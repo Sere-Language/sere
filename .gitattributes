@@ -5,3 +5,4 @@
 *.lib binary
 *.dll binary
 *.exe binary
+*.sere linguist-language=Python
