@@ -1,0 +1,91 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "LLVM_DIR": "$env{SERE_LLVM_DIR}/lib/cmake/llvm",
+        "CMAKE_AR": "$env{SERE_LLVM_DIR}/bin/llvm-lib.exe",
+        "CMAKE_LINKER": "$env{SERE_LLVM_DIR}/bin/lld-link.exe",
+        "CMAKE_RANLIB": "$env{SERE_LLVM_DIR}/bin/llvm-ranlib.exe"
+      },
+      "environment": {
+        "PATH": "$env{SERE_LLVM_DIR}/bin;$penv{PATH}"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "windows-clang-cl-relwithdebinfo",
+      "displayName": "Windows clang-cl RelWithDebInfo",
+      "description": "Preferred Sere developer build: clang-cl + lld-link + LLVM 22.",
+      "inherits": "windows-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl",
+        "CMAKE_LINKER": "lld-link"
+      }
+    },
+    {
+      "name": "windows-clang-cl-release",
+      "displayName": "Windows clang-cl Release",
+      "inherits": "windows-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl",
+        "CMAKE_LINKER": "lld-link"
+      }
+    },
+    {
+      "name": "windows-msvc-relwithdebinfo",
+      "displayName": "Windows MSVC RelWithDebInfo",
+      "inherits": "windows-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-clang-cl-relwithdebinfo",
+      "configurePreset": "windows-clang-cl-relwithdebinfo"
+    },
+    {
+      "name": "windows-clang-cl-release",
+      "configurePreset": "windows-clang-cl-release"
+    },
+    {
+      "name": "windows-msvc-relwithdebinfo",
+      "configurePreset": "windows-msvc-relwithdebinfo"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-clang-cl-relwithdebinfo",
+      "configurePreset": "windows-clang-cl-relwithdebinfo",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

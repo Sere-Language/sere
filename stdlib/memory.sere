@@ -1,0 +1,26 @@
+# Memory and pointer vocabulary for Sere.
+#
+# Unique[T]  exclusive heap pointer, freed automatically at end of scope
+# Shared[T]  reference-counted heap pointer
+# Ptr[T]     raw pointer, caller must free()
+# list[T]    runtime array
+#
+# Intrinsics (always in scope):
+#   unique[i32](0)
+#   shared[i32](1)
+#   alloc[i32]()
+#   store(ptr, 7)
+#   value = load(ptr)
+#   free(ptr)
+#
+# Address-of and dereference:
+#   p: Ptr[i32] = &n
+#   *p = 20
+#   n = *p
+#
+# alloc[T]() and free() go through the installed collector (import gc).
+# Default collector is "none": every alloc is tracked malloc, you free it.
+# Deploy a builtin with gc.use("mark_sweep") or gc.use("arena").
+# Deploy a custom collector from C with sere_gc_install (see sere/api/sere_gc.h).
+# Explicit arenas and pools: import heap.
+

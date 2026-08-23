@@ -1,0 +1,17 @@
+def main() -> i32:
+    total: i32 = 0
+    n: i32 = 0
+    while n < 5:
+        if n == 2:
+            n = n + 1
+            continue
+        if n == 4:
+            break
+        if n > 3:
+            total = total + n
+        else:
+            total = total + 1
+        n = n + 1
+    if total > 0 and not False:
+        return 0
+    return 1

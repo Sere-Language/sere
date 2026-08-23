@@ -1,0 +1,11 @@
+import gl
+
+def main() -> i32:
+    print(gl.available())
+    if not gl.available():
+        return 0
+    cap = gl.Capability.DepthTest
+    mask: i32 = gl.Buffer.Color.value + gl.Buffer.Depth.value
+    mode = gl.Primitive.Triangles
+    print(cap.value, mask, mode.value)
+    return 0

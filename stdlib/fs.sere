@@ -1,0 +1,41 @@
+# Filesystem helpers. Import with: import fs
+# Paths are strings. Failed reads return "". Status helpers return bool.
+
+extern "C" "sere_fs_read_text"
+def read_text(path: str) -> str
+
+extern "C" "sere_fs_write_text"
+def _write_text(path: str, data: str) -> i32
+
+extern "C" "sere_fs_exists"
+def _exists(path: str) -> i32
+
+extern "C" "sere_fs_is_file"
+def _is_file(path: str) -> i32
+
+extern "C" "sere_fs_is_dir"
+def _is_dir(path: str) -> i32
+
+extern "C" "sere_fs_remove"
+def _remove(path: str) -> i32
+
+extern "C" "sere_fs_mkdir"
+def _mkdir(path: str) -> i32
+
+def write_text(path: str, data: str) -> bool:
+    return _write_text(path, data) as bool
+
+def exists(path: str) -> bool:
+    return _exists(path) as bool
+
+def is_file(path: str) -> bool:
+    return _is_file(path) as bool
+
+def is_dir(path: str) -> bool:
+    return _is_dir(path) as bool
+
+def remove(path: str) -> bool:
+    return _remove(path) as bool
+
+def mkdir(path: str) -> bool:
+    return _mkdir(path) as bool

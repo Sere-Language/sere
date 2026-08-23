@@ -1,0 +1,21 @@
+import gl
+import qt6
+import sys
+import windows
+
+def main() -> i32:
+    print(__platform__, __arch__, sys.platform(), sys.arch())
+    print(sys.family().name, sys.cpu().name, sys.is_unix())
+    if __windows__:
+        print("compile-time: windows")
+        print(windows.available(), windows.computer_name(), windows.user_name())
+        size = windows.screen()
+        print(size.width, size.height)
+    if __linux__:
+        print("compile-time: linux")
+    if cfg!(macos):
+        print("compile-time: macos")
+    if not __unix__:
+        print("not unix")
+    print(gl.available(), qt6.available())
+    return 0

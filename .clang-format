@@ -1,0 +1,28 @@
+---
+Language: Cpp
+BasedOnStyle: LLVM
+ColumnLimit: 100
+IndentWidth: 2
+TabWidth: 2
+UseTab: Never
+PointerAlignment: Left
+ReferenceAlignment: Pointer
+AlwaysBreakTemplateDeclarations: Yes
+AllowShortFunctionsOnASingleLine: InlineOnly
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+BinPackArguments: false
+BinPackParameters: false
+BreakBeforeBraces: Attach
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^".*"$'
+    Priority: 1
+  - Regex: '^<sere/'
+    Priority: 2
+  - Regex: '^<llvm/'
+    Priority: 3
+  - Regex: '^<.*>$'
+    Priority: 4
+SortIncludes: true
+...

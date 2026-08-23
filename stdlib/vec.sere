@@ -1,0 +1,128 @@
+# 2D/3D/4D vectors. Import with: import vec
+# Components are f64. Integers coerce: Vec2(1, 2)
+
+extern "C" "sere_math_sqrt"
+def _sqrt(value: f64) -> f64
+
+class Vec2:
+    x: f64
+    y: f64
+
+    def add(self, other: Vec2) -> Vec2:
+        return Vec2(self.x + other.x, self.y + other.y)
+
+    def sub(self, other: Vec2) -> Vec2:
+        return Vec2(self.x - other.x, self.y - other.y)
+
+    def scale(self, factor: f64) -> Vec2:
+        return Vec2(self.x * factor, self.y * factor)
+
+    def dot(self, other: Vec2) -> f64:
+        return self.x * other.x + self.y * other.y
+
+    def length(self) -> f64:
+        return _sqrt(self.dot(self))
+
+    def normalized(self) -> Vec2:
+        mag: f64 = self.length()
+        if mag == 0 as f64:
+            return Vec2(0 as f64, 0 as f64)
+        return Vec2(self.x / mag, self.y / mag)
+
+    def lerp(self, other: Vec2, t: f64) -> Vec2:
+        s: f64 = 1 as f64 - t
+        return Vec2(self.x * s + other.x * t, self.y * s + other.y * t)
+
+    def to_list(self) -> list[f64]:
+        return [self.x, self.y]
+
+class Vec3:
+    x: f64
+    y: f64
+    z: f64
+
+    def add(self, other: Vec3) -> Vec3:
+        return Vec3(self.x + other.x, self.y + other.y, self.z + other.z)
+
+    def sub(self, other: Vec3) -> Vec3:
+        return Vec3(self.x - other.x, self.y - other.y, self.z - other.z)
+
+    def scale(self, factor: f64) -> Vec3:
+        return Vec3(self.x * factor, self.y * factor, self.z * factor)
+
+    def dot(self, other: Vec3) -> f64:
+        return self.x * other.x + self.y * other.y + self.z * other.z
+
+    def cross(self, other: Vec3) -> Vec3:
+        return Vec3(self.y * other.z - self.z * other.y, self.z * other.x - self.x * other.z, self.x * other.y - self.y * other.x)
+
+    def length(self) -> f64:
+        return _sqrt(self.dot(self))
+
+    def normalized(self) -> Vec3:
+        mag: f64 = self.length()
+        if mag == 0 as f64:
+            return Vec3(0 as f64, 0 as f64, 0 as f64)
+        return Vec3(self.x / mag, self.y / mag, self.z / mag)
+
+    def lerp(self, other: Vec3, t: f64) -> Vec3:
+        s: f64 = 1 as f64 - t
+        return Vec3(self.x * s + other.x * t, self.y * s + other.y * t, self.z * s + other.z * t)
+
+    def reflect(self, normal: Vec3) -> Vec3:
+        scale: f64 = 2 as f64 * self.dot(normal)
+        return self.sub(normal.scale(scale))
+
+    def to_list(self) -> list[f64]:
+        return [self.x, self.y, self.z]
+
+class Vec4:
+    x: f64
+    y: f64
+    z: f64
+    w: f64
+
+    def add(self, other: Vec4) -> Vec4:
+        return Vec4(self.x + other.x, self.y + other.y, self.z + other.z, self.w + other.w)
+
+    def sub(self, other: Vec4) -> Vec4:
+        return Vec4(self.x - other.x, self.y - other.y, self.z - other.z, self.w - other.w)
+
+    def scale(self, factor: f64) -> Vec4:
+        return Vec4(self.x * factor, self.y * factor, self.z * factor, self.w * factor)
+
+    def dot(self, other: Vec4) -> f64:
+        return self.x * other.x + self.y * other.y + self.z * other.z + self.w * other.w
+
+    def length(self) -> f64:
+        return _sqrt(self.dot(self))
+
+    def normalized(self) -> Vec4:
+        mag: f64 = self.length()
+        if mag == 0 as f64:
+            return Vec4(0 as f64, 0 as f64, 0 as f64, 0 as f64)
+        return Vec4(self.x / mag, self.y / mag, self.z / mag, self.w / mag)
+
+    def to_list(self) -> list[f64]:
+        return [self.x, self.y, self.z, self.w]
+
+def vec2i(x: i32, y: i32) -> Vec2:
+    return Vec2(x as f64, y as f64)
+
+def vec3i(x: i32, y: i32, z: i32) -> Vec3:
+    return Vec3(x as f64, y as f64, z as f64)
+
+def vec4i(x: i32, y: i32, z: i32, w: i32) -> Vec4:
+    return Vec4(x as f64, y as f64, z as f64, w as f64)
+
+def from_list3(values: list[f64]) -> Vec3:
+    return Vec3(values[0], values[1], values[2])
+
+def distance(left: Vec3, right: Vec3) -> f64:
+    return left.sub(right).length()
+
+def project(value: Vec3, onto: Vec3) -> Vec3:
+    denom: f64 = onto.dot(onto)
+    if denom == 0 as f64:
+        return Vec3(0 as f64, 0 as f64, 0 as f64)
+    return onto.scale(value.dot(onto) / denom)

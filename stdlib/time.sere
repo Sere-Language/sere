@@ -1,0 +1,7 @@
+# Wall clock and sleep. Import with: import time
+
+extern "C" "sere_time_now_ms"
+def now_ms() -> i64
+
+extern "C" "sere_time_sleep_ms"
+def sleep_ms(ms: i32) -> void

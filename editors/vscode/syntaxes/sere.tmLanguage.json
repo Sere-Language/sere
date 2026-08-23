@@ -1,0 +1,187 @@
+{
+  "scopeName": "source.sere",
+  "name": "Sere",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#fstringTriple" },
+    { "include": "#fstring" },
+    { "include": "#stringTriple" },
+    { "include": "#regex" },
+    { "include": "#stringSingle" },
+    { "include": "#string" },
+    { "include": "#decorator" },
+    { "include": "#macroDef" },
+    { "include": "#defDecl" },
+    { "include": "#typeDecl" },
+    { "include": "#declaration" },
+    { "include": "#macroInvoke" },
+    { "include": "#modifier" },
+    { "include": "#constant" },
+    { "include": "#keyword" },
+    { "include": "#type" },
+    { "include": "#function" },
+    { "include": "#member" },
+    { "include": "#operator" },
+    { "include": "#number" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.number-sign.sere",
+      "match": "#.*$"
+    },
+    "string": {
+      "name": "string.quoted.double.sere",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.sere",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "stringSingle": {
+      "name": "string.quoted.single.sere",
+      "begin": "'",
+      "end": "'",
+      "patterns": [
+        {
+          "name": "constant.character.escape.sere",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "stringTriple": {
+      "name": "string.quoted.triple.sere",
+      "begin": "(\"\"\"|''')",
+      "end": "\\1",
+      "patterns": [
+        {
+          "name": "constant.character.escape.sere",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "regex": {
+      "name": "string.regexp.sere",
+      "begin": "`",
+      "end": "`",
+      "patterns": [
+        {
+          "name": "constant.character.escape.sere",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "fstring": {
+      "name": "string.interpolated.sere",
+      "begin": "f(\"|')",
+      "end": "\\1",
+      "patterns": [
+        {
+          "name": "constant.character.escape.sere",
+          "match": "\\\\."
+        },
+        {
+          "name": "meta.interpolation.sere",
+          "begin": "\\{",
+          "end": "\\}",
+          "patterns": [
+            { "include": "$self" }
+          ]
+        }
+      ]
+    },
+    "fstringTriple": {
+      "name": "string.interpolated.triple.sere",
+      "begin": "f(\"\"\"|''')",
+      "end": "\\1",
+      "patterns": [
+        {
+          "name": "constant.character.escape.sere",
+          "match": "\\\\."
+        },
+        {
+          "name": "meta.interpolation.sere",
+          "begin": "\\{",
+          "end": "\\}",
+          "patterns": [
+            { "include": "$self" }
+          ]
+        }
+      ]
+    },
+    "keyword": {
+      "name": "keyword.control.sere",
+      "match": "\\b(and|as|assert|break|case|continue|defer|del|elif|else|except|finally|for|from|if|import|in|is|lambda|match|not|or|pass|quote|raise|return|super|try|while|with)\\b"
+    },
+    "modifier": {
+      "name": "storage.modifier.sere",
+      "match": "\\b(static|const|extern)\\b"
+    },
+    "constant": {
+      "name": "constant.language.sere",
+      "match": "\\b(True|False|None)\\b"
+    },
+    "decorator": {
+      "match": "(@)([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "punctuation.decorator.sere" },
+        "2": { "name": "entity.name.function.decorator.sere" }
+      }
+    },
+    "declaration": {
+      "name": "storage.type.sere",
+      "match": "\\b(class|struct|enum|type|def|macro)\\b"
+    },
+    "typeDecl": {
+      "match": "\\b(class|struct|enum|type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "storage.type.sere" },
+        "2": { "name": "entity.name.type.sere" }
+      }
+    },
+    "defDecl": {
+      "match": "\\b(def)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "storage.type.function.sere" },
+        "2": { "name": "entity.name.function.sere" }
+      }
+    },
+    "member": {
+      "match": "\\.([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "variable.other.member.sere" }
+      }
+    },
+    "type": {
+      "name": "storage.type.sere",
+      "match": "\\b(void|bool|i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|str|regex|byte|never|Unique|Shared|Ptr|list|array|dict)\\b"
+    },
+    "operator": {
+      "name": "keyword.operator.sere",
+      "match": "(\\+\\+|\\-\\-|\\*\\*=|\\*\\*|\\*=|&=|<<=|<<|>>=|>>|<=|>=|==|!=|=>|->|\\+=|\\-=|/=|//=|//|%=|\\^=|\\||\\^|~|\\*|&|\\+|\\-|<|>|=|!|\\$)"
+    },
+    "number": {
+      "name": "constant.numeric.sere",
+      "match": "\\b0[xX][0-9A-Fa-f][0-9A-Fa-f_]*\\b|\\b0[bB][01][01_]*\\b|\\b0[oO][0-7][0-7_]*\\b|\\b[0-9][0-9_]*(\\.[0-9_]*([eE][+-]?[0-9_]+)?|[eE][+-]?[0-9_]+)?[fF]?\\b|\\.[0-9][0-9_]*([eE][+-]?[0-9_]+)?[fF]?"
+    },
+    "macroDef": {
+      "match": "\\b(macro)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "storage.type.macro.sere" },
+        "2": { "name": "entity.name.function.macro.sere" }
+      }
+    },
+    "macroInvoke": {
+      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*!",
+      "captures": {
+        "1": { "name": "entity.name.function.macro.sere" }
+      }
+    },
+    "function": {
+      "name": "entity.name.function.sere",
+      "match": "\\b(print|str|unique|shared|alloc|load|store|free|len|abs|min|max|clamp|sign|range|append|typeof|isinstance|dir|inspect|sizeof|alignof|panic)\\b"
+    }
+  }
+}

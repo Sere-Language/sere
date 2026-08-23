@@ -1,0 +1,11 @@
+from html_lang import html, Html
+
+def main() -> i32:
+    title: str = "Sere"
+    node: Html = html:
+        <div class="card">
+            <h1>{title}</h1>
+            <p>count = {1 + 2}</p>
+        </div>
+    print(node.value)
+    return 0
