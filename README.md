@@ -5,11 +5,7 @@ CPython: the CPython standard library, `async`/`yield`, `*args`, and capturing
 lambdas are out of scope. Unsupported constructs diagnose (often
 `NotImplementedError`) instead of generating silent wrong code.
 
-<<<<<<< HEAD
-Programs are statically typed. 
-=======
-=======
->>>>>>> 65bcc750ea1404c3d495326a99f21dd7d07dc462
+Sere now has a website! Visit https://sere-lang.vercel.app/
 
 ```python
 def greet(name):
