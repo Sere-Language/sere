@@ -2,7 +2,9 @@
 
 Sere is a compiled language with a Python-superset frontend and an LLVM 22 backend.
 
-Programs are statically typed. `print` is a compiler intrinsic (also named in the prelude). It is not a statement.
+(If you are here from reddit feel free to DM! I do need help)
+
+Programs are statically type `print` is a compiler intrinsic (also named in the prelude). It is not a statement.
 
 ```python
 def main() -> i32:
