@@ -103,9 +103,11 @@ std::filesystem::path findStdlibDirectory(const std::filesystem::path& compilerD
 }
 
 std::unique_ptr<Module> parsePrelude(DiagnosticEngine& diagnostics,
-                                     const std::filesystem::path& stdlibDir) {
+                                     const std::filesystem::path& stdlibDir,
+                                     const std::optional<std::string>& overlayText) {
   const std::filesystem::path preludePath = stdlibDir / "prelude.sere";
-  const std::optional<std::string> text = readAll(preludePath);
+  const std::optional<std::string> text =
+      overlayText.has_value() ? overlayText : readAll(preludePath);
   if (!text.has_value()) {
     diagnostics.error("cannot load standard library prelude from '" + preludePath.string() + "'");
     diagnostics.help("set SERE_STDLIB or keep stdlib/ next to sere");
@@ -127,8 +129,9 @@ std::unique_ptr<Module> parsePrelude(DiagnosticEngine& diagnostics,
 
 bool loadPrelude(Module& userModule,
                  DiagnosticEngine& diagnostics,
-                 const std::filesystem::path& stdlibDir) {
-  std::unique_ptr<Module> prelude = parsePrelude(diagnostics, stdlibDir);
+                 const std::filesystem::path& stdlibDir,
+                 const std::optional<std::string>& text) {
+  std::unique_ptr<Module> prelude = parsePrelude(diagnostics, stdlibDir, text);
   if (prelude == nullptr) {
     return false;
   }

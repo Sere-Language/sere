@@ -27,7 +27,12 @@ struct RecordField {
   const class Type* type = nullptr;
   bool isPublic = true;
   bool isStatic = false;
+  bool stored = true;
   std::string llvmName{};
+  std::string getterLlvm{};
+  std::string setterLlvm{};
+  bool getterPublic = true;
+  bool setterPublic = true;
   std::vector<std::string> paramNames{};
   std::vector<const Type*> payloadTypes{};
   std::size_t requiredArgs = 0;

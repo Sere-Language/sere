@@ -2,17 +2,20 @@
 
 ## Zip / copy install (`releases/`)
 
-The first shippable tree is [`releases/pre-0.1.0`](../releases/pre-0.1.0/).
-It is a manual install: unzip the folder, then run `install.ps1` (or
-`install.cmd`) to copy files to `%LOCALAPPDATA%\Programs\Sere`, add `bin` to
-the user `PATH`, and set `SERE_STDLIB` / `SERE_LLVM_DIR`. LLVM is reused from
-a previous bootstrap or downloaded; it is not stored in git.
+Shippable trees land in **`releases/`**. `build/` is CMake only. `bin/` is the
+local compiler after a build.
 
 ```powershell
-.\releases\stage.ps1
-.\releases\pre-0.1.0\install.ps1
-.\releases\pre-0.1.0\uninstall.ps1
+.\scripts\package-vsix.ps1
+.\releases\stage.ps1                 # releases/pre-0.1.1 + zip + bundled vsix
+.\releases\pre-0.1.1\install.ps1
 ```
+
+`install.ps1` copies files to `%LOCALAPPDATA%\Programs\Sere`, adds `bin` to
+the user `PATH`, and sets `SERE_STDLIB` / `SERE_LLVM_DIR`. LLVM is reused from
+a previous bootstrap or downloaded; it is not stored in git.
+
+The older [`releases/pre-0.1.0`](../releases/pre-0.1.0/) tree stays as history.
 
 Options: `-Prefix`, `-NoPath`, `-Associate`, `-Editor`, `-Msvc`, `-DownloadLlvm`.
 
@@ -25,7 +28,7 @@ the editor VSIX, then compiles an Inno Setup installer.
 ```powershell
 .\scripts\bootstrap-innosetup.ps1   # once, if ISCC.exe is missing
 sere --build-installer
-sere --build-installer -o dist\Sere-0.1.0-setup.exe
+sere --build-installer -o dist\Sere-pre-0.1.1-setup.exe
 ```
 
 The setup exe is written to `dist/Sere-<version>-setup.exe` by default.

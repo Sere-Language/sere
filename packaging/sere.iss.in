@@ -32,6 +32,7 @@ ChangesAssociations=yes
 MinVersion=10.0
 SetupLogging=yes
 UninstallDisplayIcon={app}\bin\{#MyAppExeName}
+SetupIconFile=@SETUP_ICON@
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

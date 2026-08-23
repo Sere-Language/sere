@@ -257,11 +257,20 @@ public:
   [[nodiscard]] const std::string& field() const;
   void setCompileTimeText(std::string text);
   [[nodiscard]] const std::string& compileTimeText() const;
+  void setPropertyGet(std::string name);
+  [[nodiscard]] const std::string& propertyGet() const;
+  void setPropertySet(std::string name);
+  [[nodiscard]] const std::string& propertySet() const;
+  void setBackingField(bool value);
+  [[nodiscard]] bool usesBackingField() const;
 
 private:
   std::unique_ptr<Expr> object_;
   std::string field_;
   std::string compileTimeText_{};
+  std::string propertyGet_{};
+  std::string propertySet_{};
+  bool backingField_ = false;
 };
 
 enum class BinaryOp {
@@ -773,6 +782,12 @@ private:
   bool isFlags_ = false;
 };
 
+enum class PropertyKind {
+  None,
+  Get,
+  Set,
+};
+
 class FunctionDef final : public Stmt {
 public:
   FunctionDef(SourceRange range,
@@ -806,6 +821,9 @@ public:
   [[nodiscard]] const std::vector<std::string>& typeParams() const;
   void setInferredReturn(bool value);
   [[nodiscard]] bool hasInferredReturn() const;
+  void setProperty(PropertyKind kind, std::string name);
+  [[nodiscard]] PropertyKind propertyKind() const;
+  [[nodiscard]] const std::string& propertyName() const;
 
 private:
   std::string name_;
@@ -817,6 +835,8 @@ private:
   std::vector<std::string> decorators_{};
   std::string modulePrefix_{};
   std::vector<std::string> typeParams_{};
+  std::string propertyName_{};
+  PropertyKind propertyKind_ = PropertyKind::None;
   bool isAbstract_ = false;
   bool isOverride_ = false;
   bool inferredReturn_ = false;

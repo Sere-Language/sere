@@ -20,7 +20,7 @@ The language server is the same `sere` binary (`sere --lsp`).
 ## Install from VSIX
 
 1. **Extensions → … → Install from VSIX…**
-2. Choose `sere-0.2.0.vsix`
+2. Choose `dist/sere-0.2.1.vsix`
 3. Reload the window
 
 If `sere` is on `PATH` (Windows installer, `.\bin\sere-path.ps1`, or `. .\scripts\activate.ps1`), leave `sere.compilerPath` empty.
@@ -28,7 +28,7 @@ If `sere` is on `PATH` (Windows installer, `.\bin\sere-path.ps1`, or `. .\script
 ## Setup (this repository)
 
 1. Build `sere`.
-2. Install the VSIX from `editors/vscode/sere-0.2.0.vsix` or `dist/sere-0.2.0.vsix`.
+2. Install the VSIX from `dist/sere-0.2.1.vsix`.
 3. Point `sere.compilerPath` at `sere.exe` if it is not on `PATH`.
 
 Workspace default in this repo:
@@ -45,4 +45,6 @@ After rebuilding the compiler, run **Sere: Restart Language Server**.
 | Sere: Compile Current File | Compile the open `.sere` file |
 | Sere: Build Project | `sere build` in the nearest `sere.toml` |
 | Sere: Run Project | `sere run` in the nearest `sere.toml` |
+| Sere: Set Stdlib Folder | Pick the folder that contains `prelude.sere` |
+| Sere: Set Stdlib Folder | Pick the folder that contains `prelude.sere` |
 | Sere: Open Settings | Open Sere settings |

@@ -1,4 +1,0 @@
-import exc_lib
-
-def main() -> i32:
-    return 0

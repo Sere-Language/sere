@@ -1,6 +1,8 @@
 {
   "cmake.configureOnOpen": true,
-  "cmake.preferredGenerators": ["Ninja"],
+  "cmake.preferredGenerators": [
+    "Ninja"
+  ],
   "cmake.sourceDirectory": "${workspaceFolder}",
   "C_Cpp.intelliSenseEngine": "disabled",
   "clangd.arguments": [
@@ -15,7 +17,7 @@
   "files.associations": {
     "*.sere": "sere"
   },
-  "sere.compilerPath": "${workspaceFolder}/build/windows-clang-cl-relwithdebinfo/bin/sere.exe",
+  "sere.compilerPath": "c:\\Users\\jackw\\OneDrive\\Desktop\\git-projects\\sere\\build\\windows-clang-cl-relwithdebinfo\\bin\\sere.exe",
   "[sere]": {
     "editor.tabSize": 4,
     "editor.insertSpaces": true,
@@ -23,5 +25,6 @@
     "editor.suggest.showSnippets": false,
     "editor.snippetSuggestions": "none",
     "editor.acceptSuggestionOnEnter": "off"
-  }
+  },
+  "sere.stdlibPath": ""
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- Ships with Sere **pre-0.1.1**
+- Member completion for local classes, imported modules, and stdlib exports
+- **Sere: Set Stdlib Folder** picks a `prelude.sere` directory (`sere.stdlibPath`)
+
 ## 0.2.0
 
 - Grammar for builtin exceptions, `Int` / `Float`, `|>`, and macro properties

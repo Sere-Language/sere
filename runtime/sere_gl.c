@@ -9,6 +9,7 @@
 #endif
 
 #include "sere_rt.h"
+#include "sere_icon.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -1161,14 +1162,17 @@ static void registerClass(void) {
   if (ready) {
     return;
   }
-  WNDCLASSA wc;
+  WNDCLASSEXA wc;
   memset(&wc, 0, sizeof(wc));
+  wc.cbSize = sizeof(wc);
   wc.style = CS_OWNDC;
   wc.lpfnWndProc = sereGlWndProc;
   wc.hInstance = GetModuleHandleA(NULL);
   wc.hCursor = LoadCursorA(NULL, IDC_ARROW);
+  wc.hIcon = (HICON)sere_icon_hicon(0);
+  wc.hIconSm = (HICON)sere_icon_hicon(1);
   wc.lpszClassName = "SereGLWindow";
-  RegisterClassA(&wc);
+  RegisterClassExA(&wc);
   ready = 1;
 }
 
@@ -1308,6 +1312,7 @@ void* sere_gl_window_new_ex(const char* title, int64_t title_len, int32_t width,
     return NULL;
   }
   SetWindowLongPtrA(window->hwnd, GWLP_USERDATA, (LONG_PTR)window);
+  sere_icon_apply_hwnd(window->hwnd);
   window->hdc = GetDC(window->hwnd);
   PIXELFORMATDESCRIPTOR pfd;
   memset(&pfd, 0, sizeof(pfd));

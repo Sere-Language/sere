@@ -31,6 +31,17 @@ void sere_write(const char* data, int64_t len) {
   }
 }
 
+
+const char* sere_input(const char* prompt, int64_t len) {
+  sere_write(prompt, len);
+  char* buffer = (char*)malloc(1024);
+  if (buffer == NULL) {
+    return NULL;
+  }
+  fgets(buffer, 1024, stdin);
+  return buffer;
+}
+
 void sere_write_nl(void) { fputc('\n', stdout); }
 
 void sere_print_str(const char* data, int64_t len) {

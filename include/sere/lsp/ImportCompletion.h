@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -59,6 +60,8 @@ struct ImportCompletionItem {
     const std::filesystem::path& skipFile = {});
 
 [[nodiscard]] std::vector<ImportCompletionItem> importExportCompletions(
-    const std::filesystem::path& moduleFile, std::string_view prefix);
+    const std::filesystem::path& moduleFile,
+    std::string_view prefix,
+    const std::optional<std::string>& overlayText = std::nullopt);
 
 }  // namespace sere

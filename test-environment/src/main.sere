@@ -1,0 +1,19 @@
+import gl
+import math 
+
+def init_window(width: i32, height: i32, title: str = "Blank Window") -> gl.Window:
+    window = gl.Window(title, width, height)
+    return window 
+
+def main() -> void:
+    window = init_window(800, 600)
+    window.make_current()
+    
+    while not window.should_close():
+        window.set_title(f"{math.floor(window.get_fps())}")
+        window.swap_buffers()
+        window.poll_events()
+    
+    window.destroy()
+
+

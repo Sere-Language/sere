@@ -147,5 +147,66 @@ int main() {
   if (badModule != nullptr && badChecker.check(*badModule)) {
     return fail("super() outside a method must fail");
   }
+
+  const std::string properties =
+      "class Vec2:\n"
+      "    @private x: i32\n"
+      "    @private y: i32\n"
+      "    def __init__(self, x: i32, y: i32) -> void:\n"
+      "        self.x = x\n"
+      "        self.y = y\n"
+      "    @public x.get:\n"
+      "        return self.x\n"
+      "    @public y.get:\n"
+      "        return self.y\n"
+      "    @public x.set(value: i32) -> void:\n"
+      "        self.x = value\n"
+      "def main() -> i32:\n"
+      "    v: Vec2 = Vec2(1, 2)\n"
+      "    v.x = 10\n"
+      "    return v.x + v.y\n";
+  sere::DiagnosticEngine propertyOk;
+  sere::SourceManager propertyOkSource("sema_property.sere", properties);
+  sere::Lexer propertyOkLexer(propertyOkSource, propertyOk);
+  sere::Parser propertyOkParser(propertyOk, propertyOkLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> propertyOkModule = propertyOkParser.parseModule();
+  if (propertyOkModule == nullptr || propertyOk.hasErrors()) {
+    propertyOk.printAll(propertyOkSource);
+    return fail("public property get/set should parse");
+  }
+  sere::TypeContext propertyOkTypes;
+  sere::TypeChecker propertyOkChecker(propertyOkTypes, propertyOk);
+  if (!propertyOkChecker.check(*propertyOkModule)) {
+    propertyOk.printAll(propertyOkSource);
+    return fail("public property get/set should typecheck");
+  }
+
+  const std::string privateSetter =
+      "class Vec2:\n"
+      "    @private x: i32\n"
+      "    def __init__(self, x: i32) -> void:\n"
+      "        self.x = x\n"
+      "    @public x.get:\n"
+      "        return self.x\n"
+      "    @private x.set(value: i32) -> void:\n"
+      "        self.x = value\n"
+      "def main() -> i32:\n"
+      "    v: Vec2 = Vec2(1)\n"
+      "    v.x = 10\n"
+      "    return v.x\n";
+  sere::DiagnosticEngine propertyBad;
+  sere::SourceManager propertyBadSource("sema_property_private.sere", privateSetter);
+  sere::Lexer propertyBadLexer(propertyBadSource, propertyBad);
+  sere::Parser propertyBadParser(propertyBad, propertyBadLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> propertyBadModule = propertyBadParser.parseModule();
+  if (propertyBadModule == nullptr || propertyBad.hasErrors()) {
+    propertyBad.printAll(propertyBadSource);
+    return fail("private setter sample failed to parse");
+  }
+  sere::TypeContext propertyBadTypes;
+  sere::TypeChecker propertyBadChecker(propertyBadTypes, propertyBad);
+  if (propertyBadChecker.check(*propertyBadModule) || !propertyBad.hasErrors()) {
+    return fail("assigning through a private setter from outside the class should fail");
+  }
   return 0;
 }

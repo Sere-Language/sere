@@ -1,22 +1,19 @@
 # Sere releases
 
-Each subdirectory is a shippable tree: compiler, runtime, stdlib, and install
-scripts. Zip one folder and give it to someone; they can copy files by hand or
-run `install.ps1`.
-
-| Folder | Channel | Notes |
-| --- | --- | --- |
-| [pre-0.1.0](pre-0.1.0/) | Pre-release | First manual Windows x64 package |
-
-The Inno Setup wizard (`sere --build-installer` → `dist/Sere-<version>-setup.exe`)
-is a separate, later path. These folders are the zip / copy install.
-
-Refresh a folder from a local compiler build:
+`releases/` holds the installable trees. `pre-0.1.0` is the previous drop;
+`pre-0.1.1` is current.
 
 ```powershell
-.\releases\stage.ps1
-.\releases\stage.ps1 -Name pre-0.1.0
+.\scripts\package-vsix.ps1
+.\releases\stage.ps1                  # default: pre-0.1.1
+.\releases\stage.ps1 -Name pre-0.1.1
 ```
 
-LLVM is **not** stored in git (too large). `install.ps1` reuses a toolchain
-already on the machine or downloads the pinned clang+llvm archive.
+That writes:
+
+- `releases/pre-0.1.1/` — unzipped install tree
+- `releases/Sere-pre-0.1.1-windows-x64.zip`
+- `releases/sere-0.2.1.vsix` (also `pre-0.1.1/editors/sere.vsix`)
+
+LLVM is **not** stored in git. `install.ps1` reuses a toolchain already on the
+machine or downloads the pinned clang+llvm archive.

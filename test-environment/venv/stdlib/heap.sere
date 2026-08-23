@@ -1,0 +1,73 @@
+# Explicit memory: raw bytes, arenas, and fixed pools. Import with: import heap
+# alloc[T]() / free() still go through the installed collector (see import gc).
+# Arenas and pools own their storage and do not use the active GC.
+# Byte-level alloc/free/stats live in `import gc`.
+
+extern "C" "sere_mem_copy"
+def copy(dest: Ptr[i8], src: Ptr[i8], size: i64) -> void
+
+extern "C" "sere_mem_set"
+def set(dest: Ptr[i8], value: i32, size: i64) -> void
+
+extern "C" "sere_mem_eq"
+def _eq(left: Ptr[i8], right: Ptr[i8], size: i64) -> i32
+
+extern "C" "sere_arena_new"
+def arena_new(cap: i64) -> Ptr[i8]
+
+extern "C" "sere_arena_alloc"
+def arena_alloc(arena: Ptr[i8], size: i64) -> Ptr[i8]
+
+extern "C" "sere_arena_reset"
+def arena_reset(arena: Ptr[i8]) -> void
+
+extern "C" "sere_arena_destroy"
+def arena_destroy(arena: Ptr[i8]) -> void
+
+extern "C" "sere_pool_new"
+def pool_new(block_size: i64, blocks: i64) -> Ptr[i8]
+
+extern "C" "sere_pool_alloc"
+def pool_alloc(pool: Ptr[i8]) -> Ptr[i8]
+
+extern "C" "sere_pool_release"
+def pool_release(pool: Ptr[i8], pointer: Ptr[i8]) -> void
+
+extern "C" "sere_pool_destroy"
+def pool_destroy(pool: Ptr[i8]) -> void
+
+def eq(left: Ptr[i8], right: Ptr[i8], size: i64) -> bool:
+    return _eq(left, right, size) as bool
+
+def zero(dest: Ptr[i8], size: i64) -> void:
+    set(dest, 0, size)
+
+class Arena:
+    handle: Ptr[i8]
+
+    def __init__(self, cap: i64) -> void:
+        self.handle = arena_new(cap)
+
+    def alloc(self, size: i64) -> Ptr[i8]:
+        return arena_alloc(self.handle, size)
+
+    def reset(self) -> void:
+        arena_reset(self.handle)
+
+    def destroy(self) -> void:
+        arena_destroy(self.handle)
+
+class Pool:
+    handle: Ptr[i8]
+
+    def __init__(self, block_size: i64, blocks: i64) -> void:
+        self.handle = pool_new(block_size, blocks)
+
+    def alloc(self) -> Ptr[i8]:
+        return pool_alloc(self.handle)
+
+    def release(self, pointer: Ptr[i8]) -> void:
+        pool_release(self.handle, pointer)
+
+    def destroy(self) -> void:
+        pool_destroy(self.handle)

@@ -1,4 +1,0 @@
-n: Int = 20
-x: Float = 1.5
-print(n, x)
-print(f"age={n}")

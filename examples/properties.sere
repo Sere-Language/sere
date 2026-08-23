@@ -1,0 +1,25 @@
+class Vec2:
+    @private x: i32
+    @private y: i32
+
+    def __init__(self, x: i32, y: i32) -> void:
+        self.x = x
+        self.y = y
+
+    @public x.get:
+        return self.x
+
+    @public y.get:
+        return self.y
+
+    @public x.set(value: i32) -> void:
+        self.x = value
+
+    @public y.set(value: i32) -> void:
+        self.y = value
+
+
+def main() -> i32:
+    v: Vec2 = Vec2(1, 2)
+    v.x = 10
+    return v.x + v.y

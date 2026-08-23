@@ -67,8 +67,19 @@ namespace {
 }
 
 [[nodiscard]] unsigned llvmFieldIndex(const Type* type, int semanticIndex) {
-  const unsigned base = recordHasTypeId(type) ? 1u : 0u;
-  return base + static_cast<unsigned>(semanticIndex);
+  unsigned llvm = recordHasTypeId(type) ? 1u : 0u;
+  if (type == nullptr) {
+    return llvm;
+  }
+  const auto& fields = type->fields();
+  const int limit = semanticIndex < 0 ? 0 : semanticIndex;
+  for (int index = 0; index < limit && static_cast<std::size_t>(index) < fields.size(); ++index) {
+    const RecordField& field = fields[static_cast<std::size_t>(index)];
+    if (!field.isStatic && field.stored) {
+      llvm += 1;
+    }
+  }
+  return llvm;
 }
 
 void appendExceptionName(std::string& chain, std::string_view name) {
@@ -208,7 +219,7 @@ llvm::Type* IRGenerator::lower(const Type* type) {
       fields.push_back(llvm::Type::getInt32Ty(*context_));
     }
     for (const RecordField& field : type->fields()) {
-      if (!field.isStatic) {
+      if (!field.isStatic && field.stored) {
         fields.push_back(lower(field.type));
       }
     }
@@ -316,7 +327,7 @@ std::uint64_t IRGenerator::valueSize(const Type* type) const {
   }
   std::uint64_t total = 0;
   for (const RecordField& field : type->fields()) {
-    if (!field.isStatic) {
+    if (!field.isStatic && field.stored) {
       total += valueSize(field.type);
     }
   }
@@ -1053,6 +1064,14 @@ llvm::Value* IRGenerator::emitAddress(llvm::IRBuilder<>& builder, const Expr& ex
   }
   if (expr.kind() == NodeKind::MemberExpr) {
     const auto& member = static_cast<const MemberExpr&>(expr);
+    if (!member.usesBackingField() &&
+        (!member.propertyGet().empty() || !member.propertySet().empty())) {
+      if (required) {
+        diagnostics_->error(expr.range(),
+                            "property '" + member.field() + "' is not addressable");
+      }
+      return nullptr;
+    }
     const Type* objectType = member.object().resolvedType();
     if (objectType == nullptr) {
       return nullptr;
@@ -2215,7 +2234,7 @@ llvm::Value* IRGenerator::emitConstruct(llvm::IRBuilder<>& builder, const CallEx
   }
   std::vector<const RecordField*> instanceFields;
   for (const RecordField& fieldDecl : record->fields()) {
-    if (!fieldDecl.isStatic) {
+    if (!fieldDecl.isStatic && fieldDecl.stored) {
       instanceFields.push_back(&fieldDecl);
     }
   }
@@ -2224,11 +2243,13 @@ llvm::Value* IRGenerator::emitConstruct(llvm::IRBuilder<>& builder, const CallEx
     if (field == nullptr) {
       return nullptr;
     }
+    int semantic = static_cast<int>(index);
     if (index < instanceFields.size()) {
       field = emitCoerce(
           builder, field, expr.arguments()[index]->resolvedType(), instanceFields[index]->type);
+      semantic = record->fieldIndex(instanceFields[index]->name);
     }
-    aggregate = builder.CreateInsertValue(aggregate, field, {llvmFieldIndex(record, static_cast<int>(index))});
+    aggregate = builder.CreateInsertValue(aggregate, field, {llvmFieldIndex(record, semantic)});
   }
   return aggregate;
 }
@@ -3120,6 +3141,10 @@ llvm::Value* IRGenerator::emitExpr(llvm::IRBuilder<>& builder, const Expr& expr)
         return emitEnumUnit(builder, objectType, enumTagFromField(field));
       }
     }
+    if (!member.usesBackingField() && !member.propertyGet().empty()) {
+      llvm::Value* self = emitObjectPointer(builder, member.object(), objectType);
+      return emitNamedMethod(builder, member.propertyGet(), self, {});
+    }
     return builder.CreateLoad(lower(expr.resolvedType()), emitAddress(builder, expr));
   }
   case NodeKind::CallExpr:
@@ -3191,7 +3216,7 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
                                                             decl.init()->resolvedType(),
                                                             decl.resolvedType());
     if (init != nullptr && !init->getType()->isVoidTy()) {
-      builder.CreateStore(init, slot);
+    builder.CreateStore(init, slot);
     }
     rememberLocal(decl.name(), slot, decl.resolvedType());
     return true;
@@ -3221,12 +3246,37 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
       }
     }
     llvm::Value* address = nullptr;
-    if (const NameExpr* name = asName(assign.target())) {
-      if (!locals_.contains(name->name()) && !globals_.contains(name->name())) {
-        createLocalSlot(builder, name->name(), assign.value().resolvedType());
+    llvm::Value* propertySelf = nullptr;
+    const MemberExpr* propertyTarget = nullptr;
+    if (assign.target().kind() == NodeKind::MemberExpr) {
+      const auto& member = static_cast<const MemberExpr&>(assign.target());
+      if (!member.usesBackingField() && !member.propertySet().empty()) {
+        propertyTarget = &member;
+        const Type* record = member.object().resolvedType();
+        propertySelf = emitObjectPointer(builder, member.object(), record);
+        const Type* slotType = assign.target().resolvedType();
+        llvm::Type* llvmType = lower(slotType);
+        if (llvmType == nullptr || llvmType->isVoidTy() || propertySelf == nullptr) {
+          return false;
+        }
+        address = builder.CreateAlloca(llvmType, nullptr, "prop.tmp");
+        if (assign.op() != AssignOp::Assign) {
+          llvm::Value* current = emitExpr(builder, assign.target());
+          if (current == nullptr) {
+            return false;
+          }
+          builder.CreateStore(current, address);
+        }
       }
     }
-    address = emitAddress(builder, assign.target());
+    if (address == nullptr) {
+      if (const NameExpr* name = asName(assign.target())) {
+        if (!locals_.contains(name->name()) && !globals_.contains(name->name())) {
+          createLocalSlot(builder, name->name(), assign.value().resolvedType());
+        }
+      }
+      address = emitAddress(builder, assign.target());
+    }
     llvm::Value* value = emitExpr(builder, assign.value());
     if (address == nullptr || value == nullptr || value->getType()->isVoidTy()) {
       return false;
@@ -3322,7 +3372,7 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
       llvm::Value* sliced = llvm::UndefValue::get(lower(to));
       unsigned count = 0;
       for (const RecordField& field : to->fields()) {
-        if (!field.isStatic) {
+        if (!field.isStatic && field.stored) {
           ++count;
         }
       }
@@ -3333,8 +3383,15 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
       value = sliced;
     }
     value = emitCoerce(builder, value, from, to);
+    if (propertyTarget != nullptr) {
+      if (value == nullptr) {
+        return false;
+      }
+      emitNamedMethod(builder, propertyTarget->propertySet(), propertySelf, {value});
+      return true;
+    }
     if (value != nullptr && !value->getType()->isVoidTy()) {
-      builder.CreateStore(value, address);
+    builder.CreateStore(value, address);
     }
     return true;
   }
@@ -4206,9 +4263,9 @@ llvm::Value* IRGenerator::emitDunderOnSelf(llvm::IRBuilder<>& builder, const Typ
 }
 
 llvm::Value* IRGenerator::emitDunderCall(llvm::IRBuilder<>& builder,
-                                         const Expr& object,
-                                         std::string_view name,
-                                         const std::vector<llvm::Value*>& extra) {
+                                        const Expr& object,
+                                        std::string_view name,
+                                        const std::vector<llvm::Value*>& extra) {
   const Type* record =
       object.resolvedType() == nullptr ? nullptr : object.resolvedType()->canonical();
   if (record == nullptr) {
@@ -4224,6 +4281,47 @@ llvm::Value* IRGenerator::emitDunderCall(llvm::IRBuilder<>& builder,
     builder.CreateStore(value, thisPtr);
   }
   return emitDunderOnSelf(builder, record, thisPtr, name, extra);
+}
+
+llvm::Value* IRGenerator::emitObjectPointer(llvm::IRBuilder<>& builder, const Expr& object,
+                                            const Type* record) {
+  if (record == nullptr) {
+    return nullptr;
+  }
+  record = record->canonical();
+  llvm::Value* thisPtr = emitAddress(builder, object, false);
+  if (thisPtr != nullptr) {
+    return thisPtr;
+  }
+  llvm::Value* value = emitExpr(builder, object);
+  if (value == nullptr) {
+    return nullptr;
+  }
+  thisPtr = builder.CreateAlloca(lower(record), nullptr, "prop.self");
+  builder.CreateStore(value, thisPtr);
+  return thisPtr;
+}
+
+llvm::Value* IRGenerator::emitNamedMethod(llvm::IRBuilder<>& builder,
+                                          const std::string& llvmName,
+                                          llvm::Value* self,
+                                          const std::vector<llvm::Value*>& extra) {
+  if (self == nullptr || llvmName.empty()) {
+    return nullptr;
+  }
+  const auto found = functions_.find(llvmName);
+  if (found == functions_.end()) {
+    diagnostics_->error("no LLVM function for '" + llvmName + "'");
+    return nullptr;
+  }
+  std::vector<llvm::Value*> args;
+  args.push_back(self);
+  args.insert(args.end(), extra.begin(), extra.end());
+  if (found->second->getReturnType()->isVoidTy()) {
+    builder.CreateCall(found->second, args);
+    return nullptr;
+  }
+  return builder.CreateCall(found->second, args);
 }
 
 void IRGenerator::emitErrorCheck(llvm::IRBuilder<>& builder) {
@@ -4448,7 +4546,7 @@ bool IRGenerator::emitMatch(llvm::IRBuilder<>& builder,
         }
         if (matched->getType()->isIntegerTy(1) && subject->getType() == pat->getType() &&
             subject->getType()->isIntegerTy()) {
-          matched = builder.CreateICmpEQ(subject, pat);
+        matched = builder.CreateICmpEQ(subject, pat);
         }
       }
     }

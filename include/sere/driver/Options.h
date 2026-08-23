@@ -35,6 +35,7 @@ struct CompilerOptions {
   bool lsp = false;
   bool help = false;
   bool version = false;
+  bool printEnv = false;
   bool optOverridden = false;
   ProjectCommand projectCommand = ProjectCommand::None;
   std::filesystem::path initName;

@@ -12,6 +12,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -20,6 +21,8 @@ namespace sere {
 
 class Frontend {
 public:
+  [[nodiscard]] static std::string overlayKey(const std::filesystem::path& path);
+  void setFileOverlay(std::unordered_map<std::string, std::string> overlay);
   [[nodiscard]] bool analyze(const std::string& path,
                              const std::string& text,
                              const std::filesystem::path& stdlibDir);
@@ -40,6 +43,7 @@ public:
   [[nodiscard]] const std::vector<MacroUse>& macroUses() const;
 
 private:
+  [[nodiscard]] std::optional<std::string> readFile(const std::filesystem::path& path) const;
   bool loadImports(const std::filesystem::path& origin, const std::filesystem::path& stdlibDir);
   [[nodiscard]] bool importsReady(std::size_t index, const std::vector<char>& done) const;
   [[nodiscard]] bool typecheckOneImported(std::size_t index, Module* prelude);
@@ -55,6 +59,7 @@ private:
   std::vector<std::string> importNames_{};
   std::unordered_map<std::string, std::size_t> importIndex_{};
   std::vector<MacroUse> macroUses_{};
+  std::unordered_map<std::string, std::string> overlay_{};
 };
 
 }  // namespace sere

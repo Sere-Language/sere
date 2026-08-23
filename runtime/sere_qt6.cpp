@@ -1326,6 +1326,32 @@ void ensureQtPaths() {
 
 int32_t sere_qt6_available(void) { return 1; }
 
+namespace {
+const unsigned char kSereIconIco[] = {
+#include "sere_icon_ico.inc"
+};
+
+QIcon sereDefaultWindowIcon() {
+  static QIcon icon;
+  static bool loaded = false;
+  if (!loaded) {
+    loaded = true;
+    QPixmap pix;
+    if (pix.loadFromData(kSereIconIco, static_cast<uint>(sizeof(kSereIconIco)), "ICO")) {
+      icon = QIcon(pix);
+    }
+  }
+  return icon;
+}
+
+void applySereDefaultIcon(QWidget* widget) {
+  const QIcon icon = sereDefaultWindowIcon();
+  if (widget != nullptr && !icon.isNull()) {
+    widget->setWindowIcon(icon);
+  }
+}
+}  // namespace
+
 void* sere_qt6_app_new(void) {
   ensureQtPaths();
   if (QApplication::instance() != nullptr) {
@@ -1333,6 +1359,10 @@ void* sere_qt6_app_new(void) {
   }
   auto* app = new QApplication(g_argc, g_argv);
   app->setStyle("Fusion");
+  const QIcon icon = sereDefaultWindowIcon();
+  if (!icon.isNull()) {
+    app->setWindowIcon(icon);
+  }
   return app;
 }
 
@@ -1475,12 +1505,14 @@ void* sere_qt6_window_new(const char* title, int64_t title_len) {
   auto* central = new QWidget(window);
   window->setCentralWidget(central);
   window->statusBar();
+  applySereDefaultIcon(window);
   return window;
 }
 
 void* sere_qt6_dialog_new(void* parent, const char* title, int64_t title_len) {
   auto* dialog = new QDialog(asW(parent));
   dialog->setWindowTitle(fromSere(title, title_len));
+  applySereDefaultIcon(dialog);
   return dialog;
 }
 
@@ -2468,6 +2500,10 @@ void sere_qt6_settings_get(const char* key, int64_t key_len, const char** out_da
 void* sere_qt6_tray_new(const char* tip, int64_t tip_len) {
   auto* tray = new QSystemTrayIcon();
   tray->setToolTip(fromSere(tip, tip_len));
+  const QIcon icon = sereDefaultWindowIcon();
+  if (!icon.isNull()) {
+    tray->setIcon(icon);
+  }
   tray->show();
   return tray;
 }
@@ -2900,6 +2936,7 @@ void* sere_qt6_mdi_add(void* mdi, void* widget, const char* title, int64_t len) 
   }
   QMdiSubWindow* sub = area->addSubWindow(asW(widget));
   sub->setWindowTitle(fromSere(title, len));
+  applySereDefaultIcon(sub);
   sub->show();
   return sub;
 }
@@ -2909,6 +2946,7 @@ void* sere_qt6_splash_new(const char* text, int64_t len) {
   pix.fill(QColor(32, 32, 36));
   auto* splash = new QSplashScreen(pix);
   splash->showMessage(fromSere(text, len), Qt::AlignHCenter | Qt::AlignBottom, Qt::white);
+  applySereDefaultIcon(splash);
   splash->show();
   return splash;
 }

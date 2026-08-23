@@ -21,6 +21,7 @@ typedef struct SereList {
   int64_t stride;
 } SereList;
 
+const char* sere_input(const char* prompt, int64_t len);
 void sere_print_str(const char* data, int64_t len);
 void sere_write(const char* data, int64_t len);
 void sere_write_nl(void);

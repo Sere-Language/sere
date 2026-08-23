@@ -1,5 +1,0 @@
-from util import double
-import util as u
-
-def main() -> i32:
-    return double(2) + u.double(3)

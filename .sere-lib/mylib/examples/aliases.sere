@@ -1,8 +1,0 @@
-def main() -> i32:
-    donut = print
-    donut("Hello, world!")
-    magnitude = abs
-    print(magnitude(-4))
-    echo = donut
-    echo("aliased")
-    return 0

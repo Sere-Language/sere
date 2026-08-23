@@ -1,0 +1,4 @@
+﻿Sere pre-0.1.1
+staged: 2026-08-23 15:55:12 -05:00
+compiler: C:\Users\jackw\OneDrive\Desktop\git-projects\sere\bin\sere.exe
+vsix: sere-0.2.1.vsix

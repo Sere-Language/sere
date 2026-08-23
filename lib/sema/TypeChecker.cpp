@@ -334,6 +334,45 @@ const std::vector<SemanticSymbol>& TypeChecker::symbols() const {
   return symbols_;
 }
 
+const Type* TypeChecker::typeOfName(std::string_view name) const {
+  const std::string key(name);
+  for (auto scope = scopes_.rbegin(); scope != scopes_.rend(); ++scope) {
+    const auto found = scope->find(key);
+    if (found != scope->end() && found->second.type != nullptr) {
+      return found->second.type->canonical();
+    }
+  }
+  const Type* fromSymbols = nullptr;
+  for (const SemanticSymbol& symbol : symbols_) {
+    if (symbol.name != key || symbol.typeDisplay.empty()) {
+      continue;
+    }
+    if (const Type* named = types_->lookupNamed(symbol.typeDisplay)) {
+      fromSymbols = named;
+    }
+  }
+  return fromSymbols == nullptr ? nullptr : fromSymbols->canonical();
+}
+
+const Type* TypeChecker::typeOfPath(const std::vector<std::string>& parts) const {
+  if (parts.empty()) {
+    return nullptr;
+  }
+  const Type* current = typeOfName(parts[0]);
+  if (current == nullptr) {
+    current = types_->lookupNamed(parts[0]);
+  }
+  for (std::size_t index = 1; current != nullptr && index < parts.size(); ++index) {
+    current = current->canonical();
+    const RecordField* field = current->findField(parts[index]);
+    if (field == nullptr || field->type == nullptr) {
+      return nullptr;
+    }
+    current = field->type;
+  }
+  return current == nullptr ? nullptr : current->canonical();
+}
+
 bool TypeChecker::importSymbol(const std::string& name, Symbol symbol, SourceLocation location) {
   auto& scope = scopes_.back();
   const auto existing = scope.find(name);
@@ -990,10 +1029,34 @@ const Type* TypeChecker::checkMember(MemberExpr& expr) {
     reportUnknownMember(*diagnostics_, expr.range(), objectType, expr.field(), false);
     return nullptr;
   }
-  if (!field->isPublic && currentClass_ != objectType->name()) {
-    diagnostics_->error(expr.range(),
-                        "field '" + expr.field() + "' of '" + objectType->name() + "' is private");
-    return nullptr;
+  const bool ownAccessor =
+      currentClass_ == objectType->name() && currentPropertyName_ == expr.field();
+  const bool initBacking =
+      currentClass_ == objectType->name() && currentFunctionName_ == "__init__" && field->stored;
+  const bool assignThroughSetter = !expr.propertySet().empty() && !ownAccessor && !initBacking;
+  bool useBacking = ownAccessor || initBacking ||
+                    (field->getterLlvm.empty() && !assignThroughSetter);
+  if (useBacking && !field->stored) {
+    useBacking = !field->getterLlvm.empty() ? false : useBacking;
+  }
+  expr.setBackingField(useBacking);
+  if (useBacking) {
+    if (!field->stored) {
+      diagnostics_->error(expr.range(), "property '" + expr.field() + "' has no backing field");
+      return nullptr;
+    }
+    if (!field->isPublic && currentClass_ != objectType->name()) {
+      diagnostics_->error(expr.range(),
+                          "field '" + expr.field() + "' of '" + objectType->name() + "' is private");
+      return nullptr;
+    }
+  } else if (!field->getterLlvm.empty()) {
+    if (!field->getterPublic && currentClass_ != objectType->name()) {
+      diagnostics_->error(expr.range(),
+                          "getter '" + expr.field() + "' of '" + objectType->name() + "' is private");
+      return nullptr;
+    }
+    expr.setPropertyGet(field->getterLlvm);
   }
   if (isClassName(expr.object()) && !field->isStatic) {
     diagnostics_->error(expr.range(),
@@ -2670,10 +2733,38 @@ bool TypeChecker::checkAssign(AssignStmt& statement) {
   if (targetExpr.kind() == NodeKind::MemberExpr) {
     auto& member = static_cast<MemberExpr&>(targetExpr);
     const Type* objectType = checkExpr(member.object());
-    if (objectType != nullptr && objectType->isFrozen() && currentFunctionName_ != "__init__") {
-      diagnostics_->error(statement.range(),
-                          "cannot assign to frozen field '" + member.field() + "'");
-      return false;
+    if (objectType != nullptr) {
+      objectType = objectType->canonical();
+      const RecordField* field = objectType->findField(member.field());
+      const bool ownAccessor =
+          currentClass_ == objectType->name() && currentPropertyName_ == member.field();
+      const bool initBacking = currentClass_ == objectType->name() &&
+                               currentFunctionName_ == "__init__" && field != nullptr &&
+                               field->stored;
+      if (field != nullptr && !field->setterLlvm.empty() && !ownAccessor && !initBacking) {
+        if (!field->setterPublic && currentClass_ != objectType->name()) {
+          diagnostics_->error(statement.range(), "setter '" + member.field() + "' of '" +
+                                                     objectType->name() + "' is private");
+          return false;
+        }
+        if (statement.op() != AssignOp::Assign && field->getterLlvm.empty()) {
+          diagnostics_->error(statement.range(),
+                              "property '" + member.field() + "' is write-only");
+          return false;
+        }
+        member.setPropertySet(field->setterLlvm);
+        member.setBackingField(false);
+      } else if (field != nullptr && field->setterLlvm.empty() && !field->getterLlvm.empty() &&
+                 !ownAccessor && !initBacking) {
+        diagnostics_->error(statement.range(), "property '" + member.field() + "' is read-only");
+        return false;
+      }
+      if (objectType->isFrozen() && currentFunctionName_ != "__init__" &&
+          member.propertySet().empty()) {
+        diagnostics_->error(statement.range(),
+                            "cannot assign to frozen field '" + member.field() + "'");
+        return false;
+      }
     }
   }
   const Type* target = checkExpr(targetExpr);
@@ -2799,6 +2890,7 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
   }
   currentClass_ = function.ownerClass();
   currentFunctionName_ = function.name();
+  currentPropertyName_ = function.propertyName();
   pushScope();
   for (std::size_t index = 0; index < function.params().size(); ++index) {
     const ParamDecl& param = function.params()[index];
@@ -2809,6 +2901,7 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
     if (type == nullptr || !declare(param.name, symbol, param.range.start)) {
       popScope();
       currentClass_.clear();
+      currentPropertyName_.clear();
       return false;
     }
     if (param.defaultValue != nullptr) {
@@ -2817,11 +2910,20 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
         diagnostics_->error(param.range, "default value type mismatch for '" + param.name + "'");
         popScope();
         currentClass_.clear();
+        currentPropertyName_.clear();
         return false;
       }
     }
   }
   const Type* returnType = resolveTypeExpr(function.returnType());
+  if (function.propertyKind() == PropertyKind::Get && function.hasInferredReturn()) {
+    const Type* record = types_->record(function.ownerClass());
+    const RecordField* field =
+        record == nullptr ? nullptr : record->findField(function.propertyName());
+    if (field != nullptr && field->type != nullptr) {
+      returnType = field->type;
+    }
+  }
   bool ok = returnType != nullptr;
   for (const std::unique_ptr<Stmt>& statement : function.body()) {
     if (statement == nullptr) {
@@ -2831,6 +2933,7 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
   }
   popScope();
   currentClass_.clear();
+  currentPropertyName_.clear();
   return ok;
 }
 
@@ -3289,6 +3392,7 @@ void TypeChecker::inheritBaseMethods(const Type* record, const Type* base) {
 }
 
 bool TypeChecker::collectFunctions(Module& module) {
+  bool ok = true;
   for (const std::unique_ptr<Stmt>& statement : module.statements()) {
     if (statement->kind() != NodeKind::FunctionDef) {
       continue;
@@ -3298,19 +3402,23 @@ bool TypeChecker::collectFunctions(Module& module) {
       (void)types_->defineTypeParam(param);
     }
     std::vector<const Type*> params;
+    bool paramsOk = true;
     for (const ParamDecl& param : function.params()) {
       const Type* type = resolveParamDeclType(param);
       if (type == nullptr) {
-        return false;
+        paramsOk = false;
+        break;
       }
       params.push_back(type);
     }
-    if (!validateParamList(function.params(), function.range())) {
-      return false;
+    if (!paramsOk || !validateParamList(function.params(), function.range())) {
+      ok = false;
+      continue;
     }
     const Type* returnType = resolveTypeExpr(function.returnType());
     if (returnType == nullptr) {
-      return false;
+      ok = false;
+      continue;
     }
     if (function.hasInferredReturn() && function.name() != "main" &&
         function.name() != "__init__") {
@@ -3323,9 +3431,10 @@ bool TypeChecker::collectFunctions(Module& module) {
     symbol.type = fnType;
     symbol.function = &function;
     if (!declare(function.name(), symbol, function.range().start, !function.fromPrelude())) {
-      return false;
+      ok = false;
     }
   }
+  (void)ok;
   return true;
 }
 
@@ -3357,65 +3466,91 @@ bool TypeChecker::collectMethods(Module& module) {
     }
     auto& classDef = static_cast<ClassDef&>(*statement);
     const Type* record = classDef.resolvedType();
+    if (record == nullptr) {
+      continue;
+    }
     for (std::unique_ptr<FunctionDef>& method : classDef.methods()) {
       if (method->params().empty() || method->params()[0].name != "self") {
         diagnostics_->error(method->range(), "methods must take self as the first parameter");
-        return false;
+        continue;
       }
       std::vector<const Type*> params;
+      bool paramsOk = true;
       for (std::size_t index = 0; index < method->params().size(); ++index) {
         const Type* type = resolveParamType(*method, index);
         if (type == nullptr) {
-          return false;
+          paramsOk = false;
+          break;
         }
         params.push_back(type);
       }
+      if (!paramsOk) {
+        continue;
+      }
       const Type* returnType = resolveTypeExpr(method->returnType());
       if (returnType == nullptr) {
-        return false;
+        continue;
+      }
+      if (method->propertyKind() == PropertyKind::Get && method->hasInferredReturn()) {
+        const RecordField* field = record->findField(method->propertyName());
+        if (field != nullptr && field->type != nullptr) {
+          returnType = field->type;
+        }
+      }
+      if (method->propertyKind() == PropertyKind::Set) {
+        if (params.size() != 2) {
+          diagnostics_->error(method->range(),
+                              "setter '" + method->propertyName() + "' takes one value besides self");
+          continue;
+        }
+        if (!returnType->isNamed("void")) {
+          diagnostics_->error(method->range(),
+                              "setter '" + method->propertyName() + "' must return void");
+          continue;
+        }
       }
       if (method->name() == "__init__" && !returnType->isNamed("void")) {
         diagnostics_->error(method->range(), "__init__ must return void");
-        return false;
+        continue;
       }
       if (method->name() == "__str__") {
         if (params.size() != 1) {
           diagnostics_->error(method->range(), "__str__ takes only self");
-          return false;
+          continue;
         }
         if (!returnType->isNamed("str")) {
           diagnostics_->error(method->range(), "__str__ must return str");
-          return false;
+          continue;
         }
       }
       if (method->name() == "__repr__" && !returnType->isNamed("str")) {
         diagnostics_->error(method->range(), "__repr__ must return str");
-        return false;
+        continue;
       }
       if (method->name() == "__len__" && (params.size() != 1 || !returnType->isNamed("i64"))) {
         diagnostics_->error(method->range(), "__len__ must be def __len__(self) -> i64");
-        return false;
+        continue;
       }
       if (method->name() == "__bool__" && (params.size() != 1 || !returnType->isNamed("bool"))) {
         diagnostics_->error(method->range(), "__bool__ must be def __bool__(self) -> bool");
-        return false;
+        continue;
       }
       if (method->name() == "__contains__" &&
           (params.size() != 2 || !returnType->isNamed("bool"))) {
         diagnostics_->error(method->range(),
                             "__contains__ must be def __contains__(self, item: T) -> bool");
-        return false;
+        continue;
       }
       if (method->name() == "__getitem__" && params.size() != 2) {
         diagnostics_->error(method->range(),
                             "__getitem__ must be def __getitem__(self, index: T) -> U");
-        return false;
+        continue;
       }
       if (method->name() == "__setitem__" && (params.size() != 3 || !returnType->isNamed("void"))) {
         diagnostics_->error(
             method->range(),
             "__setitem__ must be def __setitem__(self, index: K, value: V) -> void");
-        return false;
+        continue;
       }
       const Type* fnType = types_->functionType(params, returnType);
       method->setResolvedType(fnType);
@@ -3436,7 +3571,7 @@ bool TypeChecker::collectMethods(Module& module) {
           sawDefault = true;
         } else if (sawDefault) {
           diagnostics_->error(param.range, "parameter without a default follows a default");
-          return false;
+          continue;
         } else {
           ++info.requiredAfterSelf;
         }
@@ -3450,6 +3585,53 @@ bool TypeChecker::collectMethods(Module& module) {
                    classDef.name(),
                    std::move(methodParams));
     }
+    std::vector<RecordField> fields = record->fields();
+    for (const std::unique_ptr<FunctionDef>& method : classDef.methods()) {
+      if (method->propertyKind() == PropertyKind::None) {
+        continue;
+      }
+      const std::string llvmName = classDef.name() + "_" + method->name();
+      RecordField* found = nullptr;
+      for (RecordField& field : fields) {
+        if (field.name == method->propertyName()) {
+          found = &field;
+          break;
+        }
+      }
+      if (found == nullptr) {
+        RecordField created;
+        created.name = method->propertyName();
+        created.stored = false;
+        created.isPublic = false;
+        fields.push_back(std::move(created));
+        found = &fields.back();
+      }
+      if (method->propertyKind() == PropertyKind::Get) {
+        if (!found->getterLlvm.empty()) {
+          diagnostics_->error(method->range(),
+                              "duplicate getter for '" + method->propertyName() + "'");
+          continue;
+        }
+        found->getterLlvm = llvmName;
+        found->getterPublic = !method->isPrivate();
+        if (found->type == nullptr && method->resolvedType() != nullptr) {
+          found->type = method->resolvedType()->returnType();
+        }
+      } else {
+        if (!found->setterLlvm.empty()) {
+          diagnostics_->error(method->range(),
+                              "duplicate setter for '" + method->propertyName() + "'");
+          continue;
+        }
+        found->setterLlvm = llvmName;
+        found->setterPublic = !method->isPrivate();
+        if (found->type == nullptr && method->resolvedType() != nullptr &&
+            method->resolvedType()->paramTypes().size() > 1) {
+          found->type = method->resolvedType()->paramTypes()[1];
+        }
+      }
+    }
+    types_->setRecordFields(record, std::move(fields));
   }
   for (const std::unique_ptr<Stmt>& statement : module.statements()) {
     if (statement->kind() != NodeKind::ClassDef) {
@@ -3457,6 +3639,9 @@ bool TypeChecker::collectMethods(Module& module) {
     }
     auto& classDef = static_cast<ClassDef&>(*statement);
     const Type* record = classDef.resolvedType();
+    if (record == nullptr) {
+      continue;
+    }
     for (const Type* base : record->bases()) {
       inheritBaseMethods(record, base);
     }
@@ -3472,22 +3657,30 @@ bool TypeChecker::collectMethods(Module& module) {
     }
     auto& enumDef = static_cast<EnumDef&>(*statement);
     const Type* record = enumDef.resolvedType();
+    if (record == nullptr) {
+      continue;
+    }
     for (std::unique_ptr<FunctionDef>& method : enumDef.methods()) {
       if (method->params().empty() || method->params()[0].name != "self") {
         diagnostics_->error(method->range(), "methods must take self as the first parameter");
-        return false;
+        continue;
       }
       std::vector<const Type*> params;
+      bool paramsOk = true;
       for (std::size_t index = 0; index < method->params().size(); ++index) {
         const Type* type = resolveParamType(*method, index);
         if (type == nullptr) {
-          return false;
+          paramsOk = false;
+          break;
         }
         params.push_back(type);
       }
+      if (!paramsOk) {
+        continue;
+      }
       const Type* returnType = resolveTypeExpr(method->returnType());
       if (returnType == nullptr) {
-        return false;
+        continue;
       }
       const Type* fnType = types_->functionType(params, returnType);
       method->setResolvedType(fnType);

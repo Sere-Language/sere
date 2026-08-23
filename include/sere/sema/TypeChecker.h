@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -64,6 +65,8 @@ public:
                      bool debug);
   [[nodiscard]] const std::vector<SemanticSymbol>& symbols() const;
   bool importSymbol(const std::string& name, Symbol symbol, SourceLocation location);
+  [[nodiscard]] const Type* typeOfName(std::string_view name) const;
+  [[nodiscard]] const Type* typeOfPath(const std::vector<std::string>& parts) const;
 
 private:
   void pushScope();
@@ -178,6 +181,7 @@ private:
   std::string moduleDoc_{};
   bool moduleDebug_ = true;
   std::string currentFunctionName_{};
+  std::string currentPropertyName_{};
   int lambdaDepth_ = 0;
   int lambdaCounter_ = 0;
 };

@@ -268,7 +268,7 @@ set_tests_properties(sere.example.gl_triangle PROPERTIES
 
 foreach(_sere_example IN ITEMS
     pythonish walrus lambda tuples defer with_ctx del_list flags_enum requests wsgi
-    import_exc)
+    import_exc properties)
   add_test(NAME sere.example.${_sere_example}
     COMMAND "$<TARGET_FILE:sere>" --emit-llvm
             "${CMAKE_SOURCE_DIR}/examples/${_sere_example}.sere"
@@ -317,3 +317,11 @@ add_executable(sere_test_import_completion import_completion.cpp)
 target_link_libraries(sere_test_import_completion PRIVATE sere_driver)
 sere_apply_warnings(sere_test_import_completion)
 add_test(NAME sere.test.import_completion COMMAND sere_test_import_completion)
+
+add_executable(sere_test_member_completion member_completion.cpp)
+target_link_libraries(sere_test_member_completion PRIVATE sere_driver)
+target_compile_definitions(sere_test_member_completion PRIVATE SERE_STDLIB_DIR="${CMAKE_SOURCE_DIR}/stdlib")
+sere_apply_warnings(sere_test_member_completion)
+add_test(NAME sere.test.member_completion COMMAND sere_test_member_completion)
+set_tests_properties(sere.test.member_completion PROPERTIES
+  ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")

@@ -45,8 +45,10 @@ compile_commands.json
 *.o
 *.a
 
-# Scratch IR at the repo root
+# Scratch IR / objects at the repo root
 /*.ll
+/*.s
+/.sere-lib/
 
 # Packaged editor
 /editors/vscode/*.vsix

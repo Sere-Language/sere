@@ -416,6 +416,28 @@ const Type* TypeContext::record(std::string_view name) const {
   return found->second;
 }
 
+const Type* TypeContext::moduleType(std::string_view name) const {
+  const auto found = interned_.find("M:" + std::string(name));
+  return found == interned_.end() ? nullptr : found->second.get();
+}
+
+const Type* TypeContext::lookupNamed(std::string_view name) const {
+  if (const Type* rec = record(name)) {
+    return rec;
+  }
+  if (const Type* als = alias(name)) {
+    return als->canonical();
+  }
+  if (const Type* module = moduleType(name)) {
+    return module;
+  }
+  const auto dot = name.rfind('.');
+  if (dot != std::string_view::npos && dot + 1 < name.size()) {
+    return lookupNamed(name.substr(dot + 1));
+  }
+  return nullptr;
+}
+
 const Type* TypeContext::alias(std::string_view name) const {
   const auto found = aliases_.find(std::string(name));
   if (found == aliases_.end()) {

@@ -12,6 +12,7 @@
 #include "sere/driver/Project.h"
 #include "sere/driver/Toolchain.h"
 #include "sere/lsp/ImportCompletion.h"
+#include "sere/lsp/MemberCompletion.h"
 #include "sere/lsp/SemanticTokens.h"
 #include "sere/types/Type.h"
 #include "sere/sema/TypeChecker.h"
@@ -43,7 +44,6 @@ namespace sere {
 namespace {
 
 constexpr int kLspSyncIncremental = 2;
-constexpr int kCompletionMethod = 2;
 constexpr int kCompletionKeyword = 14;
 constexpr int kCompletionFunction = 3;
 constexpr int kCompletionVariable = 6;
@@ -51,7 +51,6 @@ constexpr int kCompletionClass = 7;
 constexpr int kCompletionModule = 9;
 constexpr int kCompletionEnum = 13;
 constexpr int kCompletionType = 25;
-constexpr int kCompletionField = 5;
 constexpr int kCompletionStruct = 22;
 constexpr int kCompletionMacro = 3;
 
@@ -436,24 +435,6 @@ void appendMacroUseRefs(const std::vector<MacroUse>& uses, const std::string& na
   }
 }
 
-[[nodiscard]] const Type* recordTypeOf(const Node& node) {
-  if (node.kind() == NodeKind::UnaryExpr) {
-    const auto& unary = static_cast<const UnaryExpr&>(node);
-    if (unary.op() == UnaryOp::Deref && node.resolvedType() != nullptr) {
-      return node.resolvedType()->canonical();
-    }
-  }
-  const Type* type = node.resolvedType();
-  if (type != nullptr && type->isRecord()) {
-    return type->canonical();
-  }
-  if (node.kind() == NodeKind::MemberExpr) {
-    const Type* object = static_cast<const MemberExpr&>(node).object().resolvedType();
-    return object == nullptr ? nullptr : object->canonical();
-  }
-  return type == nullptr ? nullptr : type->canonical();
-}
-
 [[nodiscard]] std::string identifierPrefix(std::string_view text, std::uint32_t offset) {
   std::size_t end = offset > text.size() ? text.size() : static_cast<std::size_t>(offset);
   std::size_t start = end;
@@ -590,14 +571,6 @@ void collectCallableParams(const SemanticSymbol& match, std::vector<std::string>
   }
 }
 
-[[nodiscard]] bool hasDotBefore(std::string_view text, std::uint32_t offset, const std::string& prefix) {
-  if (offset < prefix.size()) {
-    return false;
-  }
-  const std::size_t prefixStart = static_cast<std::size_t>(offset) - prefix.size();
-  return prefixStart > 0 && text[prefixStart - 1] == '.';
-}
-
 void addCompletion(llvm::json::Array& items,
                    const std::string& label,
                    int kind,
@@ -606,23 +579,38 @@ void addCompletion(llvm::json::Array& items,
                    const std::string& insertText = {},
                    const std::string& sortText = {},
                    bool snippet = true) {
-  if (!prefix.empty() && !label.starts_with(prefix) &&
-      (insertText.empty() || !insertText.starts_with(prefix))) {
+  const auto startsWithIgnoreCase = [](std::string_view text, std::string_view prefix) {
+    if (prefix.empty()) {
+      return true;
+    }
+    if (text.size() < prefix.size()) {
+      return false;
+    }
+    for (std::size_t index = 0; index < prefix.size(); ++index) {
+      const unsigned char left = static_cast<unsigned char>(text[index]);
+      const unsigned char right = static_cast<unsigned char>(prefix[index]);
+      if (std::tolower(left) != std::tolower(right)) {
+        return false;
+      }
+    }
+    return true;
+  };
+  if (!prefix.empty() && !startsWithIgnoreCase(label, prefix) &&
+      (insertText.empty() || !startsWithIgnoreCase(insertText, prefix))) {
     return;
   }
   llvm::json::Object item{{"label", label}, {"kind", kind}};
   if (!detail.empty()) {
     item["detail"] = detail;
   }
-  if (!insertText.empty()) {
-    item["insertText"] = insertText;
-    if (snippet) {
-      item["insertTextFormat"] = 2;
-    }
+  item["insertText"] = insertText.empty() ? label : insertText;
+  if (snippet && !insertText.empty()) {
+    item["insertTextFormat"] = 2;
   }
-  if (!sortText.empty()) {
-    item["sortText"] = sortText;
-  }
+  const std::string sortKey =
+      !sortText.empty() ? sortText : ((label.empty() || label[0] == '_' ? "1" : "0") + label);
+  item["sortText"] = sortKey;
+  item["filterText"] = label;
   items.push_back(std::move(item));
 }
 
@@ -711,6 +699,14 @@ private:
   void handleDidOpen(const llvm::json::Object& params);
   void handleDidChange(const llvm::json::Object& params);
   void handleDidClose(const llvm::json::Object& params);
+  void handleDidSave(const llvm::json::Object& params);
+  void handleDidChangeWatchedFiles(const llvm::json::Object& params);
+  void handleDidChangeConfiguration(const llvm::json::Object& params);
+  void setConfiguredStdlib(const std::filesystem::path& dir);
+  void applyOverlays(Frontend& frontend) const;
+  void refreshOpenDocuments();
+  [[nodiscard]] bool isLibraryFile(const std::filesystem::path& file) const;
+  [[nodiscard]] std::optional<std::string> overlayTextFor(const std::filesystem::path& file) const;
   void handleHover(const llvm::json::Value* id, const llvm::json::Object& params);
   void handleCompletion(const llvm::json::Value* id, const llvm::json::Object& params);
   void handleDefinition(const llvm::json::Value* id, const llvm::json::Object& params);
@@ -732,6 +728,7 @@ private:
   documentOffset(const llvm::json::Object& params) const;
 
   std::filesystem::path stdlibDir_;
+  std::filesystem::path configuredStdlib_{};
   std::filesystem::path workspaceRoot_{};
   std::unordered_map<std::string, std::string> documents_{};
   std::unordered_map<std::string, std::unique_ptr<Frontend>> frontends_{};
@@ -749,7 +746,19 @@ bool LanguageSession::handleMessage(const llvm::json::Object& message) {
     handleInitialize(id, params);
     return true;
   }
-  if (*method == "initialized" || *method == "textDocument/didSave") {
+  if (*method == "initialized") {
+    return true;
+  }
+  if (*method == "textDocument/didSave" && params != nullptr) {
+    handleDidSave(*params);
+    return true;
+  }
+  if (*method == "workspace/didChangeWatchedFiles" && params != nullptr) {
+    handleDidChangeWatchedFiles(*params);
+    return true;
+  }
+  if (*method == "workspace/didChangeConfiguration" && params != nullptr) {
+    handleDidChangeConfiguration(*params);
     return true;
   }
   if (*method == "shutdown") {
@@ -879,6 +888,18 @@ void LanguageSession::publishDiagnostics(const std::string& uri,
   });
 }
 
+[[nodiscard]] bool pathIsUnder(const std::filesystem::path& file, const std::filesystem::path& root) {
+  if (root.empty()) {
+    return false;
+  }
+  std::string key = Frontend::overlayKey(file);
+  std::string prefix = Frontend::overlayKey(root);
+  if (!prefix.empty() && prefix.back() != '/') {
+    prefix += '/';
+  }
+  return key.starts_with(prefix);
+}
+
 void LanguageSession::analyzeDocument(const std::string& uri) {
   const auto found = documents_.find(uri);
   if (found == documents_.end()) {
@@ -887,9 +908,53 @@ void LanguageSession::analyzeDocument(const std::string& uri) {
   auto frontend = std::make_unique<Frontend>();
   const std::filesystem::path file = uriToPath(uri);
   applyLanguageContext(file);
+  applyOverlays(*frontend);
   (void)frontend->analyze(file.string(), found->second, stdlibDir_);
   publishDiagnostics(uri, frontend->diagnostics());
   frontends_[uri] = std::move(frontend);
+}
+
+void LanguageSession::applyOverlays(Frontend& frontend) const {
+  std::unordered_map<std::string, std::string> overlay;
+  for (const auto& [uri, text] : documents_) {
+    const std::filesystem::path file = uriToPath(uri);
+    if (isLibraryFile(file)) {
+      overlay[Frontend::overlayKey(file)] = text;
+    }
+  }
+  frontend.setFileOverlay(std::move(overlay));
+}
+
+void LanguageSession::refreshOpenDocuments() {
+  std::vector<std::string> uris;
+  uris.reserve(documents_.size());
+  for (const auto& [uri, _] : documents_) {
+    uris.push_back(uri);
+  }
+  frontends_.clear();
+  for (const std::string& uri : uris) {
+    analyzeDocument(uri);
+  }
+}
+
+bool LanguageSession::isLibraryFile(const std::filesystem::path& file) const {
+  if (file.empty()) {
+    return false;
+  }
+  if (file.filename() == "prelude.sere") {
+    return true;
+  }
+  return pathIsUnder(file, stdlibDir_) || pathIsUnder(file, workspaceRoot_ / "stdlib");
+}
+
+std::optional<std::string> LanguageSession::overlayTextFor(const std::filesystem::path& file) const {
+  const std::string key = Frontend::overlayKey(file);
+  for (const auto& [uri, text] : documents_) {
+    if (Frontend::overlayKey(uriToPath(uri)) == key) {
+      return text;
+    }
+  }
+  return std::nullopt;
 }
 
 Frontend* LanguageSession::analyzeCached(const std::string& uri) {
@@ -905,13 +970,51 @@ Frontend* LanguageSession::analyzeCached(const std::string& uri) {
   return created->second.get();
 }
 
+[[nodiscard]] bool stdlibHasPrelude(const std::filesystem::path& dir) {
+  std::error_code error;
+  return !dir.empty() && std::filesystem::exists(dir / "prelude.sere", error);
+}
+
+void LanguageSession::setConfiguredStdlib(const std::filesystem::path& dir) {
+  if (stdlibHasPrelude(dir)) {
+    configuredStdlib_ = dir;
+    stdlibDir_ = dir;
+  }
+}
+
 void LanguageSession::applyLanguageContext(const std::filesystem::path& start) {
+  if (stdlibHasPrelude(configuredStdlib_)) {
+    stdlibDir_ = configuredStdlib_;
+    return;
+  }
   const std::filesystem::path probe =
       !start.empty() ? start : (!workspaceRoot_.empty() ? workspaceRoot_ : std::filesystem::current_path());
   const LanguageContext context = resolveLanguageContext(probe);
-  stdlibDir_ = context.stdlib;
   if (context.project.has_value() && workspaceRoot_.empty()) {
     workspaceRoot_ = context.project->root;
+  }
+  const std::filesystem::path workspaceStdlib = workspaceRoot_ / "stdlib";
+  if (stdlibHasPrelude(workspaceStdlib)) {
+    stdlibDir_ = workspaceStdlib;
+    return;
+  }
+  if (!stdlibHasPrelude(stdlibDir_)) {
+    stdlibDir_ = context.stdlib;
+  }
+}
+
+void LanguageSession::handleDidChangeConfiguration(const llvm::json::Object& params) {
+  const llvm::json::Object* settings = params.getObject("settings");
+  const llvm::json::Object* sere = settings == nullptr ? nullptr : settings->getObject("sere");
+  if (sere == nullptr) {
+    return;
+  }
+  if (const std::optional<llvm::StringRef> stdlib = sere->getString("stdlibPath")) {
+    const std::filesystem::path dir(stdlib->str());
+    if (stdlibHasPrelude(dir)) {
+      setConfiguredStdlib(dir);
+      refreshOpenDocuments();
+    }
   }
 }
 
@@ -947,9 +1050,15 @@ void LanguageSession::fillImportCompletions(llvm::json::Array& items,
                                             const std::string& uri) {
   const std::filesystem::path file = uriToPath(uri);
   const LanguageContext context = resolveLanguageContext(file);
-  const std::filesystem::path stdlib = context.stdlib.empty() ? stdlibDir_ : context.stdlib;
+  std::filesystem::path stdlib = stdlibDir_;
+  if (stdlib.empty() || !std::filesystem::exists(stdlib / "prelude.sere")) {
+    stdlib = context.stdlib.empty() ? stdlibDir_ : context.stdlib;
+  }
   std::vector<std::filesystem::path> dirs = importSearchDirs(file.parent_path(), stdlib);
   appendWorkspaceImportDirs(dirs, workspaceRoot_);
+  if (!workspaceRoot_.empty()) {
+    appendImportSearchDir(dirs, workspaceRoot_ / "stdlib");
+  }
   appendLanguageContextDirs(dirs, context);
   if (query.kind == ImportCompletionKind::FromImportKeyword) {
     addCompletion(items, "import", kCompletionKeyword, "keyword", query.prefix, {}, "0import");
@@ -966,7 +1075,9 @@ void LanguageSession::fillImportCompletions(llvm::json::Array& items,
   }
   const std::filesystem::path moduleFile =
       resolveImportFile(dirs, splitImportPath(query.modulePath), file, nullptr);
-  addImportCompletionItems(items, importExportCompletions(moduleFile, query.prefix), query.prefix);
+  addImportCompletionItems(
+      items, importExportCompletions(moduleFile, query.prefix, overlayTextFor(moduleFile)),
+      query.prefix);
 }
 
 void LanguageSession::handleInitialize(const llvm::json::Value* id, const llvm::json::Object* params) {
@@ -974,6 +1085,13 @@ void LanguageSession::handleInitialize(const llvm::json::Value* id, const llvm::
     captureWorkspaceRoot(*params);
   }
   applyLanguageContext(workspaceRoot_);
+  if (params != nullptr) {
+    if (const llvm::json::Object* options = params->getObject("initializationOptions")) {
+      if (const std::optional<llvm::StringRef> stdlib = options->getString("stdlib")) {
+        setConfiguredStdlib(std::filesystem::path(stdlib->str()));
+      }
+    }
+  }
   llvm::json::Array tokenTypes;
   for (const char* name : kSemanticTokenTypeNames) {
     tokenTypes.push_back(name);
@@ -1013,8 +1131,13 @@ void LanguageSession::handleInitialize(const llvm::json::Value* id, const llvm::
       {"referencesProvider", true},
       {"codeLensProvider", llvm::json::Object{{"resolveProvider", false}}},
       {"completionProvider",
-       llvm::json::Object{{"triggerCharacters", llvm::json::Array{".", "\"", "@", "!"}},
-                          {"resolveProvider", true}}},
+       llvm::json::Object{{"triggerCharacters", llvm::json::Array{".", " ", "\"", "@", "!"}},
+                          {"resolveProvider", false}}},
+      {"workspace",
+       llvm::json::Object{
+           {"workspaceFolders", llvm::json::Object{{"supported", true}, {"changeNotifications", true}}},
+           {"didChangeWatchedFiles", llvm::json::Object{{"dynamicRegistration", false}}},
+       }},
   };
   writeResult(id, llvm::json::Object{
                       {"capabilities", std::move(capabilities)},
@@ -1034,7 +1157,11 @@ void LanguageSession::handleDidOpen(const llvm::json::Object& params) {
     return;
   }
   documents_[uri->str()] = text->str();
-  analyzeDocument(uri->str());
+  if (isLibraryFile(uriToPath(uri->str()))) {
+    refreshOpenDocuments();
+  } else {
+    analyzeDocument(uri->str());
+  }
 }
 
 void LanguageSession::handleDidChange(const llvm::json::Object& params) {
@@ -1054,7 +1181,12 @@ void LanguageSession::handleDidChange(const llvm::json::Object& params) {
       applyContentChange(text, *change);
     }
   }
-  analyzeDocument(uri->str());
+  const bool skipAnalyze = params.getBoolean("skipAnalyze").value_or(false);
+  if (isLibraryFile(uriToPath(uri->str()))) {
+    refreshOpenDocuments();
+  } else if (!skipAnalyze) {
+    analyzeDocument(uri->str());
+  }
 }
 
 void LanguageSession::handleDidClose(const llvm::json::Object& params) {
@@ -1066,6 +1198,8 @@ void LanguageSession::handleDidClose(const llvm::json::Object& params) {
   if (!uri.has_value()) {
     return;
   }
+  const std::filesystem::path file = uriToPath(uri->str());
+  const bool library = isLibraryFile(file);
   documents_.erase(uri->str());
   frontends_.erase(uri->str());
   writeMessage(llvm::json::Object{
@@ -1073,6 +1207,49 @@ void LanguageSession::handleDidClose(const llvm::json::Object& params) {
       {"method", "textDocument/publishDiagnostics"},
       {"params", llvm::json::Object{{"uri", uri->str()}, {"diagnostics", llvm::json::Array{}}}},
   });
+  if (library) {
+    refreshOpenDocuments();
+  }
+}
+
+void LanguageSession::handleDidSave(const llvm::json::Object& params) {
+  const llvm::json::Object* document = params.getObject("textDocument");
+  if (document == nullptr) {
+    return;
+  }
+  const std::optional<llvm::StringRef> uri = document->getString("uri");
+  if (!uri.has_value()) {
+    return;
+  }
+  if (isLibraryFile(uriToPath(uri->str()))) {
+    refreshOpenDocuments();
+  }
+}
+
+void LanguageSession::handleDidChangeWatchedFiles(const llvm::json::Object& params) {
+  const llvm::json::Array* changes = params.getArray("changes");
+  if (changes == nullptr) {
+    return;
+  }
+  bool libraryChanged = false;
+  for (const llvm::json::Value& changeValue : *changes) {
+    const llvm::json::Object* change = changeValue.getAsObject();
+    if (change == nullptr) {
+      continue;
+    }
+    const std::optional<llvm::StringRef> uri = change->getString("uri");
+    if (!uri.has_value()) {
+      continue;
+    }
+    const std::filesystem::path file = uriToPath(uri->str());
+    if (file.extension() == ".sere" && isLibraryFile(file)) {
+      libraryChanged = true;
+      break;
+    }
+  }
+  if (libraryChanged) {
+    refreshOpenDocuments();
+  }
 }
 
 std::optional<std::pair<std::string, std::uint32_t>>
@@ -1169,64 +1346,26 @@ void LanguageSession::handleCompletion(const llvm::json::Value* id,
     writeResult(id, std::move(items));
     return;
   }
-  const std::string prefix = identifierPrefix(text, located->second);
+  MemberAccessQuery access = detectMemberAccess(text, located->second);
+  std::string prefix = identifierPrefix(text, located->second);
+  if (const std::optional<llvm::StringRef> line = params.getString("sereLine")) {
+    const std::int64_t character = params.getInteger("sereCharacter").value_or(-1);
+    const std::size_t cursor =
+        character < 0 ? line->size() : static_cast<std::size_t>(character);
+    const MemberAccessQuery fromEditor = detectMemberAccessLine(line->str(), cursor);
+    if (fromEditor.active) {
+      access = fromEditor;
+    } else {
+      prefix = identifierPrefix(line->str(), static_cast<std::uint32_t>(cursor));
+    }
+  }
+  analyzeDocument(located->first);
   Frontend* frontend = analyzeCached(located->first);
-  if (hasDotBefore(text, located->second, prefix) && frontend != nullptr &&
-      frontend->module() != nullptr) {
-    const std::uint32_t objectOffset =
-        located->second > prefix.size() + 1
-            ? located->second - static_cast<std::uint32_t>(prefix.size()) - 1
-            : located->second;
-    const Node* node = findNodeAt(*frontend->module(), objectOffset);
-    const Type* record = node == nullptr ? nullptr : recordTypeOf(*node);
-    if (record != nullptr && (record->isRecord() || record->isModule())) {
-      for (const RecordField& field : record->fields()) {
-        if (!field.isPublic) {
-          continue;
-        }
-        const bool isFn = field.type != nullptr && field.type->kind() == TypeKind::Function;
-        addCompletion(items, field.name, isFn ? kCompletionFunction : kCompletionField,
-                      field.type == nullptr ? "" : field.type->display(), prefix);
-      }
-      for (const RecordMethod& method : record->methods()) {
-        if (!method.isPublic) {
-          continue;
-        }
-        addCompletion(items, method.name, kCompletionMethod, formatMethod(method), prefix);
-      }
-      writeResult(id, std::move(items));
-      return;
-    }
-    if (record != nullptr && record->isList()) {
-      addCompletion(items, "append", kCompletionMethod, "append(value)", prefix);
-      writeResult(id, std::move(items));
-      return;
-    }
-    if (frontend->checker() != nullptr) {
-      const std::string objectName = identifierPrefix(text, objectOffset);
-      for (const SemanticSymbol& symbol : frontend->checker()->symbols()) {
-        if (symbol.name != objectName || symbol.typeDisplay.empty()) {
-          continue;
-        }
-        const Type* inferred =
-            frontend->types() == nullptr ? nullptr : frontend->types()->record(symbol.typeDisplay);
-        if (inferred != nullptr && inferred->isRecord()) {
-          for (const RecordField& field : inferred->fields()) {
-            if (field.isPublic) {
-              addCompletion(items, field.name, kCompletionField,
-                            field.type == nullptr ? "" : field.type->display(), prefix);
-            }
-          }
-          for (const RecordMethod& method : inferred->methods()) {
-            if (!method.isPublic) {
-              continue;
-            }
-            addCompletion(items, method.name, kCompletionMethod, formatMethod(method), prefix);
-          }
-          writeResult(id, std::move(items));
-          return;
-        }
-      }
+  if (access.active) {
+    const Type* record = resolveMemberType(frontend, access);
+    for (const MemberCompletionItem& item : collectMemberCompletions(record)) {
+      addCompletion(items, item.label, item.kind, item.detail, access.prefix, {}, item.sortText,
+                    false);
     }
     writeResult(id, std::move(items));
     return;

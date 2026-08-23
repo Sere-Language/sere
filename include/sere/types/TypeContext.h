@@ -49,6 +49,8 @@ public:
   [[nodiscard]] const Type* typeParam(std::string_view name) const;
   [[nodiscard]] const Type* record(std::string_view name) const;
   [[nodiscard]] const Type* alias(std::string_view name) const;
+  [[nodiscard]] const Type* moduleType(std::string_view name) const;
+  [[nodiscard]] const Type* lookupNamed(std::string_view name) const;
   [[nodiscard]] const Type* substitute(const Type* type,
                                        const std::unordered_map<std::string, const Type*>& subst);
   [[nodiscard]] const Type* instantiate(const Type* generic,
