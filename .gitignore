@@ -41,9 +41,14 @@ compile_commands.json
 *.dll
 *.exe
 !examples/**
+examples/*.exe
 *.obj
 *.o
 *.a
+
+# Local bisect / crash repros at the repo root
+/_*.sere
+/_*.py
 
 # Scratch IR at the repo root
 /*.ll
@@ -58,6 +63,7 @@ compile_commands.json
 *.suo
 
 # Release zip payload: ship the compiler, never commit LLVM trees
+/releases/*.zip
 /releases/**/toolchains/
 !/releases/**/*.exe
 !/releases/**/*.lib

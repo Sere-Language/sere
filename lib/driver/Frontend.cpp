@@ -13,7 +13,6 @@
 
 #include <filesystem>
 #include <fstream>
-#include <iostream>
 #include <optional>
 #include <sstream>
 #include <string_view>
@@ -315,25 +314,19 @@ bool Frontend::analyze(const std::string& path,
   const LanguageContext context = resolveLanguageContext(path);
   const std::filesystem::path stdlib =
       context.stdlib.empty() ? stdlibDir : context.stdlib;
-  std::cerr << "sere-debug: lex/parse user module\n";
   Lexer lexer(*source_, diagnostics_);
   Parser parser(diagnostics_, lexer.tokenizeAll(), source_.get());
   ast_ = parser.parseModule();
-  std::cerr << "sere-debug: parsed user module\n";
   if (ast_ == nullptr) {
     ast_ = std::make_unique<Module>(SourceRange{}, std::vector<std::unique_ptr<Stmt>>{});
     return false;
   }
   if (!loadImports(path, stdlib)) {
-    std::cerr << "sere-debug: loadImports failed\n";
     return false;
   }
-  std::cerr << "sere-debug: imports loaded count=" << imported_.size() << "\n";
   if (!stdlib.empty() && !loadPrelude(*ast_, diagnostics_, stdlib)) {
-    std::cerr << "sere-debug: loadPrelude failed\n";
     return false;
   }
-  std::cerr << "sere-debug: prelude loaded\n";
   collectMacroUses(*ast_, macroUses_);
   MacroEnv macros;
   for (std::unique_ptr<Module>& imported : imported_) {
@@ -345,28 +338,21 @@ bool Frontend::analyze(const std::string& path,
     DiagnosticSourceScope scope(diagnostics_, importSources_[index].get());
     (void)expander.expandModule(*imported_[index]);
   }
-  std::cerr << "sere-debug: expanded imports\n";
   (void)expander.expandModule(*ast_);
-  std::cerr << "sere-debug: expanded user module\n";
   types_ = std::make_unique<TypeContext>();
   std::unique_ptr<Module> preludeChecked;
   if (!stdlib.empty()) {
     preludeChecked = parsePrelude(diagnostics_, stdlib);
     if (preludeChecked == nullptr) {
-      std::cerr << "sere-debug: parsePrelude failed\n";
       return false;
     }
-    std::cerr << "sere-debug: typecheck prelude\n";
     TypeChecker preludeChecker(*types_, diagnostics_);
     preludeChecker.setModuleInfo((stdlib / "prelude.sere").string(), "prelude", "", "", true);
     if (!preludeChecker.check(*preludeChecked)) {
-      std::cerr << "sere-debug: prelude check failed\n";
       return false;
     }
   }
-  std::cerr << "sere-debug: typecheck imported\n";
   (void)typecheckImported(preludeChecked.get());
-  std::cerr << "sere-debug: typecheck main\n";
   checker_ = std::make_unique<TypeChecker>(*types_, diagnostics_);
   checker_->setModuleInfo(absolutePath(path), "__main__", "", moduleDocstring(*ast_), true);
   std::vector<const ImportStmt*> imports;
@@ -381,7 +367,6 @@ bool Frontend::analyze(const std::string& path,
                       importNames_[found->second], *statement, diagnostics_);
   }
   (void)checker_->check(*ast_);
-  std::cerr << "sere-debug: analyze done\n";
   return !diagnostics_.hasErrors();
 }
 
