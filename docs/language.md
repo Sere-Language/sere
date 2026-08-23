@@ -348,13 +348,59 @@ def identity[T](value: T) -> T:
 - Return type after `->` may be omitted: `main` infers `i32`, `__init__`
   infers `void`, other functions infer `Any`
 - Parameter types may be omitted (`Any`)
-- Default arguments are allowed
-- Keyword arguments at call sites: `scale(factor=3, value=1)`
-- Varargs and kwargs: `def log(prefix: str, *parts: list[str], **opts: dict[str, str]) -> void`
-- `print(..., sep=" ", end="\n")` — `end=""` suppresses the trailing newline
+- Default arguments are allowed; a required parameter may not follow a
+  default unless a `*args` sits between them
 - Generic type parameters: `[T]` on `def` or `class`
 - Methods take `self` as the first parameter
 - `super()` is the first base class: `super().__init__(name)`, `super().id()`
+
+### Calls: keywords, `*args`, `**kwargs`
+
+Call sites accept `name=expr` after positionals. A positional after a
+keyword is a parse error. Duplicate keywords are a type error.
+
+```sere
+def scale(value: i32, factor: i32 = 2) -> i32:
+    return value * factor
+
+def join(prefix: str, *parts: list[str], sep: str = " ") -> void:
+    print(prefix, end=": ")
+    i: i32 = 0
+    while i < len(parts):
+        if i > 0:
+            print(sep, end="")
+        print(parts[i], end="")
+        i = i + 1
+    print(end="\n")
+
+def log(prefix: str, *parts: list[str], **opts: dict[str, str]) -> void:
+    pass
+
+print(scale(factor=3, value=1))
+join("items", "one", "two", sep=", ")
+```
+
+| Form | Meaning |
+| --- | --- |
+| `def f(a, b=1)` | `a` / `b` are positional-or-keyword |
+| `def f(a, *parts: list[str], sep: str = " ")` | `sep` is **keyword-only** (after the named `*parts`) |
+| `def f(*parts: list[T])` | Extra positionals become a `list[T]` (`list[Any]` if untyped) |
+| `def f(**opts: dict[str, T])` | Extra keywords become a dict (`dict[str, Any]` if untyped) |
+
+Constraints (parser + `TypeChecker::validateParamList` /
+`checkFunctionArguments`):
+
+- `*args` and `**kwargs` may each appear once. `*args` must come first.
+- Nothing may follow `**kwargs`.
+- Bare `*` is rejected: name the vararg (`*parts`, not `*`).
+- `*args` must be `list[T]`. `**kwargs` must be `dict[str, T]`.
+- Vararg parameters cannot have defaults.
+- You may pass the vararg/kwarg **by name** as a whole list or dict
+  (`join(prefix, parts=["a"], sep=", ")`).
+- Keyword arguments need a known `def`. Indirect calls and most
+  intrinsics reject them. `print` is the exception: only `sep` and `end`,
+  both `str`. Defaults are `" "` and a newline; `end=""` suppresses the
+  newline. See `examples/kwargs_demo.sere`.
 
 Native:
 
@@ -834,7 +880,8 @@ are `ValueError`.
 Sere is a **typed Python superset**, not CPython. These remain out of scope or
 incomplete. They diagnose instead of generating silent wrong code:
 
-- keyword-only parameters (after `*args`), `global` / `nonlocal`
+- bare `*` as a keyword-only separator (name the vararg: `*parts`);
+  `global` / `nonlocal`
 - Nested `def`, `async` / `await`, `yield`
 - Unmodified CPython stdlib (use Sere modules such as `requests` and `wsgi`)
 - Lambda capture of enclosing locals (pass parameters instead)
@@ -877,6 +924,7 @@ Under `examples/`:
 | `gc_mem.sere` | collectors, arenas, pools |
 | `qt6_app.sere` | Qt widgets |
 | `gl_info.sere` / `gl_triangle.sere` / `platform.sere` | GL API surface / triangle / host flags |
+| `kwargs_demo.sere` | Keyword calls, `*parts`, `print(..., end=)` |
 | `colors.sere` | unit enum |
 | `pythonish.sere` | untyped params, inferred locals, `const`, `//=` `**=` |
 | `walrus.sere` / `lambda.sere` / `tuples.sere` | `:=`, lambda, tuple unpack |

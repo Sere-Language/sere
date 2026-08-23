@@ -212,4 +212,5 @@ releases/       zip / copy install trees (pre-0.1.0, …)
 
 - **Language:** [`docs/language.md`](docs/language.md) — types, syntax, macros, stdlib surface, as implemented.
 - **Compiler internals:** [`docs/README.md`](docs/README.md) — pipeline, libraries, how to add a keyword or module.
+- **Projects / `.slib`:** [`docs/projects.md`](docs/projects.md) — `sere.toml`, pack, activate, refresh-bin.
 - **Patches:** [`CONTRIBUTING.md`](CONTRIBUTING.md)

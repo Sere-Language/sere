@@ -39,6 +39,19 @@ Statements cover `def`, `class`, `struct`, `enum`, `type`, `macro`,
 
 `extern "C" "symbol"` on a `def` records a native symbol name for codegen.
 
+### Calls and parameters
+
+`parseCallArguments` accepts positionals, then `name=expr` keywords.
+`...` in a call is skipped (so `range(0, ..., 3)` is `range(0, 3)`).
+A positional after a keyword is a parse error.
+
+`parseParams` records `ParamKind` (`Normal`, `VarArg`, `KwArg`) on each
+`ParamDecl`. `*name` and `**name` are the only vararg spellings; a bare
+`*` is rejected. The AST stores keywords on `CallExpr::keywordArguments()`
+(`NamedArgument`). Sema binds them onto `CallExpr::boundArguments()`
+before codegen (`TypeChecker::checkFunctionArguments`,
+`IRGenerator::appendBoundCallArgs`). See [language.md](language.md#functions).
+
 On error the parser synchronizes and keeps going so the LSP can still highlight
 the rest of the file.
 

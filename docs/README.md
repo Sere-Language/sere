@@ -18,6 +18,7 @@ The compiler is `sere` (`tools/sere`). The same binary also speaks LSP
 | --- | --- |
 | Learn or look up the language | **[language.md](language.md)** |
 | See the whole pipeline | [architecture.md](architecture.md) |
+| Init / build / pack / activate a project or `.slib` | **[projects.md](projects.md)** |
 | Add a keyword, type, operator, intrinsic, stdlib module, native lib, GC, or LSP feature | **[extending.md](extending.md)** |
 | Understand lex / parse / AST / macros / types | [frontend.md](frontend.md) |
 | Understand LLVM lowering, linking, and the C runtime | [backend.md](backend.md) |
@@ -77,17 +78,20 @@ sere [options] <file.sere>
 
 | Flag / command | Effect |
 | --- | --- |
-| `init`, `build`, `run`, `clean`, `shell` | Project workflow |
-| `--build-installer` | Package a Windows setup exe (compiler, LLVM, stdlib, editor) |
+| `init`, `init-lib`, `build`, `pack`, `run`, `clean`, `shell` | Project workflow ([projects.md](projects.md)) |
+| `refresh-bin` / `--refresh-bin` | Copy this compiler, runtime, and stdlib into `./bin` |
+| `build-installer` / `--build-installer` | Package a Windows setup exe |
 | `--emit-llvm` | Stop after writing `.ll` |
 | `--emit-asm`, `-S` | Stop after writing native assembly (`.s`) |
 | `--dump-tokens` | Print lexer output |
 | `--analyze` | JSON diagnostics, no codegen |
 | `--lsp` | Language server on stdin/stdout |
 | `--link <lib>` | Extra native library at link time |
+| `--color=auto\|always\|never` | Diagnostic color (`--no-color` = never) |
+| `--host <shell>` | Nested shell host for `sere shell` |
 | `--opt=O0..O3,Os,Oz` | LLVM optimization level |
 | `--passes=<pipeline>` | Custom LLVM pass pipeline |
 | `-o <path>` | Output path |
 
-Parsing lives in `lib/driver/Options.cpp`. Orchestration lives in
-`lib/driver/Compiler.cpp`.
+`--help` / `-h` prints the same table the binary uses. Parsing lives in
+`lib/driver/Options.cpp`. Orchestration lives in `lib/driver/Compiler.cpp`.

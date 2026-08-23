@@ -51,5 +51,6 @@ fail while the LSP still has `bin/sere.exe` open; that is expected.
 
 User-facing syntax: [docs/language.md](docs/language.md) (keep the README
 language table in sync). Memory vocabulary also lives in `stdlib/memory.sere`.
-Internals: update the matching file under `docs/`. Installer / packaging:
+Internals: update the matching file under `docs/`. Project CLI / `.slib`:
+[docs/projects.md](docs/projects.md). Installer / packaging:
 [docs/packaging.md](docs/packaging.md).

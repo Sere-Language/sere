@@ -10,7 +10,7 @@ Codegen, linking, and the language server are thin clients of that pipeline.
 ```
 Compiler::run
  ├── --lsp            → runLanguageServer()
- ├── init/init-lib/build/pack/run/clean/shell
+ ├── init/init-lib/build/pack/run/clean/shell/refresh-bin
  └── compileInput()
       ├── Frontend::analyze()     lex, parse, import, prelude, macros, sema
       ├── IRGenerator::emit()     typed AST → LLVM module
@@ -20,6 +20,11 @@ Compiler::run
 
 `--analyze` runs `Frontend` and prints JSON diagnostics. It never touches LLVM.
 That is the same path the LSP uses for `textDocument/publishDiagnostics`.
+
+Project commands and `sere.toml` discovery are documented in
+[projects.md](projects.md). `Frontend::analyze` calls
+`resolveLanguageContext` so the editor, `--analyze`, and `pack` share one
+import/stdlib root.
 
 ## Frontend pipeline
 

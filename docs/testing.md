@@ -35,6 +35,7 @@ ctest --preset windows-clang-cl-relwithdebinfo -R sere.test.sema --output-on-fai
 | `sere init/build` | `tests/project_cli.cpp` |
 | `.slib` pack / import | `tests/library_pack.cpp` |
 | `@private` exports | `tests/import_private.cpp` |
+| Keyword args / `*args` / `print(sep=, end=)` | `examples/kwargs_demo.sere` (wire `sere.example.kwargs_demo` if you change this) |
 | End-to-end language feature | `examples/your.sere` + `add_test(NAME sere.example.your …)` |
 
 Example tests only require `--emit-llvm` success (typecheck + IR). That is

@@ -180,7 +180,8 @@ Library projects: `sere init-lib` / `--init-lib` / `init --lib` write
 and `sere build` on a lib) writes a `.slib` via `Library.h`. Pack keeps only
 reachable local modules and compiled native objects. Import resolution
 accepts `.slib` and folder libraries (`name/lib.sere`, `name/name.sere`) in
-`ImportPath.cpp`.
+`ImportPath.cpp`. Full command and `sere.toml` runbook:
+[projects.md](projects.md).
 
 ---
 
@@ -205,5 +206,9 @@ See [testing.md](testing.md). Minimum for a language change:
 - **`p.field` on a `Unique[T]`** — not valid; complete through `(*p).`.
 - **New runtime symbol not found at link** — declaration in `.sere` must match
   the C symbol exactly, and `sere_rt` must have been rebuilt.
+- **Call keywords ignored or rejected** — only a known `def` (and `print`)
+  accept `name=expr`. Indirect calls and other intrinsics error. Wire
+  `CallExpr` keywords through parse → sema `boundArguments` →
+  `appendBoundCallArgs`; do not re-parse names in codegen.
 - **Touching everything for a stdlib-only feature** — if Sere can express it
   with `extern "C"` and existing types, skip parse/sema/codegen.
