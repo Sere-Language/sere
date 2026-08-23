@@ -5,9 +5,15 @@ CPython: the CPython standard library, `async`/`yield`, `*args`, and capturing
 lambdas are out of scope. Unsupported constructs diagnose (often
 `NotImplementedError`) instead of generating silent wrong code.
 
+<<<<<<< HEAD
 Programs are statically typed. Parameter and return types may be omitted
 (`Any`, except `main` infers `i32`). `print` is a compiler intrinsic (also
 named in the prelude). It is not a statement.
+=======
+(If you are here from reddit feel free to DM! I do need help)
+
+Programs are statically type `print` is a compiler intrinsic (also named in the prelude). It is not a statement.
+>>>>>>> 77cb658842594c3698efab3c82feac095517520a
 
 ```python
 def greet(name):
