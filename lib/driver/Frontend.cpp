@@ -13,7 +13,6 @@
 
 #include <filesystem>
 #include <fstream>
-#include <iostream>
 #include <optional>
 #include <sstream>
 #include <string_view>
@@ -297,6 +296,33 @@ void bindPreludeExports(TypeChecker& checker, Module& prelude) {
 
 }  // namespace
 
+std::string Frontend::overlayKey(const std::filesystem::path& path) {
+  std::error_code error;
+  std::filesystem::path absolute = std::filesystem::absolute(path, error);
+  if (error) {
+    absolute = path;
+  }
+  std::string text = absolute.generic_string();
+  for (char& character : text) {
+    if (character >= 'A' && character <= 'Z') {
+      character = static_cast<char>(character - 'A' + 'a');
+    }
+  }
+  return text;
+}
+
+void Frontend::setFileOverlay(std::unordered_map<std::string, std::string> overlay) {
+  overlay_ = std::move(overlay);
+}
+
+std::optional<std::string> Frontend::readFile(const std::filesystem::path& path) const {
+  const auto found = overlay_.find(overlayKey(path));
+  if (found != overlay_.end()) {
+    return found->second;
+  }
+  return readText(path);
+}
+
 bool Frontend::analyze(const std::string& path,
                        const std::string& text,
                        const std::filesystem::path& stdlibDir) {
@@ -313,27 +339,25 @@ bool Frontend::analyze(const std::string& path,
   source_ = std::make_unique<SourceManager>(path, text);
   diagnostics_.setSource(source_.get());
   const LanguageContext context = resolveLanguageContext(path);
-  const std::filesystem::path stdlib =
-      context.stdlib.empty() ? stdlibDir : context.stdlib;
-  std::cerr << "sere-debug: lex/parse user module\n";
+  std::error_code stdlibError;
+  const bool callerStdlib =
+      !stdlibDir.empty() && std::filesystem::exists(stdlibDir / "prelude.sere", stdlibError);
+  const std::filesystem::path stdlib = callerStdlib ? stdlibDir : context.stdlib;
   Lexer lexer(*source_, diagnostics_);
   Parser parser(diagnostics_, lexer.tokenizeAll(), source_.get());
   ast_ = parser.parseModule();
-  std::cerr << "sere-debug: parsed user module\n";
   if (ast_ == nullptr) {
     ast_ = std::make_unique<Module>(SourceRange{}, std::vector<std::unique_ptr<Stmt>>{});
     return false;
   }
-  if (!loadImports(path, stdlib)) {
-    std::cerr << "sere-debug: loadImports failed\n";
-    return false;
+  (void)loadImports(path, stdlib);
+  const auto preludeOverlay = overlay_.find(overlayKey(stdlib / "prelude.sere"));
+  const std::optional<std::string> preludeText =
+      preludeOverlay == overlay_.end() ? std::nullopt
+                                       : std::optional<std::string>(preludeOverlay->second);
+  if (!stdlib.empty()) {
+    (void)loadPrelude(*ast_, diagnostics_, stdlib, preludeText);
   }
-  std::cerr << "sere-debug: imports loaded count=" << imported_.size() << "\n";
-  if (!stdlib.empty() && !loadPrelude(*ast_, diagnostics_, stdlib)) {
-    std::cerr << "sere-debug: loadPrelude failed\n";
-    return false;
-  }
-  std::cerr << "sere-debug: prelude loaded\n";
   collectMacroUses(*ast_, macroUses_);
   MacroEnv macros;
   for (std::unique_ptr<Module>& imported : imported_) {
@@ -345,28 +369,18 @@ bool Frontend::analyze(const std::string& path,
     DiagnosticSourceScope scope(diagnostics_, importSources_[index].get());
     (void)expander.expandModule(*imported_[index]);
   }
-  std::cerr << "sere-debug: expanded imports\n";
   (void)expander.expandModule(*ast_);
-  std::cerr << "sere-debug: expanded user module\n";
   types_ = std::make_unique<TypeContext>();
   std::unique_ptr<Module> preludeChecked;
   if (!stdlib.empty()) {
-    preludeChecked = parsePrelude(diagnostics_, stdlib);
-    if (preludeChecked == nullptr) {
-      std::cerr << "sere-debug: parsePrelude failed\n";
-      return false;
-    }
-    std::cerr << "sere-debug: typecheck prelude\n";
-    TypeChecker preludeChecker(*types_, diagnostics_);
-    preludeChecker.setModuleInfo((stdlib / "prelude.sere").string(), "prelude", "", "", true);
-    if (!preludeChecker.check(*preludeChecked)) {
-      std::cerr << "sere-debug: prelude check failed\n";
-      return false;
+    preludeChecked = parsePrelude(diagnostics_, stdlib, preludeText);
+    if (preludeChecked != nullptr) {
+      TypeChecker preludeChecker(*types_, diagnostics_);
+      preludeChecker.setModuleInfo((stdlib / "prelude.sere").string(), "prelude", "", "", true);
+      (void)preludeChecker.check(*preludeChecked);
     }
   }
-  std::cerr << "sere-debug: typecheck imported\n";
   (void)typecheckImported(preludeChecked.get());
-  std::cerr << "sere-debug: typecheck main\n";
   checker_ = std::make_unique<TypeChecker>(*types_, diagnostics_);
   checker_->setModuleInfo(absolutePath(path), "__main__", "", moduleDocstring(*ast_), true);
   std::vector<const ImportStmt*> imports;
@@ -381,7 +395,6 @@ bool Frontend::analyze(const std::string& path,
                       importNames_[found->second], *statement, diagnostics_);
   }
   (void)checker_->check(*ast_);
-  std::cerr << "sere-debug: analyze done\n";
   return !diagnostics_.hasErrors();
 }
 
@@ -417,12 +430,12 @@ bool Frontend::loadImports(const std::filesystem::path& origin,
       } else {
         diagnostics_.error(statement->range(), "cannot find module '" + key + "'");
       }
-      return false;
+      continue;
     }
-    const std::optional<std::string> text = readText(file);
+    const std::optional<std::string> text = readFile(file);
     if (!text.has_value()) {
       diagnostics_.error(statement->range(), "cannot read module '" + file.string() + "'");
-      return false;
+      continue;
     }
     auto source = std::make_unique<SourceManager>(file.string(), *text);
     std::unique_ptr<Module> module;
@@ -430,10 +443,9 @@ bool Frontend::loadImports(const std::filesystem::path& origin,
       DiagnosticSourceScope scope(diagnostics_, source.get());
       Lexer lexer(*source, diagnostics_);
       Parser parser(diagnostics_, lexer.tokenizeAll(), source.get());
-      const std::size_t errorCount = diagnostics_.diagnostics().size();
       module = parser.parseModule();
-      if (module == nullptr || diagnostics_.diagnostics().size() > errorCount) {
-        return false;
+      if (module == nullptr) {
+        continue;
       }
     }
     collectImportStmts(*module, pending);
@@ -499,7 +511,10 @@ bool Frontend::typecheckImported(Module* prelude) {
         continue;
       }
       if (!typecheckOneImported(index, prelude)) {
-        return false;
+        done[index] = 1;
+        remaining -= 1;
+        progressed = true;
+        continue;
       }
       done[index] = 1;
       remaining -= 1;
@@ -512,9 +527,7 @@ bool Frontend::typecheckImported(Module* prelude) {
       if (done[index] != 0) {
         continue;
       }
-      if (!typecheckOneImported(index, prelude)) {
-        return false;
-      }
+      (void)typecheckOneImported(index, prelude);
       done[index] = 1;
       remaining -= 1;
     }

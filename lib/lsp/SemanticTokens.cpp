@@ -51,10 +51,9 @@ namespace {
          name == "list" || name == "array" || name == "dict";
 }
 
-[[nodiscard]] bool isBuiltinFunction(std::string_view name) {
+[[nodiscard]] bool isCompilerIntrinsic(std::string_view name) {
   return name == "print" || name == "str" || name == "unique" || name == "shared" ||
          name == "alloc" || name == "load" || name == "store" || name == "free" || name == "len" ||
-         name == "abs" || name == "min" || name == "max" || name == "clamp" || name == "sign" ||
          name == "range" || name == "append" || name == "typeof" || name == "isinstance" ||
          name == "dir" || name == "inspect" || name == "sizeof" || name == "alignof" ||
          name == "panic" || name == "parse" || name == "try_parse";
@@ -258,9 +257,18 @@ void emitIdentifier(const std::vector<Token>& tokens, std::size_t index, const T
   if (isBuiltinType(name)) {
     type = static_cast<int>(SemanticType::Type);
     mods |= static_cast<std::uint32_t>(SemanticMod::DefaultLibrary);
-  } else if (type < 0 && isBuiltinFunction(name)) {
+  } else if (isCompilerIntrinsic(name)) {
     type = static_cast<int>(SemanticType::Function);
     mods |= static_cast<std::uint32_t>(SemanticMod::DefaultLibrary);
+  } else if (type >= 0 && checker != nullptr) {
+    for (const SemanticSymbol& symbol : checker->symbols()) {
+      if (symbol.name == name && !symbol.navigable &&
+          (symbol.kind == "function" || symbol.kind == "macro" || symbol.kind == "class" ||
+           symbol.kind == "type")) {
+        mods |= static_cast<std::uint32_t>(SemanticMod::DefaultLibrary);
+        break;
+      }
+    }
   }
   if (type >= 0) {
     pushToken(out, token.range(), static_cast<SemanticType>(type), mods);

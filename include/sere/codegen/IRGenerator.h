@@ -163,6 +163,11 @@ private:
                               const Expr& object,
                               std::string_view name,
                               const std::vector<llvm::Value*>& extra);
+  llvm::Value* emitObjectPointer(llvm::IRBuilder<>& builder, const Expr& object, const Type* record);
+  llvm::Value* emitNamedMethod(llvm::IRBuilder<>& builder,
+                               const std::string& llvmName,
+                               llvm::Value* self,
+                               const std::vector<llvm::Value*>& extra);
   bool emitTry(llvm::IRBuilder<>& builder, const TryStmt& statement, const Type* returnType);
   bool emitRaise(llvm::IRBuilder<>& builder, const RaiseStmt& statement);
   bool emitMatch(llvm::IRBuilder<>& builder, const MatchStmt& statement, const Type* returnType);

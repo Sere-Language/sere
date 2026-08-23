@@ -8,7 +8,9 @@ $PackageJson = Get-Content -Raw -Path (Join-Path $ExtDir "package.json") | Conve
 $Name = $PackageJson.name
 $Version = $PackageJson.version
 $Publisher = $PackageJson.publisher
-$OutFile = Join-Path $ExtDir "$Name-$Version.vsix"
+$DistDir = Join-Path $Root "dist"
+New-Item -ItemType Directory -Path $DistDir -Force | Out-Null
+$OutFile = Join-Path $DistDir "$Name-$Version.vsix"
 
 $Staging = Join-Path ([System.IO.Path]::GetTempPath()) ("sere-vsix-" + [Guid]::NewGuid().ToString("N"))
 $ExtStaging = Join-Path $Staging "extension"
@@ -21,6 +23,7 @@ $Files = @(
   "README.md",
   "CHANGELOG.md",
   "icon.ico",
+  "icon.png",
   "syntaxes\sere.tmLanguage.json",
   "snippets\sere.json"
 )
@@ -28,6 +31,12 @@ foreach ($Rel in $Files) {
   $Src = Join-Path $ExtDir $Rel
   if (-not (Test-Path $Src) -and $Rel -eq "icon.ico") {
     $Src = Join-Path $Root "icon.ico"
+  }
+  if (-not (Test-Path $Src) -and $Rel -eq "icon.png") {
+    $Src = Join-Path $Root "icon.png"
+    if (-not (Test-Path $Src)) {
+      $Src = Join-Path $Root "Icon.PNG"
+    }
   }
   if (-not (Test-Path $Src)) {
     continue
@@ -64,7 +73,7 @@ $Manifest = @"
     <Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" Addressable="true" />
     <Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="extension/README.md" Addressable="true" />
     <Asset Type="Microsoft.VisualStudio.Services.Content.Changelog" Path="extension/CHANGELOG.md" Addressable="true" />
-    <Asset Type="Microsoft.VisualStudio.Services.Icons.Default" Path="extension/icon.ico" Addressable="true" />
+    <Asset Type="Microsoft.VisualStudio.Services.Icons.Default" Path="extension/icon.png" Addressable="true" />
   </Assets>
 </PackageManifest>
 "@
@@ -116,11 +125,5 @@ try {
 
 Remove-Item -Recurse -Force $Staging
 
-$DistDir = Join-Path $Root "dist"
-New-Item -ItemType Directory -Path $DistDir -Force | Out-Null
-$DistFile = Join-Path $DistDir "$Name-$Version.vsix"
-Copy-Item -Force $OutFile $DistFile
-Copy-Item -Force $OutFile (Join-Path $Root "editors\sere.vsix")
+Get-ChildItem -Path $ExtDir -Filter "*.vsix" -ErrorAction SilentlyContinue | Remove-Item -Force
 Write-Host "Wrote $OutFile"
-Write-Host "Wrote $DistFile"
-Write-Host "Wrote $(Join-Path $Root 'editors\sere.vsix')"

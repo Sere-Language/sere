@@ -219,6 +219,13 @@ void copyBesideOutput(const std::filesystem::path& from, const std::filesystem::
       return 1;
     }
   }
+  for (const std::filesystem::path& iconRes :
+       {compilerDirectory() / "sere_icon.res", runtime->parent_path() / "sere_icon.res"}) {
+    if (std::filesystem::exists(iconRes)) {
+      owned.push_back(iconRes.string());
+      break;
+    }
+  }
 #endif
   owned.push_back(runtimeLib);
   owned.push_back("-fuse-ld=lld");
@@ -374,9 +381,48 @@ int compileInput(const CompilerOptions& options) {
   return code;
 }
 
+void printCompilerEnv() {
+  const std::filesystem::path compilerDir = compilerDirectory();
+  const std::string executable =
+      llvm::sys::fs::getMainExecutable(nullptr, reinterpret_cast<void*>(&printCompilerEnv));
+  std::filesystem::path stdlib = compilerDir / "stdlib";
+  if (!std::filesystem::exists(stdlib / "prelude.sere")) {
+    const std::filesystem::path parentStdlib = compilerDir.parent_path() / "stdlib";
+    stdlib = std::filesystem::exists(parentStdlib / "prelude.sere")
+                 ? parentStdlib
+                 : findStdlibDirectory(compilerDir);
+  }
+  llvm::json::Object env{
+      {"version", std::string(SERE_VERSION_STRING)},
+      {"compiler", executable},
+      {"compilerDir", compilerDir.string()},
+      {"stdlib", stdlib.string()},
+  };
+  if (const std::optional<std::filesystem::path> llvmDir = llvmToolsDirectory()) {
+    env["llvmDir"] = llvmDir->parent_path().string();
+    env["llvmBin"] = llvmDir->string();
+  }
+  if (const std::optional<std::string> clang = findClang()) {
+    env["clang"] = *clang;
+  }
+  if (const std::optional<std::filesystem::path> runtime = findRuntimeLibrary()) {
+    env["runtimeLib"] = runtime->string();
+  }
+#ifdef _WIN32
+  env["platform"] = "windows";
+#else
+  env["platform"] = "posix";
+#endif
+  llvm::outs() << llvm::json::Value(std::move(env)) << '\n';
+}
+
 int Compiler::run(const CompilerOptions& options) {
   if (options.version) {
     std::cout << "sere " << SERE_VERSION_STRING << " (LLVM frontend)\n";
+    return 0;
+  }
+  if (options.printEnv) {
+    printCompilerEnv();
     return 0;
   }
   if (options.help) {

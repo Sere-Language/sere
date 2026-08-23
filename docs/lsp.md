@@ -24,9 +24,14 @@ Handled in `lib/lsp/LanguageServer.cpp`:
 - Document / workspace symbols, code lens, code actions
   (`# type[Code]: ignore` quick-fix on a diagnostic line)
 - Semantic tokens, folding, formatting
-- Import-path completion (`ImportCompletion.cpp`)
+- Import-path completion (`ImportCompletion.cpp`) and member completion
+  (`MemberCompletion.cpp`) and member completion
+  (`MemberCompletion.cpp`)
 
 Each open buffer is analyzed with `Frontend::analyze`, same as the compiler.
+Open `stdlib/*.sere` and `prelude.sere` buffers overlay the on-disk copies, so
+a new prelude function is visible in other files as you type. Saving or
+changing a watched stdlib file re-analyzes every open buffer.
 
 ## Semantic tokens
 
@@ -35,7 +40,7 @@ classifies:
 
 - Keywords (contiguous `TokenKind` keyword range)
 - Builtin types (`Unique`, `Shared`, `Ptr`, primitives, collections)
-- Builtin functions / intrinsics
+- Compiler intrinsics (`print`, `alloc`, …); prelude names come from symbols
 - Operators, including `*` and `&`
 - Symbols from `TypeChecker::symbols()`
 
@@ -47,13 +52,18 @@ and the name array in lockstep.
 Hover uses `findNodeAt` then formats the node. Unary `*` / `&` show
 `*p: i32` / `&x: Ptr[i32]` when the type checker filled `resolvedType()`.
 
-Member completion after `.` uses the record type of the object. Dereference
-is **not** implicit: `p.field` is invalid when `p` is `Unique[T]`; `(*p).field`
-uses the pointee. That matches C.
+Member completion after `.` resolves the receiver from the type checker
+(`foo`, `gl.Window`, imported modules) and lists public fields and methods.
+Dereference is **not** implicit: `p.field` is invalid when `p` is `Unique[T]`;
+`(*p).field` uses the pointee. That matches C.
 
-Completion triggers on `.`, `"`, `@`, and `!` only. `:` and space do not open
-the suggest widget, so `def main() -> i32:` then Enter starts a new indented
-line instead of inserting a snippet.
+`sere.stdlibPath` (or **Sere: Set Stdlib Folder**) pins the folder that
+contains `prelude.sere`. The language server uses that path for imports and
+completion. Empty falls back to workspace `stdlib/` then the compiler's stdlib.
+
+Completion triggers on `.`, space (for `import `), `"`, `@`, and `!`. `:` does
+not open the suggest widget, so `def main() -> i32:` then Enter starts a new
+indented line instead of inserting a snippet.
 
 ## Grammar
 
@@ -65,7 +75,7 @@ The client in `editors/vscode/extension.js` registers every server capability
 (hover, completion, definition, type definition, implementation, references,
 rename, highlight, symbols, signature help, inlay hints, folding, formatting,
 code actions, code lens, and semantic tokens). Package with
-`.\scripts\package-vsix.ps1` (writes `editors/vscode/sere-0.2.0.vsix` and `dist/sere-0.2.0.vsix`).
+`.\scripts\package-vsix.ps1` (writes `dist/sere-0.2.1.vsix`).
 
 Client commands and `sere.compilerPath` live in `editors/vscode/package.json`.
 
@@ -73,6 +83,7 @@ Client commands and `sere.compilerPath` live in `editors/vscode/package.json`.
 
 - `tests/macro_lsp.cpp` — macro symbols/uses and pointer hover/tokens
 - `tests/lsp_semantic.cpp` — broader semantic-token coverage
+- `tests/member_completion.cpp` — local class, sibling import, and stdlib members
 
 Prefer `Frontend` + `findNodeAt` / `collectSemanticTokens` over spinning up a
 JSON-RPC session in unit tests.

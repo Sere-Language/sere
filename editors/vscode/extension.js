@@ -97,34 +97,305 @@ function findSere(workspaceFolder, forLsp) {
   return found || compilerName();
 }
 
+let activeCompilerContext = null;
+
+function isAbsoluteCompiler(compilerPath) {
+  return Boolean(compilerPath) && compilerPath !== compilerName() && fs.existsSync(compilerPath);
+}
+
+function sameCompiler(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+  return path.resolve(left) === path.resolve(right);
+}
+
+function queryCompilerContext(compilerPath) {
+  return new Promise((resolve) => {
+    if (!isAbsoluteCompiler(compilerPath)) {
+      resolve(null);
+      return;
+    }
+    const env = { ...process.env };
+    delete env.SERE_STDLIB;
+    const child = spawn(compilerPath, ["--print-env"], { env });
+    let stdout = "";
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve(null);
+    }, 8000);
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.on("error", () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
+    child.on("exit", () => {
+      clearTimeout(timer);
+      try {
+        const parsed = JSON.parse(stdout.trim());
+        if (parsed && typeof parsed.stdlib === "string") {
+          resolve(parsed);
+          return;
+        }
+      } catch (_error) {
+        // Older compilers do not implement --print-env.
+      }
+      resolve(null);
+    });
+  });
+}
+
+function contextFor(compilerPath) {
+  if (activeCompilerContext && sameCompiler(activeCompilerContext.compiler, compilerPath)) {
+    return activeCompilerContext;
+  }
+  return null;
+}
+
+function stdlibFromCompiler(compilerPath) {
+  if (!isAbsoluteCompiler(compilerPath)) {
+    return "";
+  }
+  let directory = path.dirname(path.resolve(compilerPath));
+  for (let depth = 0; depth < 4; depth += 1) {
+    const stdlib = path.join(directory, "stdlib");
+    if (hasPrelude(stdlib)) {
+      return stdlib;
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) {
+      break;
+    }
+    directory = parent;
+  }
+  return "";
+}
+
 function findStdlib(workspaceFolder, compilerPath) {
   const configured = vscode.workspace.getConfiguration("sere").get("stdlibPath");
   if (typeof configured === "string" && hasPrelude(configured)) {
     return configured;
   }
-  if (hasPrelude(process.env.SERE_STDLIB)) {
-    return process.env.SERE_STDLIB;
-  }
-  const projectRoot = workspaceFolder ? findProjectRoot(workspaceFolder) : "";
-  const compilerDir = compilerPath ? path.dirname(compilerPath) : "";
-  return firstExisting([
-    projectRoot && hasPrelude(path.join(projectRoot, "venv", "stdlib"))
-      ? path.join(projectRoot, "venv", "stdlib")
-      : "",
+  const workspaceStdlib =
     workspaceFolder && hasPrelude(path.join(workspaceFolder, "stdlib"))
       ? path.join(workspaceFolder, "stdlib")
-      : "",
-    compilerDir && hasPrelude(path.join(compilerDir, "stdlib"))
-      ? path.join(compilerDir, "stdlib")
+      : "";
+  if (workspaceStdlib) {
+    return workspaceStdlib;
+  }
+  const reported = contextFor(compilerPath);
+  if (reported && hasPrelude(reported.stdlib)) {
+    return reported.stdlib;
+  }
+  const fromCompiler = stdlibFromCompiler(compilerPath);
+  if (fromCompiler) {
+    return fromCompiler;
+  }
+  const projectRoot = workspaceFolder ? findProjectRoot(workspaceFolder) : "";
+  return firstExisting([
+    hasPrelude(process.env.SERE_STDLIB) ? process.env.SERE_STDLIB : "",
+    projectRoot && hasPrelude(path.join(projectRoot, "venv", "stdlib"))
+      ? path.join(projectRoot, "venv", "stdlib")
       : "",
   ]);
 }
 
+function settingsTarget() {
+  return vscode.workspace.workspaceFolders
+    ? vscode.ConfigurationTarget.Workspace
+    : vscode.ConfigurationTarget.Global;
+}
+
+function discoveredCompilers(workspaceFolder) {
+  const name = compilerName();
+  const projectRoot = workspaceFolder ? findProjectRoot(workspaceFolder) : "";
+  const configured = vscode.workspace.getConfiguration("sere").get("compilerPath");
+  let resolved = typeof configured === "string" ? configured : "";
+  if (workspaceFolder && resolved.includes("${workspaceFolder}")) {
+    resolved = resolved.replaceAll("${workspaceFolder}", workspaceFolder);
+  }
+  return [
+    resolved,
+    workspaceFolder ? path.join(workspaceFolder, "bin", name) : "",
+    projectRoot ? path.join(projectRoot, "venv", "bin", name) : "",
+    process.env.SERE_VENV_BIN ? path.join(process.env.SERE_VENV_BIN, name) : "",
+    workspaceFolder
+      ? path.join(workspaceFolder, "build", "windows-clang-cl-relwithdebinfo", "bin", name)
+      : "",
+    workspaceFolder
+      ? path.join(workspaceFolder, "build", "windows-clang-cl-relwithdebinfo", "bin", "staging", name)
+      : "",
+    workspaceFolder ? path.join(workspaceFolder, "build", "bin", name) : "",
+  ].filter((candidate, index, all) => {
+    return candidate && fs.existsSync(candidate) && all.indexOf(candidate) === index;
+  });
+}
+
+async function applyActiveCompiler(compilerPath, session) {
+  const config = vscode.workspace.getConfiguration("sere");
+  await config.update("compilerPath", compilerPath, settingsTarget());
+  const context = await queryCompilerContext(compilerPath);
+  activeCompilerContext = context;
+  const stdlib = (context && context.stdlib) || stdlibFromCompiler(compilerPath);
+  if (session) {
+    await session.restart();
+  }
+  const version = context && context.version ? "sere " + context.version + " · " : "";
+  const stdlibLabel = stdlib || "(compiler did not report a stdlib)";
+  vscode.window.setStatusBarMessage(
+    "Sere compiler: " + version + compilerPath + " · stdlib: " + stdlibLabel,
+    6000,
+  );
+}
+
+async function setActiveCompiler(session) {
+  const workspaceFolder = session.workspaceFolder();
+  const known = discoveredCompilers(workspaceFolder);
+  const items = await Promise.all(
+    known.map(async (compilerPath) => {
+      const context = await queryCompilerContext(compilerPath);
+      const stdlib = (context && context.stdlib) || stdlibFromCompiler(compilerPath);
+      const version = context && context.version ? "sere " + context.version : "compiler";
+      return {
+        label: path.basename(path.dirname(compilerPath)) + path.sep + path.basename(compilerPath),
+        description: compilerPath,
+        detail: stdlib ? version + " · stdlib: " + stdlib : version + " · no stdlib reported",
+        compilerPath,
+      };
+    }),
+  );
+  items.push({
+    label: "Browse…",
+    description: "Pick a sere executable",
+    detail: "The selected compiler reports its stdlib and toolchain via --print-env",
+    browse: true,
+  });
+  const picked = await vscode.window.showQuickPick(items, {
+    title: "Sere: Set Active Compiler",
+    placeHolder: "Choose the compiler the language server and commands should use",
+    ignoreFocusOut: true,
+  });
+  if (!picked) {
+    return;
+  }
+  let compilerPath = picked.compilerPath;
+  if (picked.browse) {
+    const filters = process.platform === "win32" ? { Executable: ["exe"] } : undefined;
+    const uris = await vscode.window.showOpenDialog({
+      canSelectFiles: true,
+      canSelectFolders: false,
+      canSelectMany: false,
+      filters,
+      title: "Select sere",
+    });
+    if (!uris || uris.length === 0) {
+      return;
+    }
+    compilerPath = uris[0].fsPath;
+  }
+  if (!compilerPath || !fs.existsSync(compilerPath)) {
+    vscode.window.showErrorMessage("Sere: that compiler path does not exist.");
+    return;
+  }
+  await applyActiveCompiler(compilerPath, session);
+}
+
+async function pickStdlibPath(session) {
+  const uris = await vscode.window.showOpenDialog({
+    canSelectFiles: false,
+    canSelectFolders: true,
+    canSelectMany: false,
+    title: "Select Sere stdlib folder (must contain prelude.sere)",
+    openLabel: "Use this stdlib",
+  });
+  if (!uris || uris.length === 0) {
+    return;
+  }
+  const folder = uris[0].fsPath;
+  if (!hasPrelude(folder)) {
+    vscode.window.showErrorMessage(
+      "Sere: that folder is not a stdlib. It must contain prelude.sere.",
+    );
+    return;
+  }
+  const config = vscode.workspace.getConfiguration("sere");
+  await config.update("stdlibPath", folder, settingsTarget());
+  if (session) {
+    await session.restart();
+  }
+  vscode.window.setStatusBarMessage("Sere stdlib: " + folder, 6000);
+}
+
+async function openSereSettings(session) {
+  const workspaceFolder = session.workspaceFolder();
+  const compilerPath = findSere(workspaceFolder, true);
+  const stdlib = findStdlib(workspaceFolder, compilerPath);
+  const config = vscode.workspace.getConfiguration("sere");
+  const picked = await vscode.window.showQuickPick(
+    [
+      {
+        label: "Set Active Compiler",
+        description: compilerPath,
+        detail: "Pick sere.exe; stdlib is loaded from that compiler unless overridden",
+        action: "compiler",
+      },
+      {
+        label: "Set Stdlib Folder",
+        description: stdlib || "(not found)",
+        detail: config.get("stdlibPath")
+          ? "Custom sere.stdlibPath — pick another folder or clear it in Settings"
+          : "Pick the folder that contains prelude.sere",
+        action: "stdlib",
+      },
+      {
+        label: (config.get("codeLens") ? "Disable" : "Enable") + " Code Lens",
+        description: "sere.codeLens",
+        action: "codelens",
+      },
+      {
+        label: "Restart Language Server",
+        action: "restart",
+      },
+    ],
+    {
+      title: "Sere Settings",
+      placeHolder: "Sere settings (does not open the VS Code Settings UI)",
+      ignoreFocusOut: true,
+    },
+  );
+  if (!picked) {
+    return;
+  }
+  if (picked.action === "compiler") {
+    await setActiveCompiler(session);
+    return;
+  }
+  if (picked.action === "stdlib") {
+    await pickStdlibPath(session);
+    return;
+  }
+  if (picked.action === "codelens") {
+    const enabled = !config.get("codeLens");
+    await config.update("codeLens", enabled, settingsTarget());
+    vscode.window.setStatusBarMessage("Sere code lens " + (enabled ? "enabled" : "disabled"), 3000);
+    return;
+  }
+  if (picked.action === "restart") {
+    session.restart();
+  }
+}
+
 function compilerEnv(workspaceFolder, compilerPath) {
   const env = { ...process.env };
+  const context = contextFor(compilerPath) || activeCompilerContext;
   const stdlib = findStdlib(workspaceFolder, compilerPath);
   if (stdlib.length > 0) {
     env.SERE_STDLIB = stdlib;
+  }
+  if (context && context.llvmDir) {
+    env.SERE_LLVM_DIR = context.llvmDir;
   }
   return env;
 }
@@ -287,27 +558,46 @@ function toSymbol(item) {
   return symbol;
 }
 
-function toCompletion(item) {
-  const completion = new vscode.CompletionItem(item.label, item.kind);
-  completion.detail = item.detail;
-  if (item.documentation) {
-    completion.documentation = new vscode.MarkdownString(item.documentation);
+function fromLspCompletionKind(kind) {
+  if (typeof kind !== "number") {
+    return vscode.CompletionItemKind.Text;
   }
-  if (item.insertText) {
-    completion.insertText =
-      item.insertTextFormat === 2 ? new vscode.SnippetString(item.insertText) : item.insertText;
+  return Math.max(0, kind - 1);
+}
+
+function replaceRangeAfterDot(document, position) {
+  const line = document.lineAt(position.line).text;
+  const before = line.slice(0, position.character);
+  const dot = before.lastIndexOf(".");
+  const start =
+    dot >= 0
+      ? new vscode.Position(position.line, dot + 1)
+      : document.getWordRangeAtPosition(position)
+        ? document.getWordRangeAtPosition(position).start
+        : position;
+  return new vscode.Range(start, position);
+}
+
+function toCompletion(item, document, position) {
+  const completion = new vscode.CompletionItem(item.label, fromLspCompletionKind(item.kind));
+  completion.detail = item.detail || "";
+  completion.insertText = item.insertText || item.label;
+  completion.filterText = item.filterText || item.label;
+  completion.sortText = item.sortText || item.label;
+  if (item.insertTextFormat === 2) {
+    completion.insertText = new vscode.SnippetString(String(item.insertText || item.label));
   }
-  if (item.sortText) {
-    completion.sortText = item.sortText;
-  }
-  if (item.filterText) {
-    completion.filterText = item.filterText;
-  }
+  completion.range = replaceRangeAfterDot(document, position);
   return completion;
 }
 
 function documentPosition(document, position) {
-  return { textDocument: { uri: document.uri.toString() }, position: toPosition(position) };
+  return {
+    textDocument: { uri: document.uri.toString() },
+    position: toPosition(position),
+    sereLine: document.lineAt(position.line).text,
+    sereCharacter: position.character,
+  };
 }
 
 class SereLanguageClient {
@@ -318,12 +608,14 @@ class SereLanguageClient {
     this.stopping = false;
     this.changeTimers = new Map();
     this.diagnostics = vscode.languages.createDiagnosticCollection("sere");
+    this.semanticTokensEmitter = new vscode.EventEmitter();
+    this.onDidChangeSemanticTokens = this.semanticTokensEmitter.event;
     this.status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     this.status.command = "sere.restartLanguageServer";
     this.status.text = "Sere";
     this.status.tooltip = "Sere language server — click to restart";
     this.status.show();
-    context.subscriptions.push(this.diagnostics, this.status);
+    context.subscriptions.push(this.diagnostics, this.status, this.semanticTokensEmitter);
   }
 
   workspaceFolder() {
@@ -338,11 +630,27 @@ class SereLanguageClient {
     const sere = findSere(workspaceFolder, true);
     this.status.text = "Sere";
     this.status.tooltip = "Sere language server: " + sere;
-    this.child = spawn(sere, ["--lsp"], {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: compilerEnv(workspaceFolder, sere),
-    });
-    this.child.on("error", (error) => {
+    const launch = (context) => {
+      if (this.stopping) {
+        return;
+      }
+      if (context) {
+        activeCompilerContext = context;
+      }
+      const reported = contextFor(sere) || context;
+      this.status.tooltip = reported
+        ? "Sere " +
+          (reported.version || "") +
+          "\n" +
+          sere +
+          "\nstdlib: " +
+          (reported.stdlib || "")
+        : "Sere language server: " + sere;
+      this.child = spawn(sere, ["--lsp"], {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: compilerEnv(workspaceFolder, sere),
+      });
+      this.child.on("error", (error) => {
       this.status.text = "Sere $(error)";
       vscode.window.showErrorMessage(`Sere language server failed to start: ${error.message}`);
     });
@@ -373,11 +681,21 @@ class SereLanguageClient {
         return diagnostic;
       });
       this.diagnostics.set(uri, items);
+      const filePath = uri.fsPath.replace(/\\/g, "/").toLowerCase();
+      if (filePath.endsWith("/prelude.sere") || filePath.includes("/stdlib/")) {
+        this.semanticTokensEmitter.fire();
+      }
     };
     this.client
       .request("initialize", {
         processId: process.pid,
         rootUri: workspaceFolder ? vscode.Uri.file(workspaceFolder).toString() : null,
+        initializationOptions: {
+          stdlib: findStdlib(workspaceFolder, sere),
+          compiler: (reported && reported.compiler) || sere,
+          version: (reported && reported.version) || "",
+          llvmDir: (reported && reported.llvmDir) || "",
+        },
         capabilities: {
           textDocument: {
             hover: { contentFormat: ["markdown"] },
@@ -397,6 +715,8 @@ class SereLanguageClient {
         this.status.text = "Sere $(error)";
         vscode.window.showErrorMessage(`Sere language server initialize failed: ${error.message}`);
       });
+    };
+    queryCompilerContext(sere).then(launch, () => launch(null));
   }
 
   async stop() {
@@ -429,6 +749,34 @@ class SereLanguageClient {
     if (this.client !== null) {
       this.client.notify(method, params);
     }
+  }
+
+  syncDocument(document, skipAnalyze) {
+    if (document.languageId !== "sere") {
+      return;
+    }
+    const uri = document.uri.toString();
+    this.notify("textDocument/didChange", {
+      textDocument: { uri, version: document.version },
+      contentChanges: [{ text: document.getText() }],
+      skipAnalyze: Boolean(skipAnalyze),
+    });
+  }
+
+  scheduleAnalyze(document) {
+    if (document.languageId !== "sere") {
+      return;
+    }
+    const uri = document.uri.toString();
+    const previous = this.changeTimers.get(uri);
+    if (previous) {
+      clearTimeout(previous);
+    }
+    const timer = setTimeout(() => {
+      this.changeTimers.delete(uri);
+      this.syncDocument(document, false);
+    }, 250);
+    this.changeTimers.set(uri, timer);
   }
 
   openDocument(document) {
@@ -492,27 +840,34 @@ function activate(context) {
     vscode.commands.registerCommand("sere.refreshBin", () =>
       runSereCommand(session, ["refresh-bin"], "refreshed ./bin", true),
     ),
-    vscode.commands.registerCommand("sere.openSettings", () =>
-      vscode.commands.executeCommand("workbench.action.openSettings", "@ext:sere.sere"),
-    ),
+    vscode.commands.registerCommand("sere.setActiveCompiler", () => setActiveCompiler(session)),
+    vscode.commands.registerCommand("sere.setStdlibPath", () => pickStdlibPath(session)),
+    vscode.commands.registerCommand("sere.openSettings", () => openSereSettings(session)),
     vscode.workspace.onDidOpenTextDocument((document) => session.openDocument(document)),
+    ...(() => {
+      const notifyLibrary = (uri, type) => {
+        session.notify("workspace/didChangeWatchedFiles", {
+          changes: [{ uri: uri.toString(), type }],
+        });
+        session.semanticTokensEmitter.fire();
+      };
+      const watchers = [
+        vscode.workspace.createFileSystemWatcher("**/stdlib/**/*.sere"),
+        vscode.workspace.createFileSystemWatcher("**/prelude.sere"),
+      ];
+      for (const watcher of watchers) {
+        watcher.onDidCreate((uri) => notifyLibrary(uri, 1));
+        watcher.onDidChange((uri) => notifyLibrary(uri, 2));
+        watcher.onDidDelete((uri) => notifyLibrary(uri, 3));
+      }
+      return watchers;
+    })(),
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (event.document.languageId !== "sere") {
         return;
       }
-      const uri = event.document.uri.toString();
-      const previous = session.changeTimers.get(uri);
-      if (previous) {
-        clearTimeout(previous);
-      }
-      const timer = setTimeout(() => {
-        session.changeTimers.delete(uri);
-        session.notify("textDocument/didChange", {
-          textDocument: { uri, version: event.document.version },
-          contentChanges: [{ text: event.document.getText() }],
-        });
-      }, 80);
-      session.changeTimers.set(uri, timer);
+      session.syncDocument(event.document, true);
+      session.scheduleAnalyze(event.document);
     }),
     vscode.workspace.onDidCloseTextDocument((document) => {
       if (document.languageId !== "sere") {
@@ -720,15 +1075,20 @@ function activate(context) {
       "sere",
       {
         provideCompletionItems(document, position) {
+          session.syncDocument(document, true);
           return session
             .request("textDocument/completion", documentPosition(document, position))
             .then((result) => {
               const items = Array.isArray(result) ? result : [];
-              return items.map((item) => toCompletion(item));
+              return new vscode.CompletionList(
+                items.map((item) => toCompletion(item, document, position)),
+                false,
+              );
             });
         },
       },
       ".",
+      " ",
       '"',
       "@",
       "!",
@@ -787,6 +1147,7 @@ function activate(context) {
     vscode.languages.registerDocumentSemanticTokensProvider(
       "sere",
       {
+        onDidChangeSemanticTokens: session.onDidChangeSemanticTokens,
         provideDocumentSemanticTokens(document) {
           return session
             .request("textDocument/semanticTokens/full", {

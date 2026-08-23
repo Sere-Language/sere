@@ -1,8 +1,0 @@
-def main() -> i32:
-    print("Hello, ", "world")
-    print(3)
-    x: i32 = 7
-    print(f"hi {x}")
-    print(True)
-    print(abs(-4), min(3, 9), max(3, 9))
-    return 0

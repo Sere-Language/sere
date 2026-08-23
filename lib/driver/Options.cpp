@@ -35,6 +35,7 @@ void printUsage(std::string& error) {
       "Compiler options:\n"
       "  --help              Show this help\n"
       "  --version           Show version\n"
+      "  --print-env         Print compiler, stdlib, and toolchain paths as JSON\n"
       "  --emit-llvm         Write LLVM IR instead of linking an executable\n"
       "  --emit-asm, -S      Write native assembly instead of linking an executable\n"
       "  --dump-tokens       Print lexer tokens\n"
@@ -123,6 +124,10 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
     }
     if (argument == "--version" || argument == "version") {
       options.version = true;
+      continue;
+    }
+    if (argument == "--print-env" || argument == "print-env" || argument == "env") {
+      options.printEnv = true;
       continue;
     }
     if (argument == "--emit-llvm") {
@@ -327,7 +332,7 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
     error = "cannot combine --emit-llvm and --emit-asm";
     return false;
   }
-  if (!options.help && !options.version && !options.lsp &&
+  if (!options.help && !options.version && !options.printEnv && !options.lsp &&
       options.projectCommand == ProjectCommand::None && options.inputPath.empty()) {
     error = "missing input file or project command";
     printUsage(error);

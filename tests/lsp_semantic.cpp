@@ -170,6 +170,7 @@ int main() {
   sere::Frontend signatureFrontend;
   (void)signatureFrontend.analyze("lsp_signature.sere", incomplete, stdlibDir());
   if (signatureFrontend.checker() == nullptr) {
+    signatureFrontend.diagnostics().printAll();
     return fail("incomplete call should still typecheck for signature help");
   }
   bool foundScale = false;
@@ -201,6 +202,34 @@ int main() {
   }
   if (!sawScaleCall) {
     return fail("unclosed scale(1, should still parse as a call with parameter names");
+  }
+
+  const std::filesystem::path preludePath = stdlibDir() / "prelude.sere";
+  const std::string overlayPrelude =
+      "extern \"C\" \"sere_input\"\n"
+      "def input(prompt: str) -> str\n"
+      "def abs(value: i32) -> i32:\n"
+      "    return value\n";
+  sere::Frontend overlayFrontend;
+  overlayFrontend.setFileOverlay(
+      {{sere::Frontend::overlayKey(preludePath), overlayPrelude}});
+  const std::string overlayUser =
+      "def main() -> i32:\n"
+      "    name: str = input(\"n\")\n"
+      "    return 0\n";
+  if (!overlayFrontend.analyze("lsp_overlay.sere", overlayUser, stdlibDir())) {
+    overlayFrontend.diagnostics().printAll(*overlayFrontend.source());
+    return fail("overlay prelude should typecheck input()");
+  }
+  bool sawInput = false;
+  for (const sere::SemanticSymbol& symbol : overlayFrontend.checker()->symbols()) {
+    if (symbol.name == "input" && symbol.kind == "function") {
+      sawInput = true;
+      break;
+    }
+  }
+  if (!sawInput) {
+    return fail("overlay prelude must publish input as a function symbol");
   }
   return 0;
 }

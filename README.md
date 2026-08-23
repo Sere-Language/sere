@@ -175,15 +175,16 @@ Package a VSIX:
 .\scripts\package-vsix.ps1
 ```
 
-That writes `editors/vscode/sere-0.2.0.vsix` and `dist/sere-0.2.0.vsix`. In Cursor / VS Code: **Extensions → … → Install from VSIX…** and choose that file. Reload the window. `sere.compilerPath` in `.vscode/settings.json` already points at the RelWithDebInfo `sere.exe`.
+That writes `dist/sere-0.2.1.vsix`. In Cursor / VS Code: **Extensions → … → Install from VSIX…** and choose that file. Reload the window. The language server uses the RelWithDebInfo `sere.exe` under `build/` so it does not lock `./bin/sere.exe`.
 
 ## Windows installer
 
-A **manual / zip** release lives under [`releases/pre-0.1.0`](releases/pre-0.1.0/). Copy that folder or run its script:
+A **manual / zip** release is built into `dist/`:
 
 ```powershell
-.\releases\stage.ps1              # refresh the folder from this build
-.\releases\pre-0.1.0\install.ps1  # copy to %LOCALAPPDATA%\Programs\Sere and PATH
+.\scripts\package-vsix.ps1
+.\releases\stage.ps1                    # dist/Sere-pre-0.1.1 + zip
+.\dist\Sere-pre-0.1.1\install.ps1       # %LOCALAPPDATA%\Programs\Sere and PATH
 ```
 
 The Inno Setup wizard is a later option (`sere --build-installer` →
@@ -199,13 +200,15 @@ stdlib/         prelude plus io, fs, gc, heap, random, hash, sys, and more
 tools/sere/     sere executable (CLI, compiler, LSP, installer driver)
 tests/          LLVM, lexer, parser, sema, macros, example emit
 examples/       hello, structs, enums, strings, macros, dunders, errors, gl, introspect
+build/          CMake compile tree (gitignored)
 bin/            local sere.exe after a build, plus sere-path PATH helpers
-editors/vscode  language grammar, LSP client, and .vsix
+dist/           vsix, zip, and installer outputs (gitignored)
+editors/vscode  language grammar and LSP client
 scripts/        bootstrap, sere-path, project activate templates, Inno Setup helper
 cmake/          LLVM discovery and warning policy
 docs/           language reference plus compiler internals handbook
 packaging/      Windows installer templates
-releases/       zip / copy install trees (pre-0.1.0, …)
+releases/       stage.ps1 plus the historical pre-0.1.0 tree
 ```
 
 ## Documentation

@@ -358,6 +358,7 @@ void replaceAll(std::string& text, std::string_view from, std::string_view to) {
   replaceAll(text, "@HAS_QT@", hasQt ? "1" : "0");
   replaceAll(text, "@HAS_VSIX@", hasVsix ? "1" : "0");
   replaceAll(text, "@LLVM_VERSION@", SERE_PINNED_LLVM_VERSION);
+  replaceAll(text, "@SETUP_ICON@", slashPath(sourceRoot / "icon.ico"));
   return writeText(issPath, text, error);
 }
 

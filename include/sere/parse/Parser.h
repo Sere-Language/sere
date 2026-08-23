@@ -77,6 +77,7 @@ private:
   std::unique_ptr<Expr> parseComprehension(std::unique_ptr<Expr> element);
   std::unique_ptr<Stmt> parseStatement();
   std::unique_ptr<FunctionDef> parseFunction(std::string externName);
+  std::unique_ptr<FunctionDef> parsePropertyAccessor(std::string name, SourceRange nameRange);
   std::unique_ptr<ClassDef> parseClass();
   std::unique_ptr<TypeAlias> parseTypeAlias();
   std::unique_ptr<ImportStmt> parseImport();

@@ -186,7 +186,7 @@
     },
     "function": {
       "name": "entity.name.function.sere",
-      "match": "\\b(print|str|unique|shared|alloc|load|store|free|len|abs|min|max|clamp|sign|range|append|typeof|isinstance|dir|inspect|sizeof|alignof|panic|parse|try_parse)\\b"
+      "match": "\\b(print|str|unique|shared|alloc|load|store|free|len|range|append|typeof|isinstance|dir|inspect|sizeof|alignof|panic|parse|try_parse)\\b"
     }
   }
 }

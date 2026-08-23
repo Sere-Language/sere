@@ -225,7 +225,7 @@ Decorators (parsed as `@name` on the next declaration):
 
 | Decorator | On | Effect |
 | --- | --- | --- |
-| `@public` / `@private` | field, `def`, `class`, `struct`, `enum`, `type`, `macro`, module binding | `@private` is not exported: `import` / `from` and `module.name` cannot see it (`PermissionError`). Private methods are only callable inside the owning class. |
+| `@public` / `@private` | field, `def`, property accessor, `class`, `struct`, `enum`, `type`, `macro`, module binding | `@private` is not exported: `import` / `from` and `module.name` cannot see it (`PermissionError`). Private methods and setters are only usable inside the owning class. |
 | `@abstract` | method | Must be overridden |
 | `@override` | method | Marks an override |
 | `@frozen` | class | Fields are not assignable after init |
@@ -399,6 +399,42 @@ class Animal:
 
 Construct with `Pet("z")` or `Box[i32](4)`. Multiple bases are allowed
 (`class Dog(Animal, Named)`).
+
+### Properties
+
+`name.get` and `name.set` are accessors for `obj.name` / `obj.name = value`.
+The backing field may reuse the same name. Inside the accessor (and in
+`__init__` when a stored field exists), `self.name` is the field. Everywhere
+else it goes through the getter or setter.
+
+Visibility is per accessor: a public getter with a private setter is
+read-only from outside the class.
+
+```sere
+class Vec2:
+    @private x: i32
+    @private y: i32
+
+    def __init__(self, x: i32, y: i32) -> void:
+        self.x = x
+        self.y = y
+
+    @public x.get:
+        return self.x
+
+    @public y.get:
+        return self.y
+
+    @public x.set(value: i32) -> void:
+        self.x = value
+
+v.x        # getter
+v.x = 10   # setter
+```
+
+A getter may omit `()` and `-> T` (the field type is used). A setter takes
+one value besides `self` and returns `void`. A getter without a setter is
+read-only. A computed property may omit the field and only declare accessors.
 
 ### Struct (value)
 
@@ -864,6 +900,7 @@ Under `examples/`:
 | `enum_print.sere` | `print` an enum, `main -> void` |
 | `oop.sere` | inheritance, `super`, generics, `++` |
 | `point.sere` | class methods returning `self` type |
+| `properties.sere` | `x.get` / `x.set` used as `v.x` / `v.x = 10` |
 | `dunders.sere` | `__getitem__` / `__len__` / `__contains__` |
 | `errors.sere` | `try` / `raise` |
 | `memory.sere` | `Unique`, `Ptr`, `&` / `*` |

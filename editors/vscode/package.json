@@ -2,11 +2,11 @@
   "name": "sere",
   "displayName": "Sere",
   "description": "Language support for Sere: diagnostics, hover, completion, macros, exceptions, and a restartable language server.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "sere",
   "private": true,
   "license": "UNLICENSED",
-  "icon": "icon.ico",
+  "icon": "icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/Sere-Language/sere.git"
@@ -49,8 +49,8 @@
         ],
         "configuration": "./language-configuration.json",
         "icon": {
-          "light": "./icon.ico",
-          "dark": "./icon.ico"
+          "light": "./icon.png",
+          "dark": "./icon.png"
         }
       }
     ],
@@ -73,6 +73,7 @@
         "editor.codeLens": true,
         "editor.suggest.showSnippets": false,
         "editor.snippetSuggestions": "none",
+        "editor.wordBasedSuggestions": "off",
         "editor.acceptSuggestionOnEnter": "off"
       }
     },
@@ -102,25 +103,72 @@
       {
         "language": "sere",
         "scopes": {
-          "keyword": ["keyword.control"],
-          "modifier": ["storage.modifier", "keyword.control"],
-          "macro": ["entity.name.function", "keyword.control.directive"],
-          "decorator": ["entity.name.function.decorator", "entity.name.function"],
-          "class": ["entity.name.type.class"],
-          "struct": ["entity.name.type.class", "entity.name.type"],
-          "enum": ["entity.name.type.enum", "entity.name.type.class"],
-          "enumMember": ["variable.other.enummember", "variable.other.constant"],
-          "property": ["variable.other.property", "variable.other.member"],
-          "type": ["entity.name.type", "support.type"],
-          "function": ["entity.name.function"],
-          "method": ["entity.name.function.member", "entity.name.function"],
-          "parameter": ["variable.parameter"],
-          "variable": ["variable.other"],
-          "regexp": ["string.regexp"],
-          "operator": ["keyword.operator"],
-          "string": ["string"],
-          "number": ["constant.numeric"],
-          "namespace": ["entity.name.namespace"]
+          "keyword": [
+            "keyword.control"
+          ],
+          "modifier": [
+            "storage.modifier",
+            "keyword.control"
+          ],
+          "macro": [
+            "entity.name.function",
+            "keyword.control.directive"
+          ],
+          "decorator": [
+            "entity.name.function.decorator",
+            "entity.name.function"
+          ],
+          "class": [
+            "entity.name.type.class"
+          ],
+          "struct": [
+            "entity.name.type.class",
+            "entity.name.type"
+          ],
+          "enum": [
+            "entity.name.type.enum",
+            "entity.name.type.class"
+          ],
+          "enumMember": [
+            "variable.other.enummember",
+            "variable.other.constant"
+          ],
+          "property": [
+            "variable.other.property",
+            "variable.other.member"
+          ],
+          "type": [
+            "entity.name.type",
+            "support.type"
+          ],
+          "function": [
+            "entity.name.function"
+          ],
+          "method": [
+            "entity.name.function.member",
+            "entity.name.function"
+          ],
+          "parameter": [
+            "variable.parameter"
+          ],
+          "variable": [
+            "variable.other"
+          ],
+          "regexp": [
+            "string.regexp"
+          ],
+          "operator": [
+            "keyword.operator"
+          ],
+          "string": [
+            "string"
+          ],
+          "number": [
+            "constant.numeric"
+          ],
+          "namespace": [
+            "entity.name.namespace"
+          ]
         }
       }
     ],
@@ -131,13 +179,13 @@
           "type": "string",
           "default": "",
           "scope": "resource",
-          "markdownDescription": "Path to `sere`. Empty uses an activated `SERE_VENV_BIN`, then `venv/bin` from the nearest `sere.toml`. The language server prefers the CMake build-tree compiler so it does not lock `./bin/sere.exe`. CLI commands prefer workspace `bin/`."
+          "markdownDescription": "Path to `sere`. Empty auto-discovers a compiler. Use **Sere: Set Active Compiler** to pick one. Stdlib then comes from `stdlib/` next to that executable."
         },
         "sere.stdlibPath": {
           "type": "string",
           "default": "",
           "scope": "resource",
-          "markdownDescription": "Path to the Sere standard library (must contain `prelude.sere`). Empty uses a usable `SERE_STDLIB`, then the nearest project `venv/stdlib`, then `stdlib/` next to `sere` or the workspace."
+          "markdownDescription": "Folder that contains `prelude.sere`. Use **Sere: Set Stdlib Folder** to pick one. Empty uses workspace `stdlib/` or the folder next to the active compiler."
         },
         "sere.codeLens": {
           "type": "boolean",
@@ -173,6 +221,16 @@
         "category": "Sere"
       },
       {
+        "command": "sere.setActiveCompiler",
+        "title": "Set Active Compiler",
+        "category": "Sere"
+      },
+      {
+        "command": "sere.setStdlibPath",
+        "title": "Set Stdlib Folder",
+        "category": "Sere"
+      },
+      {
         "command": "sere.openSettings",
         "title": "Open Settings",
         "category": "Sere"
@@ -194,6 +252,12 @@
         },
         {
           "command": "sere.refreshBin"
+        },
+        {
+          "command": "sere.setActiveCompiler"
+        },
+        {
+          "command": "sere.setStdlibPath"
         },
         {
           "command": "sere.openSettings"

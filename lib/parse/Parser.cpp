@@ -291,9 +291,8 @@ std::unique_ptr<TypeExpr> Parser::parseTypeAtom() {
   SourceLocation end = name.range().end;
   while (match(TokenKind::Dot)) {
     if (!check(TokenKind::Identifier)) {
-      diagnostics_->error(peek().range(), "expected type name after '.', found " +
-                                              describeToken(peek()));
-      return nullptr;
+      end = previous().range().end;
+      break;
     }
     spelling += '.';
     spelling += advance().spelling();
@@ -1828,6 +1827,67 @@ std::unique_ptr<FunctionDef> Parser::parseFunction(std::string externName) {
   return function;
 }
 
+std::unique_ptr<FunctionDef> Parser::parsePropertyAccessor(std::string name, SourceRange nameRange) {
+  if (!consume(TokenKind::Dot, "expected '.' after property name")) {
+    return nullptr;
+  }
+  const std::string kind = parseIdentifier("expected 'get' or 'set' after property name");
+  if (kind != "get" && kind != "set") {
+    diagnostics_->error(previous().range(), "expected 'get' or 'set' after '" + name + ".'");
+    diagnostics_->help("write `" + name + ".get:` or `" + name + ".set(value: T):`");
+    return nullptr;
+  }
+  const bool isGet = kind == "get";
+  std::vector<ParamDecl> params;
+  ParamDecl self;
+  self.name = "self";
+  self.range = nameRange;
+  params.push_back(std::move(self));
+  if (!isGet) {
+    if (!consume(TokenKind::LParen, "expected '(' after '.set'")) {
+      return nullptr;
+    }
+    std::vector<ParamDecl> extra = parseParams();
+    if (!consume(TokenKind::RParen, "expected ')' after setter parameters")) {
+      return nullptr;
+    }
+    for (ParamDecl& param : extra) {
+      params.push_back(std::move(param));
+    }
+  } else if (match(TokenKind::LParen)) {
+    if (!consume(TokenKind::RParen, "expected ')' after '.get'")) {
+      return nullptr;
+    }
+  }
+  std::unique_ptr<TypeExpr> returnType;
+  bool inferredReturn = false;
+  if (match(TokenKind::Arrow)) {
+    returnType = parseTypeExpr();
+    if (returnType == nullptr) {
+      return nullptr;
+    }
+  } else {
+    inferredReturn = true;
+    returnType = std::make_unique<TypeExpr>(previous().range(), isGet ? "Any" : "void",
+                                            std::vector<std::unique_ptr<TypeExpr>>{});
+  }
+  const std::size_t beforeSuite = current_;
+  std::vector<std::unique_ptr<Stmt>> body = parseSuite();
+  if (body.empty() && current_ == beforeSuite && diagnostics_->hasErrors()) {
+    return nullptr;
+  }
+  SourceRange range{nameRange.start, returnType->range().end};
+  if (!body.empty()) {
+    range.end = body.back()->range().end;
+  }
+  const std::string methodName = (isGet ? "__get_" : "__set_") + name;
+  auto function = std::make_unique<FunctionDef>(range, methodName, std::move(params),
+                                                std::move(returnType), std::move(body), "");
+  function->setInferredReturn(inferredReturn);
+  function->setProperty(isGet ? PropertyKind::Get : PropertyKind::Set, std::move(name));
+  return function;
+}
+
 std::unique_ptr<ClassDef> Parser::parseClass() {
   const Token& keyword = advance();
   const bool isStruct = keyword.kind() == TokenKind::KeywordStruct;
@@ -1895,6 +1955,20 @@ std::unique_ptr<ClassDef> Parser::parseClass() {
       method->setOverride(markedOverride);
       markPrivateFromDecorators(*method, decorators);
       methods.push_back(std::move(method));
+      continue;
+    }
+    if (check(TokenKind::Identifier) && peekNth(1).kind() == TokenKind::Dot) {
+      const SourceRange nameRange = peek().range();
+      std::string property = parseIdentifier("expected property name");
+      std::unique_ptr<FunctionDef> accessor = parsePropertyAccessor(std::move(property), nameRange);
+      if (accessor == nullptr) {
+        synchronize();
+        continue;
+      }
+      accessor->setOwnerClass(name);
+      accessor->setDecorators(decorators);
+      markPrivateFromDecorators(*accessor, decorators);
+      methods.push_back(std::move(accessor));
       continue;
     }
     FieldDecl field;

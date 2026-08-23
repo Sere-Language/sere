@@ -307,5 +307,48 @@ int main() {
     dottedDiagnostics.printAll();
     return fail("qualified return types like gl.Window must parse");
   }
+
+  sere::DiagnosticEngine propertyDiagnostics;
+  const std::unique_ptr<sere::Module> properties = parseText(
+      "class Vec2:\n"
+      "    @private x: i32\n"
+      "    @private y: i32\n"
+      "    @public x.get:\n"
+      "        return self.x\n"
+      "    @public y.get:\n"
+      "        return self.y\n"
+      "    @private x.set(value: i32) -> void:\n"
+      "        self.x = value\n",
+      propertyDiagnostics);
+  if (properties == nullptr || propertyDiagnostics.hasErrors()) {
+    propertyDiagnostics.printAll();
+    return fail("property get/set accessors must parse");
+  }
+  bool sawGetX = false;
+  bool sawGetY = false;
+  bool sawSetX = false;
+  for (const std::unique_ptr<sere::Stmt>& statement : properties->statements()) {
+    if (statement->kind() != sere::NodeKind::ClassDef) {
+      continue;
+    }
+    const auto& classDef = static_cast<const sere::ClassDef&>(*statement);
+    for (const std::unique_ptr<sere::FunctionDef>& method : classDef.methods()) {
+      if (method->propertyKind() == sere::PropertyKind::Get && method->propertyName() == "x" &&
+          method->name() == "__get_x") {
+        sawGetX = true;
+      }
+      if (method->propertyKind() == sere::PropertyKind::Get && method->propertyName() == "y" &&
+          method->name() == "__get_y") {
+        sawGetY = true;
+      }
+      if (method->propertyKind() == sere::PropertyKind::Set && method->propertyName() == "x" &&
+          method->name() == "__set_x") {
+        sawSetX = true;
+      }
+    }
+  }
+  if (!sawGetX || !sawGetY || !sawSetX) {
+    return fail("x.get / y.get / x.set must become __get_x / __get_y / __set_x");
+  }
   return 0;
 }

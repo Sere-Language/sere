@@ -314,8 +314,10 @@ std::vector<ImportCompletionItem> importModuleCompletions(
   return items;
 }
 
-std::vector<ImportCompletionItem> importExportCompletions(const std::filesystem::path& moduleFile,
-                                                          std::string_view prefix) {
+std::vector<ImportCompletionItem> importExportCompletions(
+    const std::filesystem::path& moduleFile,
+    std::string_view prefix,
+    const std::optional<std::string>& overlayText) {
   std::vector<ImportCompletionItem> items;
   ImportCompletionItem star;
   star.label = "*";
@@ -333,7 +335,8 @@ std::vector<ImportCompletionItem> importExportCompletions(const std::filesystem:
       return items;
     }
   }
-  const std::optional<std::string> text = readText(sourceFile);
+  const std::optional<std::string> text =
+      overlayText.has_value() ? overlayText : readText(sourceFile);
   if (!text.has_value()) {
     return items;
   }

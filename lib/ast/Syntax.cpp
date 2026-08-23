@@ -171,6 +171,18 @@ void MemberExpr::setCompileTimeText(std::string text) { compileTimeText_ = std::
 
 const std::string& MemberExpr::compileTimeText() const { return compileTimeText_; }
 
+void MemberExpr::setPropertyGet(std::string name) { propertyGet_ = std::move(name); }
+
+const std::string& MemberExpr::propertyGet() const { return propertyGet_; }
+
+void MemberExpr::setPropertySet(std::string name) { propertySet_ = std::move(name); }
+
+const std::string& MemberExpr::propertySet() const { return propertySet_; }
+
+void MemberExpr::setBackingField(bool value) { backingField_ = value; }
+
+bool MemberExpr::usesBackingField() const { return backingField_; }
+
 BinaryExpr::BinaryExpr(SourceRange range,
                        BinaryOp op,
                        std::unique_ptr<Expr> left,
@@ -621,6 +633,15 @@ const std::vector<std::string>& FunctionDef::typeParams() const { return typePar
 void FunctionDef::setInferredReturn(bool value) { inferredReturn_ = value; }
 
 bool FunctionDef::hasInferredReturn() const { return inferredReturn_; }
+
+void FunctionDef::setProperty(PropertyKind kind, std::string name) {
+  propertyKind_ = kind;
+  propertyName_ = std::move(name);
+}
+
+PropertyKind FunctionDef::propertyKind() const { return propertyKind_; }
+
+const std::string& FunctionDef::propertyName() const { return propertyName_; }
 
 ClassDef::ClassDef(SourceRange range,
                    std::string name,
