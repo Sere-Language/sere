@@ -1,0 +1,11 @@
+CompileFlags:
+  CompilationDatabase: build/windows-clang-cl-relwithdebinfo
+  Add:
+    - "-Wno-unknown-argument"
+
+Index:
+  Background: Build
+
+Diagnostics:
+  UnusedIncludes: Strict
+  MissingIncludes: Strict

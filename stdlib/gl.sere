@@ -1,0 +1,177 @@
+# OpenGL + native GL window. Import with: import gl
+# Windows hosts get a real WGL window. Other hosts return available() == False.
+#   win = gl.Window("Sere GL", 640, 480)
+#   while win.poll():
+#       gl.clear_color(0.1, 0.2, 0.3, 1.0)
+#       gl.clear(gl.Buffer.Color.value)
+#       win.swap()
+
+extern "C" "sere_gl_available"
+def _available() -> i32
+
+extern "C" "sere_gl_window_new"
+def _window_new(title: str, width: i32, height: i32) -> Ptr[i8]
+
+extern "C" "sere_gl_window_poll"
+def _window_poll(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_swap"
+def _window_swap(window: Ptr[i8]) -> void
+
+extern "C" "sere_gl_window_make_current"
+def _window_make_current(window: Ptr[i8]) -> void
+
+extern "C" "sere_gl_window_destroy"
+def _window_destroy(window: Ptr[i8]) -> void
+
+extern "C" "sere_gl_window_width"
+def _window_width(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_height"
+def _window_height(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_clear_color"
+def clear_color(r: f32, g: f32, b: f32, a: f32) -> void
+
+extern "C" "sere_gl_clear"
+def clear(mask: i32) -> void
+
+extern "C" "sere_gl_viewport"
+def viewport(x: i32, y: i32, width: i32, height: i32) -> void
+
+extern "C" "sere_gl_enable"
+def enable(cap: i32) -> void
+
+extern "C" "sere_gl_disable"
+def disable(cap: i32) -> void
+
+extern "C" "sere_gl_begin"
+def begin(mode: i32) -> void
+
+extern "C" "sere_gl_end"
+def end() -> void
+
+extern "C" "sere_gl_vertex3f"
+def vertex3(x: f32, y: f32, z: f32) -> void
+
+extern "C" "sere_gl_color3f"
+def color3(r: f32, g: f32, b: f32) -> void
+
+extern "C" "sere_gl_get_error"
+def get_error() -> i32
+
+extern "C" "sere_gl_create_shader"
+def _create_shader(kind: i32) -> i32
+
+extern "C" "sere_gl_shader_source"
+def _shader_source(shader: i32, src: str) -> void
+
+extern "C" "sere_gl_compile_shader"
+def _compile_shader(shader: i32) -> i32
+
+extern "C" "sere_gl_shader_log"
+def shader_log(shader: i32) -> str
+
+extern "C" "sere_gl_delete_shader"
+def delete_shader(shader: i32) -> void
+
+extern "C" "sere_gl_create_program"
+def _create_program() -> i32
+
+extern "C" "sere_gl_attach_shader"
+def attach_shader(program: i32, shader: i32) -> void
+
+extern "C" "sere_gl_link_program"
+def _link_program(program: i32) -> i32
+
+extern "C" "sere_gl_program_log"
+def program_log(program: i32) -> str
+
+extern "C" "sere_gl_use_program"
+def use_program(program: i32) -> void
+
+extern "C" "sere_gl_delete_program"
+def delete_program(program: i32) -> void
+
+enum Primitive:
+    Points = 0
+    Lines = 1
+    LineLoop = 2
+    LineStrip = 3
+    Triangles = 4
+    TriangleStrip = 5
+    TriangleFan = 6
+
+enum Buffer:
+    Color = 16384
+    Depth = 256
+    Stencil = 1024
+
+enum ShaderKind:
+    Vertex = 35633
+    Fragment = 35632
+
+enum Capability:
+    DepthTest = 2929
+    CullFace = 2884
+    Blend = 3042
+
+class Window:
+    ptr: Ptr[i8]
+    title: str
+
+    def __init__(self, title: str, width: i32, height: i32) -> void:
+        self.title = title
+        self.ptr = _window_new(title, width, height)
+
+    def poll(self) -> bool:
+        return _window_poll(self.ptr) as bool
+
+    def swap(self) -> void:
+        _window_swap(self.ptr)
+
+    def make_current(self) -> void:
+        _window_make_current(self.ptr)
+
+    def width(self) -> i32:
+        return _window_width(self.ptr)
+
+    def height(self) -> i32:
+        return _window_height(self.ptr)
+
+    def destroy(self) -> void:
+        _window_destroy(self.ptr)
+
+class Shader:
+    id: i32
+    kind: ShaderKind
+
+    def __init__(self, kind: ShaderKind, source: str) -> void:
+        self.kind = kind
+        self.id = _create_shader(kind.value)
+        _shader_source(self.id, source)
+        _compile_shader(self.id)
+
+    def ok(self) -> bool:
+        return self.id != 0
+
+    def log(self) -> str:
+        return shader_log(self.id)
+
+class Program:
+    id: i32
+
+    def __init__(self, vertex: Shader, fragment: Shader) -> void:
+        self.id = _create_program()
+        attach_shader(self.id, vertex.id)
+        attach_shader(self.id, fragment.id)
+        _link_program(self.id)
+
+    def use(self) -> void:
+        use_program(self.id)
+
+    def log(self) -> str:
+        return program_log(self.id)
+
+def available() -> bool:
+    return _available() as bool

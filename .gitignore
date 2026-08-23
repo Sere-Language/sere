@@ -1,0 +1,54 @@
+# Build trees
+/build/
+/out/
+/dist/
+/cmake-build-*/
+
+# Local convenience copies of the compiler (except the readme)
+/bin/*
+!/bin/README.md
+
+# Local CMake overrides (bootstrap may generate this)
+CMakeUserPresets.json
+CMakeCache.txt
+/CMakeFiles/
+
+# Toolchains extracted into the repo by mistake
+/toolchains/
+/third_party/llvm/
+
+# Compilers / clangd
+.cache/
+compile_commands.json
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+!examples/**
+*.obj
+*.o
+*.a
+
+# Scratch IR at the repo root
+/*.ll
+
+# Packaged editor
+/editors/vscode/*.vsix
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Python leftover caches (stdlib tests later)
+__pycache__/
+*.pyc
+.venv/

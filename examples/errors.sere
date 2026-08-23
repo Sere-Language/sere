@@ -1,0 +1,36 @@
+class Boom(ValueError):
+    pass
+
+def main() -> i32:
+    caught: i32 = 0
+    try:
+        raise "boom"
+    except:
+        caught = 1
+    assert caught == 1
+
+    try:
+        raise TypeError("nope")
+    except TypeError as e:
+        assert e.message == "nope"
+        caught = 2
+
+    try:
+        raise Boom("bad")
+    except ValueError as err:
+        assert err.message == "bad"
+        caught = 3
+
+    try:
+        raise NameError("missing")
+    except TypeError:
+        caught = -1
+    except NameError:
+        caught = 4
+
+    try:
+        assert False, "fail"
+    except AssertionError as a:
+        caught = 5
+
+    return caught

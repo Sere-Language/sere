@@ -1,0 +1,25 @@
+class Board:
+    cells: list[i32]
+
+    def __init__(self) -> void:
+        self.cells = [0, 0, 0]
+
+    def __len__(self) -> i64:
+        return len(self.cells)
+
+    def __getitem__(self, index: i32) -> i32:
+        return self.cells[index]
+
+    def __setitem__(self, index: i32, value: i32) -> void:
+        self.cells[index] = value
+
+    def __contains__(self, value: i32) -> bool:
+        return value in self.cells
+
+def main() -> i32:
+    board: Board = Board()
+    board[0] = 7
+    assert board[0] == 7
+    assert len(board) == 3
+    assert 7 in board
+    return 0

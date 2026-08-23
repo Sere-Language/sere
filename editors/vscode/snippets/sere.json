@@ -1,0 +1,72 @@
+{
+  "Function": {
+    "prefix": "def",
+    "body": ["def ${1:name}(${2}) -> ${3:void}:", "    ${0:pass}"],
+    "description": "Function definition"
+  },
+  "Class": {
+    "prefix": "class",
+    "body": ["class ${1:Name}:", "    ${0:pass}"],
+    "description": "Class definition"
+  },
+  "Struct": {
+    "prefix": "struct",
+    "body": ["struct ${1:Name}:", "    ${2:field}: ${3:i32}"],
+    "description": "Struct definition"
+  },
+  "Enum": {
+    "prefix": "enum",
+    "body": ["enum ${1:Name}:", "    ${2:Variant}"],
+    "description": "Enum definition"
+  },
+  "For loop": {
+    "prefix": "for",
+    "body": ["for ${1:item} in ${2:items}:", "    ${0:pass}"],
+    "description": "for-in loop"
+  },
+  "While loop": {
+    "prefix": "while",
+    "body": ["while ${1:condition}:", "    ${0:pass}"],
+    "description": "while loop"
+  },
+  "If": {
+    "prefix": "if",
+    "body": ["if ${1:condition}:", "    ${0:pass}"],
+    "description": "if statement"
+  },
+  "Try/except": {
+    "prefix": "try",
+    "body": ["try:", "    ${1:pass}", "except ${2:Error}:", "    ${0:pass}"],
+    "description": "try/except"
+  },
+  "Match": {
+    "prefix": "match",
+    "body": ["match ${1:value}:", "    case ${2:_}:", "        ${0:pass}"],
+    "description": "match statement"
+  },
+  "Macro": {
+    "prefix": "macro",
+    "body": ["macro ${1:name}(${2:x}):", "    quote:", "        ${0:$x}"],
+    "description": "Macro definition"
+  },
+  "Unique pointer": {
+    "prefix": "unique",
+    "body": ["unique[${1:i32}](${2:value})"],
+    "description": "Unique[T] allocation"
+  },
+  "Shared pointer": {
+    "prefix": "shared",
+    "body": ["shared[${1:i32}](${2:value})"],
+    "description": "Shared[T] allocation"
+  },
+  "Raw pointer": {
+    "prefix": "alloc",
+    "body": ["alloc[${1:i32}]()"],
+    "description": "Ptr[T] allocation"
+  },
+  "Main": {
+    "prefix": "main",
+    "body": ["def main() -> i32:", "    ${0:return 0}"],
+    "description": "Program entry point"
+  }
+}

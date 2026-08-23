@@ -1,0 +1,24 @@
+{
+  "cmake.configureOnOpen": true,
+  "cmake.preferredGenerators": ["Ninja"],
+  "cmake.sourceDirectory": "${workspaceFolder}",
+  "C_Cpp.intelliSenseEngine": "disabled",
+  "clangd.arguments": [
+    "--compile-commands-dir=${workspaceFolder}/build/windows-clang-cl-relwithdebinfo",
+    "--header-insertion=never",
+    "--background-index"
+  ],
+  "npm.autoDetect": "off",
+  "npm.exclude": "**/editors/vscode/**",
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.associations": {
+    "*.sere": "sere"
+  },
+  "sere.compilerPath": "${workspaceFolder}/build/windows-clang-cl-relwithdebinfo/bin/sere.exe",
+  "[sere]": {
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "editor.semanticHighlighting.enabled": true
+  }
+}

@@ -1,0 +1,158 @@
+; Sere Windows installer. Tokens are filled by sere --build-installer.
+; Requires Inno Setup 6.
+
+#define MyAppName "Sere"
+#define MyAppVersion "@SERE_VERSION@"
+#define MyAppPublisher "Sere"
+#define MyAppExeName "sere.exe"
+#define HasQt @HAS_QT@
+#define HasVsix @HAS_VSIX@
+#define LlvmVersion "@LLVM_VERSION@"
+
+[Setup]
+AppId={{A7C4E2F1-9B58-4D3A-8E71-2C6F0B91D5A3}
+AppName={#MyAppName}
+AppVersion={#MyAppVersion}
+AppPublisher={#MyAppPublisher}
+AppVerName={#MyAppName} {#MyAppVersion}
+DefaultDirName={localappdata}\Programs\Sere
+DefaultGroupName=Sere
+DisableProgramGroupPage=yes
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog
+OutputDir=@OUTPUT_DIR@
+OutputBaseFilename=@OUTPUT_BASE@
+Compression=lzma2
+SolidCompression=yes
+WizardStyle=modern
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+ChangesEnvironment=yes
+ChangesAssociations=yes
+MinVersion=10.0
+SetupLogging=yes
+UninstallDisplayIcon={app}\bin\{#MyAppExeName}
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+Name: "adduserpath"; Description: "Add sere to the user PATH"; GroupDescription: "Environment:"; Flags: checkedonce
+Name: "addsystempath"; Description: "Add sere to the system PATH (requires Administrator)"; GroupDescription: "Environment:"; Flags: unchecked
+Name: "llvm"; Description: "Install LLVM {#LlvmVersion} toolchain (required to compile)"; GroupDescription: "Toolchains:"; Flags: checkedonce
+Name: "msvc"; Description: "Install C++ build tools / Windows SDK if missing (required to link)"; GroupDescription: "Toolchains:"; Flags: checkedonce
+Name: "startmenu"; Description: "Create Start Menu shortcuts"; GroupDescription: "Shortcuts:"; Flags: checkedonce
+Name: "associate"; Description: "Associate .sere files with Sere"; GroupDescription: "File types:"; Flags: checkedonce
+#if HasVsix
+Name: "vscodeext"; Description: "Install the Sere editor extension (VS Code / Cursor) with language server"; GroupDescription: "Editor:"; Flags: checkedonce
+#endif
+#if HasQt
+Name: "qt6"; Description: "Install Qt6 GUI runtime (needed for import qt6)"; GroupDescription: "Optional libraries:"; Flags: checkedonce
+#endif
+
+[Files]
+Source: "@PAYLOAD_DIR@\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "@PAYLOAD_DIR@\stdlib\*"; DestDir: "{app}\stdlib"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "@PAYLOAD_DIR@\include\*"; DestDir: "{app}\include"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "@PAYLOAD_DIR@\packaging\*"; DestDir: "{app}\packaging"; Flags: ignoreversion
+Source: "@PAYLOAD_DIR@\toolchains\*"; DestDir: "{app}\toolchains"; Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: llvm
+#if HasVsix
+Source: "@PAYLOAD_DIR@\editors\*"; DestDir: "{app}\editors"; Flags: ignoreversion
+#endif
+#if HasQt
+Source: "@PAYLOAD_DIR@\qt6\*"; DestDir: "{app}\bin"; Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: qt6
+#endif
+
+[Icons]
+Name: "{group}\Sere"; Filename: "{cmd}"; Parameters: "/K ""set PATH={app}\bin;%PATH%&& set SERE_LLVM_DIR={app}\toolchains\llvm-{#LlvmVersion}&& set SERE_STDLIB={app}\stdlib&& echo Sere {#MyAppVersion}&& sere --version"""; WorkingDir: "{app}"; Tasks: startmenu
+Name: "{group}\Uninstall Sere"; Filename: "{uninstallexe}"; Tasks: startmenu
+
+[Registry]
+Root: HKCU; Subkey: "Environment"; ValueType: string; ValueName: "SERE_STDLIB"; ValueData: "{app}\stdlib"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Environment"; ValueType: string; ValueName: "SERE_LLVM_DIR"; ValueData: "{app}\toolchains\llvm-{#LlvmVersion}"; Flags: uninsdeletevalue; Tasks: llvm
+Root: HKCU; Subkey: "Software\Classes\.sere"; ValueType: string; ValueName: ""; ValueData: "SereSourceFile"; Flags: uninsdeletevalue; Tasks: associate
+Root: HKCU; Subkey: "Software\Classes\SereSourceFile"; ValueType: string; ValueName: ""; ValueData: "Sere Source File"; Flags: uninsdeletekey; Tasks: associate
+Root: HKCU; Subkey: "Software\Classes\SereSourceFile\DefaultIcon"; ValueType: string; ValueData: "{app}\bin\{#MyAppExeName},0"; Tasks: associate
+Root: HKCU; Subkey: "Software\Classes\SereSourceFile\shell\open\command"; ValueType: string; ValueData: """{app}\bin\{#MyAppExeName}"" ""%1"""; Tasks: associate
+
+[Run]
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\packaging\ensure-msvc.ps1"""; StatusMsg: "Checking C++ build tools..."; Tasks: msvc; Flags: runhidden waituntilterminated
+#if HasVsix
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\packaging\install-vsix.ps1"" -Vsix ""{app}\editors\sere.vsix"" -Compiler ""{app}\bin\{#MyAppExeName}"""; StatusMsg: "Installing editor extension..."; Tasks: vscodeext; Flags: runhidden waituntilterminated
+#endif
+
+[Code]
+function NeedsAddPath(const RootKey: Integer; const SubKey, Dir: string): Boolean;
+var
+  Orig: string;
+  Check: string;
+begin
+  Result := True;
+  if not RegQueryStringValue(RootKey, SubKey, 'Path', Orig) then
+    Exit;
+  Check := ';' + Uppercase(Orig) + ';';
+  Result := Pos(';' + Uppercase(Dir) + ';', Check) = 0;
+end;
+
+procedure AddToPath(const RootKey: Integer; const SubKey, Dir: string);
+var
+  Orig: string;
+begin
+  if not NeedsAddPath(RootKey, SubKey, Dir) then
+    Exit;
+  if not RegQueryStringValue(RootKey, SubKey, 'Path', Orig) then
+    Orig := '';
+  if Orig = '' then
+    Orig := Dir
+  else if Orig[Length(Orig)] = ';' then
+    Orig := Orig + Dir
+  else
+    Orig := Orig + ';' + Dir;
+  RegWriteExpandStringValue(RootKey, SubKey, 'Path', Orig);
+end;
+
+procedure RemoveFromPath(const RootKey: Integer; const SubKey, Dir: string);
+var
+  Orig: string;
+  UpperOrig: string;
+  UpperDir: string;
+  P: Integer;
+begin
+  if not RegQueryStringValue(RootKey, SubKey, 'Path', Orig) then
+    Exit;
+  UpperOrig := ';' + Uppercase(Orig) + ';';
+  UpperDir := ';' + Uppercase(Dir) + ';';
+  P := Pos(UpperDir, UpperOrig);
+  if P = 0 then
+    Exit;
+  Delete(Orig, P, Length(Dir) + 1);
+  if (Length(Orig) > 0) and (Orig[1] = ';') then
+    Delete(Orig, 1, 1);
+  if (Length(Orig) > 0) and (Orig[Length(Orig)] = ';') then
+    Delete(Orig, Length(Orig), 1);
+  RegWriteExpandStringValue(RootKey, SubKey, 'Path', Orig);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  BinDir: string;
+begin
+  if CurStep <> ssPostInstall then
+    Exit;
+  BinDir := ExpandConstant('{app}\bin');
+  if WizardIsTaskSelected('adduserpath') then
+    AddToPath(HKEY_CURRENT_USER, 'Environment', BinDir);
+  if WizardIsTaskSelected('addsystempath') then
+    AddToPath(HKEY_LOCAL_MACHINE, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', BinDir);
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  BinDir: string;
+begin
+  if CurUninstallStep <> usPostUninstall then
+    Exit;
+  BinDir := ExpandConstant('{app}\bin');
+  RemoveFromPath(HKEY_CURRENT_USER, 'Environment', BinDir);
+  RemoveFromPath(HKEY_LOCAL_MACHINE, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', BinDir);
+end;

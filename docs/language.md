@@ -1,0 +1,842 @@
+# Sere language reference
+
+This is the user-facing description of Sere **as the compiler implements it today**.
+It is not a roadmap. Features that are tokenized but not implemented are called
+out at the end.
+
+Sere is a **statically typed Python-superset**. Indentation is significant.
+Programs compile to native code through LLVM 22. `print` is a language intrinsic
+(also used from the prelude); it is not a statement.
+
+A minimal program:
+
+```sere
+def main() -> i32:
+    print("hello, sere")
+    return 0
+```
+
+Compile:
+
+```powershell
+sere examples\hello.sere -o hello.exe
+.\hello.exe
+```
+
+The process exit code is `main`'s `i32` return value.
+
+---
+
+## Contents
+
+1. [Programs](#programs)
+2. [Lexical structure](#lexical-structure)
+3. [Types](#types)
+4. [Names and bindings](#names-and-bindings)
+5. [Expressions](#expressions)
+6. [Statements](#statements)
+7. [Functions](#functions)
+8. [Classes, structs, and enums](#classes-structs-and-enums)
+9. [Modules and imports](#modules-and-imports)
+10. [Memory and pointers](#memory-and-pointers)
+11. [Collections and strings](#collections-and-strings)
+12. [Pattern matching](#pattern-matching)
+13. [Errors](#errors)
+14. [Macros](#macros)
+15. [Introspection and platform](#introspection-and-platform)
+16. [Intrinsics](#intrinsics)
+17. [Standard library](#standard-library)
+18. [Native interop](#native-interop)
+19. [Diagnostics](#diagnostics)
+20. [Reserved, not implemented](#reserved-not-implemented)
+21. [Examples](#examples)
+
+---
+
+## Programs
+
+A linked executable needs `main`. Return `i32` (used as the process exit code)
+or `void`:
+
+```sere
+def main() -> i32:
+    return 0
+```
+
+or with arguments:
+
+```sere
+def main(argv: list[str]) -> i32:
+    return len(argv)
+```
+
+A file without `main` still typechecks and can emit LLVM; it does not produce a
+C `main`. Top-level statements in the entry file run as module initialization
+before `main`.
+
+`prelude.sere` is injected automatically. Other stdlib modules are opt-in
+(`import math`).
+
+A typed binding may omit an initializer; the slot is default-initialized.
+`=` always requires an expression.
+
+```sere
+ptr: Unique[i32]          # ok, default
+n: i32 = 0                # ok
+# n: i32 =                # error
+```
+
+Indent with **spaces only**. Tabs are a diagnostic.
+
+---
+
+## Lexical structure
+
+### Comments
+
+`#` to end of line. `# type: ignore` and `# type[NameError]: ignore` suppress
+diagnostics (see [Diagnostics](#diagnostics)).
+
+### Names
+
+Identifiers: ASCII letters, digits, and `_`. Keywords are reserved.
+
+### Keywords
+
+```
+False  None  True
+and  as  assert  break  case  class  const  continue
+def  defer  del  elif  else  enum  except  extern  finally
+for  from  if  import  in  is  lambda  macro  match
+not  or  pass  raise  return  static  struct  super
+try  type  while  with
+```
+
+`const`, `lambda`, and `with` are reserved words. They are not implemented as
+syntax yet.
+
+### Literals
+
+| Kind | Forms |
+| --- | --- |
+| Integer | decimal `42`, hex `0xFF`, binary `0b1010`, octal `0o755`, `_` separators `1_000` |
+| Float | `1.0`, `3e2`, `1.0f`, `_` allowed |
+| Bool | `True`, `False` |
+| None | `None` |
+| String | `"..."`, `'...'`, `"""..."""` (multiline) |
+| F-string | `f"hi {x}"` with `{expr}` holes |
+| Regex | backtick `` `\d+` ``, type `regex` |
+
+### Operators
+
+Arithmetic: `+ - * / // % **`  
+Bitwise: `& | ^ ~ << >>`  
+Comparison: `== != < <= > >=` `is` `in`  
+Boolean: `and` `or` `not`  
+Assignment: `=` `+=` `-=` `*=` `/=` `%=` `&=` `|=` `^=` `<<=` `>>=`  
+Inc/dec: `++n` `n++` `--n` `n--`  
+Pointers: `&x` `*p`  
+Cast: `value as T`  
+Call/index: `f(x)` `xs[i]` `xs[a:b]`  
+Other: `.` `,` `:` `->` `=>` `!` `$` `@` `...` `|` (unions and bitwise or)
+
+`/` is true division. `//` is floor division.
+
+---
+
+## Types
+
+### Primitives
+
+| Type | Meaning |
+| --- | --- |
+| `void` | No value (function returns) |
+| `bool` | `True` / `False` |
+| `i8` `i16` `i32` `i64` | Signed integers |
+| `u8` `u16` `u32` `u64` | Unsigned integers |
+| `f32` `f64` | IEEE floats |
+| `str` | String |
+| `byte` | Alias of `u8` |
+| `regex` | Compiled pattern (backtick literal) |
+
+Prelude aliases (unions):
+
+```sere
+type Int = i8 | i16 | i32 | i64 | u8 | u16 | u32 | u64
+type Float = f32 | f64
+```
+
+### Pointers
+
+| Type | Meaning |
+| --- | --- |
+| `Unique[T]` | Exclusive heap pointer; dropped at end of scope |
+| `Shared[T]` | Reference-counted heap pointer |
+| `Ptr[T]` | Raw pointer; caller `free`s |
+
+### Collections
+
+| Type | Meaning |
+| --- | --- |
+| `list[T]` | Runtime list |
+| `array[T]` | Fixed array from `array[T](...)` |
+| `dict[K, V]` | Map |
+
+### User types
+
+- `class` — identity (reference)
+- `struct` — copy-by-value
+- `enum` — discriminant; variants `Color.Green`
+- `type Name = ...` — alias or union
+
+### Unions
+
+```sere
+n: i32 | f32 = 3
+type Number = i32 | i64
+wide: i64 = 10
+total: i64 = small + wide    # integer widths mix in arithmetic
+```
+
+Cast with `as` or a constructor: `n as i32`, `i32(tone)`, `T(value)`,
+`Unique[T](pointer)`.
+
+---
+
+## Names and bindings
+
+```sere
+n: i32 = 0
+static module_count: i32 = 0
+
+def bump() -> i32:
+    static n: i32 = 0
+    n = n + 1
+    return n
+```
+
+- Local: `name: Type` or `name: Type = expr`
+- Module-level `static` and function-level `static` persist
+- Functions and types can be aliased: `donut = print`
+
+Decorators (parsed as `@name` on the next declaration):
+
+| Decorator | On | Effect |
+| --- | --- | --- |
+| `@public` / `@private` | field | Visibility (`PermissionError` if a private field is used from outside) |
+| `@abstract` | method | Must be overridden |
+| `@override` | method | Marks an override |
+| `@frozen` | class | Fields are not assignable after init |
+| `@flags` | enum | Parsed and stored; no extra checking yet |
+
+---
+
+## Expressions
+
+Precedence, high to low (roughly): postfix → unary → `as` → range →
+`* / // % **` → `+ -` → shifts → `&` → `^` → `|` → comparisons / `in` / `is` →
+`and` → `or` → ternary `a if c else b`.
+
+```sere
+xs: list[i32] = [1, 2, 3]
+ages: dict[str, i32] = {"ada": 36}
+empty: dict[str, i32] = dict[str, i32]()
+arr: array[i32] = array[i32](1, 2, 3)
+comp: list[i32] = [x for x in range(0, ..., 3)]
+label: str = f"n={n}"
+ok: bool = "ell" in hello and n > 0 and not False
+```
+
+`range` is an intrinsic that yields `list[i32]`:
+
+| Call | Meaning |
+| --- | --- |
+| `range(stop)` | `0, 1, …, stop-1` |
+| `range(start, stop)` | `start … stop-1` |
+| `range(start, stop, step)` | stepped |
+
+`start ... stop` desugars to `range(start, stop)`. A bare `...` in a call
+argument list is skipped, so `range(0, ..., 3)` is `range(0, 3)`.
+
+Ternary is Python-style: `x if cond else y`.
+
+---
+
+## Statements
+
+```sere
+pass
+assert cond
+assert cond, "failed"
+return expr
+break
+continue
+n = n + 1
+n += 2
+++n
+n++
+```
+
+### `if` / `while` / `for`
+
+```sere
+if n == 1:
+    n = n + 2
+elif n == 0:
+    pass
+else:
+    n = -n
+
+while n < 4:
+    n = n + 1
+
+for n in range(0, 4):
+    total += n
+for item in xs:
+    total += item
+for ch in hello:
+    pass
+```
+
+`for` iterates `range(...)`, `str` (one-character strings), and `list[T]`.
+
+### `defer` / `del`
+
+```sere
+defer free(raw)
+defer:
+    print("done")
+del name
+```
+
+Both parse and typecheck. Today `defer` runs its body **immediately** (it is not
+queued until function exit). `del` is a no-op at codegen.
+
+---
+
+## Functions
+
+```sere
+def scale(value: i32, factor: i32 = 2) -> i32:
+    return value * factor
+
+def identity[T](value: T) -> T:
+    return value
+```
+
+- Return type after `->` is required
+- Default arguments are allowed
+- Generic type parameters: `[T]` on `def` or `class`
+- Methods take `self` as the first parameter
+- `super()` is the first base class: `super().__init__(name)`, `super().id()`
+
+Native:
+
+```sere
+extern "C" "native_add"
+def add(left: i32, right: i32) -> i32
+```
+
+The string is the link symbol. The `def` has no body.
+
+---
+
+## Classes, structs, and enums
+
+### Class (identity)
+
+```sere
+class Pet:
+    name: str
+
+    def __init__(self, name: str) -> void:
+        self.name = name
+
+    def id(self) -> i32:
+        return 1
+
+class Cat(Pet):
+    def __init__(self, name: str) -> void:
+        super().__init__(name)
+
+class Box[T]:
+    value: T
+
+    def get(self) -> T:
+        return self.value
+
+class Animal:
+    @abstract
+    def speak(self) -> i32:
+        pass
+```
+
+Construct with `Pet("z")` or `Box[i32](4)`. Multiple bases are allowed
+(`class Dog(Animal, Named)`).
+
+### Struct (value)
+
+```sere
+struct Point:
+    x: i32
+    y: i32
+
+    def length_sq(self) -> i32:
+        return self.x * self.x + self.y * self.y
+
+p: Point = Point(1, 2)
+q: Point = p     # copy
+q.x = 9          # p.x stays 1
+```
+
+Structs cannot inherit.
+
+### Enum
+
+```sere
+enum Color:
+    Red
+    Green = 2
+    Blue
+
+enum Message:
+    Quit
+    Move(x: i32, y: i32)
+    Write(str)
+
+    def is_quit(self) -> bool:
+        match self:
+            case Message.Quit:
+                return True
+            case _:
+                return False
+```
+
+- Unit variants: `Color.Green`
+- Payload variants: `Message.Move(1, 2)`
+- `.name` → `str`, `.value` → discriminant, `i32(tone)` → tag
+- `Color.variants()` → `list[str]`
+- `tone is Color.Green` compares identity of the variant
+- `@flags` on an enum marks it as a flag set
+
+### Dunder methods
+
+If a type defines these, the corresponding syntax uses them:
+
+| Method | Syntax |
+| --- | --- |
+| `__init__` | `T(...)` |
+| `__len__` | `len(x)` |
+| `__getitem__` / `__setitem__` | `x[i]` / `x[i] = v` |
+| `__contains__` | `v in x` |
+| `__add__` / `__radd__` and other arithmetic | `+ - * / // % **` and comparisons |
+
+---
+
+## Modules and imports
+
+```sere
+import util
+import util as u
+from util import double
+from html_lang import html, Html
+from math import sqrt
+from string import *
+```
+
+Search order: directory of the importing file (and `libs/` next to it), then
+the stdlib next to `sere` (or `SERE_STDLIB` in tests). The file
+`util.sere` provides module `util`.
+
+Module globals (always in scope):
+
+| Name | Meaning |
+| --- | --- |
+| `__name__` | `"__main__"` for the entry file, otherwise the module stem |
+| `__file__` | Source path |
+| `__package__` | Package string |
+| `__doc__` | Leading docstring if present |
+| `__debug__` | True in a debug-oriented build flag |
+| `__sere_version__` | Compiler version string |
+
+Compile-time host flags (bool). A false `if` branch is not typechecked:
+
+| Flag | Meaning |
+| --- | --- |
+| `__windows__` `__linux__` `__macos__` `__unix__` | OS |
+| `__x86_64__` `__arm64__` | Architecture |
+| `__platform__` | `"windows"` / `"linux"` / `"macos"` |
+| `__arch__` | `"x86_64"` / `"arm64"` / `"unknown"` |
+
+```sere
+if __windows__:
+    windows.message_box("hi")
+if cfg!(linux):
+    pass
+```
+
+`cfg!(windows)` (and `linux`, `macos`, `unix`, `x86_64`, `arm64`, `debug`) is a
+prelude macro that expands to the matching dunder.
+
+---
+
+## Memory and pointers
+
+```sere
+owned: Unique[i32] = unique[i32](42)
+*owned = 43
+value: i32 = load(owned)
+
+raw: Ptr[i32] = alloc[i32]()
+store(raw, 7)
+*raw = 8
+free(raw)
+
+local: i32 = 10
+stack: Ptr[i32] = &local
+*stack = *owned
+```
+
+| Intrinsic | Result |
+| --- | --- |
+| `unique[T](value)` | `Unique[T]` |
+| `shared[T](value)` | `Shared[T]` |
+| `alloc[T]()` | `Ptr[T]` |
+| `load(p)` | `T` |
+| `store(p, v)` | `void` |
+| `free(p)` | `void` |
+| `&x` | `Ptr[T]` for an addressable lvalue |
+| `*p` | load `T`; `*p = v` stores |
+
+`alloc` / `free` go through the installed collector (`import gc`). Default
+collector is `"none"` (tracked malloc; you free it). Switch with
+`gc.use("mark_sweep")` or `gc.use("arena")`. Arenas and pools: `import heap`.
+Custom collectors: implement `SereGcVTable` in C, call `sere_gc_install` from
+`sere_mod_init`, link with `sere main.sere --link my_gc.lib`.
+
+---
+
+## Collections and strings
+
+```sere
+xs: list[i32] = [1, 2, 3]
+xs.append(4)
+xs[0] = 10
+print(len(xs), xs[1], xs[1:], xs[:2], xs[1:3], xs[:])
+
+hello: str = "Hello"
+assert hello[0] == "H"
+assert hello[-1] == "o"
+assert hello[1:4] == "ell"
+assert "ell" in hello
+assert hello + "!" == "Hello!"
+assert hello * 2 == "HelloHello"
+```
+
+`len` works on `list`, `array`, `dict`, `str`, and types with `__len__`.
+`xs.append(v)` and `append(xs, v)` both add to a list.
+
+Dicts: `ages["ada"] = 37`. Empty: `dict[str, i32]()`.
+
+---
+
+## Pattern matching
+
+```sere
+match moved:
+    case Message.Move(x, y):
+        assert x == 1
+    case Message.Quit if n > 0:
+        pass
+    case _:
+        assert False
+```
+
+`case _` is the wildcard. Enum payloads bind names in the arm. `case pat if expr`
+is a guard.
+
+---
+
+## Errors
+
+```sere
+try:
+    raise TypeError("nope")
+except TypeError as e:
+    print(e.message)
+```
+
+`try` needs `except` and/or `finally`. Optional `else` (no error) and `finally`
+(always). `except Type` matches that class and its subclasses. Bare `except:`
+catches everything. `as e` binds an instance with `.message`.
+
+Builtin exception classes (all subclass `Exception`):
+`SyntaxError`, `IndentationError`, `NameError`, `AttributeError`, `TypeError`,
+`IndexError`, `ImportError`, `ValueError`, `AssertionError`, `PermissionError`,
+`RuntimeError`, `RecursionError`, `NotImplementedError`.
+
+```sere
+class Boom(ValueError):
+    pass
+
+raise Boom("bad")
+raise "boom"                 # Exception
+raise TypeError              # empty message
+assert False, "fail"         # AssertionError, catchable
+```
+
+`raise` stringifies the first constructor argument (or a bare `str`). Bare
+`raise` uses an empty `Exception`. `panic("msg")` still aborts. Prelude macros:
+
+```sere
+todo!("not yet")
+unreachable!()
+dbg!(total)          # prints and yields total
+```
+
+---
+
+## Macros
+
+Macros run **after parse, before type checking**. They are hygienic by default
+(names introduced in a `quote` do not capture caller names). Expansion depth
+is capped (diagnostic `RecursionError`).
+
+### Quote
+
+```sere
+macro twice(x):
+    quote:
+        ($x) + ($x)
+
+total: i32 = twice!(n)
+```
+
+Splice with `$x`. Repeats: `$($x),*` inside `quote`. `$type` is available when
+the macro sets `typed: true` (the type of the first argument).
+
+### Match (token trees)
+
+```sere
+macro vec:
+    match:
+        ($($x:expr),*) => quote:
+            [$($x),*]
+
+xs: list[i32] = vec!(1, 2, 3)
+```
+
+Specs include `expr`, `ident`, `literal`.
+
+### Indent / raw / pipeline
+
+Statement form: `name:` plus an indented body. Expression form only after `=`:
+
+```sere
+node: Html = html:
+    <div>{title}</div>
+
+n: i32 = pipeline:
+    1
+    |> add2
+    |> wrap(4)
+```
+
+Do not write `if left < right:` as a macro; `ident:` newline after a comparison
+is the suite colon.
+
+Macro properties:
+
+```sere
+macro html:
+    syntax: raw          # raw | tokens | pipeline | (default sere)
+    interpolate: brace   # brace | dollar
+    wrapper: Html        # constructor around the result
+    typed: true
+```
+
+Invocations:
+
+- `name!(...)`  `name!{...}`  `name![...]`
+- indent `name:` (statement, or initializer after `=`)
+
+Import macros like any name: `from html_lang import html, Html`.
+
+---
+
+## Introspection and platform
+
+Always in scope:
+
+```sere
+typeof(small)              # str
+isinstance[i32](small)
+isinstance(small, i32)
+dir(Box)                   # list[str]
+dir()
+inspect(scale)             # str
+sizeof[i32]()              # i64
+alignof[i32]()             # i64
+x.__name__  x.__type__  x.__module__  x.__qualname__
+Type.__name__
+```
+
+`from inspect import label` is extra helpers, not the builtins.
+
+---
+
+## Intrinsics
+
+These names are compiler primitives (see `IntrinsicKind`):
+
+`unique` `shared` `alloc` `free` `load` `store` `len` `print` `str`
+`append` `list` / list construction `array` `dict` `range`
+`typeof` `isinstance` `dir` `inspect` `sizeof` `alignof` `panic` `super`
+
+`print` accepts any printable value, including pointers. `str(x)` converts.
+
+---
+
+## Standard library
+
+Injected: `stdlib/prelude.sere` (`abs`, `min`, `max`, `clamp`, `sign`,
+`Int` / `Float`, macros `dbg!` `todo!` `unreachable!` `cfg!`).
+
+Import the rest:
+
+| Module | Role |
+| --- | --- |
+| `io` | `read_line`, `eprint` |
+| `fs` `path` `os` `env` `sys` | Files, paths, process, host |
+| `string` `bytes` `encoding` `regex` | Text and binary |
+| `math` `vec` `matrix` `ml` `arrays` | Numeric / linear algebra |
+| `hash` `random` `time` `log` `bit` | Utilities |
+| `gc` `heap` `memory` | Collectors, arenas (memory is documentation) |
+| `inspect` | Extra labels (`label`, `describe`) |
+| `util` | Tiny helpers (`double`); used by import examples |
+| `html_lang` | `html:` raw macro + `Html` |
+| `windows` | Win32 message box, beep, clipboard, … (stub off Windows) |
+| `gl` | OpenGL window (real on Windows WGL) |
+| `qt6` | Qt 6 widgets; linked automatically if the compiler was built with Qt |
+
+Failed C bindings typically return `""` / `0` / `False` rather than throwing.
+Gate OS-only code with `if __windows__:`.
+
+More on how stdlib is wired: [stdlib.md](stdlib.md).
+
+---
+
+## Native interop
+
+```sere
+extern "C" "sere_gc_collect"
+def collect() -> void
+```
+
+Link extra object files or libs:
+
+```powershell
+sere src\main.sere --link libs\native.lib -o bin\app.exe
+```
+
+Optional module init: define `void sere_mod_init(void)` in C. The runtime
+provides an empty default. A strong definition from `--link` overrides it.
+`sere_mod_init` runs from generated `main` before Sere globals.
+
+Headers: `include/sere/api/sere_mod.h`, `sere_gc.h`.
+
+---
+
+## Diagnostics
+
+Reported as `error[NameError]: ...` (and other exception names).
+
+| Exception | Typical cause |
+| --- | --- |
+| `SyntaxError` | Parse |
+| `IndentationError` | Mixed or inconsistent indent |
+| `NameError` | Unknown name, type, function, macro, module |
+| `AttributeError` | Unknown field or method |
+| `TypeError` | Wrong type, operand, or argument |
+| `IndexError` | Bad index or slice |
+| `ImportError` | Missing module or prelude |
+| `ValueError` | Invalid or uninferable value |
+| `AssertionError` | Bad `assert` |
+| `PermissionError` | Private field |
+| `RuntimeError` | Control-flow / compiler internal |
+| `RecursionError` | Macro expansion limit |
+| `NotImplementedError` | Unsupported or leftover construct |
+
+Suppression:
+
+```sere
+# type[NameError]: ignore          # whole file if at the top
+def main() -> i32:
+    n: i32 = "nope"                # TypeError still reported
+    return missing                 # NameError ignored (file rule)
+
+    return missing  # type: ignore              # this line
+    # type: ignore
+    return missing                              # next statement
+```
+
+`# type[Exception]: ignore` hides every diagnostic in scope.
+`# type: ignore[NameError]` is accepted. Unknown names in the ignore list
+are `ValueError`.
+
+`sere --analyze file.sere` prints JSON diagnostics. The editor uses `sere --lsp`.
+
+---
+
+## Reserved, not implemented
+
+These are keywords, tokens, or half-wired AST. Do not rely on them:
+
+- `lambda`, `with`, `const` — reserved, no syntax
+- Walrus `:=` — token exists; not parsed as an expression
+- `//=` and `**=` — lexed, not parsed as assignment
+- Tuples `(a, b)` — AST/codegen exist; the parser does not build them
+- `defer` — body runs now, not at function exit
+- `del` — accepted, no codegen
+- `@flags` — accepted, unused
+
+If a construct parses but lowering is incomplete, you get
+`NotImplementedError` rather than silent wrong code.
+
+---
+
+## Examples
+
+Under `examples/`:
+
+| File | Shows |
+| --- | --- |
+| `hello.sere` | `print`, f-strings, prelude math |
+| `control.sere` | `if` / `while` / `break` / `continue` |
+| `lang.sere` | `for`, defaults, enums |
+| `features.sere` | unions, comprehensions, default constructors |
+| `types.sere` | `Int` / `Float` aliases (no `main`) |
+| `collections.sere` | list, array, dict, `@public` / `@private`, `static` |
+| `strings.sere` | quotes, index, slice, `in`, `+`, `*` |
+| `structs.sere` | value types |
+| `enums.sere` | payloads, `match`, `.name` / `.value` |
+| `enum_print.sere` | `print` an enum, `main -> void` |
+| `oop.sere` | inheritance, `super`, generics, `++` |
+| `point.sere` | class methods returning `self` type |
+| `dunders.sere` | `__getitem__` / `__len__` / `__contains__` |
+| `errors.sere` | `try` / `raise` |
+| `memory.sere` | `Unique`, `Ptr`, `&` / `*` |
+| `introspect.sere` | `typeof`, `dir`, module dunders |
+| `imports.sere` | `import` / `from` |
+| `aliases.sere` | function aliases |
+| `macros_*.sere` | quote, match, HTML, pipeline, hygiene |
+| `native_add.sere` | `extern "C"` |
+| `stdlib_mods.sere` / `stdlib_more.sere` | fs, math, string, regex, hash, … |
+| `numeric.sere` | vec, matrix, ml, bytes |
+| `gc_mem.sere` | collectors, arenas, pools |
+| `qt6_app.sere` | Qt widgets |
+| `gl_info.sere` / `platform.sere` | GL / host flags |
+| `colors.sere` | unit enum |
+
+Internals of the compiler: [README.md](README.md) in this folder.
+How to add a keyword or module: [extending.md](extending.md).
