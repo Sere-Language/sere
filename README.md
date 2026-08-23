@@ -1,11 +1,15 @@
-# Sere
+# 🪶 Sere
 
 Sere is a compiled **typed Python superset** with an LLVM 22 backend. It is not
 CPython: the CPython standard library, `async`/`yield`, `*args`, and capturing
 lambdas are out of scope. Unsupported constructs diagnose (often
 `NotImplementedError`) instead of generating silent wrong code.
 
+<<<<<<< HEAD
 Programs are statically typed. 
+=======
+=======
+>>>>>>> 65bcc750ea1404c3d495326a99f21dd7d07dc462
 
 ```python
 def greet(name):
