@@ -9,7 +9,7 @@ sere_apply_warnings(sere)
 
 set_target_properties(sere PROPERTIES
   OUTPUT_NAME sere
-  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/staging"
 )
 
 set(SERE_PROJECT_BIN "${CMAKE_SOURCE_DIR}/bin")
@@ -22,7 +22,7 @@ add_custom_command(TARGET sere POST_BUILD
     -DSERE_STDLIB="${CMAKE_SOURCE_DIR}/stdlib"
     -DSERE_API_HEADER="${CMAKE_SOURCE_DIR}/include/sere/api/sere_mod.h"
     -DSERE_GC_HEADER="${CMAKE_SOURCE_DIR}/include/sere/api/sere_gc.h"
-    -DSERE_BUILD_BIN="$<TARGET_FILE_DIR:sere>"
+    -DSERE_BUILD_BIN="${CMAKE_BINARY_DIR}/bin"
     -DSERE_PROJECT_BIN="${SERE_PROJECT_BIN}"
     -DSERE_SUFFIX="$<TARGET_FILE_SUFFIX:sere>"
     -P "${CMAKE_SOURCE_DIR}/scripts/copy_compiler_outputs.cmake"

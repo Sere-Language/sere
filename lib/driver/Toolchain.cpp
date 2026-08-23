@@ -9,6 +9,7 @@
 #include <llvm/Support/Program.h>
 
 #include <cstdlib>
+#include <iostream>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -16,6 +17,7 @@
 
 #ifdef _WIN32
 #include <stdlib.h>
+#include <windows.h>
 #endif
 
 namespace sere {
@@ -110,7 +112,7 @@ std::optional<std::filesystem::path> findNativeLibrary(std::string_view stem) {
   const std::filesystem::path directory = compilerDirectory();
   const std::filesystem::path parent = directory.parent_path();
   const std::string name(stem);
-  const std::vector<std::filesystem::path> candidates = {
+  std::vector<std::filesystem::path> candidates = {
       directory / (name + ".lib"),
       directory / (name + ".a"),
       directory / ("lib" + name + ".a"),
@@ -122,6 +124,12 @@ std::optional<std::filesystem::path> findNativeLibrary(std::string_view stem) {
       parent / "runtime" / (name + ".a"),
       parent / "runtime" / ("lib" + name + ".a"),
   };
+  if (const char* home = std::getenv("SERE_HOME")) {
+    const std::filesystem::path homeDir(home);
+    candidates.push_back(homeDir / (name + ".lib"));
+    candidates.push_back(homeDir / (name + ".a"));
+    candidates.push_back(homeDir / ("lib" + name + ".a"));
+  }
   return firstExisting(candidates);
 }
 
@@ -288,6 +296,86 @@ std::optional<std::filesystem::path> findSystemLibrary(std::string_view name) {
   (void)name;
 #endif
   return std::nullopt;
+}
+
+namespace {
+
+bool copyFileOverwrite(const std::filesystem::path& from, const std::filesystem::path& to,
+                       std::string& error) {
+  std::error_code code;
+  std::filesystem::create_directories(to.parent_path(), code);
+  std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing, code);
+  if (code) {
+    error = "could not copy " + from.string() + " -> " + to.string() + ": " + code.message();
+    return false;
+  }
+  return true;
+}
+
+bool installRunningSafe(const std::filesystem::path& from, const std::filesystem::path& dest,
+                        std::string& error) {
+  if (!std::filesystem::exists(from)) {
+    error = "missing " + from.string();
+    return false;
+  }
+  const std::filesystem::path neu = std::filesystem::path(dest.string() + ".new");
+  const std::filesystem::path old = std::filesystem::path(dest.string() + ".old");
+  if (!copyFileOverwrite(from, neu, error)) {
+    return false;
+  }
+  std::error_code code;
+  std::filesystem::copy_file(neu, dest, std::filesystem::copy_options::overwrite_existing, code);
+  if (!code) {
+    std::filesystem::remove(neu, code);
+    std::filesystem::remove(old, code);
+    return true;
+  }
+  std::filesystem::remove(old, code);
+  std::filesystem::rename(dest, old, code);
+  if (code) {
+    error = "queued " + neu.string() + " (run sere refresh-bin after closing the language server)";
+    return false;
+  }
+  if (!copyFileOverwrite(neu, dest, error)) {
+    return false;
+  }
+  std::filesystem::remove(neu, code);
+  return true;
+}
+
+}  // namespace
+
+int refreshCompilerBin(const std::filesystem::path& destBin, std::string& error) {
+  const std::filesystem::path fromDir = compilerDirectory();
+#ifdef _WIN32
+  const std::filesystem::path exeName = "sere.exe";
+#else
+  const std::filesystem::path exeName = "sere";
+#endif
+  const std::filesystem::path dest =
+      destBin.empty() ? (std::filesystem::current_path() / "bin") : destBin;
+  std::error_code code;
+  std::filesystem::create_directories(dest, code);
+  if (!installRunningSafe(fromDir / exeName, dest / exeName, error)) {
+    return 1;
+  }
+  if (const auto runtime = findRuntimeLibrary()) {
+    const std::filesystem::path runtimeDest = dest / runtime->filename();
+    (void)copyFileOverwrite(*runtime, runtimeDest, error);
+  }
+  const std::filesystem::path stdlibFrom = fromDir / "stdlib";
+  const std::filesystem::path stdlibSrc =
+      std::filesystem::exists(stdlibFrom) ? stdlibFrom
+                                          : fromDir.parent_path().parent_path().parent_path() / "stdlib";
+  if (std::filesystem::exists(stdlibSrc)) {
+    std::filesystem::copy(stdlibSrc, dest / "stdlib",
+                          std::filesystem::copy_options::overwrite_existing |
+                              std::filesystem::copy_options::recursive,
+                          code);
+  }
+  error.clear();
+  std::cout << "updated " << (dest / exeName).string() << '\n';
+  return 0;
 }
 
 }  // namespace sere

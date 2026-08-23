@@ -443,8 +443,9 @@ bool MacroExpander::expandStmtList(std::vector<std::unique_ptr<Stmt>>& statement
         const auto& decl = static_cast<const VarDecl&>(*item);
         std::unique_ptr<Expr> init =
             decl.init() == nullptr ? nullptr : expandExpr(*decl.init());
-        item = std::make_unique<VarDecl>(item->range(), decl.name(), cloneTypeExpr(decl.type()),
-                                         std::move(init), decl.isStatic());
+        item = std::make_unique<VarDecl>(item->range(), decl.name(),
+                                         decl.hasType() ? cloneTypeExpr(decl.type()) : nullptr,
+                                         std::move(init), decl.isStatic(), decl.isConst());
       } else if (item->kind() == NodeKind::AssignStmt) {
         const auto& assign = static_cast<const AssignStmt&>(*item);
         item = std::make_unique<AssignStmt>(item->range(), expandExpr(assign.target()),

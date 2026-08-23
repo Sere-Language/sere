@@ -20,11 +20,18 @@ $Files = @(
   "language-configuration.json",
   "README.md",
   "CHANGELOG.md",
+  "icon.ico",
   "syntaxes\sere.tmLanguage.json",
   "snippets\sere.json"
 )
 foreach ($Rel in $Files) {
   $Src = Join-Path $ExtDir $Rel
+  if (-not (Test-Path $Src) -and $Rel -eq "icon.ico") {
+    $Src = Join-Path $Root "icon.ico"
+  }
+  if (-not (Test-Path $Src)) {
+    continue
+  }
   $Dest = Join-Path $ExtStaging $Rel
   New-Item -ItemType Directory -Path (Split-Path $Dest) -Force | Out-Null
   Copy-Item -Path $Src -Destination $Dest
@@ -57,6 +64,7 @@ $Manifest = @"
     <Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" Addressable="true" />
     <Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="extension/README.md" Addressable="true" />
     <Asset Type="Microsoft.VisualStudio.Services.Content.Changelog" Path="extension/CHANGELOG.md" Addressable="true" />
+    <Asset Type="Microsoft.VisualStudio.Services.Icons.Default" Path="extension/icon.ico" Addressable="true" />
   </Assets>
 </PackageManifest>
 "@
@@ -70,6 +78,8 @@ $ContentTypes = @"
   <Default Extension=".vsixmanifest" ContentType="text/xml" />
   <Default Extension=".js" ContentType="application/javascript" />
   <Default Extension=".md" ContentType="text/markdown" />
+  <Default Extension=".ico" ContentType="image/x-icon" />
+  <Default Extension=".png" ContentType="image/png" />
 </Types>
 "@
 [System.IO.File]::WriteAllText((Join-Path $Staging "[Content_Types].xml"), $ContentTypes.TrimStart(), $Utf8NoBom)
@@ -105,4 +115,12 @@ try {
 }
 
 Remove-Item -Recurse -Force $Staging
+
+$DistDir = Join-Path $Root "dist"
+New-Item -ItemType Directory -Path $DistDir -Force | Out-Null
+$DistFile = Join-Path $DistDir "$Name-$Version.vsix"
+Copy-Item -Force $OutFile $DistFile
+Copy-Item -Force $OutFile (Join-Path $Root "editors\sere.vsix")
 Write-Host "Wrote $OutFile"
+Write-Host "Wrote $DistFile"
+Write-Host "Wrote $(Join-Path $Root 'editors\sere.vsix')"

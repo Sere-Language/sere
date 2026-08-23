@@ -82,10 +82,13 @@ public:
   [[nodiscard]] bool isEnum() const;
   [[nodiscard]] bool isStruct() const;
   [[nodiscard]] bool isFrozen() const;
+  [[nodiscard]] bool isFlags() const;
   [[nodiscard]] bool isUnion() const;
   [[nodiscard]] bool isIndexable() const;
   [[nodiscard]] bool isIterable() const;
   [[nodiscard]] bool isNever() const;
+  [[nodiscard]] bool isAny() const;
+  [[nodiscard]] bool isVoidLike() const;
   [[nodiscard]] bool hasEnumPayload() const;
   [[nodiscard]] int unionMemberIndex(const Type* member) const;
   [[nodiscard]] const std::vector<const Type*>& bases() const;
@@ -111,6 +114,7 @@ private:
   bool isEnum_ = false;
   bool isStruct_ = false;
   bool isFrozen_ = false;
+  bool isFlags_ = false;
 };
 
 }  // namespace sere

@@ -45,6 +45,9 @@ private:
   std::vector<std::unique_ptr<TypeExpr>> parseTypeArgList();
   std::vector<std::string> parseTypeParamList();
   std::unique_ptr<Expr> parseExpr();
+  std::unique_ptr<Expr> parseTupleTail(std::unique_ptr<Expr> first, SourceLocation start);
+  std::unique_ptr<Expr> parseLambda();
+  std::unique_ptr<Stmt> parseConst();
   std::unique_ptr<Expr> parseEqualsValue();
   std::unique_ptr<Expr> parseTernary();
   std::unique_ptr<Expr> parseOr();
@@ -87,6 +90,7 @@ private:
   std::unique_ptr<MatchStmt> parseMatch();
   std::unique_ptr<DelStmt> parseDel();
   std::unique_ptr<DeferStmt> parseDefer();
+  std::unique_ptr<Stmt> parseWith();
   std::unique_ptr<EnumDef> parseEnum();
   [[nodiscard]] bool parseEnumVariant(EnumVariant& variant);
   [[nodiscard]] bool parseInlineEnumVariants(std::vector<EnumVariant>& variants);
@@ -115,6 +119,7 @@ private:
   std::vector<Token> tokens_;
   std::size_t current_ = 0;
   bool inQuote_ = false;
+  bool allowAsCast_ = true;
 };
 
 }  // namespace sere

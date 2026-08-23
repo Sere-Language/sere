@@ -85,6 +85,9 @@ User macros are navigable in the LSP; prelude macros (`dbg!`, `todo!`, …) are 
 
 ## Type checker
 
+`Any` is a top type: every value is assignable to it. `None` is `void` as a
+named type, so `i32 | None = None` and `i32 | None = void` are both valid.
+
 `TypeChecker::check` (`include/sere/sema/TypeChecker.h`):
 
 1. Register intrinsics (`registerBuiltins`).

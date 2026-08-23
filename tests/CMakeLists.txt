@@ -259,6 +259,24 @@ add_test(NAME sere.example.gl_info
 set_tests_properties(sere.example.gl_info PROPERTIES
   ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
 
+add_test(NAME sere.example.gl_triangle
+  COMMAND "$<TARGET_FILE:sere>" --emit-llvm
+          "${CMAKE_SOURCE_DIR}/examples/gl_triangle.sere"
+          -o "${CMAKE_BINARY_DIR}/gl_triangle.ll")
+set_tests_properties(sere.example.gl_triangle PROPERTIES
+  ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
+
+foreach(_sere_example IN ITEMS
+    pythonish walrus lambda tuples defer with_ctx del_list flags_enum requests wsgi
+    import_exc)
+  add_test(NAME sere.example.${_sere_example}
+    COMMAND "$<TARGET_FILE:sere>" --emit-llvm
+            "${CMAKE_SOURCE_DIR}/examples/${_sere_example}.sere"
+            -o "${CMAKE_BINARY_DIR}/${_sere_example}.ll")
+  set_tests_properties(sere.example.${_sere_example} PROPERTIES
+    ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
+endforeach()
+
 add_executable(sere_test_project_cli project_cli.cpp)
 target_link_libraries(sere_test_project_cli PRIVATE sere_driver)
 sere_apply_warnings(sere_test_project_cli)
@@ -284,3 +302,8 @@ sere_apply_warnings(sere_test_lsp_semantic)
 add_test(NAME sere.test.lsp_semantic COMMAND sere_test_lsp_semantic)
 set_tests_properties(sere.test.lsp_semantic PROPERTIES
   ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
+
+add_executable(sere_test_import_completion import_completion.cpp)
+target_link_libraries(sere_test_import_completion PRIVATE sere_driver)
+sere_apply_warnings(sere_test_import_completion)
+add_test(NAME sere.test.import_completion COMMAND sere_test_import_completion)

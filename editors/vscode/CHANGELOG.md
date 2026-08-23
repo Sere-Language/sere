@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+- Grammar for builtin exceptions, `Int` / `Float`, `|>`, and macro properties
+- Snippets for `raise TypeError`, `except TypeError as e`, custom exceptions, imports
+- Language server stdlib discovery skips empty `venv/stdlib` (requires `prelude.sere`)
+- Commands: **Build Project** and **Run Project**
+- Extension and language icon (`icon.ico`) and downloadable `sere-0.2.0.vsix`
+
 ## 0.1.1
 
 - Parameter hints while typing function, method, constructor, and macro arguments

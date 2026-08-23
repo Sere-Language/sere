@@ -41,8 +41,8 @@ public:
 private:
   bool loadImports(const std::filesystem::path& origin, const std::filesystem::path& stdlibDir);
   [[nodiscard]] bool importsReady(std::size_t index, const std::vector<char>& done) const;
-  [[nodiscard]] bool typecheckOneImported(std::size_t index);
-  bool typecheckImported(const std::filesystem::path& stdlibDir);
+  [[nodiscard]] bool typecheckOneImported(std::size_t index, Module* prelude);
+  bool typecheckImported(Module* prelude);
   DiagnosticEngine diagnostics_{};
   std::unique_ptr<SourceManager> source_{};
   std::unique_ptr<Module> ast_{};

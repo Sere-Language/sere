@@ -1,4 +1,9 @@
 {
+  "Main": {
+    "prefix": "main",
+    "body": ["def main() -> i32:", "    ${0:return 0}"],
+    "description": "Program entry point"
+  },
   "Function": {
     "prefix": "def",
     "body": ["def ${1:name}(${2}) -> ${3:void}:", "    ${0:pass}"],
@@ -6,8 +11,12 @@
   },
   "Class": {
     "prefix": "class",
-    "body": ["class ${1:Name}:", "    ${0:pass}"],
-    "description": "Class definition"
+    "body": [
+      "class ${1:Name}:",
+      "    def __init__(self${2}) -> void:",
+      "        ${0:pass}"
+    ],
+    "description": "Class with __init__"
   },
   "Struct": {
     "prefix": "struct",
@@ -18,6 +27,11 @@
     "prefix": "enum",
     "body": ["enum ${1:Name}:", "    ${2:Variant}"],
     "description": "Enum definition"
+  },
+  "Type alias": {
+    "prefix": "type",
+    "body": ["type ${1:Name} = ${2:i32}"],
+    "description": "Type alias or union"
   },
   "For loop": {
     "prefix": "for",
@@ -36,8 +50,23 @@
   },
   "Try/except": {
     "prefix": "try",
-    "body": ["try:", "    ${1:pass}", "except ${2:Error}:", "    ${0:pass}"],
-    "description": "try/except"
+    "body": [
+      "try:",
+      "    ${1:pass}",
+      "except ${2:TypeError} as ${3:e}:",
+      "    ${0:print(e.message)}"
+    ],
+    "description": "try / except TypeError as e"
+  },
+  "Raise": {
+    "prefix": "raise",
+    "body": ["raise ${1:TypeError}(\"${2:message}\")"],
+    "description": "Raise a builtin exception"
+  },
+  "Exception class": {
+    "prefix": "exc",
+    "body": ["class ${1:Boom}(${2:Exception}):", "    pass"],
+    "description": "Custom exception subclass"
   },
   "Match": {
     "prefix": "match",
@@ -47,7 +76,12 @@
   "Macro": {
     "prefix": "macro",
     "body": ["macro ${1:name}(${2:x}):", "    quote:", "        ${0:$x}"],
-    "description": "Macro definition"
+    "description": "Quote macro"
+  },
+  "Import": {
+    "prefix": "import",
+    "body": ["from ${1:math} import ${2:sqrt}"],
+    "description": "from-import"
   },
   "Unique pointer": {
     "prefix": "unique",
@@ -64,9 +98,19 @@
     "body": ["alloc[${1:i32}]()"],
     "description": "Ptr[T] allocation"
   },
-  "Main": {
-    "prefix": "main",
-    "body": ["def main() -> i32:", "    ${0:return 0}"],
-    "description": "Program entry point"
+  "Parse": {
+    "prefix": "parse",
+    "body": ["parse[${1:i32}](${2:text})"],
+    "description": "Parse a string as T"
+  },
+  "Try parse": {
+    "prefix": "try_parse",
+    "body": ["try_parse[${1:i32}](${2:text})"],
+    "description": "Parse a string as T | None"
+  },
+  "Type ignore": {
+    "prefix": "ignore",
+    "body": ["# type[${1:NameError}]: ignore"],
+    "description": "Suppress a diagnostic"
   }
 }

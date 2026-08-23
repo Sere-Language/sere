@@ -243,7 +243,46 @@ void collectLinkLibraries(const std::filesystem::path& directory,
   return manifest;
 }
 
+void copyStdlibTree(const std::filesystem::path& from, const std::filesystem::path& to) {
+  std::error_code error;
+  if (!stdlibUsable(from) || from.empty() || to.empty() || samePath(from, to)) {
+    return;
+  }
+  std::filesystem::create_directories(to, error);
+  std::filesystem::copy(from, to,
+                        std::filesystem::copy_options::recursive |
+                            std::filesystem::copy_options::overwrite_existing,
+                        error);
+}
+
 }  // namespace
+
+void copyIfPresent(const std::filesystem::path& from, const std::filesystem::path& to) {
+  std::error_code error;
+  if (!std::filesystem::exists(from, error)) {
+    return;
+  }
+  std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing, error);
+}
+
+void prepareProjectStdlib(const ProjectManifest& manifest) {
+  if (!stdlibUsable(manifest.stdlib)) {
+    copyStdlibTree(findStdlibDirectory(compilerDirectory()), manifest.stdlib);
+  }
+  const std::filesystem::path dest = manifest.root / "venv" / "bin";
+  const std::filesystem::path from = compilerDirectory();
+  std::error_code error;
+  std::filesystem::create_directories(dest, error);
+  if (!std::filesystem::exists(dest / "sere.exe", error) &&
+      !std::filesystem::exists(dest / "sere", error)) {
+    copyIfPresent(from / "sere.exe", dest / "sere.exe");
+    copyIfPresent(from / "sere", dest / "sere");
+  }
+  for (const char* name :
+       {"sere_rt.lib", "sere_qt6.lib", "sere_qt6.dll", "Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll"}) {
+    copyIfPresent(from / name, dest / name);
+  }
+}
 
 std::optional<std::filesystem::path> findProjectRoot(const std::filesystem::path& start) {
   std::error_code error;
@@ -371,8 +410,12 @@ int buildProject(const CompilerOptions& options) {
       llvm::errs() << "note: native library build failed; continuing with Sere sources\n";
     }
   }
-  if (std::getenv("SERE_STDLIB") == nullptr) {
-    setEnvironmentVariable("SERE_STDLIB", manifest->stdlib.string());
+  prepareProjectStdlib(*manifest);
+  const std::filesystem::path stdlib = stdlibUsable(manifest->stdlib)
+                                           ? manifest->stdlib
+                                           : findStdlibDirectory(compilerDirectory());
+  if (stdlibUsable(stdlib)) {
+    setEnvironmentVariable("SERE_STDLIB", stdlib.string());
   }
   const CompilerOptions compile = compileOptionsFor(*manifest, options);
   std::cout << "sere build " << manifest->name << " -> " << compile.outputPath.string() << '\n';

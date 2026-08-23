@@ -68,6 +68,8 @@ TypeContext::TypeContext() {
   internPrimitive("str");
   internPrimitive("regex");
   internPrimitive("never");
+  internPrimitive("None");
+  internPrimitive("Any");
   static_cast<void>(defineAlias("byte", primitive("u8")));
 }
 
@@ -207,6 +209,12 @@ void TypeContext::setRecordStruct(const Type* record, bool isStruct) {
 void TypeContext::setRecordFrozen(const Type* record, bool isFrozen) {
   if (Type* writableRecord = writable(record)) {
     writableRecord->isFrozen_ = isFrozen;
+  }
+}
+
+void TypeContext::setRecordFlags(const Type* record, bool isFlags) {
+  if (Type* writableRecord = writable(record)) {
+    writableRecord->isFlags_ = isFlags;
   }
 }
 
@@ -420,6 +428,10 @@ const Type* TypeContext::neverType() const { return primitive("never"); }
 
 const Type* TypeContext::voidType() const { return primitive("void"); }
 
+const Type* TypeContext::noneType() const { return primitive("None"); }
+
+const Type* TypeContext::anyType() const { return primitive("Any"); }
+
 const Type* TypeContext::boolType() const { return primitive("bool"); }
 
 const Type* TypeContext::i32Type() const { return primitive("i32"); }
@@ -476,6 +488,24 @@ const Type* TypeContext::unionType(std::vector<const Type*> members) {
       if (existing == member) {
         seen = true;
         break;
+      }
+    }
+    if (member->isAny()) {
+      return anyType();
+    }
+    if (member->isVoidLike()) {
+      bool replaced = false;
+      for (const Type*& existing : unique) {
+        if (existing->isVoidLike()) {
+          if (existing->isNamed("void") && member->isNamed("None")) {
+            existing = member;
+          }
+          replaced = true;
+          break;
+        }
+      }
+      if (replaced) {
+        continue;
       }
     }
     if (!seen) {

@@ -31,5 +31,9 @@ Wizard tasks: user/system PATH, LLVM, C++ Build Tools if missing, Start Menu,
 After install, a new terminal should run `sere --version` and compile a
 `.sere` file without this git checkout or `scripts/bootstrap.ps1`.
 
+From a source checkout, `sere refresh-bin` (or **Sere: Refresh ./bin Compiler**)
+replaces `./bin/sere.exe` from the compiler that is currently running. CMake
+install also renames a locked `bin/sere.exe` out of the way.
+
 Building Sere **from source** still uses `scripts/bootstrap.ps1` and
 `scripts/env.ps1`. Those are developer scripts, not end-user steps.

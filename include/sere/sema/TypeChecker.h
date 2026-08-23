@@ -114,6 +114,8 @@ private:
   [[nodiscard]] const Type* iterableElementType(Expr& iterable);
   bool bindCollectionInit(Expr& init, const Type* dest);
   [[nodiscard]] bool isClassName(const Expr& expr);
+  [[nodiscard]] const Type* rewriteDunderBinary(BinaryExpr& expr, const Type* left,
+                                                const Type* right);
   [[nodiscard]] const Type* checkBinary(BinaryExpr& expr);
   [[nodiscard]] const Type* checkUnary(UnaryExpr& expr);
   [[nodiscard]] const Type* checkDeref(UnaryExpr& expr, const Type* operand);
@@ -123,8 +125,10 @@ private:
   [[nodiscard]] const Type* resolveSuperType(SourceRange range);
   [[nodiscard]] const Type* checkTernary(TernaryExpr& expr);
   [[nodiscard]] const Type* checkTuple(TupleExpr& expr);
-  [[nodiscard]] const Type* rewriteDunderBinary(BinaryExpr& expr, const Type* left,
-                                                const Type* right);
+  [[nodiscard]] const Type* checkWalrus(WalrusExpr& expr);
+  [[nodiscard]] const Type* checkLambda(LambdaExpr& expr);
+  [[nodiscard]] const Type* checkIndirectCall(CallExpr& expr, const Type* functionType);
+  bool checkWith(WithStmt& statement, const Type* expectedReturn);
   [[nodiscard]] std::optional<bool> constBool(const Expr& expr) const;
   bool checkIf(IfStmt& statement, const Type* expectedReturn);
   bool checkWhile(WhileStmt& statement, const Type* expectedReturn);
@@ -166,6 +170,8 @@ private:
   std::string moduleDoc_{};
   bool moduleDebug_ = true;
   std::string currentFunctionName_{};
+  int lambdaDepth_ = 0;
+  int lambdaCounter_ = 0;
 };
 
 }  // namespace sere

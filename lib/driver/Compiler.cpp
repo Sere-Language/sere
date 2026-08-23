@@ -1,5 +1,5 @@
 /// @file Compiler.cpp
-/// Runs the frontend pipeline and either writes LLVM IR or invokes clang to link.
+/// Runs the frontend pipeline and writes LLVM IR, native assembly, or a linked executable.
 
 #include "sere/driver/Compiler.h"
 
@@ -68,6 +68,9 @@ void dumpTokens(const std::vector<Token>& tokens) {
   if (options.emitLlvm) {
     return output.replace_extension(".ll");
   }
+  if (options.emitAsm) {
+    return output.replace_extension(".s");
+  }
   return output.replace_extension(".exe");
 }
 
@@ -122,6 +125,28 @@ void copyBesideOutput(const std::filesystem::path& from, const std::filesystem::
   std::error_code error;
   std::filesystem::copy_file(from, destDir / from.filename(),
                              std::filesystem::copy_options::overwrite_existing, error);
+}
+
+[[nodiscard]] int emitAssembly(const std::filesystem::path& irPath,
+                               const std::filesystem::path& outputPath) {
+  const std::optional<std::string> clang = findClang();
+  if (!clang.has_value()) {
+    llvm::errs() << "error: clang not found; re-run the Sere installer or scripts/bootstrap.ps1\n";
+    return 1;
+  }
+  prependLlvmToolsToPath();
+  const std::string clangPath = *clang;
+  const std::vector<std::string> owned{clangPath, "-S", "-x", "ir", "-O0", irPath.string(), "-o",
+                                       outputPath.string()};
+  llvm::SmallVector<llvm::StringRef, 8> arguments;
+  for (const std::string& item : owned) {
+    arguments.push_back(item);
+  }
+  const int code = llvm::sys::ExecuteAndWait(clangPath, arguments);
+  if (code != 0) {
+    llvm::errs() << "error: clang -S failed with exit code " << code << '\n';
+  }
+  return code;
 }
 
 [[nodiscard]] int linkExecutable(const std::filesystem::path& irPath,
@@ -263,7 +288,9 @@ int compileInput(const CompilerOptions& options) {
   }
 
   Frontend frontend;
-  const std::filesystem::path stdlibDir = findStdlibDirectory(compilerDirectory());
+  const LanguageContext language = resolveLanguageContext(options.inputPath);
+  const std::filesystem::path stdlibDir =
+      language.stdlib.empty() ? findStdlibDirectory(compilerDirectory()) : language.stdlib;
   const bool ok = frontend.analyze(options.inputPath.string(), *text, stdlibDir);
   frontend.diagnostics().setColorMode(options.colorMode);
   if (options.analyze) {
@@ -305,6 +332,21 @@ int compileInput(const CompilerOptions& options) {
     }
     llvm::outs() << "wrote " << outputPath.string() << '\n';
     return 0;
+  }
+  if (options.emitAsm) {
+    const std::filesystem::path irPath =
+        std::filesystem::temp_directory_path() / (options.inputPath.stem().string() + ".sere.ll");
+    std::string writeError;
+    if (!writeIr(*module, irPath, writeError)) {
+      frontend.diagnostics().error(writeError);
+      frontend.diagnostics().printAll();
+      return 1;
+    }
+    const int code = emitAssembly(irPath, outputPath);
+    if (code == 0) {
+      llvm::outs() << "wrote " << outputPath.string() << '\n';
+    }
+    return code;
   }
 
   const std::filesystem::path irPath =
@@ -356,6 +398,14 @@ int Compiler::run(const CompilerOptions& options) {
   }
   if (options.projectCommand == ProjectCommand::BuildInstaller) {
     return buildInstaller(options);
+  }
+  if (options.projectCommand == ProjectCommand::RefreshBin) {
+    std::string refreshError;
+    const int code = refreshCompilerBin({}, refreshError);
+    if (code != 0 && !refreshError.empty()) {
+      llvm::errs() << "error: " << refreshError << '\n';
+    }
+    return code;
   }
   return compileInput(options);
 }

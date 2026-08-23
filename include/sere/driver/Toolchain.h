@@ -22,5 +22,7 @@ void setEnvironmentVariable(std::string_view name, std::string_view value);
 /// Puts MSVC and Windows SDK lib dirs on LIB so clang can link without vcvars.
 void applyHostLinkEnvironment();
 [[nodiscard]] std::optional<std::filesystem::path> findSystemLibrary(std::string_view name);
+/// Copy this compiler, runtime, and stdlib into destBin (default: ./bin).
+[[nodiscard]] int refreshCompilerBin(const std::filesystem::path& destBin, std::string& error);
 
 }  // namespace sere

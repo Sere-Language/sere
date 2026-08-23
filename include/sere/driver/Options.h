@@ -20,12 +20,14 @@ enum class ProjectCommand {
   Clean,
   Shell,
   BuildInstaller,
+  RefreshBin,
 };
 
 struct CompilerOptions {
   std::filesystem::path inputPath;
   std::filesystem::path outputPath;
   bool emitLlvm = false;
+  bool emitAsm = false;
   bool dumpTokens = false;
   bool analyze = false;
   bool lsp = false;

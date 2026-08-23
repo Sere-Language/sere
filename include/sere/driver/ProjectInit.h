@@ -12,4 +12,7 @@ namespace sere {
                                   const std::filesystem::path& compilerDir,
                                   std::string& error);
 
+/// Rewrites venv/shell.* so `sere shell` never sources a user profile.
+void writeProjectShellRc(const std::filesystem::path& root);
+
 }  // namespace sere

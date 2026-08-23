@@ -49,6 +49,9 @@ struct LanguageContext {
 void appendLanguageContextDirs(std::vector<std::filesystem::path>& dirs,
                                const LanguageContext& context);
 
+/// Copies compiler stdlib into the project venv when prelude.sere is missing.
+void prepareProjectStdlib(const ProjectManifest& manifest);
+
 [[nodiscard]] int buildProject(const CompilerOptions& options);
 [[nodiscard]] int runProject(const CompilerOptions& options);
 [[nodiscard]] int cleanProject(const CompilerOptions& options);

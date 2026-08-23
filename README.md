@@ -1,19 +1,22 @@
 # Sere
 
-Sere is a compiled language with a Python-superset frontend and an LLVM 22 backend.
+Sere is a compiled **typed Python superset** with an LLVM 22 backend. It is not
+CPython: the CPython standard library, `async`/`yield`, `*args`, and capturing
+lambdas are out of scope. Unsupported constructs diagnose (often
+`NotImplementedError`) instead of generating silent wrong code.
 
-Programs are statically typed. `print` is a compiler intrinsic (also named in the prelude). It is not a statement.
+Programs are statically typed. Parameter and return types may be omitted
+(`Any`, except `main` infers `i32`). `print` is a compiler intrinsic (also
+named in the prelude). It is not a statement.
 
 ```python
+def greet(name):
+    print(f"hello {name}")
+
 def main() -> i32:
-    owned: Unique[i32] = unique[i32](42)
-    n: i32 = 0
-    while n < 3:
-        if n == 1:
-            n = n + 2
-        else:
-            n = n + 1
-    print("hello, sere")
+    xs = [1, 2, 3]
+    xs.append(4)
+    greet("sere")
     return 0
 ```
 
@@ -48,18 +51,31 @@ ctest --preset windows-clang-cl-relwithdebinfo --output-on-failure
 
 ```powershell
 .\bin\sere.exe init myapp
-.\myapp\scripts\activate
+cd myapp
+. .\scripts\activate.ps1
 sere build
 sere run
 deactivate
 ```
 
-`scripts/activate` opens a nested shell with the project compiler on `PATH`. Normal shell commands keep working. `sere build` compiles `src/main.sere`; `sere run` builds and executes `bin/<name>.exe`.
+Dot-source `scripts/activate.ps1` so this terminal stays put. `deactivate` restores `PATH` and the prompt; it does not close the window. Running `activate.ps1` without the leading `.` starts a clean nested `sere shell` instead.
+
+Put the compiler on `PATH` from the repo or a project:
+
+```powershell
+.\bin\sere-path.ps1              # this session
+.\bin\sere-path.ps1 -Persistent  # this session + your user PATH
+```
+
+`sere build` compiles `src/main.sere`; `sere run` builds and executes `bin/<name>.exe`.
+`sere refresh-bin` copies this compiler, runtime, and stdlib into `./bin` even
+when the previous `sere.exe` is locked (it is renamed to `sere.exe.old`).
 
 ## Compile a program
 
 ```powershell
 .\bin\sere.exe --emit-llvm examples\hello.sere -o hello.ll
+.\bin\sere.exe --emit-asm examples\hello.sere -o hello.s
 .\bin\sere.exe examples\hello.sere -o hello.exe
 .\hello.exe
 ```
@@ -132,7 +148,7 @@ Package a VSIX:
 .\scripts\package-vsix.ps1
 ```
 
-That writes `editors/vscode/sere-0.1.1.vsix`. In Cursor / VS Code: **Extensions → … → Install from VSIX…** and choose that file. Reload the window. `sere.compilerPath` in `.vscode/settings.json` already points at the RelWithDebInfo `sere.exe`.
+That writes `editors/vscode/sere-0.2.0.vsix` and `dist/sere-0.2.0.vsix`. In Cursor / VS Code: **Extensions → … → Install from VSIX…** and choose that file. Reload the window. `sere.compilerPath` in `.vscode/settings.json` already points at the RelWithDebInfo `sere.exe`.
 
 ## Windows installer
 
@@ -154,10 +170,10 @@ runtime/        heap, collectors, shared boxes, lists, print
 stdlib/         prelude plus io, fs, gc, heap, random, hash, sys, and more
 tools/sere/     sere executable (CLI, compiler, LSP, installer driver)
 tests/          LLVM, lexer, parser, sema, macros, example emit
-examples/       hello, structs, enums, strings, macros, dunders, errors, introspect
-bin/            local sere.exe after a build (gitignored convenience copy)
+examples/       hello, structs, enums, strings, macros, dunders, errors, gl, introspect
+bin/            local sere.exe after a build, plus sere-path PATH helpers
 editors/vscode  language grammar, LSP client, and .vsix
-scripts/        bootstrap, environment activation, Inno Setup helper
+scripts/        bootstrap, sere-path, project activate templates, Inno Setup helper
 cmake/          LLVM discovery and warning policy
 docs/           language reference plus compiler internals handbook
 packaging/      Windows installer templates

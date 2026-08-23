@@ -209,7 +209,8 @@ std::vector<std::filesystem::path> importSearchDirs(const std::filesystem::path&
 }
 
 std::filesystem::path resolveImportFile(const std::vector<std::filesystem::path>& searchDirs,
-                                        const std::vector<std::string>& parts) {
+                                        const std::vector<std::string>& parts,
+                                        const std::filesystem::path& skipFile) {
   std::filesystem::path relative;
   for (const std::string& part : parts) {
     relative /= part;
@@ -221,9 +222,13 @@ std::filesystem::path resolveImportFile(const std::vector<std::filesystem::path>
     }
     const std::filesystem::path candidate = directory / relative;
     std::error_code error;
-    if (std::filesystem::exists(candidate, error) && !error) {
-      return std::filesystem::weakly_canonical(candidate, error);
+    if (!std::filesystem::exists(candidate, error) || error) {
+      continue;
     }
+    if (!skipFile.empty() && namesEqual(candidate, skipFile)) {
+      continue;
+    }
+    return std::filesystem::weakly_canonical(candidate, error);
   }
   return {};
 }

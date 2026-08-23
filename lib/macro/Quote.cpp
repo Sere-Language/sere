@@ -481,6 +481,32 @@ std::unique_ptr<Expr> cloneExpr(const Expr& expr) {
   case NodeKind::TupleExpr:
     return std::make_unique<TupleExpr>(expr.range(),
                                        cloneExprs(static_cast<const TupleExpr&>(expr).elements()));
+  case NodeKind::WalrusExpr: {
+    const auto& walrus = static_cast<const WalrusExpr&>(expr);
+    return std::make_unique<WalrusExpr>(expr.range(), walrus.name(), cloneExpr(walrus.value()));
+  }
+  case NodeKind::LambdaExpr: {
+    const auto& lambda = static_cast<const LambdaExpr&>(expr);
+    std::vector<ParamDecl> params;
+    for (const ParamDecl& param : lambda.params()) {
+      ParamDecl copy;
+      copy.name = param.name;
+      copy.range = param.range;
+      if (param.type != nullptr) {
+        copy.type = cloneTypeExpr(*param.type);
+      }
+      if (param.defaultValue != nullptr) {
+        copy.defaultValue = cloneExpr(*param.defaultValue);
+      }
+      params.push_back(std::move(copy));
+    }
+    std::unique_ptr<TypeExpr> ret =
+        lambda.returnType() == nullptr ? nullptr : cloneTypeExpr(*lambda.returnType());
+    auto copy = std::make_unique<LambdaExpr>(expr.range(), std::move(params),
+                                             cloneExpr(lambda.body()), std::move(ret));
+    copy->setLlvmName(lambda.llvmName());
+    return copy;
+  }
   case NodeKind::InterpolatedStringExpr: {
     const auto& interpolated = static_cast<const InterpolatedStringExpr&>(expr);
     std::vector<StringPart> parts;
@@ -512,8 +538,9 @@ std::unique_ptr<Stmt> cloneStmt(const Stmt& stmt) {
   case NodeKind::VarDecl: {
     const auto& decl = static_cast<const VarDecl&>(stmt);
     std::unique_ptr<Expr> init = decl.init() == nullptr ? nullptr : cloneExpr(*decl.init());
-    return std::make_unique<VarDecl>(stmt.range(), decl.name(), cloneTypeExpr(decl.type()),
-                                     std::move(init), decl.isStatic());
+    std::unique_ptr<TypeExpr> type = decl.hasType() ? cloneTypeExpr(decl.type()) : nullptr;
+    return std::make_unique<VarDecl>(stmt.range(), decl.name(), std::move(type), std::move(init),
+                                     decl.isStatic(), decl.isConst());
   }
   case NodeKind::AssignStmt: {
     const auto& assign = static_cast<const AssignStmt&>(stmt);
@@ -578,6 +605,17 @@ std::unique_ptr<Stmt> cloneStmt(const Stmt& stmt) {
     return std::make_unique<MacroInvokeStmt>(stmt.range(), invoke.name(), invoke.delimiter(),
                                              invoke.rawText(), invoke.rawRange(), invoke.tokens());
   }
+  case NodeKind::DelStmt:
+    return std::make_unique<DelStmt>(stmt.range(),
+                                     cloneExpr(static_cast<const DelStmt&>(stmt).target()));
+  case NodeKind::DeferStmt:
+    return std::make_unique<DeferStmt>(stmt.range(),
+                                       cloneStmts(static_cast<const DeferStmt&>(stmt).body()));
+  case NodeKind::WithStmt: {
+    const auto& withStmt = static_cast<const WithStmt&>(stmt);
+    return std::make_unique<WithStmt>(stmt.range(), cloneExpr(withStmt.context()), withStmt.name(),
+                                      cloneStmts(withStmt.body()));
+  }
   default:
     return std::make_unique<PassStmt>(stmt.range());
   }
@@ -605,8 +643,9 @@ std::vector<std::unique_ptr<Stmt>> substStmts(const std::vector<std::unique_ptr<
       const auto& decl = static_cast<const VarDecl&>(*cloned);
       std::unique_ptr<Expr> init =
           decl.init() == nullptr ? nullptr : substOne(*decl.init(), env, callSite);
-      out.push_back(std::make_unique<VarDecl>(callSite, decl.name(), cloneTypeExpr(decl.type()),
-                                              std::move(init), decl.isStatic()));
+      std::unique_ptr<TypeExpr> type = decl.hasType() ? cloneTypeExpr(decl.type()) : nullptr;
+      out.push_back(std::make_unique<VarDecl>(callSite, decl.name(), std::move(type), std::move(init),
+                                              decl.isStatic(), decl.isConst()));
       continue;
     }
     if (cloned->kind() == NodeKind::ReturnStmt) {

@@ -112,8 +112,8 @@ not  or  pass  raise  return  static  struct  super
 try  type  while  with
 ```
 
-`const`, `lambda`, and `with` are reserved words. They are not implemented as
-syntax yet.
+`const` binds a readonly name. `lambda` is an anonymous function. `with`
+requires `__enter__` / `__exit__` on the context type.
 
 ### Literals
 
@@ -133,11 +133,12 @@ Arithmetic: `+ - * / // % **`
 Bitwise: `& | ^ ~ << >>`  
 Comparison: `== != < <= > >=` `is` `in`  
 Boolean: `and` `or` `not`  
-Assignment: `=` `+=` `-=` `*=` `/=` `%=` `&=` `|=` `^=` `<<=` `>>=`  
+Assignment: `=` `+=` `-=` `*=` `/=` `//=` `%=` `**=` `&=` `|=` `^=` `<<=` `>>=`  
 Inc/dec: `++n` `n++` `--n` `n--`  
 Pointers: `&x` `*p`  
 Cast: `value as T`  
 Call/index: `f(x)` `xs[i]` `xs[a:b]`  
+Walrus: `name := expr`  
 Other: `.` `,` `:` `->` `=>` `!` `$` `@` `...` `|` (unions and bitwise or)
 
 `/` is true division. `//` is floor division.
@@ -306,11 +307,30 @@ for ch in hello:
 defer free(raw)
 defer:
     print("done")
-del name
+del xs[i]
+del table[key]
 ```
 
-Both parse and typecheck. Today `defer` runs its body **immediately** (it is not
-queued until function exit). `del` is a no-op at codegen.
+`defer` queues its body and runs it in reverse order on every `return` (and
+on the implicit return at the end of the function). `del` removes a list index
+or dict key. `del name` is a diagnostic.
+
+### `with` / `const` / `lambda` / tuples
+
+```sere
+const limit = 4
+pair = (1, 2)
+a, b = pair
+add1 = lambda (x: i32) -> i32: x + 1
+if (n := 3) > 0:
+    print(n)
+with Guard() as value:
+    print(value)
+```
+
+Untyped `lambda x: ...` parameters are `Any`. Lambdas do not capture enclosing
+locals; pass values as parameters. `with` calls `__enter__` and `__exit__` on
+one evaluated context object.
 
 ---
 
@@ -324,7 +344,9 @@ def identity[T](value: T) -> T:
     return value
 ```
 
-- Return type after `->` is required
+- Return type after `->` may be omitted: `main` infers `i32`, `__init__`
+  infers `void`, other functions infer `Any`
+- Parameter types may be omitted (`Any`)
 - Default arguments are allowed
 - Generic type parameters: `[T]` on `def` or `class`
 - Methods take `self` as the first parameter
@@ -417,7 +439,7 @@ enum Message:
 - `.name` → `str`, `.value` → discriminant, `i32(tone)` → tag
 - `Color.variants()` → `list[str]`
 - `tone is Color.Green` compares identity of the variant
-- `@flags` on an enum marks it as a flag set
+- `@flags` on an enum marks it as a flag set; `Flag.A in mask` is a bitwise test
 
 ### Dunder methods
 
@@ -429,6 +451,7 @@ If a type defines these, the corresponding syntax uses them:
 | `__len__` | `len(x)` |
 | `__getitem__` / `__setitem__` | `x[i]` / `x[i] = v` |
 | `__contains__` | `v in x` |
+| `__enter__` / `__exit__` | `with x as name:` |
 | `__add__` / `__radd__` and other arithmetic | `+ - * / // % **` and comparisons |
 
 ---
@@ -716,7 +739,7 @@ Import the rest:
 | `util` | Tiny helpers (`double`); used by import examples |
 | `html_lang` | `html:` raw macro + `Html` |
 | `windows` | Win32 message box, beep, clipboard, … (stub off Windows) |
-| `gl` | OpenGL window (real on Windows WGL) |
+| `gl` | OpenGL 2.1+ (WGL window, shaders, VBO/VAO, textures, FBO, input) |
 | `qt6` | Qt 6 widgets; linked automatically if the compiler was built with Qt |
 
 Failed C bindings typically return `""` / `0` / `False` rather than throwing.
@@ -790,15 +813,15 @@ are `ValueError`.
 
 ## Reserved, not implemented
 
-These are keywords, tokens, or half-wired AST. Do not rely on them:
+Sere is a **typed Python superset**, not CPython. These remain out of scope or
+incomplete. They diagnose instead of generating silent wrong code:
 
-- `lambda`, `with`, `const` — reserved, no syntax
-- Walrus `:=` — token exists; not parsed as an expression
-- `//=` and `**=` — lexed, not parsed as assignment
-- Tuples `(a, b)` — AST/codegen exist; the parser does not build them
-- `defer` — body runs now, not at function exit
-- `del` — accepted, no codegen
-- `@flags` — accepted, unused
+- `*args` / `**kwargs`, keyword-only parameters, `global` / `nonlocal`
+- Nested `def`, `async` / `await`, `yield`
+- Unmodified CPython stdlib (use Sere modules such as `requests` and `wsgi`)
+- Lambda capture of enclosing locals (pass parameters instead)
+- `del name` (only `del xs[i]` / `del d[k]`)
+- `print x` as a statement (`print` is a call)
 
 If a construct parses but lowering is incomplete, you get
 `NotImplementedError` rather than silent wrong code.
@@ -835,8 +858,13 @@ Under `examples/`:
 | `numeric.sere` | vec, matrix, ml, bytes |
 | `gc_mem.sere` | collectors, arenas, pools |
 | `qt6_app.sere` | Qt widgets |
-| `gl_info.sere` / `platform.sere` | GL / host flags |
+| `gl_info.sere` / `gl_triangle.sere` / `platform.sere` | GL API surface / triangle / host flags |
 | `colors.sere` | unit enum |
+| `pythonish.sere` | untyped params, inferred locals, `const`, `//=` `**=` |
+| `walrus.sere` / `lambda.sere` / `tuples.sere` | `:=`, lambda, tuple unpack |
+| `defer.sere` / `with_ctx.sere` / `del_list.sere` | defer, with, del |
+| `flags_enum.sere` | `@flags` and `in` |
+| `requests.sere` / `wsgi.sere` | HTTP client and WSGI-shaped server types |
 
 Internals of the compiler: [README.md](README.md) in this folder.
 How to add a keyword or module: [extending.md](extending.md).

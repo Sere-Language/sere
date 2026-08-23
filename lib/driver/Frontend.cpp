@@ -195,6 +195,44 @@ void bindModuleExports(TypeChecker& checker,
   }
 }
 
+void bindPreludeExports(TypeChecker& checker, Module& prelude) {
+  for (std::unique_ptr<Stmt>& item : prelude.statements()) {
+    if (item == nullptr) {
+      continue;
+    }
+    Symbol symbol;
+    if (item->kind() == NodeKind::ClassDef) {
+      auto& classDef = static_cast<ClassDef&>(*item);
+      symbol.kind = SymbolKind::Class;
+      symbol.type = classDef.resolvedType();
+      (void)checker.importSymbol(classDef.name(), symbol, classDef.range().start);
+    } else if (item->kind() == NodeKind::EnumDef) {
+      auto& enumDef = static_cast<EnumDef&>(*item);
+      symbol.kind = SymbolKind::Class;
+      symbol.type = enumDef.resolvedType();
+      (void)checker.importSymbol(enumDef.name(), symbol, enumDef.range().start);
+    } else if (item->kind() == NodeKind::TypeAlias) {
+      auto& alias = static_cast<TypeAlias&>(*item);
+      symbol.kind = SymbolKind::Type;
+      symbol.type = alias.resolvedType();
+      (void)checker.importSymbol(alias.name(), symbol, alias.range().start);
+    } else if (item->kind() == NodeKind::FunctionDef) {
+      auto& function = static_cast<FunctionDef&>(*item);
+      symbol.kind = SymbolKind::Function;
+      symbol.type = function.resolvedType();
+      symbol.function = &function;
+      (void)checker.importSymbol(function.name(), symbol, function.range().start);
+    } else if (item->kind() == NodeKind::MacroDef) {
+      auto& macro = static_cast<MacroDef&>(*item);
+      symbol.kind = SymbolKind::Macro;
+      symbol.paramNames = macro.params();
+      symbol.typeDisplay = formatMacro(macro);
+      symbol.snippet = macroSnippet(macro);
+      (void)checker.importSymbol(macro.name(), symbol, macro.range().start);
+    }
+  }
+}
+
 }  // namespace
 
 bool Frontend::analyze(const std::string& path,
@@ -240,7 +278,19 @@ bool Frontend::analyze(const std::string& path,
   }
   (void)expander.expandModule(*ast_);
   types_ = std::make_unique<TypeContext>();
-  (void)typecheckImported(stdlib);
+  std::unique_ptr<Module> preludeChecked;
+  if (!stdlib.empty()) {
+    preludeChecked = parsePrelude(diagnostics_, stdlib);
+    if (preludeChecked == nullptr) {
+      return false;
+    }
+    TypeChecker preludeChecker(*types_, diagnostics_);
+    preludeChecker.setModuleInfo((stdlib / "prelude.sere").string(), "prelude", "", "", true);
+    if (!preludeChecker.check(*preludeChecked)) {
+      return false;
+    }
+  }
+  (void)typecheckImported(preludeChecked.get());
   checker_ = std::make_unique<TypeChecker>(*types_, diagnostics_);
   checker_->setModuleInfo(absolutePath(path), "__main__", "", moduleDocstring(*ast_), true);
   std::vector<const ImportStmt*> imports;
@@ -278,7 +328,7 @@ bool Frontend::loadImports(const std::filesystem::path& origin,
       continue;
     }
     const std::filesystem::path file =
-        resolveImportFile(searchDirs, statement->modulePath());
+        resolveImportFile(searchDirs, statement->modulePath(), origin);
     if (file.empty()) {
       diagnostics_.error(statement->range(), "cannot find module '" + key + "'");
       return false;
@@ -321,12 +371,15 @@ bool Frontend::importsReady(std::size_t index, const std::vector<char>& done) co
   return true;
 }
 
-bool Frontend::typecheckOneImported(std::size_t index) {
+bool Frontend::typecheckOneImported(std::size_t index, Module* prelude) {
   DiagnosticSourceScope scope(diagnostics_, importSources_[index].get());
   TypeChecker checker(*types_, diagnostics_);
   const std::string file = absolutePath(importPaths_[index].string());
   const std::string name = importPaths_[index].stem().string();
   checker.setModuleInfo(file, name, "", moduleDocstring(*imported_[index]), true);
+  if (prelude != nullptr) {
+    bindPreludeExports(checker, *prelude);
+  }
   std::vector<const ImportStmt*> imports;
   collectImportStmts(*imported_[index], imports);
   for (const ImportStmt* statement : imports) {
@@ -348,8 +401,7 @@ bool Frontend::typecheckOneImported(std::size_t index) {
   return true;
 }
 
-bool Frontend::typecheckImported(const std::filesystem::path& stdlibDir) {
-  (void)stdlibDir;
+bool Frontend::typecheckImported(Module* prelude) {
   std::vector<char> done(imported_.size(), 0);
   std::size_t remaining = imported_.size();
   while (remaining > 0) {
@@ -358,7 +410,7 @@ bool Frontend::typecheckImported(const std::filesystem::path& stdlibDir) {
       if (done[index] != 0 || !importsReady(index, done)) {
         continue;
       }
-      if (!typecheckOneImported(index)) {
+      if (!typecheckOneImported(index, prelude)) {
         return false;
       }
       done[index] = 1;
@@ -372,7 +424,7 @@ bool Frontend::typecheckImported(const std::filesystem::path& stdlibDir) {
       if (done[index] != 0) {
         continue;
       }
-      if (!typecheckOneImported(index)) {
+      if (!typecheckOneImported(index, prelude)) {
         return false;
       }
       done[index] = 1;

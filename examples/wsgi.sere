@@ -1,0 +1,8 @@
+import wsgi
+
+def main() -> i32:
+    app = wsgi.Handler()
+    env = wsgi.Environ("GET", "/", "")
+    resp = app.handle(env)
+    print(resp.status)
+    return 0

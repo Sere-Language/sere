@@ -31,6 +31,8 @@ enum class IntrinsicKind {
   AlignOf,
   Panic,
   Super,
+  Parse,
+  TryParse,
 };
 
 [[nodiscard]] std::string_view intrinsicName(IntrinsicKind kind);

@@ -20,20 +20,25 @@ void printUsage(std::string& error) {
       "  run [-- <args>]     Build and run the project executable\n"
       "  clean               Remove bin/ artifacts\n"
       "  shell               Enter the Sere project shell\n"
+      "  refresh-bin         Copy this compiler into ./bin (stdlib and runtime too)\n"
       "  build-installer     Package a Windows installer (compiler, LLVM, stdlib, editor)\n"
       "\n"
       "After init:\n"
-      "  ./<name>/scripts/activate     enter the project shell\n"
-      "  sere build                    compile src/main.sere\n"
-      "  sere run                      build and run\n"
+      "  . ./<name>/scripts/activate.ps1   activate in this terminal\n"
+      "  .\\bin\\sere-path.ps1 -Persistent put the compiler on your user PATH\n"
+      "  sere build                       compile src/main.sere\n"
+      "  sere run                         build and run\n"
+      "  deactivate                       leave the project (does not exit)\n"
       "\n"
       "Compiler options:\n"
       "  --help              Show this help\n"
       "  --version           Show version\n"
       "  --emit-llvm         Write LLVM IR instead of linking an executable\n"
+      "  --emit-asm, -S      Write native assembly instead of linking an executable\n"
       "  --dump-tokens       Print lexer tokens\n"
       "  --analyze           Print JSON diagnostics and stop\n"
       "  --lsp               Run the language server on stdin/stdout\n"
+      "  --refresh-bin       Same as refresh-bin\n"
       "  --build-installer   Same as build-installer\n"
       "  --init <name>       Same as init\n"
       "  --host <shell>      Shell to nest: powershell, cmd, bash (shell command)\n"
@@ -76,6 +81,10 @@ void printUsage(std::string& error) {
     command = ProjectCommand::BuildInstaller;
     return true;
   }
+  if (argument == "refresh-bin" || argument == "self-update") {
+    command = ProjectCommand::RefreshBin;
+    return true;
+  }
   return false;
 }
 
@@ -106,6 +115,10 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
       options.emitLlvm = true;
       continue;
     }
+    if (argument == "--emit-asm" || argument == "-S") {
+      options.emitAsm = true;
+      continue;
+    }
     if (argument == "--dump-tokens") {
       options.dumpTokens = true;
       continue;
@@ -116,6 +129,10 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
     }
     if (argument == "--lsp") {
       options.lsp = true;
+      continue;
+    }
+    if (argument == "--refresh-bin") {
+      options.projectCommand = ProjectCommand::RefreshBin;
       continue;
     }
     if (argument == "--build-installer") {
@@ -247,6 +264,10 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
   }
   if (options.projectCommand == ProjectCommand::Init && options.initName.empty()) {
     options.initName = "sere-project";
+  }
+  if (options.emitLlvm && options.emitAsm) {
+    error = "cannot combine --emit-llvm and --emit-asm";
+    return false;
   }
   if (!options.help && !options.version && !options.lsp &&
       options.projectCommand == ProjectCommand::None && options.inputPath.empty()) {
