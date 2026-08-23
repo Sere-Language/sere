@@ -1,5 +1,0 @@
-
-def main() -> Int:
-    print("Hello, World!")
-    return 0
-

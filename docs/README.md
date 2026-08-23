@@ -9,7 +9,8 @@ This folder holds two kinds of docs:
 
 Sere is a **statically typed Python-superset** with an **LLVM 22** backend.
 The compiler is `sere` (`tools/sere`). The same binary also speaks LSP
-(`sere --lsp`) and drives project commands (`sere init|build|run|clean|shell`).
+(`sere --lsp`) and drives project commands
+(`sere init|init-lib|build|pack|run|clean|shell`).
 
 ## Read this first
 
@@ -23,7 +24,7 @@ The compiler is `sere` (`tools/sere`). The same binary also speaks LSP
 | Work on hover, completion, or highlighting | [lsp.md](lsp.md) |
 | Add or change `stdlib/*.sere` | [stdlib.md](stdlib.md) |
 | Add a test or example | [testing.md](testing.md) |
-| Package the Windows installer | [packaging.md](packaging.md) |
+| Package a zip install or the Windows wizard | [packaging.md](packaging.md) |
 | Send a patch | [../CONTRIBUTING.md](../CONTRIBUTING.md) |
 
 ## Mental model

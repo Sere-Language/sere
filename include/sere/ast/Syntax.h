@@ -82,12 +82,15 @@ public:
   [[nodiscard]] bool fromPrelude() const;
   void setResolvedType(const Type* type);
   void setFromPrelude(bool value);
+  [[nodiscard]] bool isPrivate() const;
+  void setPrivate(bool value);
 
 private:
   NodeKind kind_;
   SourceRange range_;
   const Type* resolvedType_ = nullptr;
   bool fromPrelude_ = false;
+  bool isPrivate_ = false;
 };
 
 class TypeExpr final : public Node {
@@ -114,11 +117,13 @@ public:
 
 class IntegerLiteral final : public Expr {
 public:
-  IntegerLiteral(SourceRange range, std::int64_t value);
+  IntegerLiteral(SourceRange range, std::int64_t value, bool isByte = false);
   [[nodiscard]] std::int64_t value() const;
+  [[nodiscard]] bool isByte() const;
 
 private:
   std::int64_t value_;
+  bool isByte_ = false;
 };
 
 class FloatLiteral final : public Expr {

@@ -57,6 +57,13 @@ compile_commands.json
 *.user
 *.suo
 
+# Release zip payload: ship the compiler, never commit LLVM trees
+/releases/**/toolchains/
+!/releases/**/*.exe
+!/releases/**/*.lib
+!/releases/**/*.dll
+!/releases/**/*.vsix
+
 # OS
 Thumbs.db
 Desktop.ini

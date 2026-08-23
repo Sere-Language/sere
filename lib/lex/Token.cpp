@@ -380,6 +380,13 @@ DecodedString decodeStringToken(std::string_view spelling) {
   return decoded;
 }
 
+bool isSingleQuotedLiteral(std::string_view spelling) {
+  if (spelling.size() < 2 || spelling.front() != '\'') {
+    return false;
+  }
+  return spelling.size() < 3 || spelling[1] != '\'' || spelling[2] != '\'';
+}
+
 namespace {
 
 [[nodiscard]] int numericDigitValue(char character) {

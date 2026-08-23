@@ -249,6 +249,46 @@ int main() {
     return fail("expected ProjectCommand::RefreshBin from --refresh-bin");
   }
 
+  sere::CompilerOptions initLib;
+  if (!parseArgs({"sere", "init-lib", "mathlib"}, initLib, error)) {
+    return fail("failed to parse init-lib");
+  }
+  if (initLib.projectCommand != sere::ProjectCommand::InitLib ||
+      initLib.initName.string() != "mathlib") {
+    return fail("expected InitLib mathlib");
+  }
+  sere::CompilerOptions initLibFlag;
+  if (!parseArgs({"sere", "--init-lib", "mathlib"}, initLibFlag, error)) {
+    return fail("failed to parse --init-lib");
+  }
+  if (initLibFlag.projectCommand != sere::ProjectCommand::InitLib) {
+    return fail("expected InitLib from --init-lib");
+  }
+  sere::CompilerOptions initWithLib;
+  if (!parseArgs({"sere", "init", "mathlib", "--lib"}, initWithLib, error)) {
+    return fail("failed to parse init --lib");
+  }
+  if (initWithLib.projectCommand != sere::ProjectCommand::InitLib ||
+      initWithLib.initName.string() != "mathlib") {
+    return fail("expected init --lib to become InitLib mathlib");
+  }
+  sere::CompilerOptions packCmd;
+  if (!parseArgs({"sere", "pack", "src/lib.sere", "-o", "dist/mathlib.slib"}, packCmd, error)) {
+    return fail("failed to parse pack");
+  }
+  if (packCmd.projectCommand != sere::ProjectCommand::Pack ||
+      packCmd.inputPath.generic_string() != "src/lib.sere" ||
+      packCmd.outputPath.generic_string() != "dist/mathlib.slib") {
+    return fail("expected pack src/lib.sere -o dist/mathlib.slib");
+  }
+  sere::CompilerOptions packFlag;
+  if (!parseArgs({"sere", "--pack"}, packFlag, error)) {
+    return fail("failed to parse --pack");
+  }
+  if (packFlag.projectCommand != sere::ProjectCommand::Pack) {
+    return fail("expected Pack from --pack");
+  }
+
   const std::filesystem::path temp =
       std::filesystem::temp_directory_path() / "sere-project-cli-test";
   std::error_code fsError;
@@ -292,6 +332,27 @@ int main() {
   if (const int contextCode = checkLanguageContext(project, temp); contextCode != 0) {
     std::filesystem::remove_all(temp, fsError);
     return contextCode;
+  }
+  const std::filesystem::path library = temp / "mathlib";
+  if (sere::initSereLibrary(library, error) != 0) {
+    std::cerr << error << '\n';
+    std::filesystem::remove_all(temp, fsError);
+    return fail("initSereLibrary failed");
+  }
+  if (!std::filesystem::exists(library / "src" / "lib.sere") ||
+      !std::filesystem::exists(library / "sere.toml")) {
+    std::filesystem::remove_all(temp, fsError);
+    return fail("init-lib did not write expected files");
+  }
+  sere::ProjectManifest libManifest;
+  if (!sere::loadProjectManifest(library, libManifest, error)) {
+    std::filesystem::remove_all(temp, fsError);
+    return fail("loadProjectManifest failed for library");
+  }
+  if (libManifest.kind != sere::ProjectKind::Lib || libManifest.name != "mathlib" ||
+      libManifest.entry.filename() != "lib.sere") {
+    std::filesystem::remove_all(temp, fsError);
+    return fail("library manifest should be kind=lib with src/lib.sere");
   }
   std::filesystem::remove_all(temp, fsError);
   return 0;

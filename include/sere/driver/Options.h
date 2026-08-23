@@ -15,7 +15,9 @@ namespace sere {
 enum class ProjectCommand {
   None = 0,
   Init,
+  InitLib,
   Build,
+  Pack,
   Run,
   Clean,
   Shell,
@@ -36,6 +38,7 @@ struct CompilerOptions {
   bool optOverridden = false;
   ProjectCommand projectCommand = ProjectCommand::None;
   std::filesystem::path initName;
+  bool initLibrary = false;
   std::string shellHost;
   std::vector<std::string> programArgs;
   std::vector<std::filesystem::path> linkLibraries;

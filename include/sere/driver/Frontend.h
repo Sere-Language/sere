@@ -36,6 +36,7 @@ public:
   [[nodiscard]] const TypeChecker* checker() const;
   [[nodiscard]] const std::vector<std::unique_ptr<Module>>& importedModules() const;
   [[nodiscard]] std::vector<std::string> importedModuleNames() const;
+  [[nodiscard]] const std::vector<std::filesystem::path>& importedModulePaths() const;
   [[nodiscard]] const std::vector<MacroUse>& macroUses() const;
 
 private:
@@ -51,6 +52,7 @@ private:
   std::vector<std::unique_ptr<SourceManager>> importSources_{};
   std::vector<std::unique_ptr<Module>> imported_{};
   std::vector<std::filesystem::path> importPaths_{};
+  std::vector<std::string> importNames_{};
   std::unordered_map<std::string, std::size_t> importIndex_{};
   std::vector<MacroUse> macroUses_{};
 };

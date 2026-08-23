@@ -175,6 +175,13 @@ Builtin names today: `none`, `mark_sweep`, `arena`.
 4. Implementation under `lib/driver/Project*.cpp`.
 5. `tests/project_cli.cpp`.
 
+Library projects: `sere init-lib` / `--init-lib` / `init --lib` write
+`kind = "lib"` and `src/lib.sere`. `sere pack` (also `--pack`, `build-lib`,
+and `sere build` on a lib) writes a `.slib` via `Library.h`. Pack keeps only
+reachable local modules and compiled native objects. Import resolution
+accepts `.slib` and folder libraries (`name/lib.sere`, `name/name.sere`) in
+`ImportPath.cpp`.
+
 ---
 
 ## 12. Add a test / example

@@ -5,15 +5,7 @@ CPython: the CPython standard library, `async`/`yield`, `*args`, and capturing
 lambdas are out of scope. Unsupported constructs diagnose (often
 `NotImplementedError`) instead of generating silent wrong code.
 
-<<<<<<< HEAD
-Programs are statically typed. Parameter and return types may be omitted
-(`Any`, except `main` infers `i32`). `print` is a compiler intrinsic (also
-named in the prelude). It is not a statement.
-=======
-(If you are here from reddit feel free to DM! I do need help)
-
-Programs are statically type `print` is a compiler intrinsic (also named in the prelude). It is not a statement.
->>>>>>> 77cb658842594c3698efab3c82feac095517520a
+Programs are statically typed. 
 
 ```python
 def greet(name):
@@ -76,6 +68,35 @@ Put the compiler on `PATH` from the repo or a project:
 `sere build` compiles `src/main.sere`; `sere run` builds and executes `bin/<name>.exe`.
 `sere refresh-bin` copies this compiler, runtime, and stdlib into `./bin` even
 when the previous `sere.exe` is locked (it is renamed to `sere.exe.old`).
+
+## Libraries
+
+Create a drop-in library, pack it into one `.slib` file, then copy that file
+into another project's `libs/` folder:
+
+```powershell
+sere init-lib mathlib
+cd mathlib
+sere pack
+copy dist\mathlib.slib ..\myapp\libs\
+```
+
+```python
+import mathlib
+
+def main() -> i32:
+    return mathlib.add(2, 3)
+```
+
+`sere --init-lib mathlib` and `sere init mathlib --lib` do the same as
+`init-lib`. `sere pack file.sere -o mathlib.slib` packs a single module
+without a project. `sere build` in a `kind = "lib"` project also writes the
+`.slib` that contains only the entry, the local modules it imports, and
+compiled native objects. Unused files next to the library are not packed.
+Native C/C++ under `libs/native` (when `native = true`) or loose `.c` / `.cpp`
+next to a folder library is compiled and stored in that same file. If you
+prefer not to pack, a folder `libs/mylib/` with `lib.sere` or `mylib.sere`
+plus native sources acts as the library.
 
 ## Compile a program
 
@@ -158,14 +179,15 @@ That writes `editors/vscode/sere-0.2.0.vsix` and `dist/sere-0.2.0.vsix`. In Curs
 
 ## Windows installer
 
-Package a full toolchain installer (compiler, LLVM 22.1.8, stdlib, runtime, optional Qt6, editor VSIX):
+A **manual / zip** release lives under [`releases/pre-0.1.0`](releases/pre-0.1.0/). Copy that folder or run its script:
 
 ```powershell
-.\scripts\bootstrap-innosetup.ps1
-sere --build-installer
+.\releases\stage.ps1              # refresh the folder from this build
+.\releases\pre-0.1.0\install.ps1  # copy to %LOCALAPPDATA%\Programs\Sere and PATH
 ```
 
-That writes `dist/Sere-<version>-setup.exe`. The wizard can add `sere` to PATH, install C++ build tools if they are missing, associate `.sere` files, and install the VS Code / Cursor extension (`sere --lsp`). After install, a new terminal can compile `.sere` programs without this repository. See [docs/packaging.md](docs/packaging.md).
+The Inno Setup wizard is a later option (`sere --build-installer` →
+`dist/Sere-<version>-setup.exe`). See [docs/packaging.md](docs/packaging.md).
 
 ## Layout
 
@@ -183,6 +205,7 @@ scripts/        bootstrap, sere-path, project activate templates, Inno Setup hel
 cmake/          LLVM discovery and warning policy
 docs/           language reference plus compiler internals handbook
 packaging/      Windows installer templates
+releases/       zip / copy install trees (pre-0.1.0, …)
 ```
 
 ## Documentation

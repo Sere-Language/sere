@@ -15,6 +15,7 @@
 #include <fstream>
 #include <optional>
 #include <sstream>
+#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -93,11 +94,43 @@ void collectImportStmts(const Module& module, std::vector<const ImportStmt*>& ou
   }
 }
 
+[[nodiscard]] std::string exportedName(const Stmt& item) {
+  if (item.kind() == NodeKind::FunctionDef) {
+    return static_cast<const FunctionDef&>(item).name();
+  }
+  if (item.kind() == NodeKind::ClassDef) {
+    return static_cast<const ClassDef&>(item).name();
+  }
+  if (item.kind() == NodeKind::EnumDef) {
+    return static_cast<const EnumDef&>(item).name();
+  }
+  if (item.kind() == NodeKind::TypeAlias) {
+    return static_cast<const TypeAlias&>(item).name();
+  }
+  if (item.kind() == NodeKind::MacroDef) {
+    return static_cast<const MacroDef&>(item).name();
+  }
+  if (item.kind() == NodeKind::VarDecl) {
+    return static_cast<const VarDecl&>(item).name();
+  }
+  return {};
+}
+
+[[nodiscard]] bool isPrivateNamed(const Module& module, std::string_view name) {
+  for (const std::unique_ptr<Stmt>& item : module.statements()) {
+    if (item != nullptr && item->isPrivate() && exportedName(*item) == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void bindModuleExports(TypeChecker& checker,
                        TypeContext& types,
                        Module& module,
                        const std::string& moduleName,
-                       const ImportStmt& statement) {
+                       const ImportStmt& statement,
+                       DiagnosticEngine& diagnostics) {
   std::vector<RecordField> exports;
   for (std::unique_ptr<Stmt>& item : module.statements()) {
     if (item->fromPrelude()) {
@@ -109,6 +142,7 @@ void bindModuleExports(TypeChecker& checker,
       RecordField field;
       field.name = function.name();
       field.type = function.resolvedType();
+      field.isPublic = !item->isPrivate();
       field.llvmName =
           function.isExtern() ? function.externName() : moduleName + "_" + function.name();
       for (const ParamDecl& param : function.params()) {
@@ -124,22 +158,26 @@ void bindModuleExports(TypeChecker& checker,
                        ? static_cast<ClassDef&>(*item).name()
                        : static_cast<EnumDef&>(*item).name();
       field.type = item->resolvedType();
+      field.isPublic = !item->isPrivate();
       exports.push_back(field);
     } else if (item->kind() == NodeKind::TypeAlias) {
       auto& alias = static_cast<TypeAlias&>(*item);
       RecordField field;
       field.name = alias.name();
       field.type = alias.resolvedType();
+      field.isPublic = !item->isPrivate();
       exports.push_back(field);
     } else if (item->kind() == NodeKind::MacroDef) {
       RecordField field;
       field.name = static_cast<MacroDef&>(*item).name();
+      field.isPublic = !item->isPrivate();
       exports.push_back(field);
     } else if (item->kind() == NodeKind::VarDecl) {
       auto& decl = static_cast<VarDecl&>(*item);
       RecordField field;
       field.name = decl.name();
       field.type = decl.resolvedType();
+      field.isPublic = !item->isPrivate();
       exports.push_back(field);
     }
   }
@@ -152,6 +190,26 @@ void bindModuleExports(TypeChecker& checker,
                          statement.range().start);
     return;
   }
+  if (!statement.star()) {
+    for (const std::string& name : statement.names()) {
+      const RecordField* found = nullptr;
+      for (const RecordField& field : moduleType->fields()) {
+        if (field.name == name) {
+          found = &field;
+          break;
+        }
+      }
+      if (found != nullptr && found->isPublic) {
+        continue;
+      }
+      if (found != nullptr || isPrivateNamed(module, name)) {
+        diagnostics.error(statement.range(), "'" + name + "' is private and is not exported");
+      } else {
+        diagnostics.error(statement.range(),
+                          "cannot import name '" + name + "' from '" + moduleName + "'");
+      }
+    }
+  }
   for (const RecordField& field : moduleType->fields()) {
     const bool wanted = statement.star();
     bool named = false;
@@ -159,6 +217,9 @@ void bindModuleExports(TypeChecker& checker,
       named = named || name == field.name;
     }
     if (!wanted && !named) {
+      continue;
+    }
+    if (!field.isPublic) {
       continue;
     }
     Symbol symbol;
@@ -245,6 +306,7 @@ bool Frontend::analyze(const std::string& path,
   imported_.clear();
   importSources_.clear();
   importPaths_.clear();
+  importNames_.clear();
   importIndex_.clear();
   macroUses_.clear();
   source_ = std::make_unique<SourceManager>(path, text);
@@ -302,7 +364,7 @@ bool Frontend::analyze(const std::string& path,
       continue;
     }
     bindModuleExports(*checker_, *types_, *imported_[found->second],
-                      importPaths_[found->second].stem().string(), *statement);
+                      importNames_[found->second], *statement, diagnostics_);
   }
   (void)checker_->check(*ast_);
   return !diagnostics_.hasErrors();
@@ -315,8 +377,12 @@ bool Frontend::loadImports(const std::filesystem::path& origin,
   }
   std::vector<const ImportStmt*> pending;
   collectImportStmts(*ast_, pending);
-  const std::filesystem::path originDir = std::filesystem::path(origin).parent_path();
-  const LanguageContext context = resolveLanguageContext(origin);
+  std::error_code pathError;
+  const std::filesystem::path originPath = std::filesystem::absolute(origin, pathError);
+  const std::filesystem::path originDir =
+      std::filesystem::is_regular_file(originPath, pathError) ? originPath.parent_path()
+                                                             : originPath;
+  const LanguageContext context = resolveLanguageContext(originPath);
   std::vector<std::filesystem::path> searchDirs = importSearchDirs(originDir, stdlibDir);
   appendLanguageContextDirs(searchDirs, context);
   std::vector<std::filesystem::path> visiting;
@@ -327,10 +393,15 @@ bool Frontend::loadImports(const std::filesystem::path& origin,
     if (importIndex_.contains(key)) {
       continue;
     }
+    std::string resolveError;
     const std::filesystem::path file =
-        resolveImportFile(searchDirs, statement->modulePath(), origin);
+        resolveImportFile(searchDirs, statement->modulePath(), originPath, &resolveError);
     if (file.empty()) {
-      diagnostics_.error(statement->range(), "cannot find module '" + key + "'");
+      if (!resolveError.empty()) {
+        diagnostics_.error(statement->range(), resolveError);
+      } else {
+        diagnostics_.error(statement->range(), "cannot find module '" + key + "'");
+      }
       return false;
     }
     const std::optional<std::string> text = readText(file);
@@ -353,6 +424,8 @@ bool Frontend::loadImports(const std::filesystem::path& origin,
     collectImportStmts(*module, pending);
     importIndex_[key] = imported_.size();
     importPaths_.push_back(file);
+    importNames_.push_back(statement->modulePath().empty() ? file.stem().string()
+                                                           : statement->modulePath().back());
     imported_.push_back(std::move(module));
     importSources_.push_back(std::move(source));
   }
@@ -375,7 +448,7 @@ bool Frontend::typecheckOneImported(std::size_t index, Module* prelude) {
   DiagnosticSourceScope scope(diagnostics_, importSources_[index].get());
   TypeChecker checker(*types_, diagnostics_);
   const std::string file = absolutePath(importPaths_[index].string());
-  const std::string name = importPaths_[index].stem().string();
+  const std::string name = importNames_[index];
   checker.setModuleInfo(file, name, "", moduleDocstring(*imported_[index]), true);
   if (prelude != nullptr) {
     bindPreludeExports(checker, *prelude);
@@ -387,8 +460,8 @@ bool Frontend::typecheckOneImported(std::size_t index, Module* prelude) {
     if (found == importIndex_.end()) {
       continue;
     }
-    bindModuleExports(checker, *types_, *imported_[found->second],
-                      importPaths_[found->second].stem().string(), *statement);
+    bindModuleExports(checker, *types_, *imported_[found->second], importNames_[found->second],
+                      *statement, diagnostics_);
   }
   if (!checker.check(*imported_[index])) {
     return false;
@@ -455,6 +528,10 @@ TypeChecker* Frontend::checker() { return checker_.get(); }
 const TypeChecker* Frontend::checker() const { return checker_.get(); }
 
 const std::vector<std::unique_ptr<Module>>& Frontend::importedModules() const { return imported_; }
+
+const std::vector<std::filesystem::path>& Frontend::importedModulePaths() const {
+  return importPaths_;
+}
 
 std::vector<std::string> Frontend::importedModuleNames() const {
   std::vector<std::string> names;

@@ -1,0 +1,38 @@
+# HTTP client with a requests-shaped API.
+#   import requests
+#   r = requests.get("https://example.com")
+#   print(r.status_code)
+# Failed requests return status 0 and empty text.
+
+extern "C" "sere_http_request"
+def _request(method: str, url: str, body: str, timeout_ms: i32) -> str
+
+extern "C" "sere_http_last_status"
+def _last_status() -> i32
+
+class Response:
+    status_code: i32
+    url: str
+    text: str
+    def __init__(self, status_code: i32, url: str, text: str) -> void:
+        self.status_code = status_code
+        self.url = url
+        self.text = text
+    def ok(self) -> bool:
+        return self.status_code >= 200 and self.status_code < 300
+
+def request(method: str, url: str, data: str = "", timeout_ms: i32 = 30000) -> Response:
+    text: str = _request(method, url, data, timeout_ms)
+    return Response(_last_status(), url, text)
+
+def get(url: str, timeout_ms: i32 = 30000) -> Response:
+    return request("GET", url, "", timeout_ms)
+
+def post(url: str, data: str = "", timeout_ms: i32 = 30000) -> Response:
+    return request("POST", url, data, timeout_ms)
+
+def put(url: str, data: str = "", timeout_ms: i32 = 30000) -> Response:
+    return request("PUT", url, data, timeout_ms)
+
+def delete(url: str, timeout_ms: i32 = 30000) -> Response:
+    return request("DELETE", url, "", timeout_ms)

@@ -1,0 +1,6 @@
+def main() -> i32:
+    xs = [1, 2, 3]
+    del xs[1]
+    ages: dict[str, i32] = {"ada": 36}
+    del ages["ada"]
+    return len(xs)

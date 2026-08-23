@@ -35,6 +35,9 @@ struct DecodedString {
 [[nodiscard]] std::string_view stringLiteralInner(std::string_view spelling);
 [[nodiscard]] DecodedString decodeStringToken(std::string_view spelling);
 
+/// True for `'...'` but not `'''...'''` or `"..."`.
+[[nodiscard]] bool isSingleQuotedLiteral(std::string_view spelling);
+
 enum class IntegerParseStatus {
   Ok,
   Invalid,

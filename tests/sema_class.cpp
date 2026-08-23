@@ -77,6 +77,57 @@ int main() {
   }
   sere::TypeContext inheritedTypes;
   sere::TypeChecker inheritedChecker(inheritedTypes, inheritedDiagnostics);
+  const std::string privateMethod =
+      "class Box:\n"
+      "    def __init__(self) -> void:\n"
+      "        pass\n"
+      "    @private def sneak(self) -> i32:\n"
+      "        return 7\n"
+      "    def ok(self) -> i32:\n"
+      "        return self.sneak()\n"
+      "def main() -> i32:\n"
+      "    b: Box = Box()\n"
+      "    return b.ok()\n";
+  sere::DiagnosticEngine privateOk;
+  sere::SourceManager privateOkSource("sema_private_ok.sere", privateMethod);
+  sere::Lexer privateOkLexer(privateOkSource, privateOk);
+  sere::Parser privateOkParser(privateOk, privateOkLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> privateOkModule = privateOkParser.parseModule();
+  if (privateOkModule == nullptr || privateOk.hasErrors()) {
+    privateOk.printAll(privateOkSource);
+    return fail("private method used inside its class should parse");
+  }
+  sere::TypeContext privateOkTypes;
+  sere::TypeChecker privateOkChecker(privateOkTypes, privateOk);
+  if (!privateOkChecker.check(*privateOkModule)) {
+    privateOk.printAll(privateOkSource);
+    return fail("private method used inside its class should typecheck");
+  }
+
+  const std::string privateLeak =
+      "class Box:\n"
+      "    def __init__(self) -> void:\n"
+      "        pass\n"
+      "    @private def sneak(self) -> i32:\n"
+      "        return 7\n"
+      "def main() -> i32:\n"
+      "    b: Box = Box()\n"
+      "    return b.sneak()\n";
+  sere::DiagnosticEngine privateBad;
+  sere::SourceManager privateBadSource("sema_private_bad.sere", privateLeak);
+  sere::Lexer privateBadLexer(privateBadSource, privateBad);
+  sere::Parser privateBadParser(privateBad, privateBadLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> privateBadModule = privateBadParser.parseModule();
+  if (privateBadModule == nullptr || privateBad.hasErrors()) {
+    privateBad.printAll(privateBadSource);
+    return fail("private leak sample failed to parse");
+  }
+  sere::TypeContext privateBadTypes;
+  sere::TypeChecker privateBadChecker(privateBadTypes, privateBad);
+  if (privateBadChecker.check(*privateBadModule) || !privateBad.hasErrors()) {
+    return fail("calling a private method from outside the class should fail");
+  }
+
   if (!inheritedChecker.check(*inheritedModule)) {
     inheritedDiagnostics.printAll(inheritedSource);
     return fail("super() should type check");

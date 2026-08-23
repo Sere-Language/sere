@@ -1,0 +1,21 @@
+enum Color:
+    Red
+    Green = 2
+    Blue
+
+def scale(value: i32, factor: i32 = 2) -> i32:
+    return value * factor
+
+def unused_helper() -> i32:
+    return 99
+
+def main() -> i32:
+    total: i32 = 0
+    for n in range(0, 4):
+        total += n
+    xs: list[i32] = [1, 2]
+    for item in xs:
+        total += item
+    tone: Color = Color.Green
+    assert tone is Color.Green
+    return total + scale(3) + Color.Red.value

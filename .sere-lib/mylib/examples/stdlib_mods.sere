@@ -1,0 +1,29 @@
+import fs
+import math
+import os
+import path
+import regex
+import string
+import time
+
+def main() -> i32:
+    joined: str = path.join("a", "b")
+    parent: str = path.dirname("a/b/c.txt")
+    base: str = path.basename("a/b/c.txt")
+    suffix: str = path.ext("c.txt")
+    absolute: bool = path.is_abs("/tmp")
+    root: f64 = math.sqrt(9 as f64)
+    up: str = string.upper("hi")
+    low: str = string.lower("HI")
+    trimmed: str = string.strip("  ok  ")
+    prefix: bool = string.starts_with("hello", "he")
+    has_el: bool = string.contains("hello", "el")
+    cwd: str = os.getcwd()
+    here: bool = fs.exists(".")
+    now: i64 = time.now_ms()
+    digits: bool = regex.is_match(`\d+`, "ab12")
+    found: str = regex.find(`\d+`, "ab12")
+    swapped: str = regex.replace(`ab`, "ab12", "xy")
+    print(joined, parent, base, suffix, absolute, root, up, low, trimmed, prefix, has_el, here, now)
+    print(cwd, digits, found, swapped)
+    return 0

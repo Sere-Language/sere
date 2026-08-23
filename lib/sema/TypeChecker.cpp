@@ -908,6 +908,11 @@ const Type* TypeChecker::checkMember(MemberExpr& expr) {
       reportUnknownMember(*diagnostics_, expr.range(), objectType, expr.field(), false);
       return nullptr;
     }
+    if (!exportField->isPublic) {
+      diagnostics_->error(expr.range(),
+                          "'" + expr.field() + "' is private and is not exported");
+      return nullptr;
+    }
     expr.setResolvedType(exportField->type);
     return exportField->type;
   }
@@ -2172,6 +2177,11 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
   const Type* objectType = checkExpr(member.object());
   if (objectType != nullptr && objectType->isModule()) {
     const RecordField* exported = objectType->findField(member.field());
+    if (exported != nullptr && !exported->isPublic) {
+      diagnostics_->error(expr.range(),
+                          "'" + member.field() + "' is private and is not exported");
+      return nullptr;
+    }
     if (exported != nullptr && exported->type != nullptr && exported->type->isRecord()) {
       return checkConstructor(expr, exported->type);
     }
@@ -2265,6 +2275,12 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
     return nullptr;
   }
   const RecordMethod& method = objectType->methods()[static_cast<std::size_t>(index)];
+  if (!method.isPublic && currentClass_ != objectType->name()) {
+    diagnostics_->error(expr.range(),
+                        "method '" + member.field() + "' of '" + objectType->name() +
+                            "' is private");
+    return nullptr;
+  }
   const Type* functionType = method.type;
   expr.setMethod(true);
   expr.setLoweredName(method.llvmName);
@@ -2307,9 +2323,12 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
 
 const Type* TypeChecker::checkExpr(Expr& expr) {
   switch (expr.kind()) {
-  case NodeKind::IntegerLiteral:
-    expr.setResolvedType(types_->i32Type());
-    return types_->i32Type();
+  case NodeKind::IntegerLiteral: {
+    const auto& literal = static_cast<const IntegerLiteral&>(expr);
+    const Type* type = literal.isByte() ? types_->i8Type() : types_->i32Type();
+    expr.setResolvedType(type);
+    return type;
+  }
   case NodeKind::FloatLiteral: {
     const auto& literal = static_cast<const FloatLiteral&>(expr);
     const Type* type = literal.isF32() ? types_->f32Type() : types_->f64Type();
@@ -3031,6 +3050,7 @@ bool TypeChecker::collectMethods(Module& module) {
       info.type = fnType;
       info.llvmName = classDef.name() + "_" + method->name();
       info.isAbstract = method->isAbstract();
+      info.isPublic = !method->isPrivate();
       bool sawDefault = false;
       for (std::size_t index = 0; index < method->params().size(); ++index) {
         const ParamDecl& param = method->params()[index];
@@ -3101,6 +3121,7 @@ bool TypeChecker::collectMethods(Module& module) {
       info.name = method->name();
       info.type = fnType;
       info.llvmName = enumDef.name() + "_" + method->name();
+      info.isPublic = !method->isPrivate();
       for (std::size_t index = 0; index < method->params().size(); ++index) {
         info.paramNames.push_back(method->params()[index].name);
         if (index > 0 && method->params()[index].defaultValue == nullptr) {

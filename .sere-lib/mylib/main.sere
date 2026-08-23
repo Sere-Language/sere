@@ -1,0 +1,7 @@
+import mylib 
+
+def main() -> Int:
+    mylib.this_is_private()
+    return 0
+
+main()

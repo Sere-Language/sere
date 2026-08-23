@@ -1,0 +1,35 @@
+class Counter:
+    @public
+    value: i32
+    @private
+    secret: i32
+    static total: i32 = 0
+
+    def __init__(self, value: i32) -> void:
+        self.value = value
+        self.secret = 1
+        Counter.total = Counter.total + 1
+
+    def hidden(self) -> i32:
+        return self.secret
+
+static module_count: i32 = 0
+
+def bump() -> i32:
+    static n: i32 = 0
+    n = n + 1
+    return n
+
+def main() -> i32:
+    xs: list[i32] = [1, 2, 3]
+    xs.append(4)
+    xs[0] = 10
+    arr: array[i32] = array[i32](1, 2, 3)
+    ages: dict[str, i32] = {"ada": 36}
+    ages["ada"] = 37
+    empty: dict[str, i32] = dict[str, i32]()
+    empty["linus"] = 55
+    c: Counter = Counter(5)
+    module_count = module_count + 1
+    print(len(xs), xs[1], arr[2], ages["ada"], empty["linus"], len(ages), c.value, c.hidden(), Counter.total, module_count, bump(), bump())
+    return 0

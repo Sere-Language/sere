@@ -50,7 +50,7 @@ const std::vector<DiagnosticCodeInfo>& diagnosticCodeCatalog() {
       {DiagnosticCode::AssertionError, "AssertionError",
        "Invalid assert statements."},
       {DiagnosticCode::PermissionError, "PermissionError",
-       "Access to private fields from outside the owning class."},
+       "Access to private fields, methods, or module exports from outside their owner."},
       {DiagnosticCode::RuntimeError, "RuntimeError",
        "Control-flow errors, codegen failures, and internal compiler stops."},
       {DiagnosticCode::RecursionError, "RecursionError",
@@ -104,7 +104,8 @@ DiagnosticCode inferDiagnosticCode(std::string_view message) {
   if (contains(message, "inconsistent indentation")) {
     return DiagnosticCode::IndentationError;
   }
-  if (contains(message, "cannot find module") || contains(message, "cannot load standard library")) {
+  if (contains(message, "cannot find module") || contains(message, "cannot load standard library") ||
+      contains(message, "cannot import name")) {
     return DiagnosticCode::ImportError;
   }
   if (contains(message, "recursion limit")) {

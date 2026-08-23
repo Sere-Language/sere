@@ -1,0 +1,48 @@
+class Named:
+    name: str
+
+class Animal:
+    @abstract
+    def speak(self) -> i32:
+        pass
+
+class Dog(Animal, Named):
+    @override
+    def speak(self) -> i32:
+        return 1
+
+class Pet:
+    name: str
+
+    def __init__(self, name: str) -> void:
+        self.name = name
+
+    def id(self) -> i32:
+        return 1
+
+class Cat(Pet):
+    def __init__(self, name: str) -> void:
+        super().__init__(name)
+
+    def id(self) -> i32:
+        return super().id() + 1
+
+class Box[T]:
+    value: T
+
+    def get(self) -> T:
+        return self.value
+
+def identity[T](value: T) -> T:
+    return value
+
+def main() -> i32:
+    n: i32 = 1
+    n += 2
+    ++n
+    n++
+    n *= 1
+    d: Dog = Dog()
+    boxed: Box[i32] = Box[i32](4)
+    c: Cat = Cat("z")
+    return n + d.speak() + boxed.get() + identity(0) + c.id()

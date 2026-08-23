@@ -282,6 +282,16 @@ target_link_libraries(sere_test_project_cli PRIVATE sere_driver)
 sere_apply_warnings(sere_test_project_cli)
 add_test(NAME sere.test.project_cli COMMAND sere_test_project_cli)
 
+add_executable(sere_test_import_private import_private.cpp)
+target_link_libraries(sere_test_import_private PRIVATE sere_driver)
+sere_apply_warnings(sere_test_import_private)
+add_test(NAME sere.test.import_private COMMAND sere_test_import_private)
+
+add_executable(sere_test_library_pack library_pack.cpp)
+target_link_libraries(sere_test_library_pack PRIVATE sere_driver)
+sere_apply_warnings(sere_test_library_pack)
+add_test(NAME sere.test.library_pack COMMAND sere_test_library_pack)
+
 add_executable(sere_test_type_ignore type_ignore.cpp)
 target_link_libraries(sere_test_type_ignore PRIVATE sere_sema)
 sere_apply_warnings(sere_test_type_ignore)

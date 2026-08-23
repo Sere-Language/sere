@@ -445,5 +445,25 @@ int main() {
   if (delModule != nullptr && delChecker.check(*delModule)) {
     return fail("del of a name must be rejected");
   }
+
+  const std::string chars =
+      "def main() -> i32:\n"
+      "    c: i8 = 'A'\n"
+      "    b: byte = '\\n'\n"
+      "    n: i32 = c\n"
+      "    s: str = \"A\"\n"
+      "    t: str = 'hi'\n"
+      "    return n\n";
+  sere::DiagnosticEngine charDiagnostics;
+  sere::SourceManager charSource("sema_char.sere", chars);
+  sere::Lexer charLexer(charSource, charDiagnostics);
+  sere::Parser charParser(charDiagnostics, charLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> charModule = charParser.parseModule();
+  sere::TypeContext charTypes;
+  sere::TypeChecker charChecker(charTypes, charDiagnostics);
+  if (charModule == nullptr || !charChecker.check(*charModule)) {
+    charDiagnostics.printAll(charSource);
+    return fail("single-quoted one-char literals should type as i8/byte");
+  }
   return 0;
 }
