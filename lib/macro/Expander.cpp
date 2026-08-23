@@ -572,10 +572,7 @@ std::unique_ptr<Expr> MacroExpander::expandExpr(const Expr& expr) {
       if (expanded == nullptr) {
         return nullptr;
       }
-      NamedArgument named;
-      named.name = kw.name;
-      named.value = std::move(expanded);
-      keywordArgs.push_back(std::move(named));
+      keywordArgs.push_back(NamedArgument{kw.name, std::move(expanded)});
     }
     return std::make_unique<CallExpr>(expr.range(), std::move(callee), std::move(typeArgs),
                                       std::move(args), std::move(keywordArgs));

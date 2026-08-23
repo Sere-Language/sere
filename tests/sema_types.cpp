@@ -364,6 +364,59 @@ int main() {
     return fail("unit enums should convert to integers");
   }
 
+  const std::string kwargs =
+      "def add(a: i32, b: i32 = 1) -> i32:\n"
+      "    return a + b\n"
+      "def join(prefix: str, *parts: list[str], sep: str = \",\") -> i32:\n"
+      "    return len(parts)\n"
+      "def main() -> i32:\n"
+      "    n: i32 = add(b=2, a=3)\n"
+      "    n = n + add(4)\n"
+      "    return n + join(\"x\", \"a\", \"b\", sep=\":\")\n";
+  sere::DiagnosticEngine kwargsDiagnostics;
+  sere::SourceManager kwargsSource("sema_kwargs.sere", kwargs);
+  sere::Lexer kwargsLexer(kwargsSource, kwargsDiagnostics);
+  sere::Parser kwargsParser(kwargsDiagnostics, kwargsLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> kwargsModule = kwargsParser.parseModule();
+  sere::TypeContext kwargsTypes;
+  sere::TypeChecker kwargsChecker(kwargsTypes, kwargsDiagnostics);
+  if (kwargsModule == nullptr || !kwargsChecker.check(*kwargsModule)) {
+    kwargsDiagnostics.printAll(kwargsSource);
+    return fail("keyword, default, and *args calls should typecheck");
+  }
+
+  const std::string badKw =
+      "def add(a: i32, b: i32 = 1) -> i32:\n"
+      "    return a + b\n"
+      "def main() -> i32:\n"
+      "    return add(1, extra=2)\n";
+  sere::DiagnosticEngine badKwDiagnostics;
+  sere::SourceManager badKwSource("sema_bad_kw.sere", badKw);
+  sere::Lexer badKwLexer(badKwSource, badKwDiagnostics);
+  sere::Parser badKwParser(badKwDiagnostics, badKwLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> badKwModule = badKwParser.parseModule();
+  sere::TypeContext badKwTypes;
+  sere::TypeChecker badKwChecker(badKwTypes, badKwDiagnostics);
+  if (badKwModule != nullptr && badKwChecker.check(*badKwModule)) {
+    return fail("unexpected keyword arguments must be rejected");
+  }
+
+  const std::string dupArg =
+      "def add(a: i32, b: i32 = 1) -> i32:\n"
+      "    return a + b\n"
+      "def main() -> i32:\n"
+      "    return add(1, a=2)\n";
+  sere::DiagnosticEngine dupDiagnostics;
+  sere::SourceManager dupSource("sema_dup_arg.sere", dupArg);
+  sere::Lexer dupLexer(dupSource, dupDiagnostics);
+  sere::Parser dupParser(dupDiagnostics, dupLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> dupModule = dupParser.parseModule();
+  sere::TypeContext dupTypes;
+  sere::TypeChecker dupChecker(dupTypes, dupDiagnostics);
+  if (dupModule != nullptr && dupChecker.check(*dupModule)) {
+    return fail("positional + keyword for the same parameter must be rejected");
+  }
+
   const std::string parseText =
       "def main() -> i32:\n"
       "    n: i32 = parse[i32](\"123\")\n"

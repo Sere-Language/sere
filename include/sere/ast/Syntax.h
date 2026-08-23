@@ -216,8 +216,7 @@ public:
   [[nodiscard]] const std::vector<std::unique_ptr<Expr>>& arguments() const;
   [[nodiscard]] const std::vector<NamedArgument>& keywordArguments() const;
   [[nodiscard]] const std::vector<const Expr*>& boundArguments() const;
-  void setBoundArguments(std::vector<const Expr*> arguments,
-                        std::vector<std::unique_ptr<Expr>> owned);
+  void setBoundArguments(std::vector<const Expr*> arguments);
   [[nodiscard]] IntrinsicKind intrinsic() const;
   void setIntrinsic(IntrinsicKind kind);
   [[nodiscard]] const std::string& loweredName() const;
@@ -239,7 +238,6 @@ private:
   std::vector<std::unique_ptr<Expr>> arguments_;
   std::vector<NamedArgument> keywordArguments_;
   std::vector<const Expr*> boundArguments_;
-  std::vector<std::unique_ptr<Expr>> boundStorage_;
   IntrinsicKind intrinsic_ = IntrinsicKind::None;
   std::string loweredName_;
   std::vector<std::string> paramNames_{};

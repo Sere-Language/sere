@@ -650,14 +650,13 @@ ParsedCallArguments Parser::parseCallArguments() {
     }
     if (check(TokenKind::Identifier) && peekNth(1).kind() == TokenKind::Equal) {
       seenKeyword = true;
-      NamedArgument keyword;
-      keyword.name = advance().spelling();
+      const std::string name = advance().spelling();
       (void)advance();
-      keyword.value = parseExpr();
-      if (keyword.value == nullptr) {
+      std::unique_ptr<Expr> value = parseExpr();
+      if (value == nullptr) {
         return {};
       }
-      parsed.keyword.push_back(std::move(keyword));
+      parsed.keyword.push_back(NamedArgument{name, std::move(value)});
     } else {
       if (seenKeyword) {
         diagnostics_->error(peek().range(), "positional argument follows keyword argument");

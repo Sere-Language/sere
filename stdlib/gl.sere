@@ -1100,6 +1100,16 @@ enum WindowFlag:
     Fullscreen = 64
     Vsync = 128
 
+def _sat01(value: f64) -> f64:
+    if value < 0.0:
+        return 0.0
+    if value > 1.0:
+        return 1.0
+    return value
+
+def _byte(value: f64) -> i32:
+    return (value * 255.0) as i32
+
 class Color:
     r: f64
     g: f64
@@ -1123,42 +1133,23 @@ class Color:
 
     def lerp(self, other: Color, t: f64) -> Color:
         u: f64 = 1.0 - t
-        return Color(self.r * u + other.r * t, self.g * u + other.g * t, self.b * u + other.b * t, self.a * u + other.a * t)
+        return Color(self.r * u + other.r * t, self.g * u + other.g * t,
+                     self.b * u + other.b * t, self.a * u + other.a * t)
 
     def r8(self) -> i32:
-        return (self.r * 255.0) as i32
+        return _byte(self.r)
 
     def g8(self) -> i32:
-        return (self.g * 255.0) as i32
+        return _byte(self.g)
 
     def b8(self) -> i32:
-        return (self.b * 255.0) as i32
+        return _byte(self.b)
 
     def a8(self) -> i32:
-        return (self.a * 255.0) as i32
+        return _byte(self.a)
 
     def clamp01(self) -> Color:
-        r: f64 = self.r
-        g: f64 = self.g
-        b: f64 = self.b
-        a: f64 = self.a
-        if r < 0.0:
-            r = 0.0
-        if r > 1.0:
-            r = 1.0
-        if g < 0.0:
-            g = 0.0
-        if g > 1.0:
-            g = 1.0
-        if b < 0.0:
-            b = 0.0
-        if b > 1.0:
-            b = 1.0
-        if a < 0.0:
-            a = 0.0
-        if a > 1.0:
-            a = 1.0
-        return Color(r, g, b, a)
+        return Color(_sat01(self.r), _sat01(self.g), _sat01(self.b), _sat01(self.a))
 
     def premul(self) -> Color:
         return Color(self.r * self.a, self.g * self.a, self.b * self.a, self.a)

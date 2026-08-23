@@ -122,10 +122,8 @@ const std::vector<NamedArgument>& CallExpr::keywordArguments() const { return ke
 
 const std::vector<const Expr*>& CallExpr::boundArguments() const { return boundArguments_; }
 
-void CallExpr::setBoundArguments(std::vector<const Expr*> arguments,
-                                 std::vector<std::unique_ptr<Expr>> owned) {
+void CallExpr::setBoundArguments(std::vector<const Expr*> arguments) {
   boundArguments_ = std::move(arguments);
-  boundStorage_ = std::move(owned);
 }
 
 IntrinsicKind CallExpr::intrinsic() const { return intrinsic_; }

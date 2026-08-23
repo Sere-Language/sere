@@ -2977,10 +2977,6 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
 
   std::size_t positionalIndex = 0;
   std::vector<const Expr*> bound(params.size(), nullptr);
-  std::vector<std::unique_ptr<Expr>> owned;
-  const auto useArgument = [&](std::size_t paramIndex, Expr* argument) {
-    bound[paramIndex] = argument;
-  };
 
   const std::size_t preVarArgEnd =
       varArgIndex.has_value() ? varArgIndex.value()
@@ -2992,6 +2988,11 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
     Expr* argument = nullptr;
     if (positionalIndex < expr.arguments().size()) {
       argument = expr.arguments()[positionalIndex++].get();
+      if (keywordIndexes.contains(params[index].name)) {
+        diagnostics_->error(expr.range(), "got multiple values for argument '" +
+                                              params[index].name + "'");
+        return false;
+      }
     } else {
       argument = takeKeyword(params[index].name);
     }
@@ -3006,7 +3007,7 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
     if (!checkArg(*argument, paramTypes[index], paramLabel(index))) {
       return false;
     }
-    useArgument(index, argument);
+    bound[index] = argument;
   }
 
   if (varArgIndex.has_value()) {
@@ -3015,13 +3016,19 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
     const Type* elementType =
         listType != nullptr && listType->isList() ? listType->elementType() : types_->anyType();
     if (Expr* explicitArg = takeKeyword(params[index].name)) {
+      if (positionalIndex < expr.arguments().size()) {
+        diagnostics_->error(expr.range(), "got multiple values for argument '" +
+                                              params[index].name + "'");
+        return false;
+      }
       if (!checkArg(*explicitArg, listType, paramLabel(index))) {
         return false;
       }
-      useArgument(index, explicitArg);
+      bound[index] = explicitArg;
     } else {
       while (positionalIndex < expr.arguments().size()) {
-        if (!checkArg(*expr.arguments()[positionalIndex], elementType, paramLabel(index) + " element")) {
+        if (!checkArg(*expr.arguments()[positionalIndex], elementType,
+                      paramLabel(index) + " element")) {
           return false;
         }
         ++positionalIndex;
@@ -3033,7 +3040,8 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
     return false;
   }
 
-  const std::size_t keywordOnlyStart = varArgIndex.has_value() ? varArgIndex.value() + 1 : preVarArgEnd;
+  const std::size_t keywordOnlyStart =
+      varArgIndex.has_value() ? varArgIndex.value() + 1 : preVarArgEnd;
   const std::size_t keywordOnlyEnd = kwArgIndex.has_value() ? kwArgIndex.value() : params.size();
   for (std::size_t index = keywordOnlyStart; index < keywordOnlyEnd; ++index) {
     if (params[index].kind != ParamKind::Normal) {
@@ -3051,7 +3059,7 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
     if (!checkArg(*argument, paramTypes[index], paramLabel(index))) {
       return false;
     }
-    useArgument(index, argument);
+    bound[index] = argument;
   }
 
   if (kwArgIndex.has_value()) {
@@ -3063,11 +3071,10 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
       if (!checkArg(*explicitArg, dictType, paramLabel(index))) {
         return false;
       }
-      useArgument(index, explicitArg);
+      bound[index] = explicitArg;
     } else {
       for (const auto& entry : keywordIndexes) {
-        if (!checkArg(*expr.keywordArguments()[entry.second].value,
-                      valueType,
+        if (!checkArg(*expr.keywordArguments()[entry.second].value, valueType,
                       "unexpected keyword argument '" + entry.first + "'")) {
           return false;
         }
@@ -3090,7 +3097,7 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
     }
   }
 
-  expr.setBoundArguments(std::move(bound), std::move(owned));
+  expr.setBoundArguments(std::move(bound));
   return true;
 }
 

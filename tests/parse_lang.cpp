@@ -307,5 +307,17 @@ int main() {
     dottedDiagnostics.printAll();
     return fail("qualified return types like gl.Window must parse");
   }
+
+  sere::DiagnosticEngine kwParseDiagnostics;
+  const std::unique_ptr<sere::Module> kwCall = parseText(
+      "def add(a: i32, b: i32 = 0) -> i32:\n"
+      "    return a + b\n"
+      "def main() -> i32:\n"
+      "    return add(b=2, a=3)\n",
+      kwParseDiagnostics);
+  if (kwCall == nullptr || kwParseDiagnostics.hasErrors()) {
+    kwParseDiagnostics.printAll();
+    return fail("keyword arguments at call sites must parse");
+  }
   return 0;
 }

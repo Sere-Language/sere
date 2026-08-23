@@ -834,7 +834,7 @@ are `ValueError`.
 Sere is a **typed Python superset**, not CPython. These remain out of scope or
 incomplete. They diagnose instead of generating silent wrong code:
 
-- keyword-only parameters (after `*args`), `global` / `nonlocal`
+- Bare `*` keyword-only marker, `global` / `nonlocal`
 - Nested `def`, `async` / `await`, `yield`
 - Unmodified CPython stdlib (use Sere modules such as `requests` and `wsgi`)
 - Lambda capture of enclosing locals (pass parameters instead)

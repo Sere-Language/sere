@@ -37,6 +37,7 @@
 #include <queue>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -866,25 +867,9 @@ void IRGenerator::appendBoundCallArgs(llvm::IRBuilder<>& builder,
                                       const Type* fnType,
                                       std::vector<llvm::Value*>& args,
                                       const std::size_t skipParams) {
-  std::unordered_map<std::string, const NamedArgument*> keywords;
-  for (const NamedArgument& kw : expr.keywordArguments()) {
-    keywords[kw.name] = &kw;
-  }
-  std::size_t positionalIndex = 0;
-  const auto takePositional = [&]() -> const Expr* {
-    if (positionalIndex < expr.arguments().size()) {
-      return expr.arguments()[positionalIndex++].get();
-    }
-    return nullptr;
-  };
-  const auto takeKeyword = [&](const std::string& name) -> const Expr* {
-    const auto found = keywords.find(name);
-    if (found == keywords.end()) {
-      return nullptr;
-    }
-    const Expr* value = found->second->value.get();
-    keywords.erase(found);
-    return value;
+  const auto paramTypeAt = [&](std::size_t index) -> const Type* {
+    return fnType != nullptr && index < fnType->paramTypes().size() ? fnType->paramTypes()[index]
+                                                                   : nullptr;
   };
   const auto emitArgument = [&](const Expr* argument, const Type* toType) -> llvm::Value* {
     if (argument == nullptr) {
@@ -901,7 +886,7 @@ void IRGenerator::appendBoundCallArgs(llvm::IRBuilder<>& builder,
     if (value == nullptr) {
       return;
     }
-    const Type* layout = toType != nullptr ? toType : (argument == nullptr ? nullptr : argument->resolvedType());
+    const Type* layout = toType != nullptr ? toType : argument->resolvedType();
     if (function.isExtern() && layout != nullptr && layout->isStrLayout()) {
       args.push_back(builder.CreateExtractValue(value, {0}));
       args.push_back(builder.CreateExtractValue(value, {1}));
@@ -910,118 +895,81 @@ void IRGenerator::appendBoundCallArgs(llvm::IRBuilder<>& builder,
     args.push_back(value);
   };
 
-  std::optional<std::size_t> varArgIndex;
-  std::optional<std::size_t> kwArgIndex;
-  for (std::size_t index = skipParams; index < function.params().size(); ++index) {
-    if (function.params()[index].kind == ParamKind::VarArg) {
-      varArgIndex = index;
-    } else if (function.params()[index].kind == ParamKind::KwArg) {
-      kwArgIndex = index;
+  const std::vector<const Expr*>& bound = expr.boundArguments();
+  if (bound.size() != function.params().size()) {
+    std::size_t paramIndex = skipParams;
+    for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
+      appendArgument(argument.get(), paramTypeAt(paramIndex));
+      ++paramIndex;
+    }
+    appendDefaultArgs(builder, args, function, expr.arguments().size(), skipParams);
+    return;
+  }
+
+  std::unordered_set<const Expr*> used;
+  for (const Expr* argument : bound) {
+    if (argument != nullptr) {
+      used.insert(argument);
     }
   }
-  const std::size_t preVarArgEnd =
-      varArgIndex.has_value() ? varArgIndex.value() : function.params().size();
 
-  for (std::size_t index = skipParams; index < preVarArgEnd; ++index) {
+  for (std::size_t index = skipParams; index < function.params().size(); ++index) {
     const ParamDecl& param = function.params()[index];
-    if (param.kind != ParamKind::Normal) {
+    const Type* paramType = paramTypeAt(index);
+    if (param.kind == ParamKind::Normal) {
+      appendArgument(bound[index], paramType);
       continue;
     }
-    const Expr* argument = takePositional();
-    if (argument == nullptr) {
-      argument = takeKeyword(param.name);
+    if (bound[index] != nullptr) {
+      args.push_back(emitArgument(bound[index], paramType));
+      continue;
     }
-    if (argument == nullptr) {
-      argument = param.defaultValue.get();
-    }
-    const Type* paramType =
-        fnType != nullptr && index < fnType->paramTypes().size() ? fnType->paramTypes()[index]
-                                                                 : nullptr;
-    appendArgument(argument, paramType);
-  }
-
-  if (varArgIndex.has_value()) {
-    const std::size_t index = varArgIndex.value();
-    const ParamDecl& param = function.params()[index];
-    const Type* listType =
-        fnType != nullptr && index < fnType->paramTypes().size() ? fnType->paramTypes()[index]
-                                                                 : nullptr;
-    const Type* elementType =
-        listType != nullptr && listType->isList() ? listType->elementType() : types_->anyType();
-    if (const Expr* explicitArg = takeKeyword(param.name)) {
-      args.push_back(emitArgument(explicitArg, listType));
-    } else {
+    if (param.kind == ParamKind::VarArg) {
+      const Type* elementType =
+          paramType != nullptr && paramType->isList() ? paramType->elementType() : types_->anyType();
       llvm::Function* newFn =
           runtimeDecl("sere_list_new", builder.getPtrTy(), {builder.getInt64Ty()});
       llvm::Function* pushFn = runtimeDecl(
           "sere_list_push", builder.getVoidTy(), {builder.getPtrTy(), builder.getPtrTy()});
-      llvm::Value* list =
-          builder.CreateCall(newFn, {builder.getInt64(valueSize(elementType))});
-      while (positionalIndex < expr.arguments().size()) {
-        llvm::Value* value = emitArgument(expr.arguments()[positionalIndex++].get(), elementType);
+      llvm::Value* list = builder.CreateCall(newFn, {builder.getInt64(valueSize(elementType))});
+      for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
+        if (used.contains(argument.get())) {
+          continue;
+        }
+        llvm::Value* value = emitArgument(argument.get(), elementType);
         if (value != nullptr) {
           builder.CreateCall(pushFn, {list, emitTempSlot(builder, value, elementType)});
         }
       }
       args.push_back(list);
-    }
-  }
-
-  const std::size_t keywordOnlyStart =
-      varArgIndex.has_value() ? varArgIndex.value() + 1 : preVarArgEnd;
-  const std::size_t keywordOnlyEnd =
-      kwArgIndex.has_value() ? kwArgIndex.value() : function.params().size();
-  for (std::size_t index = keywordOnlyStart; index < keywordOnlyEnd; ++index) {
-    const ParamDecl& param = function.params()[index];
-    if (param.kind != ParamKind::Normal) {
       continue;
     }
-    const Expr* argument = takeKeyword(param.name);
-    if (argument == nullptr) {
-      argument = param.defaultValue.get();
-    }
-    const Type* paramType =
-        fnType != nullptr && index < fnType->paramTypes().size() ? fnType->paramTypes()[index]
-                                                                 : nullptr;
-    appendArgument(argument, paramType);
-  }
 
-  if (kwArgIndex.has_value()) {
-    const std::size_t index = kwArgIndex.value();
-    const ParamDecl& param = function.params()[index];
-    const Type* dictType =
-        fnType != nullptr && index < fnType->paramTypes().size() ? fnType->paramTypes()[index]
-                                                                 : nullptr;
     const Type* keyType =
-        dictType != nullptr && dictType->isDict() ? dictType->dictKeyType() : types_->strType();
+        paramType != nullptr && paramType->isDict() ? paramType->dictKeyType() : types_->strType();
     const Type* valueType =
-        dictType != nullptr && dictType->isDict() ? dictType->dictValueType() : types_->anyType();
-    if (const Expr* explicitArg = takeKeyword(param.name)) {
-      args.push_back(emitArgument(explicitArg, dictType));
-    } else {
-      llvm::Function* newFn = runtimeDecl("sere_dict_new",
-                                          builder.getPtrTy(),
-                                          {builder.getInt64Ty(), builder.getInt64Ty(), builder.getInt32Ty()});
-      llvm::Function* setFn = runtimeDecl("sere_dict_set",
-                                          builder.getVoidTy(),
-                                          {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()});
-      llvm::Value* dict = builder.CreateCall(newFn,
-                                             {builder.getInt64(valueSize(keyType)),
-                                              builder.getInt64(valueSize(valueType)),
-                                              builder.getInt32(dictKeyKind(keyType))});
-      for (const auto& entry : keywords) {
-        const NamedArgument& kw = *entry.second;
-        llvm::Value* keyValue = emitStrLiteral(builder, kw.name);
-        llvm::Value* value = emitArgument(kw.value.get(), valueType);
-        if (value != nullptr) {
-          builder.CreateCall(setFn,
-                             {dict,
-                              emitTempSlot(builder, keyValue, keyType),
-                              emitTempSlot(builder, value, valueType)});
-        }
+        paramType != nullptr && paramType->isDict() ? paramType->dictValueType() : types_->anyType();
+    llvm::Function* newFn =
+        runtimeDecl("sere_dict_new", builder.getPtrTy(),
+                    {builder.getInt64Ty(), builder.getInt64Ty(), builder.getInt32Ty()});
+    llvm::Function* setFn = runtimeDecl(
+        "sere_dict_set", builder.getVoidTy(),
+        {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()});
+    llvm::Value* dict = builder.CreateCall(newFn, {builder.getInt64(valueSize(keyType)),
+                                                   builder.getInt64(valueSize(valueType)),
+                                                   builder.getInt32(dictKeyKind(keyType))});
+    for (const NamedArgument& kw : expr.keywordArguments()) {
+      if (used.contains(kw.value.get())) {
+        continue;
       }
-      args.push_back(dict);
+      llvm::Value* value = emitArgument(kw.value.get(), valueType);
+      if (value == nullptr) {
+        continue;
+      }
+      builder.CreateCall(setFn, {dict, emitTempSlot(builder, emitStrLiteral(builder, kw.name), keyType),
+                                 emitTempSlot(builder, value, valueType)});
     }
+    args.push_back(dict);
   }
 }
 
@@ -2027,7 +1975,7 @@ llvm::Value* IRGenerator::emitPrint(llvm::IRBuilder<>& builder, const CallExpr& 
     emitWriteValue(builder, *expr.arguments()[index]);
   }
   if (endExpr == nullptr) {
-  builder.CreateCall(newline, {});
+    builder.CreateCall(newline, {});
   } else {
     writeStrValue(emitExpr(builder, *endExpr));
   }
@@ -2110,7 +2058,7 @@ llvm::Value* IRGenerator::emitCall(llvm::IRBuilder<>& builder, const CallExpr& e
   bool isExtern = externFunctions_.contains(calleeName);
   const FunctionDef* functionDef = nullptr;
   const Type* fnType = nullptr;
-    const auto defFound = functionDefs_.find(calleeName);
+  const auto defFound = functionDefs_.find(calleeName);
   if (defFound != functionDefs_.end()) {
     functionDef = defFound->second;
     if (functionDef != nullptr) {
@@ -2121,30 +2069,15 @@ llvm::Value* IRGenerator::emitCall(llvm::IRBuilder<>& builder, const CallExpr& e
   if (functionDef != nullptr) {
     appendBoundCallArgs(builder, expr, *functionDef, fnType, args, 0);
   } else {
-  for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
-    llvm::Value* value = emitExpr(builder, *argument);
-    if (isExtern && argument->resolvedType() != nullptr &&
+    for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
+      llvm::Value* value = emitExpr(builder, *argument);
+      if (isExtern && argument->resolvedType() != nullptr &&
           argument->resolvedType()->isStrLayout()) {
-      args.push_back(builder.CreateExtractValue(value, {0}));
-      args.push_back(builder.CreateExtractValue(value, {1}));
-    } else {
-      args.push_back(value);
-    }
-  }
-    if (functionDef != nullptr) {
-      std::size_t llvmIndex = 0;
-      for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
-        const Type* from = expr.arguments()[index]->resolvedType();
-        if (from != nullptr && from->isStrLayout() && functionDef->isExtern()) {
-          llvmIndex += 2;
-          continue;
-        }
-        if (llvmIndex < args.size() && fnType != nullptr && index < fnType->paramTypes().size()) {
-          args[llvmIndex] = emitCoerce(builder, args[llvmIndex], from, fnType->paramTypes()[index]);
-        }
-        llvmIndex += 1;
+        args.push_back(builder.CreateExtractValue(value, {0}));
+        args.push_back(builder.CreateExtractValue(value, {1}));
+      } else {
+        args.push_back(value);
       }
-      appendDefaultArgs(builder, args, *functionDef, expr.arguments().size(), 0);
     }
   }
   matchCallArgs(builder, callee, args);
@@ -2262,19 +2195,16 @@ llvm::Value* IRGenerator::emitInitConstruct(llvm::IRBuilder<>& builder, const Ca
   if (initDef != nullptr) {
     appendBoundCallArgs(builder, expr, *initDef, initType, args, 1);
   } else {
-  std::size_t paramIndex = 1;
-  for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
-    llvm::Value* value = emitExpr(builder, *argument);
-    if (initType != nullptr && paramIndex < initType->paramTypes().size()) {
+    std::size_t paramIndex = 1;
+    for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
+      llvm::Value* value = emitExpr(builder, *argument);
+      if (initType != nullptr && paramIndex < initType->paramTypes().size()) {
         value =
             emitCoerce(builder, value, argument->resolvedType(), initType->paramTypes()[paramIndex]);
+      }
+      args.push_back(value);
+      ++paramIndex;
     }
-    args.push_back(value);
-    ++paramIndex;
-  }
-    if (initDef != nullptr) {
-      appendDefaultArgs(builder, args, *initDef, expr.arguments().size(), 1);
-  }
   }
   matchCallArgs(builder, found->second, args);
   builder.CreateCall(found->second, args);
@@ -2309,18 +2239,15 @@ llvm::Value* IRGenerator::emitMethodCall(llvm::IRBuilder<>& builder, const CallE
   if (methodDef != nullptr) {
     appendBoundCallArgs(builder, expr, *methodDef, methodType, args, 1);
   } else {
-  std::size_t paramIndex = 1;
-  for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
-    llvm::Value* value = emitExpr(builder, *argument);
-    if (methodType != nullptr && paramIndex < methodType->paramTypes().size()) {
+    std::size_t paramIndex = 1;
+    for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
+      llvm::Value* value = emitExpr(builder, *argument);
+      if (methodType != nullptr && paramIndex < methodType->paramTypes().size()) {
         value = emitCoerce(
             builder, value, argument->resolvedType(), methodType->paramTypes()[paramIndex]);
-    }
-    args.push_back(value);
-    ++paramIndex;
-  }
-    if (methodDef != nullptr) {
-      appendDefaultArgs(builder, args, *methodDef, expr.arguments().size(), 1);
+      }
+      args.push_back(value);
+      ++paramIndex;
     }
   }
   llvm::Function* callee = found->second;

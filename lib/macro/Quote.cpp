@@ -433,10 +433,7 @@ std::unique_ptr<Expr> cloneExpr(const Expr& expr) {
     }
     std::vector<NamedArgument> keywordArgs;
     for (const NamedArgument& kw : call.keywordArguments()) {
-      NamedArgument cloned;
-      cloned.name = kw.name;
-      cloned.value = cloneExpr(*kw.value);
-      keywordArgs.push_back(std::move(cloned));
+      keywordArgs.push_back(NamedArgument{kw.name, cloneExpr(*kw.value)});
     }
     return std::make_unique<CallExpr>(expr.range(), cloneExpr(call.callee()), std::move(typeArgs),
                                       cloneExprs(call.arguments()), std::move(keywordArgs));
