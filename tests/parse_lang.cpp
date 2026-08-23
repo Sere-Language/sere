@@ -296,5 +296,16 @@ int main() {
   if (!printStmtDiagnostics.hasErrors()) {
     return fail("print as a statement must be a SyntaxError");
   }
+
+  sere::DiagnosticEngine dottedDiagnostics;
+  const std::unique_ptr<sere::Module> dotted = parseText(
+      "import gl\n"
+      "def create_window() -> gl.Window:\n"
+      "    return gl.Window(1, 1, \"x\")\n",
+      dottedDiagnostics);
+  if (dotted == nullptr || dottedDiagnostics.hasErrors()) {
+    dottedDiagnostics.printAll();
+    return fail("qualified return types like gl.Window must parse");
+  }
   return 0;
 }

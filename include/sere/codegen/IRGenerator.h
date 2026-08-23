@@ -172,6 +172,12 @@ private:
                          const FunctionDef& function,
                          std::size_t provided,
                          std::size_t skip);
+  void appendBoundCallArgs(llvm::IRBuilder<>& builder,
+                           const CallExpr& expr,
+                           const FunctionDef& function,
+                           const Type* fnType,
+                           std::vector<llvm::Value*>& args,
+                           std::size_t skipParams = 0);
   llvm::Value* emitAddress(llvm::IRBuilder<>& builder, const Expr& expr, bool required = true);
   void emitDrops(llvm::IRBuilder<>& builder);
   void rememberLocal(const std::string& name, llvm::Value* allocaInst, const Type* type);

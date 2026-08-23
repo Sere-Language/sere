@@ -729,10 +729,8 @@ function activate(context) {
         },
       },
       ".",
-      ":",
       '"',
       "@",
-      " ",
       "!",
     ),
     vscode.languages.registerFoldingRangeProvider("sere", {

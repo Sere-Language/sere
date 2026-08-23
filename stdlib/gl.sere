@@ -5,9 +5,10 @@
 #   win = gl.Window("Sere GL", 800, 600)
 #   prog = gl.program(vert, frag)
 #   mesh = gl.Mesh(vertices, 3)
-#   while win.poll():
-#       if win.key(gl.Key.Escape):
-#           break
+#   while not win.should_close():
+#       win.poll()
+#       if win.key_pressed(gl.Key.Escape):
+#           win.close()
 #       gl.clear_color(0.08, 0.09, 0.12, 1.0)
 #       gl.clear(gl.color_depth())
 #       win.fit_viewport()
@@ -21,8 +22,23 @@ def _available() -> i32
 extern "C" "sere_gl_window_new"
 def _window_new(title: str, width: i32, height: i32) -> Ptr[i8]
 
+extern "C" "sere_gl_window_new_ex"
+def _window_new_ex(title: str, width: i32, height: i32, flags: i32) -> Ptr[i8]
+
 extern "C" "sere_gl_window_poll"
 def _window_poll(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_wait"
+def _window_wait(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_should_close"
+def _window_should_close(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_set_should_close"
+def _window_set_should_close(window: Ptr[i8], value: i32) -> void
+
+extern "C" "sere_gl_window_is_open"
+def _window_is_open(window: Ptr[i8]) -> i32
 
 extern "C" "sere_gl_window_swap"
 def _window_swap(window: Ptr[i8]) -> void
@@ -39,6 +55,18 @@ def _window_width(window: Ptr[i8]) -> i32
 extern "C" "sere_gl_window_height"
 def _window_height(window: Ptr[i8]) -> i32
 
+extern "C" "sere_gl_window_fb_width"
+def _window_fb_width(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_fb_height"
+def _window_fb_height(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_x"
+def _window_x(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_y"
+def _window_y(window: Ptr[i8]) -> i32
+
 extern "C" "sere_gl_window_set_title"
 def _window_set_title(window: Ptr[i8], title: str) -> void
 
@@ -48,11 +76,104 @@ def _window_title(window: Ptr[i8]) -> str
 extern "C" "sere_gl_window_set_vsync"
 def _window_set_vsync(window: Ptr[i8], enabled: i32) -> void
 
+extern "C" "sere_gl_window_vsync"
+def _window_vsync(window: Ptr[i8]) -> i32
+
 extern "C" "sere_gl_window_show_cursor"
 def _window_show_cursor(window: Ptr[i8], show: i32) -> void
 
+extern "C" "sere_gl_window_set_cursor_mode"
+def _window_set_cursor_mode(window: Ptr[i8], mode: i32) -> void
+
+extern "C" "sere_gl_window_cursor_mode"
+def _window_cursor_mode(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_set_cursor_pos"
+def _window_set_cursor_pos(window: Ptr[i8], x: i32, y: i32) -> void
+
 extern "C" "sere_gl_window_set_size"
 def _window_set_size(window: Ptr[i8], width: i32, height: i32) -> void
+
+extern "C" "sere_gl_window_set_pos"
+def _window_set_pos(window: Ptr[i8], x: i32, y: i32) -> void
+
+extern "C" "sere_gl_window_set_min_size"
+def _window_set_min_size(window: Ptr[i8], width: i32, height: i32) -> void
+
+extern "C" "sere_gl_window_set_max_size"
+def _window_set_max_size(window: Ptr[i8], width: i32, height: i32) -> void
+
+extern "C" "sere_gl_window_show"
+def _window_show(window: Ptr[i8]) -> void
+
+extern "C" "sere_gl_window_hide"
+def _window_hide(window: Ptr[i8]) -> void
+
+extern "C" "sere_gl_window_minimize"
+def _window_minimize(window: Ptr[i8]) -> void
+
+extern "C" "sere_gl_window_maximize"
+def _window_maximize(window: Ptr[i8]) -> void
+
+extern "C" "sere_gl_window_restore"
+def _window_restore(window: Ptr[i8]) -> void
+
+extern "C" "sere_gl_window_focus"
+def _window_focus(window: Ptr[i8]) -> void
+
+extern "C" "sere_gl_window_request_attention"
+def _window_request_attention(window: Ptr[i8]) -> void
+
+extern "C" "sere_gl_window_set_fullscreen"
+def _window_set_fullscreen(window: Ptr[i8], enabled: i32) -> void
+
+extern "C" "sere_gl_window_fullscreen"
+def _window_fullscreen(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_set_resizable"
+def _window_set_resizable(window: Ptr[i8], enabled: i32) -> void
+
+extern "C" "sere_gl_window_set_decorated"
+def _window_set_decorated(window: Ptr[i8], enabled: i32) -> void
+
+extern "C" "sere_gl_window_set_floating"
+def _window_set_floating(window: Ptr[i8], enabled: i32) -> void
+
+extern "C" "sere_gl_window_set_opacity"
+def _window_set_opacity(window: Ptr[i8], opacity: f64) -> void
+
+extern "C" "sere_gl_window_resizable"
+def _window_resizable(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_decorated"
+def _window_decorated(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_floating"
+def _window_floating(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_opacity"
+def _window_opacity(window: Ptr[i8]) -> f64
+
+extern "C" "sere_gl_window_content_scale"
+def _window_content_scale(window: Ptr[i8]) -> f64
+
+extern "C" "sere_gl_window_focused"
+def _window_focused(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_minimized"
+def _window_minimized(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_maximized"
+def _window_maximized(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_visible"
+def _window_visible(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_hovered"
+def _window_hovered(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_resized"
+def _window_resized(window: Ptr[i8]) -> i32
 
 extern "C" "sere_gl_window_time"
 def _window_time(window: Ptr[i8]) -> f64
@@ -63,17 +184,53 @@ def _window_dt(window: Ptr[i8]) -> f64
 extern "C" "sere_gl_window_key"
 def _window_key(window: Ptr[i8], vk: i32) -> i32
 
+extern "C" "sere_gl_window_key_pressed"
+def _window_key_pressed(window: Ptr[i8], vk: i32) -> i32
+
+extern "C" "sere_gl_window_key_released"
+def _window_key_released(window: Ptr[i8], vk: i32) -> i32
+
+extern "C" "sere_gl_window_mods"
+def _window_mods(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_char"
+def _window_char(window: Ptr[i8]) -> i32
+
 extern "C" "sere_gl_window_mouse_x"
 def _window_mouse_x(window: Ptr[i8]) -> i32
 
 extern "C" "sere_gl_window_mouse_y"
 def _window_mouse_y(window: Ptr[i8]) -> i32
 
+extern "C" "sere_gl_window_mouse_dx"
+def _window_mouse_dx(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_mouse_dy"
+def _window_mouse_dy(window: Ptr[i8]) -> i32
+
 extern "C" "sere_gl_window_mouse_button"
 def _window_mouse_button(window: Ptr[i8], button: i32) -> i32
 
+extern "C" "sere_gl_window_mouse_button_pressed"
+def _window_mouse_button_pressed(window: Ptr[i8], button: i32) -> i32
+
+extern "C" "sere_gl_window_mouse_button_released"
+def _window_mouse_button_released(window: Ptr[i8], button: i32) -> i32
+
 extern "C" "sere_gl_window_wheel"
 def _window_wheel(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_clipboard_get"
+def _window_clipboard_get(window: Ptr[i8]) -> str
+
+extern "C" "sere_gl_window_clipboard_set"
+def _window_clipboard_set(window: Ptr[i8], text: str) -> void
+
+extern "C" "sere_gl_screen_width"
+def screen_width() -> i32
+
+extern "C" "sere_gl_screen_height"
+def screen_height() -> i32
 
 extern "C" "sere_gl_clear_color"
 def clear_color(r: f64, g: f64, b: f64, a: f64) -> void
@@ -96,11 +253,26 @@ def disable(cap: i32) -> void
 extern "C" "sere_gl_blend_func"
 def blend_func(src: i32, dst: i32) -> void
 
+extern "C" "sere_gl_blend_func_separate"
+def blend_func_separate(src_rgb: i32, dst_rgb: i32, src_a: i32, dst_a: i32) -> void
+
+extern "C" "sere_gl_blend_equation"
+def blend_equation(mode: i32) -> void
+
+extern "C" "sere_gl_blend_equation_separate"
+def blend_equation_separate(rgb: i32, alpha: i32) -> void
+
+extern "C" "sere_gl_blend_color"
+def blend_color(r: f64, g: f64, b: f64, a: f64) -> void
+
 extern "C" "sere_gl_depth_func"
 def depth_func(func: i32) -> void
 
 extern "C" "sere_gl_depth_mask"
 def _depth_mask(enabled: i32) -> void
+
+extern "C" "sere_gl_depth_range"
+def depth_range(near_z: f64, far_z: f64) -> void
 
 extern "C" "sere_gl_color_mask"
 def _color_mask(r: i32, g: i32, b: i32, a: i32) -> void
@@ -114,6 +286,9 @@ def front_face(mode: i32) -> void
 extern "C" "sere_gl_polygon_mode"
 def polygon_mode(face: i32, mode: i32) -> void
 
+extern "C" "sere_gl_polygon_offset"
+def polygon_offset(factor: f64, units: f64) -> void
+
 extern "C" "sere_gl_line_width"
 def line_width(width: f64) -> void
 
@@ -122,6 +297,45 @@ def point_size(size: f64) -> void
 
 extern "C" "sere_gl_pixel_store"
 def pixel_store(pname: i32, value: i32) -> void
+
+extern "C" "sere_gl_hint"
+def hint(target: i32, mode: i32) -> void
+
+extern "C" "sere_gl_is_enabled"
+def _is_enabled(cap: i32) -> i32
+
+extern "C" "sere_gl_logic_op"
+def logic_op(op: i32) -> void
+
+extern "C" "sere_gl_stencil_func"
+def stencil_func(func: i32, ref: i32, mask: i32) -> void
+
+extern "C" "sere_gl_stencil_op"
+def stencil_op(sfail: i32, dpfail: i32, dppass: i32) -> void
+
+extern "C" "sere_gl_stencil_mask"
+def stencil_mask(mask: i32) -> void
+
+extern "C" "sere_gl_clear_depth"
+def clear_depth(depth: f64) -> void
+
+extern "C" "sere_gl_clear_stencil"
+def clear_stencil(s: i32) -> void
+
+extern "C" "sere_gl_draw_buffer"
+def draw_buffer(buf: i32) -> void
+
+extern "C" "sere_gl_read_buffer"
+def read_buffer(buf: i32) -> void
+
+extern "C" "sere_gl_sample_coverage"
+def sample_coverage(value: f64, invert: i32) -> void
+
+extern "C" "sere_gl_get_float"
+def get_float(pname: i32) -> f64
+
+extern "C" "sere_gl_validate_program"
+def _validate_program(program: i32) -> i32
 
 extern "C" "sere_gl_finish"
 def finish() -> void
@@ -222,8 +436,20 @@ def uniform4f(location: i32, x: f64, y: f64, z: f64, w: f64) -> void
 extern "C" "sere_gl_uniform1i"
 def uniform1i(location: i32, x: i32) -> void
 
+extern "C" "sere_gl_uniform2i"
+def uniform2i(location: i32, x: i32, y: i32) -> void
+
+extern "C" "sere_gl_uniform3i"
+def uniform3i(location: i32, x: i32, y: i32, z: i32) -> void
+
+extern "C" "sere_gl_uniform4i"
+def uniform4i(location: i32, x: i32, y: i32, z: i32, w: i32) -> void
+
 extern "C" "sere_gl_uniform_vec"
 def uniform_vec(location: i32, values: list[f64]) -> void
+
+extern "C" "sere_gl_uniform_mat3"
+def uniform_mat3(location: i32, values: list[f64]) -> void
 
 extern "C" "sere_gl_uniform_mat4"
 def uniform_mat4(location: i32, values: list[f64]) -> void
@@ -330,6 +556,9 @@ def renderbuffer_storage(target: i32, internal: i32, width: i32, height: i32) ->
 extern "C" "sere_gl_framebuffer_renderbuffer"
 def framebuffer_renderbuffer(target: i32, attachment: i32, rbo_target: i32, rbo: i32) -> void
 
+extern "C" "sere_gl_blit_framebuffer"
+def blit_framebuffer(src_x0: i32, src_y0: i32, src_x1: i32, src_y1: i32, dst_x0: i32, dst_y0: i32, dst_x1: i32, dst_y1: i32, mask: i32, filter: i32) -> void
+
 extern "C" "sere_gl_read_pixels"
 def read_pixels(x: i32, y: i32, width: i32, height: i32, format: i32, gltype: i32) -> list[byte]
 
@@ -347,15 +576,22 @@ enum Primitive:
     TriangleStripAdjacency = 13
     Patches = 14
 
+@flags
 enum ClearMask:
     Depth = 256
     Stencil = 1024
     Color = 16384
+    DEPTH_BUFFER_BIT = 256
+    STENCIL_BUFFER_BIT = 1024
+    COLOR_BUFFER_BIT = 16384
 
 enum Buffer:
     Color = 16384
     Depth = 256
     Stencil = 1024
+    COLOR_BUFFER_BIT = 16384
+    DEPTH_BUFFER_BIT = 256
+    STENCIL_BUFFER_BIT = 1024
 
 enum ShaderKind:
     Fragment = 35632
@@ -376,10 +612,25 @@ enum Capability:
     Dither = 3024
     Blend = 3042
     ColorMaterial = 2903
+    ColorLogicOp = 3058
     ScissorTest = 3089
+    Texture1D = 3552
     Texture2D = 3553
+    TextureCubeMap = 34067
+    PolygonOffsetPoint = 10753
+    PolygonOffsetLine = 10754
+    PolygonOffsetFill = 32823
     Multisample = 32925
+    SampleAlphaToCoverage = 32926
+    SampleCoverage = 32928
+    DepthClamp = 34383
+    ProgramPointSize = 34370
+    RasterizerDiscard = 35977
     FramebufferSrgb = 36281
+    ClipDistance0 = 12288
+    ClipDistance1 = 12289
+    ClipDistance2 = 12290
+    ClipDistance3 = 12291
 
 enum BlendFactor:
     Zero = 0
@@ -393,6 +644,80 @@ enum BlendFactor:
     DstColor = 774
     OneMinusDstColor = 775
     SrcAlphaSaturate = 776
+    ConstantColor = 32769
+    OneMinusConstantColor = 32770
+    ConstantAlpha = 32771
+    OneMinusConstantAlpha = 32772
+    Src1Color = 35065
+    OneMinusSrc1Color = 35066
+    Src1Alpha = 34185
+    OneMinusSrc1Alpha = 35067
+
+enum BlendEquation:
+    Add = 32774
+    Subtract = 32778
+    ReverseSubtract = 32779
+    Min = 32775
+    Max = 32776
+
+enum StencilOp:
+    Zero = 0
+    Invert = 5386
+    Keep = 7680
+    Replace = 7681
+    Incr = 7682
+    Decr = 7683
+    IncrWrap = 34055
+    DecrWrap = 34056
+
+enum Hint:
+    Perspective = 3152
+    PointSmooth = 3153
+    LineSmooth = 3154
+    PolygonSmooth = 3155
+    Fog = 3156
+    GenerateMipmap = 33170
+    TextureCompression = 34031
+    FragmentShaderDerivative = 35723
+
+enum HintMode:
+    DontCare = 4352
+    Fastest = 4353
+    Nicest = 4354
+
+enum LogicOp:
+    Clear = 5376
+    And = 5377
+    AndReverse = 5378
+    Copy = 5379
+    AndInverted = 5380
+    Noop = 5381
+    Xor = 5382
+    Or = 5383
+    Nor = 5384
+    Equiv = 5385
+    Invert = 5386
+    OrReverse = 5387
+    CopyInverted = 5388
+    OrInverted = 5389
+    Nand = 5390
+    Set = 5391
+
+enum DrawBuffer:
+    Empty = 0
+    FrontLeft = 1024
+    FrontRight = 1025
+    BackLeft = 1026
+    BackRight = 1027
+    Front = 1028
+    Back = 1029
+    Left = 1030
+    Right = 1031
+    FrontAndBack = 1032
+    Color0 = 36064
+    Color1 = 36065
+    Color2 = 36066
+    Color3 = 36067
 
 enum DepthFn:
     Never = 512
@@ -426,6 +751,10 @@ enum DataType:
     I32 = 5124
     U32 = 5125
     F32 = 5126
+    F64 = 5130
+    Half = 5131
+    U24_8 = 34042
+    F32_U24_8 = 36269
 
 enum GlError:
     NoError = 0
@@ -444,9 +773,20 @@ enum Info:
     Extensions = 7939
     ShadingLanguage = 35724
     MaxTextureSize = 3379
+    MaxViewportDims = 3386
     MaxTextureUnits = 34018
     MaxVertexAttribs = 34921
+    MaxDrawBuffers = 34852
     MaxColorAttachments = 36063
+    MaxSamples = 36183
+    Max3DTextureSize = 32883
+    MaxCubeMapSize = 34076
+    MaxArrayTextureLayers = 35071
+    MaxUniformBlockSize = 35376
+    MajorVersion = 33307
+    MinorVersion = 33308
+    NumExtensions = 33309
+    ContextFlags = 33310
 
 enum BufferTarget:
     Array = 34962
@@ -455,6 +795,13 @@ enum BufferTarget:
     PixelUnpack = 35052
     Uniform = 35345
     Texture = 35882
+    TransformFeedback = 35982
+    CopyRead = 36662
+    CopyWrite = 36663
+    DrawIndirect = 36671
+    ShaderStorage = 37074
+    DispatchIndirect = 37102
+    AtomicCounter = 37568
 
 enum Usage:
     StreamDraw = 35040
@@ -480,16 +827,33 @@ enum TextureTarget:
 
 enum TextureFormat:
     Red = 6403
+    RG = 33319
     RGB = 6407
     RGBA = 6408
     Luminance = 6409
     LuminanceAlpha = 6410
     Depth = 6402
     DepthStencil = 34041
+    R8 = 33321
+    RG8 = 33323
+    RGB8 = 32849
+    RGBA8 = 32856
+    R16F = 33325
+    RG16F = 33327
+    RGB16F = 34843
     RGBA16F = 34842
+    R32F = 33326
+    RG32F = 33328
+    RGB32F = 34837
     RGBA32F = 34836
+    Depth16 = 33189
     Depth24 = 33190
+    Depth32 = 33191
+    Depth32F = 36012
     Depth24Stencil8 = 35056
+    SRGB = 35904
+    SRGB8 = 35905
+    SRGB8A8 = 35907
 
 enum Filter:
     Nearest = 9728
@@ -522,6 +886,14 @@ enum TextureUnit:
     T5 = 33989
     T6 = 33990
     T7 = 33991
+    T8 = 33992
+    T9 = 33993
+    T10 = 33994
+    T11 = 33995
+    T12 = 33996
+    T13 = 33997
+    T14 = 33998
+    T15 = 33999
 
 enum FramebufferTarget:
     Framebuffer = 36160
@@ -534,6 +906,10 @@ enum Attachment:
     Color1 = 36065
     Color2 = 36066
     Color3 = 36067
+    Color4 = 36068
+    Color5 = 36069
+    Color6 = 36070
+    Color7 = 36071
     Depth = 36096
     Stencil = 36128
     DepthStencil = 33306
@@ -550,6 +926,12 @@ enum PixelStore:
     PackAlignment = 3333
     UnpackRowLength = 3314
     PackRowLength = 3330
+    UnpackSkipPixels = 3316
+    UnpackSkipRows = 3315
+    PackSkipPixels = 3332
+    PackSkipRows = 3331
+    UnpackImageHeight = 32878
+    PackImageHeight = 32876
 
 enum Key:
     Backspace = 8
@@ -570,6 +952,7 @@ enum Key:
     Up = 38
     Right = 39
     Down = 40
+    PrintScreen = 44
     Insert = 45
     Delete = 46
     D0 = 48
@@ -608,6 +991,26 @@ enum Key:
     X = 88
     Y = 89
     Z = 90
+    LWin = 91
+    RWin = 92
+    Apps = 93
+    Sleep = 95
+    Num0 = 96
+    Num1 = 97
+    Num2 = 98
+    Num3 = 99
+    Num4 = 100
+    Num5 = 101
+    Num6 = 102
+    Num7 = 103
+    Num8 = 104
+    Num9 = 105
+    Multiply = 106
+    Add = 107
+    Separator = 108
+    Subtract = 109
+    Decimal = 110
+    Divide = 111
     F1 = 112
     F2 = 113
     F3 = 114
@@ -620,16 +1023,82 @@ enum Key:
     F10 = 121
     F11 = 122
     F12 = 123
+    F13 = 124
+    F14 = 125
+    F15 = 126
+    F16 = 127
+    F17 = 128
+    F18 = 129
+    F19 = 130
+    F20 = 131
+    F21 = 132
+    F22 = 133
+    F23 = 134
+    F24 = 135
     NumLock = 144
+    ScrollLock = 145
     LShift = 160
     RShift = 161
     LControl = 162
     RControl = 163
+    LAlt = 164
+    RAlt = 165
+    VolumeMute = 173
+    VolumeDown = 174
+    VolumeUp = 175
+    MediaNext = 176
+    MediaPrev = 177
+    MediaStop = 178
+    MediaPlay = 179
+    Semicolon = 186
+    Plus = 187
+    Comma = 188
+    Minus = 189
+    Period = 190
+    Slash = 191
+    Grave = 192
+    LBracket = 219
+    Backslash = 220
+    RBracket = 221
+    Quote = 222
 
 enum Mouse:
     Left = 0
     Right = 1
     Middle = 2
+    X1 = 3
+    X2 = 4
+
+enum Action:
+    Release = 0
+    Press = 1
+    Repeat = 2
+
+@flags
+enum Mod:
+    Shift = 1
+    Control = 2
+    Alt = 4
+    Super = 8
+    CapsLock = 16
+    NumLock = 32
+
+enum CursorMode:
+    Normal = 0
+    Hidden = 1
+    Disabled = 2
+    Captured = 3
+
+@flags
+enum WindowFlag:
+    Visible = 1
+    Resizable = 2
+    Decorated = 4
+    Maximized = 8
+    Floating = 16
+    Focused = 32
+    Fullscreen = 64
+    Vsync = 128
 
 class Color:
     r: f64
@@ -646,21 +1115,159 @@ class Color:
     def use4(self) -> void:
         color4(self.r, self.g, self.b, self.a)
 
+    def with_alpha(self, a: f64) -> Color:
+        return Color(self.r, self.g, self.b, a)
+
+    def scaled(self, s: f64) -> Color:
+        return Color(self.r * s, self.g * s, self.b * s, self.a)
+
+    def lerp(self, other: Color, t: f64) -> Color:
+        u: f64 = 1.0 - t
+        return Color(self.r * u + other.r * t, self.g * u + other.g * t, self.b * u + other.b * t, self.a * u + other.a * t)
+
+    def r8(self) -> i32:
+        return (self.r * 255.0) as i32
+
+    def g8(self) -> i32:
+        return (self.g * 255.0) as i32
+
+    def b8(self) -> i32:
+        return (self.b * 255.0) as i32
+
+    def a8(self) -> i32:
+        return (self.a * 255.0) as i32
+
+    def clamp01(self) -> Color:
+        r: f64 = self.r
+        g: f64 = self.g
+        b: f64 = self.b
+        a: f64 = self.a
+        if r < 0.0:
+            r = 0.0
+        if r > 1.0:
+            r = 1.0
+        if g < 0.0:
+            g = 0.0
+        if g > 1.0:
+            g = 1.0
+        if b < 0.0:
+            b = 0.0
+        if b > 1.0:
+            b = 1.0
+        if a < 0.0:
+            a = 0.0
+        if a > 1.0:
+            a = 1.0
+        return Color(r, g, b, a)
+
+    def premul(self) -> Color:
+        return Color(self.r * self.a, self.g * self.a, self.b * self.a, self.a)
+
+    def invert(self) -> Color:
+        return Color(1.0 - self.r, 1.0 - self.g, 1.0 - self.b, self.a)
+
+    def gray(self) -> f64:
+        return self.r * 0.2126 + self.g * 0.7152 + self.b * 0.0722
+
+    def to_u32(self) -> i32:
+        r: i32 = self.r8()
+        g: i32 = self.g8()
+        b: i32 = self.b8()
+        a: i32 = self.a8()
+        return ((a & 255) << 24) + ((r & 255) << 16) + ((g & 255) << 8) + (b & 255)
+
+    def __str__(self) -> str:
+        return f"Color({self.r}, {self.g}, {self.b}, {self.a})"
+
 class Window:
     ptr: Ptr[i8]
     title: str
 
-    def __init__(self, title: str, width: i32, height: i32) -> void:
+    def __init__(self, title: str, width: i32, height: i32, flags: i32 = 0) -> void:
         self.title = title
-        self.ptr = _window_new(title, width, height)
+        self.ptr = _window_new_ex(title, width, height, flags)
 
-    def poll(self) -> bool:
+    def __bool__(self) -> bool:
+        return self.is_open()
+
+    def ok(self) -> bool:
+        return self.is_open()
+
+    def poll_events(self) -> bool:
         return _window_poll(self.ptr) as bool
 
-    def swap(self) -> void:
+    def poll(self) -> bool:
+        return self.poll_events()
+
+    def wait(self) -> bool:
+        return _window_wait(self.ptr) as bool
+
+    def should_close(self) -> bool:
+        return _window_should_close(self.ptr) as bool
+
+    def set_should_close(self, value: bool) -> void:
+        _window_set_should_close(self.ptr, value as i32)
+
+    def set_flag(self, flag: WindowFlag, value: bool) -> void:
+        if flag.value == WindowFlag.Visible.value:
+            if value:
+                self.show()
+            else:
+                self.hide()
+        elif flag.value == WindowFlag.Resizable.value:
+            self.set_resizable(value)
+        elif flag.value == WindowFlag.Decorated.value:
+            self.set_decorated(value)
+        elif flag.value == WindowFlag.Maximized.value:
+            if value:
+                self.maximize()
+            else:
+                self.restore()
+        elif flag.value == WindowFlag.Floating.value:
+            self.set_floating(value)
+        elif flag.value == WindowFlag.Focused.value:
+            if value:
+                self.focus()
+        elif flag.value == WindowFlag.Fullscreen.value:
+            self.set_fullscreen(value)
+        elif flag.value == WindowFlag.Vsync.value:
+            self.set_vsync(value)
+
+    def flag(self, which: WindowFlag) -> bool:
+        if which.value == WindowFlag.Visible.value:
+            return self.visible()
+        if which.value == WindowFlag.Resizable.value:
+            return self.resizable()
+        if which.value == WindowFlag.Decorated.value:
+            return self.decorated()
+        if which.value == WindowFlag.Maximized.value:
+            return self.maximized()
+        if which.value == WindowFlag.Floating.value:
+            return self.floating()
+        if which.value == WindowFlag.Focused.value:
+            return self.focused()
+        if which.value == WindowFlag.Fullscreen.value:
+            return self.fullscreen()
+        if which.value == WindowFlag.Vsync.value:
+            return self.vsync()
+        return False
+
+    def close(self) -> void:
+        _window_set_should_close(self.ptr, 1)
+
+    def keep_open(self) -> void:
+        _window_set_should_close(self.ptr, 0)
+
+    def is_open(self) -> bool:
+        return _window_is_open(self.ptr) as bool
+
+    def swap_buffers(self) -> void:
         _window_swap(self.ptr)
 
-    def make_current(self) -> void:
+    def flip(self) -> void:
+        self.swap_buffers()
+
+    def set_as_current(self) -> void:
         _window_make_current(self.ptr)
 
     def width(self) -> i32:
@@ -668,6 +1275,18 @@ class Window:
 
     def height(self) -> i32:
         return _window_height(self.ptr)
+
+    def fb_width(self) -> i32:
+        return _window_fb_width(self.ptr)
+
+    def fb_height(self) -> i32:
+        return _window_fb_height(self.ptr)
+
+    def x(self) -> i32:
+        return _window_x(self.ptr)
+
+    def y(self) -> i32:
+        return _window_y(self.ptr)
 
     def aspect(self) -> f64:
         h: i32 = self.height()
@@ -685,14 +1304,180 @@ class Window:
     def set_vsync(self, enabled: bool) -> void:
         _window_set_vsync(self.ptr, enabled as i32)
 
+    def vsync(self) -> bool:
+        return _window_vsync(self.ptr) as bool
+
     def show_cursor(self, show: bool) -> void:
         _window_show_cursor(self.ptr, show as i32)
+
+    def set_cursor(self, mode: CursorMode) -> void:
+        _window_set_cursor_mode(self.ptr, mode.value)
+
+    def cursor(self) -> i32:
+        return _window_cursor_mode(self.ptr)
+
+    def cursor_normal(self) -> void:
+        self.set_cursor(CursorMode.Normal)
+
+    def cursor_hidden(self) -> void:
+        self.set_cursor(CursorMode.Hidden)
+
+    def cursor_disabled(self) -> void:
+        self.set_cursor(CursorMode.Disabled)
+
+    def cursor_captured(self) -> void:
+        self.set_cursor(CursorMode.Captured)
+
+    def set_cursor_pos(self, x: i32, y: i32) -> void:
+        _window_set_cursor_pos(self.ptr, x, y)
 
     def set_size(self, width: i32, height: i32) -> void:
         _window_set_size(self.ptr, width, height)
 
-    def time(self) -> f64:
+    def set_pos(self, x: i32, y: i32) -> void:
+        _window_set_pos(self.ptr, x, y)
+
+    def set_min_size(self, width: i32, height: i32) -> void:
+        _window_set_min_size(self.ptr, width, height)
+
+    def set_max_size(self, width: i32, height: i32) -> void:
+        _window_set_max_size(self.ptr, width, height)
+
+    def center(self) -> void:
+        self.set_pos((screen_width() - self.width()) // 2, (screen_height() - self.height()) // 2)
+
+    def show(self) -> void:
+        _window_show(self.ptr)
+
+    def hide(self) -> void:
+        _window_hide(self.ptr)
+
+    def minimize(self) -> void:
+        _window_minimize(self.ptr)
+
+    def maximize(self) -> void:
+        _window_maximize(self.ptr)
+
+    def restore(self) -> void:
+        _window_restore(self.ptr)
+
+    def focus(self) -> void:
+        _window_focus(self.ptr)
+
+    def request_attention(self) -> void:
+        _window_request_attention(self.ptr)
+
+    def set_fullscreen(self, enabled: bool) -> void:
+        _window_set_fullscreen(self.ptr, enabled as i32)
+
+    def fullscreen(self) -> bool:
+        return _window_fullscreen(self.ptr) as bool
+
+    def set_resizable(self, enabled: bool) -> void:
+        _window_set_resizable(self.ptr, enabled as i32)
+
+    def set_decorated(self, enabled: bool) -> void:
+        _window_set_decorated(self.ptr, enabled as i32)
+
+    def set_floating(self, enabled: bool) -> void:
+        _window_set_floating(self.ptr, enabled as i32)
+
+    def set_flag(self, flag: WindowFlag, enabled: bool) -> void:
+        v: i32 = flag.value
+        if v == WindowFlag.Visible.value:
+            if enabled:
+                self.show()
+            else:
+                self.hide()
+        elif v == WindowFlag.Resizable.value:
+            self.set_resizable(enabled)
+        elif v == WindowFlag.Decorated.value:
+            self.set_decorated(enabled)
+        elif v == WindowFlag.Maximized.value:
+            if enabled:
+                self.maximize()
+            else:
+                self.restore()
+        elif v == WindowFlag.Floating.value:
+            self.set_floating(enabled)
+        elif v == WindowFlag.Focused.value:
+            if enabled:
+                self.focus()
+        elif v == WindowFlag.Fullscreen.value:
+            self.set_fullscreen(enabled)
+        elif v == WindowFlag.Vsync.value:
+            self.set_vsync(enabled)
+
+    def has_flag(self, flag: WindowFlag) -> bool:
+        v: i32 = flag.value
+        if v == WindowFlag.Visible.value:
+            return self.visible()
+        if v == WindowFlag.Resizable.value:
+            return self.resizable()
+        if v == WindowFlag.Decorated.value:
+            return self.decorated()
+        if v == WindowFlag.Maximized.value:
+            return self.maximized()
+        if v == WindowFlag.Floating.value:
+            return self.floating()
+        if v == WindowFlag.Focused.value:
+            return self.focused()
+        if v == WindowFlag.Fullscreen.value:
+            return self.fullscreen()
+        if v == WindowFlag.Vsync.value:
+            return self.vsync()
+        return False
+
+    def set_opacity(self, opacity: f64) -> void:
+        _window_set_opacity(self.ptr, opacity)
+
+    def resizable(self) -> bool:
+        return _window_resizable(self.ptr) as bool
+
+    def decorated(self) -> bool:
+        return _window_decorated(self.ptr) as bool
+
+    def floating(self) -> bool:
+        return _window_floating(self.ptr) as bool
+
+    def opacity(self) -> f64:
+        return _window_opacity(self.ptr)
+
+    def content_scale(self) -> f64:
+        return _window_content_scale(self.ptr)
+
+    def toggle_fullscreen(self) -> void:
+        self.set_fullscreen(not self.fullscreen())
+
+    def iconify(self) -> void:
+        self.minimize()
+
+    def flash(self) -> void:
+        self.request_attention()
+
+    def focused(self) -> bool:
+        return _window_focused(self.ptr) as bool
+
+    def minimized(self) -> bool:
+        return _window_minimized(self.ptr) as bool
+
+    def maximized(self) -> bool:
+        return _window_maximized(self.ptr) as bool
+
+    def visible(self) -> bool:
+        return _window_visible(self.ptr) as bool
+
+    def hovered(self) -> bool:
+        return _window_hovered(self.ptr) as bool
+
+    def resized(self) -> bool:
+        return _window_resized(self.ptr) as bool
+
+    def get_time(self) -> f64:
         return _window_time(self.ptr)
+
+    def time(self) -> f64:
+        return self.get_time()
 
     def dt(self) -> f64:
         return _window_dt(self.ptr)
@@ -703,31 +1488,126 @@ class Window:
     def key_code(self, vk: i32) -> bool:
         return _window_key(self.ptr, vk) as bool
 
+    def key_pressed(self, code: Key) -> bool:
+        return _window_key_pressed(self.ptr, code.value) as bool
+
+    def key_released(self, code: Key) -> bool:
+        return _window_key_released(self.ptr, code.value) as bool
+
+    def mods(self) -> i32:
+        return _window_mods(self.ptr)
+
+    def shift(self) -> bool:
+        return (self.mods() & Mod.Shift.value) != 0
+
+    def ctrl(self) -> bool:
+        return (self.mods() & Mod.Control.value) != 0
+
+    def alt(self) -> bool:
+        return (self.mods() & Mod.Alt.value) != 0
+
+    def super_key(self) -> bool:
+        return (self.mods() & Mod.Super.value) != 0
+
+    def caps_lock(self) -> bool:
+        return (self.mods() & Mod.CapsLock.value) != 0
+
+    def num_lock(self) -> bool:
+        return (self.mods() & Mod.NumLock.value) != 0
+
+    def mod_down(self, which: Mod) -> bool:
+        return (self.mods() & which.value) != 0
+
+    def key_code_pressed(self, vk: i32) -> bool:
+        return _window_key_pressed(self.ptr, vk) as bool
+
+    def key_code_released(self, vk: i32) -> bool:
+        return _window_key_released(self.ptr, vk) as bool
+
+    def typed(self) -> i32:
+        return _window_char(self.ptr)
+
     def mouse_x(self) -> i32:
         return _window_mouse_x(self.ptr)
 
     def mouse_y(self) -> i32:
         return _window_mouse_y(self.ptr)
 
+    def mouse_dx(self) -> i32:
+        return _window_mouse_dx(self.ptr)
+
+    def mouse_dy(self) -> i32:
+        return _window_mouse_dy(self.ptr)
+
     def button(self, which: Mouse) -> bool:
         return _window_mouse_button(self.ptr, which.value) as bool
+
+    def button_pressed(self, which: Mouse) -> bool:
+        return _window_mouse_button_pressed(self.ptr, which.value) as bool
+
+    def button_released(self, which: Mouse) -> bool:
+        return _window_mouse_button_released(self.ptr, which.value) as bool
+
+    def left(self) -> bool:
+        return self.button(Mouse.Left)
+
+    def right(self) -> bool:
+        return self.button(Mouse.Right)
+
+    def middle(self) -> bool:
+        return self.button(Mouse.Middle)
+
+    def left_pressed(self) -> bool:
+        return self.button_pressed(Mouse.Left)
+
+    def right_pressed(self) -> bool:
+        return self.button_pressed(Mouse.Right)
+
+    def middle_pressed(self) -> bool:
+        return self.button_pressed(Mouse.Middle)
 
     def wheel(self) -> i32:
         return _window_wheel(self.ptr)
 
+    def get_fps(self) -> f64:
+        delta: f64 = self.dt()
+        if delta <= 0.0:
+            return 0.0
+        return 1.0 / delta
+
+    def fps(self) -> f64:
+        return self.get_fps()
+
+    def clipboard(self) -> str:
+        return _window_clipboard_get(self.ptr)
+
+    def set_clipboard(self, text: str) -> void:
+        _window_clipboard_set(self.ptr, text)
+
     def fit_viewport(self) -> void:
-        viewport(0, 0, self.width(), self.height())
+        viewport(0, 0, self.fb_width(), self.fb_height())
+
+    def fit_scissor(self) -> void:
+        scissor(0, 0, self.fb_width(), self.fb_height())
+
+    def capture_frame(self) -> list[byte]:
+        return read_pixels(0, 0, self.fb_width(), self.fb_height(), TextureFormat.RGBA.value, DataType.U8.value)
 
     def destroy(self) -> void:
         _window_destroy(self.ptr)
+
+    def __str__(self) -> str:
+        return f"Window({self.get_title()}, {self.width()}x{self.height()})"
 
 class Shader:
     id: i32
     kind: ShaderKind
     compiled: i32
+    source: str
 
     def __init__(self, kind: ShaderKind, source: str) -> void:
         self.kind = kind
+        self.source = source
         self.id = _create_shader(kind.value)
         _shader_source(self.id, source)
         self.compiled = _compile_shader(self.id)
@@ -740,10 +1620,17 @@ class Shader:
     def log(self) -> str:
         return shader_log(self.id)
 
+    def __bool__(self) -> bool:
+        return self.ok()
+
     def destroy(self) -> void:
         delete_shader(self.id)
         self.id = 0
         self.compiled = 0
+        self.source = ""
+
+    def __str__(self) -> str:
+        return f"Shader({self.kind.value}, {self.id})"
 
 class Program:
     id: i32
@@ -757,6 +1644,19 @@ class Program:
 
     def use(self) -> void:
         use_program(self.id)
+
+    def unuse(self) -> void:
+        use_program(0)
+
+    def attach(self, shader: Shader) -> void:
+        attach_shader(self.id, shader.id)
+
+    def detach(self, shader: Shader) -> void:
+        detach_shader(self.id, shader.id)
+
+    def link(self) -> bool:
+        self.linked = _link_program(self.id)
+        return self.ok()
 
     def ok(self) -> bool:
         if self.id == 0:
@@ -787,19 +1687,49 @@ class Program:
     def set_f4(self, name: str, x: f64, y: f64, z: f64, w: f64) -> void:
         uniform4f(self.loc(name), x, y, z, w)
 
+    def set_color(self, name: str, color: Color) -> void:
+        uniform4f(self.loc(name), color.r, color.g, color.b, color.a)
+
+    def set_bool(self, name: str, value: bool) -> void:
+        uniform1i(self.loc(name), value as i32)
+
     def set_i(self, name: str, x: i32) -> void:
         uniform1i(self.loc(name), x)
+
+    def set_tex(self, name: str, unit: i32) -> void:
+        uniform1i(self.loc(name), unit)
+
+    def set_i2(self, name: str, x: i32, y: i32) -> void:
+        uniform2i(self.loc(name), x, y)
+
+    def set_i3(self, name: str, x: i32, y: i32, z: i32) -> void:
+        uniform3i(self.loc(name), x, y, z)
+
+    def set_i4(self, name: str, x: i32, y: i32, z: i32, w: i32) -> void:
+        uniform4i(self.loc(name), x, y, z, w)
 
     def set_vec(self, name: str, values: list[f64]) -> void:
         uniform_vec(self.loc(name), values)
 
+    def set_mat3(self, name: str, values: list[f64]) -> void:
+        uniform_mat3(self.loc(name), values)
+
     def set_mat4(self, name: str, values: list[f64]) -> void:
         uniform_mat4(self.loc(name), values)
+
+    def validate(self) -> bool:
+        return _validate_program(self.id) as bool
+
+    def __bool__(self) -> bool:
+        return self.ok()
 
     def destroy(self) -> void:
         delete_program(self.id)
         self.id = 0
         self.linked = 0
+
+    def __str__(self) -> str:
+        return f"Program({self.id})"
 
 class GpuBuffer:
     id: i32
@@ -811,6 +1741,9 @@ class GpuBuffer:
 
     def bind(self) -> void:
         bind_buffer(self.target, self.id)
+
+    def unbind(self) -> void:
+        bind_buffer(self.target, 0)
 
     def data_f64(self, values: list[f64], usage: Usage) -> void:
         self.bind()
@@ -827,6 +1760,12 @@ class GpuBuffer:
     def sub_f64(self, offset_bytes: i64, values: list[f64]) -> void:
         self.bind()
         buffer_sub_f64(self.target, offset_bytes, values)
+
+    def ok(self) -> bool:
+        return self.id != 0
+
+    def __bool__(self) -> bool:
+        return self.ok()
 
     def destroy(self) -> void:
         delete_buffer(self.id)
@@ -851,6 +1790,15 @@ class VertexArray:
     def attrib_typed(self, index: i32, size: i32, gltype: DataType, normalized: bool, stride_bytes: i32, offset_bytes: i64) -> void:
         enable_attrib(index)
         attrib_pointer(index, size, gltype.value, normalized as i32, stride_bytes, offset_bytes)
+
+    def disable(self, index: i32) -> void:
+        disable_attrib(index)
+
+    def ok(self) -> bool:
+        return self.id != 0
+
+    def __bool__(self) -> bool:
+        return self.ok()
 
     def destroy(self) -> void:
         delete_vao(self.id)
@@ -890,6 +1838,22 @@ class Texture:
         tex_param(self.target, TexParam.WrapS.value, s.value)
         tex_param(self.target, TexParam.WrapT.value, t.value)
 
+    def wrap_r(self, r: Wrap) -> void:
+        self.bind()
+        tex_param(self.target, TexParam.WrapR.value, r.value)
+
+    def unbind(self) -> void:
+        bind_texture(self.target, 0)
+
+    def upload_sub(self, x: i32, y: i32, width: i32, height: i32, pixels: list[byte]) -> void:
+        self.bind()
+        tex_sub_image2d(self.target, 0, x, y, width, height, TextureFormat.RGBA.value, DataType.U8.value, pixels)
+
+    def resize(self, width: i32, height: i32, format: TextureFormat) -> void:
+        self.width = width
+        self.height = height
+        self.allocate(format)
+
     def upload(self, pixels: list[byte]) -> void:
         self.bind()
         tex_image2d(self.target, 0, TextureFormat.RGBA.value, self.width, self.height, TextureFormat.RGBA.value, DataType.U8.value, pixels)
@@ -906,9 +1870,22 @@ class Texture:
         self.bind()
         generate_mipmap(self.target)
 
+    def upload_format(self, format: TextureFormat, pixels: list[byte]) -> void:
+        self.bind()
+        tex_image2d(self.target, 0, format.value, self.width, self.height, format.value, DataType.U8.value, pixels)
+
+    def ok(self) -> bool:
+        return self.id != 0
+
+    def __bool__(self) -> bool:
+        return self.ok()
+
     def destroy(self) -> void:
         delete_texture(self.id)
         self.id = 0
+
+    def __str__(self) -> str:
+        return f"Texture({self.width}x{self.height})"
 
 class Renderbuffer:
     id: i32
@@ -924,6 +1901,21 @@ class Renderbuffer:
 
     def bind(self) -> void:
         bind_renderbuffer(FramebufferTarget.Renderbuffer.value, self.id)
+
+    def unbind(self) -> void:
+        bind_renderbuffer(FramebufferTarget.Renderbuffer.value, 0)
+
+    def resize(self, width: i32, height: i32, internal: TextureFormat) -> void:
+        self.width = width
+        self.height = height
+        self.bind()
+        renderbuffer_storage(FramebufferTarget.Renderbuffer.value, internal.value, width, height)
+
+    def ok(self) -> bool:
+        return self.id != 0
+
+    def __bool__(self) -> bool:
+        return self.ok()
 
     def destroy(self) -> void:
         delete_renderbuffer(self.id)
@@ -946,16 +1938,51 @@ class Framebuffer:
         bind_framebuffer(FramebufferTarget.Framebuffer.value, 0)
 
     def color(self, texture: Texture) -> void:
+        self.color_at(0, texture)
+
+    def color_at(self, index: i32, texture: Texture) -> void:
         self.bind()
-        framebuffer_texture2d(FramebufferTarget.Framebuffer.value, Attachment.Color0.value, texture.target, texture.id, 0)
+        framebuffer_texture2d(FramebufferTarget.Framebuffer.value, Attachment.Color0.value + index, texture.target, texture.id, 0)
 
     def depth_texture(self, texture: Texture) -> void:
         self.bind()
         framebuffer_texture2d(FramebufferTarget.Framebuffer.value, Attachment.Depth.value, texture.target, texture.id, 0)
 
+    def stencil_texture(self, texture: Texture) -> void:
+        self.bind()
+        framebuffer_texture2d(FramebufferTarget.Framebuffer.value, Attachment.Stencil.value, texture.target, texture.id, 0)
+
     def depth(self, buffer: Renderbuffer) -> void:
         self.bind()
         framebuffer_renderbuffer(FramebufferTarget.Framebuffer.value, Attachment.Depth.value, FramebufferTarget.Renderbuffer.value, buffer.id)
+
+    def stencil(self, buffer: Renderbuffer) -> void:
+        self.bind()
+        framebuffer_renderbuffer(FramebufferTarget.Framebuffer.value, Attachment.Stencil.value, FramebufferTarget.Renderbuffer.value, buffer.id)
+
+    def depth_stencil(self, buffer: Renderbuffer) -> void:
+        self.bind()
+        framebuffer_renderbuffer(FramebufferTarget.Framebuffer.value, Attachment.DepthStencil.value, FramebufferTarget.Renderbuffer.value, buffer.id)
+
+    def viewport(self) -> void:
+        viewport(0, 0, self.width, self.height)
+
+    def capture(self) -> list[byte]:
+        self.bind()
+        return read_pixels(0, 0, self.width, self.height, TextureFormat.RGBA.value, DataType.U8.value)
+
+    def blit_to(self, dest: Framebuffer, mask: i32, filter: Filter) -> void:
+        bind_framebuffer(FramebufferTarget.Read.value, self.id)
+        bind_framebuffer(FramebufferTarget.Draw.value, dest.id)
+        blit_framebuffer(0, 0, self.width, self.height, 0, 0, dest.width, dest.height, mask, filter.value)
+
+    def blit_screen(self, mask: i32, filter: Filter) -> void:
+        bind_framebuffer(FramebufferTarget.Read.value, self.id)
+        bind_framebuffer(FramebufferTarget.Draw.value, 0)
+        blit_framebuffer(0, 0, self.width, self.height, 0, 0, self.width, self.height, mask, filter.value)
+
+    def __bool__(self) -> bool:
+        return self.ok()
 
     def ok(self) -> bool:
         self.bind()
@@ -968,6 +1995,9 @@ class Framebuffer:
     def destroy(self) -> void:
         delete_framebuffer(self.id)
         self.id = 0
+
+    def __str__(self) -> str:
+        return f"Framebuffer({self.width}x{self.height})"
 
 class Mesh:
     vao: VertexArray
@@ -1006,12 +2036,34 @@ class Mesh:
         self.index_count = len(values) as i32
         self.indexed = 1
 
+    def update(self, vertices: list[f64], usage: Usage) -> void:
+        self.vao.bind()
+        self.vbo.data_f64(vertices, usage)
+        if self.stride > 0:
+            self.count = (len(vertices) as i32) // (self.stride // 4)
+
+    def unbind(self) -> void:
+        self.vao.unbind()
+
     def draw(self, mode: Primitive) -> void:
+        self.draw_range(mode, 0, self.count)
+
+    def draw_range(self, mode: Primitive, first: i32, count: i32) -> void:
         self.vao.bind()
         if self.indexed != 0:
             draw_elements(mode.value, self.index_count, DataType.U32.value, 0 as i64)
         else:
-            draw_arrays(mode.value, 0, self.count)
+            draw_arrays(mode.value, first, count)
+
+    def draw_indexed(self, mode: Primitive) -> void:
+        self.vao.bind()
+        draw_elements(mode.value, self.index_count, DataType.U32.value, 0 as i64)
+
+    def ok(self) -> bool:
+        return self.vao.ok()
+
+    def __bool__(self) -> bool:
+        return self.ok()
 
     def destroy(self) -> void:
         self.vao.destroy()
@@ -1021,8 +2073,17 @@ class Mesh:
 def available() -> bool:
     return _available() as bool
 
+def color_buffer() -> i32:
+    return ClearMask.COLOR_BUFFER_BIT.value
+
+def depth_buffer() -> i32:
+    return ClearMask.DEPTH_BUFFER_BIT.value
+
+def stencil_buffer() -> i32:
+    return ClearMask.STENCIL_BUFFER_BIT.value
+
 def color_depth() -> i32:
-    return ClearMask.Color.value + ClearMask.Depth.value
+    return ClearMask.COLOR_BUFFER_BIT.value + ClearMask.DEPTH_BUFFER_BIT.value
 
 def color_depth_stencil() -> i32:
     return ClearMask.Color.value + ClearMask.Depth.value + ClearMask.Stencil.value
@@ -1037,9 +2098,21 @@ def set_blend(src: BlendFactor, dst: BlendFactor) -> void:
     enable(Capability.Blend.value)
     blend_func(src.value, dst.value)
 
+def set_blend_eq(mode: BlendEquation) -> void:
+    enable(Capability.Blend.value)
+    blend_equation(mode.value)
+
 def set_depth(func: DepthFn) -> void:
     enable(Capability.DepthTest.value)
     depth_func(func.value)
+
+def set_stencil(func: DepthFn, ref: i32, mask: i32, sfail: StencilOp, dpfail: StencilOp, dppass: StencilOp) -> void:
+    enable(Capability.StencilTest.value)
+    stencil_func(func.value, ref, mask)
+    stencil_op(sfail.value, dpfail.value, dppass.value)
+
+def enabled(cap: Capability) -> bool:
+    return _is_enabled(cap.value) as bool
 
 def depth_write(enabled: bool) -> void:
     _depth_mask(enabled as i32)
@@ -1084,3 +2157,42 @@ def texture_color(width: i32, height: i32, format: TextureFormat) -> Texture:
     tex = Texture(width, height)
     tex.allocate(format)
     return tex
+
+def default_window_flags() -> i32:
+    return WindowFlag.Visible.value + WindowFlag.Resizable.value + WindowFlag.Decorated.value + WindowFlag.Focused.value + WindowFlag.Vsync.value
+
+def rgb(r: f64, g: f64, b: f64) -> Color:
+    return Color(r, g, b, 1.0)
+
+def rgba(r: f64, g: f64, b: f64, a: f64) -> Color:
+    return Color(r, g, b, a)
+
+def rgb8(r: i32, g: i32, b: i32) -> Color:
+    return Color((r as f64) / 255.0, (g as f64) / 255.0, (b as f64) / 255.0, 1.0)
+
+def rgba8(r: i32, g: i32, b: i32, a: i32) -> Color:
+    return Color((r as f64) / 255.0, (g as f64) / 255.0, (b as f64) / 255.0, (a as f64) / 255.0)
+
+def color_u32(value: i32) -> Color:
+    a: i32 = (value >> 24) & 255
+    r: i32 = (value >> 16) & 255
+    g: i32 = (value >> 8) & 255
+    b: i32 = value & 255
+    return rgba8(r, g, b, a)
+
+def set_blend_separate(src_rgb: BlendFactor, dst_rgb: BlendFactor, src_a: BlendFactor, dst_a: BlendFactor) -> void:
+    enable(Capability.Blend.value)
+    blend_func_separate(src_rgb.value, dst_rgb.value, src_a.value, dst_a.value)
+
+def set_hint(target: Hint, mode: HintMode) -> void:
+    hint(target.value, mode.value)
+
+def set_logic(op: LogicOp) -> void:
+    enable(Capability.ColorLogicOp.value)
+    logic_op(op.value)
+
+def set_draw_buf(buf: DrawBuffer) -> void:
+    draw_buffer(buf.value)
+
+def set_read_buf(buf: DrawBuffer) -> void:
+    read_buffer(buf.value)

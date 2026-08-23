@@ -16,6 +16,11 @@ namespace sere {
 class DiagnosticEngine;
 class SourceManager;
 
+struct ParsedCallArguments {
+  std::vector<std::unique_ptr<Expr>> positional;
+  std::vector<NamedArgument> keyword;
+};
+
 class Parser {
 public:
   Parser(DiagnosticEngine& diagnostics, std::vector<Token> tokens,
@@ -68,7 +73,7 @@ private:
   std::unique_ptr<Expr> parseDictLiteral();
   std::unique_ptr<Expr> parseFString();
   std::unique_ptr<Expr> parseEmbeddedExpr(std::string_view text, SourceLocation base);
-  std::vector<std::unique_ptr<Expr>> parseCallArguments();
+  [[nodiscard]] ParsedCallArguments parseCallArguments();
   std::unique_ptr<Expr> parseComprehension(std::unique_ptr<Expr> element);
   std::unique_ptr<Stmt> parseStatement();
   std::unique_ptr<FunctionDef> parseFunction(std::string externName);

@@ -10,7 +10,7 @@ The language server is the same `sere` binary (`sere --lsp`).
 - Diagnostics with exception codes (`NameError`, `TypeError`, …)
 - Hover types, including `&x: Ptr[T]` and `*p: T`
 - Completion (members, imports, keywords, macros, exceptions)
-- Parameter hints, signature help, inlay hints, and snippets
+- Parameter hints, signature help, and inlay hints
 - Go to definition, type definition, implementation, and references
 - Rename, document highlight, document / workspace symbols
 - Folding, format-on-request, and code lens reference counts

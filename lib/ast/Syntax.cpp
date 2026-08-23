@@ -102,11 +102,13 @@ bool NameExpr::compileTimeBool() const { return compileTimeBool_; }
 CallExpr::CallExpr(SourceRange range,
                    std::unique_ptr<Expr> callee,
                    std::vector<std::unique_ptr<TypeExpr>> typeArgs,
-                   std::vector<std::unique_ptr<Expr>> arguments)
+                   std::vector<std::unique_ptr<Expr>> arguments,
+                   std::vector<NamedArgument> keywordArguments)
     : Expr(NodeKind::CallExpr, range),
       callee_(std::move(callee)),
       typeArgs_(std::move(typeArgs)),
-      arguments_(std::move(arguments)) {}
+      arguments_(std::move(arguments)),
+      keywordArguments_(std::move(keywordArguments)) {}
 
 const Expr& CallExpr::callee() const { return *callee_; }
 
@@ -115,6 +117,16 @@ Expr& CallExpr::callee() { return *callee_; }
 const std::vector<std::unique_ptr<TypeExpr>>& CallExpr::typeArgs() const { return typeArgs_; }
 
 const std::vector<std::unique_ptr<Expr>>& CallExpr::arguments() const { return arguments_; }
+
+const std::vector<NamedArgument>& CallExpr::keywordArguments() const { return keywordArguments_; }
+
+const std::vector<const Expr*>& CallExpr::boundArguments() const { return boundArguments_; }
+
+void CallExpr::setBoundArguments(std::vector<const Expr*> arguments,
+                                 std::vector<std::unique_ptr<Expr>> owned) {
+  boundArguments_ = std::move(arguments);
+  boundStorage_ = std::move(owned);
+}
 
 IntrinsicKind CallExpr::intrinsic() const { return intrinsic_; }
 

@@ -13,6 +13,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -105,6 +106,18 @@ namespace {
 
 [[nodiscard]] std::string quoteType(const Type* type) {
   return "'" + (type == nullptr ? std::string("?") : type->display()) + "'";
+}
+
+[[nodiscard]] std::vector<std::string> splitQualifiedName(const std::string& name) {
+  std::vector<std::string> parts;
+  std::size_t start = 0;
+  for (std::size_t index = 0; index <= name.size(); ++index) {
+    if (index == name.size() || name[index] == '.') {
+      parts.push_back(name.substr(start, index - start));
+      start = index + 1;
+    }
+  }
+  return parts;
 }
 
 [[nodiscard]] bool isParseableType(const Type* type) {
@@ -567,8 +580,8 @@ bool TypeChecker::isAssignable(const Type* from, const Type* to) const {
   if (from->isNamed("f32") && to->isNamed("f64")) {
     return true;
   }
-  if ((from->isEnum() && to->isInteger()) || (from->isInteger() && to->isEnum())) {
-    return false;
+  if (from->isIntEnum() && to->isInteger()) {
+    return true;
   }
   if (to->isUnion()) {
     if (from->isUnion()) {
@@ -674,6 +687,57 @@ const Type* TypeChecker::resolveNamedType(const std::string& name,
       return nullptr;
     }
     resolvedArgs.push_back(resolved);
+  }
+  if (name.find('.') != std::string::npos) {
+    const std::vector<std::string> parts = splitQualifiedName(name);
+    if (parts.size() < 2 || parts[0].empty()) {
+      if (reportMissing) {
+        reportUnknown(range, "type", name);
+      }
+      return nullptr;
+    }
+    const Symbol* symbol = lookup(parts[0]);
+    const Type* current = symbol == nullptr ? nullptr : symbol->type;
+    if (current == nullptr || !current->isModule()) {
+      if (reportMissing) {
+        reportUnknown(range, "module", parts[0]);
+      }
+      return nullptr;
+    }
+    for (std::size_t index = 1; index < parts.size(); ++index) {
+      const RecordField* field = current->findField(parts[index]);
+      if (field == nullptr || field->type == nullptr) {
+        if (reportMissing) {
+          reportUnknown(range, "type", name);
+        }
+        return nullptr;
+      }
+      if (!field->isPublic) {
+        diagnostics_->error(range, "'" + parts[index] + "' is private and is not exported");
+        return nullptr;
+      }
+      current = field->type;
+      if (index + 1 < parts.size() && !current->isModule()) {
+        if (reportMissing) {
+          reportUnknown(range, "type", name);
+        }
+        return nullptr;
+      }
+    }
+    if (!current->typeParams().empty()) {
+      if (resolvedArgs.size() != current->typeParams().size()) {
+        diagnostics_->error(range,
+                            "'" + name + "' requires " +
+                                std::to_string(current->typeParams().size()) + " type arguments");
+        return nullptr;
+      }
+      return types_->instantiate(current, resolvedArgs);
+    }
+    if (!resolvedArgs.empty()) {
+      diagnostics_->error(range, "type '" + name + "' is not generic");
+      return nullptr;
+    }
+    return current;
   }
   if (name == "Unique" || name == "Shared" || name == "Ptr" || name == "list" || name == "array") {
     if (resolvedArgs.size() != 1) {
@@ -1262,8 +1326,9 @@ const Type* TypeChecker::checkBinary(BinaryExpr& expr) {
   if (op == BinaryOp::In || op == BinaryOp::NotIn) {
     if (right->isNamed("str") || right->isSequence() || right->isDict() ||
         right->methodIndex("__contains__") >= 0 ||
-        (right->isEnum() && right->isFlags() && left->isEnum() &&
-         left->canonical() == right->canonical())) {
+        (right->isEnum() && right->isFlags() && left->isIntEnum() &&
+         left->canonical() == right->canonical()) ||
+        (left->isIntEnum() && right->isInteger())) {
       expr.setResolvedType(types_->boolType());
       return types_->boolType();
     }
@@ -1299,7 +1364,9 @@ const Type* TypeChecker::checkBinary(BinaryExpr& expr) {
         (left->isInteger() || left->isFloat()) && (right->isInteger() || right->isFloat());
     const bool strs = left->isNamed("str") && right->isNamed("str");
     const bool enums = left->isEnum() && right->isEnum() && left->canonical() == right->canonical();
-    if (!(same || ints || floats || mixedNum || strs || enums)) {
+    const bool enumInt = (left->isIntEnum() && right->isInteger()) ||
+                         (right->isIntEnum() && left->isInteger());
+    if (!(same || ints || floats || mixedNum || strs || enums || enumInt)) {
       diagnostics_->error(expr.range(),
                           "cannot compare " + quoteType(left) + " with " + quoteType(right));
       return nullptr;
@@ -1310,19 +1377,25 @@ const Type* TypeChecker::checkBinary(BinaryExpr& expr) {
   if (op == BinaryOp::BitAnd || op == BinaryOp::BitOr || op == BinaryOp::BitXor ||
       op == BinaryOp::Shl || op == BinaryOp::Shr) {
     if (!left->isInteger() || !right->isInteger()) {
-      if (!(left->isEnum() && right->isEnum() && left->canonical() == right->canonical())) {
+      const bool leftBits = left->isInteger() || left->isIntEnum();
+      const bool rightBits = right->isInteger() || right->isIntEnum();
+      if (!leftBits || !rightBits) {
         diagnostics_->error(expr.range(), "bitwise operators require integers");
         return nullptr;
       }
-      expr.setResolvedType(left);
-      return left;
+      if (left->isIntEnum() && right->isIntEnum() && left->canonical() == right->canonical()) {
+        expr.setResolvedType(left);
+        return left;
+      }
+      expr.setResolvedType(types_->i32Type());
+      return types_->i32Type();
     }
     const Type* result = left->integerBitWidth() >= right->integerBitWidth() ? left : right;
     expr.setResolvedType(result);
     return result;
   }
-  const bool leftNum = left->isInteger() || left->isFloat();
-  const bool rightNum = right->isInteger() || right->isFloat();
+  const bool leftNum = left->isInteger() || left->isFloat() || left->isIntEnum();
+  const bool rightNum = right->isInteger() || right->isFloat() || right->isIntEnum();
   if (!leftNum || !rightNum) {
     if (left->isEnum() || right->isEnum()) {
       diagnostics_->error(expr.range(),
@@ -1339,6 +1412,16 @@ const Type* TypeChecker::checkBinary(BinaryExpr& expr) {
   if (left->isFloat() || right->isFloat()) {
     result = (left->isNamed("f64") || right->isNamed("f64")) ? types_->primitive("f64")
                                                              : types_->primitive("f32");
+  } else if (left->isIntEnum() || right->isIntEnum()) {
+    if (left->isIntEnum() && right->isIntEnum() && left->canonical() == right->canonical()) {
+      result = left;
+    } else if (left->isInteger()) {
+      result = left;
+    } else if (right->isInteger()) {
+      result = right;
+    } else {
+      result = types_->i32Type();
+    }
   } else {
     result = left->integerBitWidth() >= right->integerBitWidth() ? left : right;
   }
@@ -1366,7 +1449,8 @@ const Type* TypeChecker::checkUnary(UnaryExpr& expr) {
     return types_->boolType();
   }
   if (expr.op() == UnaryOp::Invert) {
-    if (!operand->isInteger() && operand->methodIndex("__invert__") < 0) {
+    if (!operand->isInteger() && !operand->isIntEnum() &&
+        operand->methodIndex("__invert__") < 0) {
       diagnostics_->error(expr.range(), "'~' requires an integer");
       return nullptr;
     }
@@ -1630,6 +1714,11 @@ bool TypeChecker::checkContinue(const ContinueStmt& statement) {
 }
 
 const Type* TypeChecker::checkIntrinsicCall(CallExpr& expr, IntrinsicKind kind) {
+  if (kind != IntrinsicKind::Print && !expr.keywordArguments().empty()) {
+    diagnostics_->error(expr.range(), std::string(intrinsicName(kind)) +
+                                        "() does not accept keyword arguments");
+    return nullptr;
+  }
   std::vector<const Type*> typeArgs;
   for (const std::unique_ptr<TypeExpr>& typeArg : expr.typeArgs()) {
     const Type* resolved = resolveTypeExpr(*typeArg);
@@ -1801,6 +1890,18 @@ const Type* TypeChecker::checkIntrinsicCall(CallExpr& expr, IntrinsicKind kind) 
     if (!typeArgs.empty()) {
       diagnostics_->error(expr.range(), "print() does not take type arguments");
       return nullptr;
+    }
+    for (const NamedArgument& kw : expr.keywordArguments()) {
+      if (kw.name != "sep" && kw.name != "end") {
+        diagnostics_->error(kw.value->range(),
+                            "print() got an unexpected keyword argument '" + kw.name + "'");
+        return nullptr;
+      }
+      const Type* kwType = checkExpr(*kw.value);
+      if (kwType == nullptr || !kwType->isNamed("str")) {
+        diagnostics_->error(kw.value->range(), "print() keyword '" + kw.name + "' must be a str");
+        return nullptr;
+      }
     }
     for (std::size_t index = 0; index < valueTypes.size(); ++index) {
       if (!isPrintable(valueTypes[index])) {
@@ -2015,55 +2116,47 @@ const Type* TypeChecker::checkCall(CallExpr& expr) {
   if (functionType == nullptr) {
     return nullptr;
   }
-  std::size_t required = functionType->paramTypes().size();
   if (symbol->function != nullptr) {
-    required = 0;
-    bool sawDefault = false;
+    if (!validateParamList(symbol->function->params(), symbol->function->range())) {
+      return nullptr;
+    }
+    std::vector<std::string> names;
     for (const ParamDecl& param : symbol->function->params()) {
-      if (param.defaultValue != nullptr) {
-        sawDefault = true;
-      } else if (sawDefault) {
-        diagnostics_->error(param.range, "parameter without a default follows a default");
+      names.push_back(param.name);
+    }
+    expr.setParamNames(std::move(names));
+    if (!checkFunctionArguments(expr,
+                                symbol->function->params(),
+                                functionType->paramTypes(),
+                                name->name())) {
+      return nullptr;
+    }
+  } else if (!expr.keywordArguments().empty()) {
+    diagnostics_->error(expr.range(), "keyword arguments require a known function definition");
+    return nullptr;
+  } else {
+    std::size_t required = functionType->paramTypes().size();
+    if (expr.arguments().size() < required ||
+        expr.arguments().size() > functionType->paramTypes().size()) {
+      diagnostics_->error(expr.range(),
+                          "'" + name->name() + "' takes " +
+                              countLabel(functionType->paramTypes().size(), "argument", "arguments") +
+                              ", but " + std::to_string(expr.arguments().size()) + " provided");
+      return nullptr;
+    }
+    for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
+      const Type* argType = checkExpr(*expr.arguments()[index]);
+      if (argType == nullptr) {
         return nullptr;
-      } else {
-        ++required;
+      }
+      if (!isAssignable(argType, functionType->paramTypes()[index])) {
+        diagnostics_->error(expr.arguments()[index]->range(),
+                            "argument type mismatch: expected " +
+                                quoteType(functionType->paramTypes()[index]) + ", found " +
+                                quoteType(argType));
+        return nullptr;
       }
     }
-  }
-  if (symbol->function != nullptr) {
-    std::vector<std::string> names;
-    for (const ParamDecl& param : symbol->function->params()) {
-      names.push_back(param.name);
-    }
-    expr.setParamNames(std::move(names));
-  }
-  if (expr.arguments().size() < required ||
-      expr.arguments().size() > functionType->paramTypes().size()) {
-    diagnostics_->error(expr.range(),
-                        "'" + name->name() + "' takes " +
-                            countLabel(functionType->paramTypes().size(), "argument", "arguments") +
-                            ", but " + std::to_string(expr.arguments().size()) + " provided");
-    return nullptr;
-  }
-  for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
-    const Type* argType = checkExpr(*expr.arguments()[index]);
-    if (argType == nullptr) {
-      return nullptr;
-    }
-    if (!isAssignable(argType, functionType->paramTypes()[index])) {
-      diagnostics_->error(expr.arguments()[index]->range(),
-                          "argument type mismatch: expected " +
-                              quoteType(functionType->paramTypes()[index]) + ", found " +
-                              quoteType(argType));
-      return nullptr;
-    }
-  }
-  if (symbol->function != nullptr) {
-    std::vector<std::string> names;
-    for (const ParamDecl& param : symbol->function->params()) {
-      names.push_back(param.name);
-    }
-    expr.setParamNames(std::move(names));
   }
   if (expr.loweredName().empty()) {
     expr.setLoweredName(loweredCallName(*name, *symbol));
@@ -2104,26 +2197,36 @@ const Type* TypeChecker::checkConstructor(CallExpr& expr, const Type* record) {
     if (functionType == nullptr || functionType->paramTypes().empty()) {
       return nullptr;
     }
-    if (expr.arguments().size() < init.requiredAfterSelf ||
-        expr.arguments().size() + 1 > functionType->paramTypes().size()) {
+    FunctionDef* initDef = findMethodDef(record, "__init__");
+    if (initDef != nullptr) {
+      if (!checkFunctionArguments(expr,
+                                  initDef->params(),
+                                  functionType->paramTypes(),
+                                  record->name(),
+                                  1)) {
+        return nullptr;
+      }
+    } else if (expr.arguments().size() < init.requiredAfterSelf ||
+               expr.arguments().size() + 1 > functionType->paramTypes().size()) {
       diagnostics_->error(
           expr.range(),
           "'" + record->name() + "' takes " +
               countLabel(functionType->paramTypes().size() - 1, "argument", "arguments") +
               ", but " + std::to_string(expr.arguments().size()) + " provided");
       return nullptr;
-    }
-    for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
-      const Type* argType = checkExpr(*expr.arguments()[index]);
-      if (argType == nullptr) {
-        return nullptr;
-      }
-      if (!isAssignable(argType, functionType->paramTypes()[index + 1])) {
-        diagnostics_->error(expr.arguments()[index]->range(),
-                            "constructor argument type mismatch: expected " +
-                                quoteType(functionType->paramTypes()[index + 1]) + ", found " +
-                                quoteType(argType));
-        return nullptr;
+    } else {
+      for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
+        const Type* argType = checkExpr(*expr.arguments()[index]);
+        if (argType == nullptr) {
+          return nullptr;
+        }
+        if (!isAssignable(argType, functionType->paramTypes()[index + 1])) {
+          diagnostics_->error(expr.arguments()[index]->range(),
+                              "constructor argument type mismatch: expected " +
+                                  quoteType(functionType->paramTypes()[index + 1]) + ", found " +
+                                  quoteType(argType));
+          return nullptr;
+        }
       }
     }
     std::vector<std::string> names;
@@ -2292,30 +2395,38 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
   if (functionType == nullptr || functionType->paramTypes().empty()) {
     return nullptr;
   }
-  if (expr.arguments().size() < method.requiredAfterSelf ||
-      expr.arguments().size() + 1 > functionType->paramTypes().size()) {
+  FunctionDef* methodDef = findMethodDef(objectType, member.field());
+  if (methodDef != nullptr) {
+    if (!checkFunctionArguments(expr,
+                                methodDef->params(),
+                                functionType->paramTypes(),
+                                member.field(),
+                                1)) {
+      return nullptr;
+    }
+  } else if (expr.arguments().size() < method.requiredAfterSelf ||
+             expr.arguments().size() + 1 > functionType->paramTypes().size()) {
     diagnostics_->error(
         expr.range(),
         "'" + member.field() + "' takes " +
             countLabel(functionType->paramTypes().size() - 1, "argument", "arguments") + ", but " +
             std::to_string(expr.arguments().size()) + " provided");
     return nullptr;
-  }
-  for (std::size_t argIndex = 0; argIndex < expr.arguments().size(); ++argIndex) {
-    const Type* argType = checkExpr(*expr.arguments()[argIndex]);
-    if (argType == nullptr) {
-      return nullptr;
+  } else {
+    for (std::size_t argIndex = 0; argIndex < expr.arguments().size(); ++argIndex) {
+      const Type* argType = checkExpr(*expr.arguments()[argIndex]);
+      if (argType == nullptr) {
+        return nullptr;
+      }
+      if (!isAssignable(argType, functionType->paramTypes()[argIndex + 1])) {
+        diagnostics_->error(expr.arguments()[argIndex]->range(),
+                            "argument type mismatch: expected " +
+                                quoteType(functionType->paramTypes()[argIndex + 1]) + ", found " +
+                                quoteType(argType));
+        return nullptr;
+      }
     }
-    if (!isAssignable(argType, functionType->paramTypes()[argIndex + 1])) {
-      diagnostics_->error(expr.arguments()[argIndex]->range(),
-                          "argument type mismatch: expected " +
-                              quoteType(functionType->paramTypes()[argIndex + 1]) + ", found " +
-                              quoteType(argType));
-      return nullptr;
-    }
   }
-  expr.setMethod(true);
-  expr.setLoweredName(method.llvmName);
   member.setResolvedType(functionType);
   expr.setResolvedType(functionType->returnType());
   return functionType->returnType();
@@ -2683,6 +2794,9 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
   if (function.isExtern() || function.isAbstract()) {
     return true;
   }
+  if (!validateParamList(function.params(), function.range())) {
+    return false;
+  }
   currentClass_ = function.ownerClass();
   currentFunctionName_ = function.name();
   pushScope();
@@ -2720,6 +2834,266 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
   return ok;
 }
 
+const Type* TypeChecker::resolveParamDeclType(const ParamDecl& param) {
+  if (param.kind == ParamKind::VarArg) {
+    if (param.type == nullptr) {
+      return types_->listType(types_->anyType());
+    }
+    const Type* type = resolveTypeExpr(*param.type);
+    if (type == nullptr) {
+      return nullptr;
+    }
+    if (!type->isList()) {
+      diagnostics_->error(param.range, "*args must be annotated as list[T]");
+      return nullptr;
+    }
+    return type;
+  }
+  if (param.kind == ParamKind::KwArg) {
+    if (param.type == nullptr) {
+      return types_->dictType(types_->strType(), types_->anyType());
+    }
+    const Type* type = resolveTypeExpr(*param.type);
+    if (type == nullptr) {
+      return nullptr;
+    }
+    if (!type->isDict()) {
+      diagnostics_->error(param.range, "**kwargs must be annotated as dict[str, T]");
+      return nullptr;
+    }
+    return type;
+  }
+  if (param.type == nullptr) {
+    return types_->anyType();
+  }
+  return resolveTypeExpr(*param.type);
+}
+
+bool TypeChecker::validateParamList(const std::vector<ParamDecl>& params, SourceRange range) {
+  bool sawDefault = false;
+  bool sawVarArg = false;
+  bool sawKwArg = false;
+  for (const ParamDecl& param : params) {
+    if (param.kind == ParamKind::KwArg) {
+      if (sawKwArg) {
+        diagnostics_->error(param.range, "**kwargs may appear only once");
+        return false;
+      }
+      sawKwArg = true;
+    } else if (param.kind == ParamKind::VarArg) {
+      if (sawVarArg || sawKwArg) {
+        diagnostics_->error(param.range, "*args must appear before **kwargs");
+        return false;
+      }
+      sawVarArg = true;
+      sawDefault = false;
+    } else if (param.defaultValue != nullptr) {
+      sawDefault = true;
+    } else if (sawDefault && !sawVarArg) {
+      diagnostics_->error(param.range, "parameter without a default follows a default");
+      return false;
+    } else if (sawKwArg) {
+      diagnostics_->error(range, "parameters may not follow **kwargs");
+      return false;
+    }
+    if (param.defaultValue != nullptr && param.kind != ParamKind::Normal) {
+      diagnostics_->error(param.range, "vararg parameters cannot have defaults");
+      return false;
+    }
+  }
+  return true;
+}
+
+FunctionDef* TypeChecker::findMethodDef(const Type* record, std::string_view methodName) {
+  if (record == nullptr) {
+    return nullptr;
+  }
+  const auto found = classes_.find(record->name());
+  if (found == classes_.end() || found->second == nullptr) {
+    return nullptr;
+  }
+  for (const std::unique_ptr<FunctionDef>& method : found->second->methods()) {
+    if (method != nullptr && method->name() == methodName) {
+      return method.get();
+    }
+  }
+  return nullptr;
+}
+
+bool TypeChecker::checkFunctionArguments(CallExpr& expr,
+                                         const std::vector<ParamDecl>& params,
+                                         const std::vector<const Type*>& paramTypes,
+                                         std::string_view calleeLabel,
+                                         const std::size_t selfSkip) {
+  if (params.size() != paramTypes.size()) {
+    diagnostics_->error(expr.range(), "internal: parameter metadata mismatch");
+    return false;
+  }
+  std::unordered_map<std::string, std::size_t> keywordIndexes;
+  for (std::size_t index = 0; index < expr.keywordArguments().size(); ++index) {
+    const NamedArgument& kw = expr.keywordArguments()[index];
+    if (keywordIndexes.contains(kw.name)) {
+      diagnostics_->error(kw.value->range(), "duplicate keyword argument '" + kw.name + "'");
+      return false;
+    }
+    keywordIndexes[kw.name] = index;
+  }
+
+  std::optional<std::size_t> varArgIndex;
+  std::optional<std::size_t> kwArgIndex;
+  for (std::size_t index = selfSkip; index < params.size(); ++index) {
+    if (params[index].kind == ParamKind::VarArg) {
+      varArgIndex = index;
+    } else if (params[index].kind == ParamKind::KwArg) {
+      kwArgIndex = index;
+    }
+  }
+
+  const auto paramLabel = [&](std::size_t index) -> std::string {
+    return std::string(calleeLabel) + " parameter '" + params[index].name + "'";
+  };
+  const auto takeKeyword = [&](const std::string& name) -> Expr* {
+    const auto found = keywordIndexes.find(name);
+    if (found == keywordIndexes.end()) {
+      return nullptr;
+    }
+    Expr* value = expr.keywordArguments()[found->second].value.get();
+    keywordIndexes.erase(found);
+    return value;
+  };
+  const auto checkArg = [&](Expr& argument, const Type* expected, const std::string& label) -> bool {
+    const Type* argType = checkExpr(argument);
+    if (argType == nullptr) {
+      return false;
+    }
+    if (!isAssignable(argType, expected)) {
+      diagnostics_->error(argument.range(),
+                          label + " type mismatch: expected " + quoteType(expected) + ", found " +
+                              quoteType(argType));
+      return false;
+    }
+    return true;
+  };
+
+  std::size_t positionalIndex = 0;
+  std::vector<const Expr*> bound(params.size(), nullptr);
+  std::vector<std::unique_ptr<Expr>> owned;
+  const auto useArgument = [&](std::size_t paramIndex, Expr* argument) {
+    bound[paramIndex] = argument;
+  };
+
+  const std::size_t preVarArgEnd =
+      varArgIndex.has_value() ? varArgIndex.value()
+                              : (kwArgIndex.has_value() ? kwArgIndex.value() : params.size());
+  for (std::size_t index = selfSkip; index < preVarArgEnd; ++index) {
+    if (params[index].kind != ParamKind::Normal) {
+      continue;
+    }
+    Expr* argument = nullptr;
+    if (positionalIndex < expr.arguments().size()) {
+      argument = expr.arguments()[positionalIndex++].get();
+    } else {
+      argument = takeKeyword(params[index].name);
+    }
+    if (argument == nullptr) {
+      if (params[index].defaultValue != nullptr) {
+        continue;
+      }
+      diagnostics_->error(expr.range(), "missing argument '" + params[index].name + "' to " +
+                                            std::string(calleeLabel));
+      return false;
+    }
+    if (!checkArg(*argument, paramTypes[index], paramLabel(index))) {
+      return false;
+    }
+    useArgument(index, argument);
+  }
+
+  if (varArgIndex.has_value()) {
+    const std::size_t index = varArgIndex.value();
+    const Type* listType = paramTypes[index];
+    const Type* elementType =
+        listType != nullptr && listType->isList() ? listType->elementType() : types_->anyType();
+    if (Expr* explicitArg = takeKeyword(params[index].name)) {
+      if (!checkArg(*explicitArg, listType, paramLabel(index))) {
+        return false;
+      }
+      useArgument(index, explicitArg);
+    } else {
+      while (positionalIndex < expr.arguments().size()) {
+        if (!checkArg(*expr.arguments()[positionalIndex], elementType, paramLabel(index) + " element")) {
+          return false;
+        }
+        ++positionalIndex;
+      }
+    }
+  } else if (positionalIndex < expr.arguments().size()) {
+    diagnostics_->error(expr.arguments()[positionalIndex]->range(),
+                        "too many positional arguments to " + std::string(calleeLabel));
+    return false;
+  }
+
+  const std::size_t keywordOnlyStart = varArgIndex.has_value() ? varArgIndex.value() + 1 : preVarArgEnd;
+  const std::size_t keywordOnlyEnd = kwArgIndex.has_value() ? kwArgIndex.value() : params.size();
+  for (std::size_t index = keywordOnlyStart; index < keywordOnlyEnd; ++index) {
+    if (params[index].kind != ParamKind::Normal) {
+      continue;
+    }
+    Expr* argument = takeKeyword(params[index].name);
+    if (argument == nullptr) {
+      if (params[index].defaultValue != nullptr) {
+        continue;
+      }
+      diagnostics_->error(expr.range(), "missing keyword argument '" + params[index].name +
+                                            "' to " + std::string(calleeLabel));
+      return false;
+    }
+    if (!checkArg(*argument, paramTypes[index], paramLabel(index))) {
+      return false;
+    }
+    useArgument(index, argument);
+  }
+
+  if (kwArgIndex.has_value()) {
+    const std::size_t index = kwArgIndex.value();
+    const Type* dictType = paramTypes[index];
+    const Type* valueType =
+        dictType != nullptr && dictType->isDict() ? dictType->dictValueType() : types_->anyType();
+    if (Expr* explicitArg = takeKeyword(params[index].name)) {
+      if (!checkArg(*explicitArg, dictType, paramLabel(index))) {
+        return false;
+      }
+      useArgument(index, explicitArg);
+    } else {
+      for (const auto& entry : keywordIndexes) {
+        if (!checkArg(*expr.keywordArguments()[entry.second].value,
+                      valueType,
+                      "unexpected keyword argument '" + entry.first + "'")) {
+          return false;
+        }
+      }
+      keywordIndexes.clear();
+    }
+  }
+
+  if (!keywordIndexes.empty()) {
+    const NamedArgument& extra = expr.keywordArguments()[keywordIndexes.begin()->second];
+    diagnostics_->error(extra.value->range(),
+                        "unexpected keyword argument '" + extra.name + "' to " +
+                            std::string(calleeLabel));
+    return false;
+  }
+
+  for (std::size_t index = selfSkip; index < params.size(); ++index) {
+    if (bound[index] == nullptr && params[index].defaultValue != nullptr) {
+      bound[index] = params[index].defaultValue.get();
+    }
+  }
+
+  expr.setBoundArguments(std::move(bound), std::move(owned));
+  return true;
+}
+
 const Type* TypeChecker::resolveParamType(const FunctionDef& function, std::size_t index) {
   const ParamDecl& param = function.params()[index];
   if (function.isMethod() && index == 0) {
@@ -2729,10 +3103,7 @@ const Type* TypeChecker::resolveParamType(const FunctionDef& function, std::size
     }
     return types_->record(function.ownerClass());
   }
-  if (param.type == nullptr) {
-    return types_->anyType();
-  }
-  return resolveTypeExpr(*param.type);
+  return resolveParamDeclType(param);
 }
 
 bool TypeChecker::collectClassNames(Module& module) {
@@ -2928,11 +3299,14 @@ bool TypeChecker::collectFunctions(Module& module) {
     }
     std::vector<const Type*> params;
     for (const ParamDecl& param : function.params()) {
-      const Type* type = param.type == nullptr ? types_->anyType() : resolveTypeExpr(*param.type);
+      const Type* type = resolveParamDeclType(param);
       if (type == nullptr) {
         return false;
       }
       params.push_back(type);
+    }
+    if (!validateParamList(function.params(), function.range())) {
+      return false;
     }
     const Type* returnType = resolveTypeExpr(function.returnType());
     if (returnType == nullptr) {
@@ -3449,10 +3823,15 @@ const Type* TypeChecker::checkLambda(LambdaExpr& expr) {
   expr.setLlvmName("__sere_lambda_" + std::to_string(lambdaCounter_));
   pushScope();
   ++lambdaDepth_;
+  if (!validateParamList(expr.params(), expr.range())) {
+    --lambdaDepth_;
+    popScope();
+    return nullptr;
+  }
   std::vector<const Type*> params;
   bool ok = true;
   for (ParamDecl& param : expr.params()) {
-    const Type* type = param.type == nullptr ? types_->anyType() : resolveTypeExpr(*param.type);
+    const Type* type = resolveParamDeclType(param);
     if (type == nullptr) {
       ok = false;
       type = types_->anyType();
@@ -3488,6 +3867,10 @@ const Type* TypeChecker::checkLambda(LambdaExpr& expr) {
 
 const Type* TypeChecker::checkIndirectCall(CallExpr& expr, const Type* functionType) {
   if (functionType == nullptr || functionType->kind() != TypeKind::Function) {
+    return nullptr;
+  }
+  if (!expr.keywordArguments().empty()) {
+    diagnostics_->error(expr.range(), "keyword arguments are not supported for indirect calls");
     return nullptr;
   }
   if (expr.arguments().size() != functionType->paramTypes().size()) {

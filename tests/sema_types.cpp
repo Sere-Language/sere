@@ -339,6 +339,31 @@ int main() {
     return fail("computed enum values must still be rejected");
   }
 
+  const std::string intEnum =
+      "enum Tone:\n"
+      "    Low = 1\n"
+      "    High = 4\n"
+      "def take(n: i32) -> i32:\n"
+      "    return n\n"
+      "def main() -> i32:\n"
+      "    n: i32 = Tone.Low\n"
+      "    if Tone.High == 4:\n"
+      "        n = n + Tone.High\n"
+      "    if Tone.Low in 5:\n"
+      "        n = take(Tone.High)\n"
+      "    return n | Tone.Low\n";
+  sere::DiagnosticEngine intEnumDiagnostics;
+  sere::SourceManager intEnumSource("sema_int_enum.sere", intEnum);
+  sere::Lexer intEnumLexer(intEnumSource, intEnumDiagnostics);
+  sere::Parser intEnumParser(intEnumDiagnostics, intEnumLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> intEnumModule = intEnumParser.parseModule();
+  sere::TypeContext intEnumTypes;
+  sere::TypeChecker intEnumChecker(intEnumTypes, intEnumDiagnostics);
+  if (intEnumModule == nullptr || !intEnumChecker.check(*intEnumModule)) {
+    intEnumDiagnostics.printAll(intEnumSource);
+    return fail("unit enums should convert to integers");
+  }
+
   const std::string parseText =
       "def main() -> i32:\n"
       "    n: i32 = parse[i32](\"123\")\n"

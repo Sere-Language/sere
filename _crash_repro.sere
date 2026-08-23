@@ -1,0 +1,4 @@
+import gl
+
+def main() -> void:
+    print("ok")

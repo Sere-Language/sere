@@ -52,7 +52,6 @@ constexpr int kCompletionModule = 9;
 constexpr int kCompletionEnum = 13;
 constexpr int kCompletionType = 25;
 constexpr int kCompletionField = 5;
-constexpr int kCompletionSnippet = 15;
 constexpr int kCompletionStruct = 22;
 constexpr int kCompletionMacro = 3;
 
@@ -675,32 +674,6 @@ void addKeywordCompletions(llvm::json::Array& items, const std::string& prefix) 
   for (const char* keyword : keywords) {
     addCompletion(items, keyword, kCompletionKeyword, "keyword", prefix, {}, "1" + std::string(keyword));
   }
-  addCompletion(items, "def", kCompletionSnippet, "function snippet", prefix,
-                "def ${1:name}(${2}) -> ${3:void}:\n    ${0:pass}", "0def");
-  addCompletion(items, "class", kCompletionSnippet, "class snippet", prefix,
-                "class ${1:Name}:\n    ${0:pass}", "0class");
-  addCompletion(items, "enum", kCompletionSnippet, "enum snippet", prefix,
-                "enum ${1:Name}:\n    ${2:Variant}", "0enum");
-  addCompletion(items, "for", kCompletionSnippet, "for-in snippet", prefix,
-                "for ${1:item} in ${2:items}:\n    ${0:pass}", "0for");
-  addCompletion(items, "struct", kCompletionSnippet, "struct snippet", prefix,
-                "struct ${1:Name}:\n    ${2:field}: ${3:i32}", "0struct");
-  addCompletion(items, "try", kCompletionSnippet, "try/except snippet", prefix,
-                "try:\n    ${1:pass}\nexcept ${2:Error}:\n    ${0:pass}", "0try");
-  addCompletion(items, "match", kCompletionSnippet, "match snippet", prefix,
-                "match ${1:value}:\n    case ${2:_}:\n        ${0:pass}", "0match");
-  addCompletion(items, "macro", kCompletionSnippet, "macro snippet", prefix,
-                "macro ${1:name}(${2:x}):\n    quote:\n        ${0:$x}", "0macro");
-  addCompletion(items, "unique", kCompletionSnippet, "Unique[T] allocation", prefix,
-                "unique[${1:i32}](${2:value})", "0unique");
-  addCompletion(items, "shared", kCompletionSnippet, "Shared[T] allocation", prefix,
-                "shared[${1:i32}](${2:value})", "0shared");
-  addCompletion(items, "alloc", kCompletionSnippet, "Ptr[T] allocation", prefix,
-                "alloc[${1:i32}]()", "0alloc");
-  addCompletion(items, "parse", kCompletionSnippet, "parse string as T", prefix,
-                "parse[${1:i32}](${2:text})", "0parse");
-  addCompletion(items, "try_parse", kCompletionSnippet, "parse string as T | None", prefix,
-                "try_parse[${1:i32}](${2:text})", "0try_parse");
 }
 
 void addTypeCompletions(llvm::json::Array& items, const std::string& prefix) {
@@ -1040,7 +1013,7 @@ void LanguageSession::handleInitialize(const llvm::json::Value* id, const llvm::
       {"referencesProvider", true},
       {"codeLensProvider", llvm::json::Object{{"resolveProvider", false}}},
       {"completionProvider",
-       llvm::json::Object{{"triggerCharacters", llvm::json::Array{".", ":", "\"", "@", " ", "!"}},
+       llvm::json::Object{{"triggerCharacters", llvm::json::Array{".", "\"", "@", "!"}},
                           {"resolveProvider", true}}},
   };
   writeResult(id, llvm::json::Object{

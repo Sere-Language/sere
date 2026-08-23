@@ -431,8 +431,15 @@ std::unique_ptr<Expr> cloneExpr(const Expr& expr) {
     for (const std::unique_ptr<TypeExpr>& arg : call.typeArgs()) {
       typeArgs.push_back(cloneTypeExpr(*arg));
     }
+    std::vector<NamedArgument> keywordArgs;
+    for (const NamedArgument& kw : call.keywordArguments()) {
+      NamedArgument cloned;
+      cloned.name = kw.name;
+      cloned.value = cloneExpr(*kw.value);
+      keywordArgs.push_back(std::move(cloned));
+    }
     return std::make_unique<CallExpr>(expr.range(), cloneExpr(call.callee()), std::move(typeArgs),
-                                      cloneExprs(call.arguments()));
+                                      cloneExprs(call.arguments()), std::move(keywordArgs));
   }
   case NodeKind::MemberExpr: {
     const auto& member = static_cast<const MemberExpr&>(expr);

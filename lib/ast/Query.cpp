@@ -26,6 +26,9 @@ const Node* searchExpr(const Expr& expr, std::uint32_t offset) {
     for (const std::unique_ptr<Expr>& arg : call.arguments()) {
       inner = firstNotNull(inner, searchExpr(*arg, offset));
     }
+    for (const NamedArgument& kw : call.keywordArguments()) {
+      inner = firstNotNull(inner, searchExpr(*kw.value, offset));
+    }
     break;
   }
   case NodeKind::MemberExpr:
