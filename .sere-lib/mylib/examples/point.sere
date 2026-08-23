@@ -1,0 +1,14 @@
+class Point:
+    x: i32
+    y: i32
+
+    def __init__(self, x: i32, y: i32) -> void:
+        self.x = x
+        self.y = y
+
+    def add(self, dx: i32, dy: i32) -> Point:
+        return Point(self.x + dx, self.y + dy)
+
+        
+def main() -> i32:
+    return 0

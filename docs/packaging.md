@@ -1,5 +1,23 @@
 # Packaging and the Windows installer
 
+## Zip / copy install (`releases/`)
+
+The first shippable tree is [`releases/pre-0.1.0`](../releases/pre-0.1.0/).
+It is a manual install: unzip the folder, then run `install.ps1` (or
+`install.cmd`) to copy files to `%LOCALAPPDATA%\Programs\Sere`, add `bin` to
+the user `PATH`, and set `SERE_STDLIB` / `SERE_LLVM_DIR`. LLVM is reused from
+a previous bootstrap or downloaded; it is not stored in git.
+
+```powershell
+.\releases\stage.ps1
+.\releases\pre-0.1.0\install.ps1
+.\releases\pre-0.1.0\uninstall.ps1
+```
+
+Options: `-Prefix`, `-NoPath`, `-Associate`, `-Editor`, `-Msvc`, `-DownloadLlvm`.
+
+## Inno Setup wizard
+
 `sere --build-installer` (alias `sere build-installer`) stages the compiler,
 stdlib, LLVM 22.1.8 toolchain, runtime, C API headers, optional Qt6 DLLs, and
 the editor VSIX, then compiles an Inno Setup installer.

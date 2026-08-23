@@ -3,6 +3,8 @@
 
 #include "sere/driver/ImportPath.h"
 
+#include "sere/driver/Library.h"
+
 #include <algorithm>
 #include <string>
 #include <system_error>
@@ -25,13 +27,15 @@ namespace {
 }
 
 [[nodiscard]] bool isSkippedDirName(std::string_view name) {
-  return name == "build" || name == "bin" || name == "CMakeFiles" || name == "node_modules" ||
-         name == "out" || name == "target" || name == ".git";
+  return name == "build" || name == "bin" || name == "dist" || name == "CMakeFiles" ||
+         name == "node_modules" || name == "out" || name == "target" || name == ".git" ||
+         name == ".sere-lib";
 }
 
 [[nodiscard]] bool isSereModuleFile(const std::filesystem::path& path) {
-  return path.extension() == ".sere" && path.stem() != "prelude" &&
-         !isHiddenName(path.stem().string());
+  const bool sere = path.extension() == ".sere";
+  const bool slib = isSereLibraryFile(path);
+  return (sere || slib) && path.stem() != "prelude" && !isHiddenName(path.stem().string());
 }
 
 [[nodiscard]] bool directoryHasSereFile(const std::filesystem::path& directory) {
@@ -72,6 +76,9 @@ namespace {
   const char* origin = pathIsUnder(file, stdlibDir) ? "stdlib" : "workspace";
   if (isPackage) {
     return std::string(origin) + " package";
+  }
+  if (isSereLibraryFile(file)) {
+    return std::string(origin) + " library";
   }
   return std::string(origin) + " module";
 }
@@ -196,12 +203,18 @@ void appendWorkspaceImportDirs(std::vector<std::filesystem::path>& dirs,
 std::vector<std::filesystem::path> importSearchDirs(const std::filesystem::path& originDir,
                                                     const std::filesystem::path& stdlibDir) {
   std::vector<std::filesystem::path> dirs;
-  appendImportSearchDir(dirs, originDir);
-  if (!originDir.empty()) {
-    appendImportSearchDir(dirs, originDir / "libs");
-    appendImportSearchDir(dirs, originDir.parent_path() / "libs");
+  std::error_code error;
+  const std::filesystem::path cwd = std::filesystem::current_path(error);
+  std::filesystem::path origin = originDir;
+  if (origin.empty()) {
+    origin = cwd;
   }
-  const std::filesystem::path cwd = std::filesystem::current_path();
+  appendImportSearchDir(dirs, origin);
+  if (!origin.empty()) {
+    appendImportSearchDir(dirs, origin / "libs");
+    appendImportSearchDir(dirs, origin.parent_path() / "libs");
+  }
+  appendImportSearchDir(dirs, cwd);
   appendImportSearchDir(dirs, cwd / "libs");
   appendImportSearchDir(dirs, cwd / "src");
   appendImportSearchDir(dirs, stdlibDir);
@@ -210,25 +223,51 @@ std::vector<std::filesystem::path> importSearchDirs(const std::filesystem::path&
 
 std::filesystem::path resolveImportFile(const std::vector<std::filesystem::path>& searchDirs,
                                         const std::vector<std::string>& parts,
-                                        const std::filesystem::path& skipFile) {
+                                        const std::filesystem::path& skipFile,
+                                        std::string* resolveError) {
   std::filesystem::path relative;
   for (const std::string& part : parts) {
     relative /= part;
   }
-  relative += ".sere";
+  const std::filesystem::path relativeSere = [&relative]() {
+    std::filesystem::path path = relative;
+    path += ".sere";
+    return path;
+  }();
+  const std::filesystem::path relativeSlib = [&relative]() {
+    std::filesystem::path path = relative;
+    path += ".slib";
+    return path;
+  }();
   for (const std::filesystem::path& directory : searchDirs) {
     if (directory.empty()) {
       continue;
     }
-    const std::filesystem::path candidate = directory / relative;
+    const std::filesystem::path candidate = directory / relativeSere;
     std::error_code error;
-    if (!std::filesystem::exists(candidate, error) || error) {
-      continue;
+    if (std::filesystem::exists(candidate, error) && !error) {
+      if (skipFile.empty() || !namesEqual(candidate, skipFile)) {
+        return std::filesystem::weakly_canonical(candidate, error);
+      }
     }
-    if (!skipFile.empty() && namesEqual(candidate, skipFile)) {
-      continue;
+    const std::filesystem::path slib = directory / relativeSlib;
+    if (std::filesystem::exists(slib, error) && !error) {
+      if (skipFile.empty() || !namesEqual(slib, skipFile)) {
+        std::string extractError;
+        const std::filesystem::path entry = ensureLibraryExtracted(slib, extractError);
+        if (!entry.empty()) {
+          return entry;
+        }
+        if (resolveError != nullptr && resolveError->empty() && !extractError.empty()) {
+          *resolveError = "cannot open library '" + slib.string() + "': " + extractError;
+        }
+      }
     }
-    return std::filesystem::weakly_canonical(candidate, error);
+    const std::filesystem::path folder = directory / relative;
+    const std::filesystem::path folderEntry = folderLibraryEntry(folder);
+    if (!folderEntry.empty() && (skipFile.empty() || !namesEqual(folderEntry, skipFile))) {
+      return folderEntry;
+    }
   }
   return {};
 }
@@ -275,7 +314,7 @@ std::vector<ImportModuleEntry> listImportModules(
       if (!stdlibDir.empty() && namesEqual(path, stdlibDir)) {
         continue;
       }
-      if (!directoryHasSereFile(path)) {
+      if (!directoryHasSereFile(path) && folderLibraryEntry(path).empty()) {
         continue;
       }
       considerEntry(out, seen, parent, name, path, stdlibDir, last, true);

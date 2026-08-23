@@ -123,7 +123,8 @@ requires `__enter__` / `__exit__` on the context type.
 | Float | `1.0`, `3e2`, `1.0f`, `_` allowed |
 | Bool | `True`, `False` |
 | None | `None` |
-| String | `"..."`, `'...'`, `"""..."""` (multiline) |
+| String | `"..."`, multi-character `'...'`, `"""..."""` (multiline) |
+| Byte | one-character `'A'` / `'\n'` — type `i8`, assignable to `byte` (`u8`) |
 | F-string | `f"hi {x}"` with `{expr}` holes |
 | Regex | backtick `` `\d+` ``, type `regex` |
 
@@ -224,7 +225,7 @@ Decorators (parsed as `@name` on the next declaration):
 
 | Decorator | On | Effect |
 | --- | --- | --- |
-| `@public` / `@private` | field | Visibility (`PermissionError` if a private field is used from outside) |
+| `@public` / `@private` | field, `def`, `class`, `struct`, `enum`, `type`, `macro`, module binding | `@private` is not exported: `import` / `from` and `module.name` cannot see it (`PermissionError`). Private methods are only callable inside the owning class. |
 | `@abstract` | method | Must be overridden |
 | `@override` | method | Marks an override |
 | `@frozen` | class | Fields are not assignable after init |
@@ -467,9 +468,17 @@ from math import sqrt
 from string import *
 ```
 
-Search order: directory of the importing file (and `libs/` next to it), then
-the stdlib next to `sere` (or `SERE_STDLIB` in tests). The file
-`util.sere` provides module `util`.
+Search order: directory of the importing file (and `libs/` next to it), the
+current working directory, then the stdlib next to `sere` (or `SERE_STDLIB`
+in tests). `util.sere` and `util.slib` both provide module `util`. `.sere`
+wins when both exist. A folder named `util` with `util/util.sere` or
+`util/lib.sere` is also `import util` (native `.c` / `.lib` in that folder or
+`native/` are compiled and linked). The compiler extracts `.slib` files next
+to themselves under `.sere-lib/` and links any native objects they contain.
+`.slib` packs only the entry and the local modules it actually imports, plus
+compiled native objects — not the rest of the tree. The language server uses
+the same search path, so drop-in `.slib` files and folder libraries complete
+and hover like ordinary modules.
 
 Module globals (always in scope):
 
@@ -761,6 +770,10 @@ Link extra object files or libs:
 ```powershell
 sere src\main.sere --link libs\native.lib -o bin\app.exe
 ```
+
+Packed `.slib` files and folder libraries (`mylib/lib.sere` plus `mylib/*.c`
+or `mylib/native/`) compile and link their C automatically. Prefer packing
+the compiled `.lib` / `.a` into the `.slib` so consumers stay on one file.
 
 Optional module init: define `void sere_mod_init(void)` in C. The runtime
 provides an empty default. A strong definition from `--link` overrides it.

@@ -224,6 +224,7 @@ int main() {
       "    c: str = \"\"\"cd\"\"\"\n"
       "    d: regex = `a+`\n"
       "    e: str = f'x={a}'\n"
+      "    c: i8 = 'A'\n"
       "    return 0\n",
       quoteParseDiagnostics);
   if (quotes == nullptr || quoteParseDiagnostics.hasErrors()) {

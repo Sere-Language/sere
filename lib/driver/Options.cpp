@@ -16,9 +16,11 @@ void printUsage(std::string& error) {
       "\n"
       "Project commands:\n"
       "  init <name>         Create a Sere project (src, libs, bin, venv, scripts)\n"
-      "  build               Compile the project in the current directory\n"
+      "  init-lib <name>     Create a drop-in library project (src, libs, dist)\n"
+      "  build               Compile the project (exe) or pack a library (.slib)\n"
+      "  pack [file.sere]    Build a single-file .slib you can drop into libs/\n"
       "  run [-- <args>]     Build and run the project executable\n"
-      "  clean               Remove bin/ artifacts\n"
+      "  clean               Remove bin/ and dist/ artifacts\n"
       "  shell               Enter the Sere project shell\n"
       "  refresh-bin         Copy this compiler into ./bin (stdlib and runtime too)\n"
       "  build-installer     Package a Windows installer (compiler, LLVM, stdlib, editor)\n"
@@ -41,6 +43,10 @@ void printUsage(std::string& error) {
       "  --refresh-bin       Same as refresh-bin\n"
       "  --build-installer   Same as build-installer\n"
       "  --init <name>       Same as init\n"
+      "  --init-lib <name>   Same as init-lib\n"
+      "  --lib               With init: create a library project\n"
+      "  --pack [file]       Same as pack\n"
+      "  --build-lib [file]  Same as pack\n"
       "  --host <shell>      Shell to nest: powershell, cmd, bash (shell command)\n"
       "  --link <lib>        Link an extra native C/C++ library into the program\n"
       "  --color=<mode>      Color diagnostics: auto, always, never\n"
@@ -61,8 +67,16 @@ void printUsage(std::string& error) {
     command = ProjectCommand::Init;
     return true;
   }
+  if (argument == "init-lib" || argument == "init_lib") {
+    command = ProjectCommand::InitLib;
+    return true;
+  }
   if (argument == "build") {
     command = ProjectCommand::Build;
+    return true;
+  }
+  if (argument == "pack" || argument == "build-lib" || argument == "build_lib") {
+    command = ProjectCommand::Pack;
     return true;
   }
   if (argument == "run") {
@@ -140,12 +154,34 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
       continue;
     }
     if (argument == "--init") {
-      options.projectCommand = ProjectCommand::Init;
+      options.projectCommand = options.initLibrary ? ProjectCommand::InitLib : ProjectCommand::Init;
       if (index + 1 < argc && argv[index + 1][0] != '-') {
         ++index;
         options.initName = argv[index];
-      } else {
-        options.initName = "sere-project";
+      }
+      continue;
+    }
+    if (argument == "--init-lib") {
+      options.projectCommand = ProjectCommand::InitLib;
+      options.initLibrary = true;
+      if (index + 1 < argc && argv[index + 1][0] != '-') {
+        ++index;
+        options.initName = argv[index];
+      }
+      continue;
+    }
+    if (argument == "--lib") {
+      options.initLibrary = true;
+      if (options.projectCommand == ProjectCommand::Init) {
+        options.projectCommand = ProjectCommand::InitLib;
+      }
+      continue;
+    }
+    if (argument == "--pack" || argument == "--build-lib") {
+      options.projectCommand = ProjectCommand::Pack;
+      if (index + 1 < argc && argv[index + 1][0] != '-') {
+        ++index;
+        options.inputPath = argv[index];
       }
       continue;
     }
@@ -238,18 +274,34 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
     ProjectCommand command = ProjectCommand::None;
     if (options.projectCommand == ProjectCommand::None && parseProjectCommand(argument, command)) {
       options.projectCommand = command;
-      if (command == ProjectCommand::Init) {
+      if (command == ProjectCommand::Init || command == ProjectCommand::InitLib) {
+        options.initLibrary = options.initLibrary || command == ProjectCommand::InitLib;
+        if (command == ProjectCommand::Init && options.initLibrary) {
+          options.projectCommand = ProjectCommand::InitLib;
+        }
         if (index + 1 < argc && argv[index + 1][0] != '-') {
           ++index;
           options.initName = argv[index];
-        } else {
-          options.initName = "sere-project";
         }
+      }
+      if (command == ProjectCommand::Pack && index + 1 < argc && argv[index + 1][0] != '-') {
+        ++index;
+        options.inputPath = argv[index];
       }
       continue;
     }
     if (options.projectCommand == ProjectCommand::Run) {
       options.programArgs.emplace_back(argument);
+      continue;
+    }
+    if ((options.projectCommand == ProjectCommand::Init ||
+         options.projectCommand == ProjectCommand::InitLib) &&
+        options.initName.empty()) {
+      options.initName = std::string(argument);
+      continue;
+    }
+    if (options.projectCommand == ProjectCommand::Pack && options.inputPath.empty()) {
+      options.inputPath = std::string(argument);
       continue;
     }
     if (options.projectCommand != ProjectCommand::None) {
@@ -262,8 +314,14 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
     }
     options.inputPath = std::string(argument);
   }
-  if (options.projectCommand == ProjectCommand::Init && options.initName.empty()) {
-    options.initName = "sere-project";
+  if (options.initLibrary && options.projectCommand == ProjectCommand::Init) {
+    options.projectCommand = ProjectCommand::InitLib;
+  }
+  if ((options.projectCommand == ProjectCommand::Init ||
+       options.projectCommand == ProjectCommand::InitLib) &&
+      options.initName.empty()) {
+    options.initName =
+        options.projectCommand == ProjectCommand::InitLib ? "sere-lib" : "sere-project";
   }
   if (options.emitLlvm && options.emitAsm) {
     error = "cannot combine --emit-llvm and --emit-asm";

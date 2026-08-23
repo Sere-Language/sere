@@ -1,0 +1,7 @@
+import requests
+
+def main() -> i32:
+    r = requests.get("https://example.com")
+    print(r.status_code)
+    print(r.ok())
+    return 0

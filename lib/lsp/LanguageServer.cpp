@@ -992,7 +992,7 @@ void LanguageSession::fillImportCompletions(llvm::json::Array& items,
     return;
   }
   const std::filesystem::path moduleFile =
-      resolveImportFile(dirs, splitImportPath(query.modulePath), file);
+      resolveImportFile(dirs, splitImportPath(query.modulePath), file, nullptr);
   addImportCompletionItems(items, importExportCompletions(moduleFile, query.prefix), query.prefix);
 }
 
@@ -1216,6 +1216,9 @@ void LanguageSession::handleCompletion(const llvm::json::Value* id,
                       field.type == nullptr ? "" : field.type->display(), prefix);
       }
       for (const RecordMethod& method : record->methods()) {
+        if (!method.isPublic) {
+          continue;
+        }
         addCompletion(items, method.name, kCompletionMethod, formatMethod(method), prefix);
       }
       writeResult(id, std::move(items));
@@ -1242,6 +1245,9 @@ void LanguageSession::handleCompletion(const llvm::json::Value* id,
             }
           }
           for (const RecordMethod& method : inferred->methods()) {
+            if (!method.isPublic) {
+              continue;
+            }
             addCompletion(items, method.name, kCompletionMethod, formatMethod(method), prefix);
           }
           writeResult(id, std::move(items));

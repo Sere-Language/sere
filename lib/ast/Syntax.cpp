@@ -31,6 +31,10 @@ bool Node::fromPrelude() const { return fromPrelude_; }
 
 void Node::setFromPrelude(bool value) { fromPrelude_ = value; }
 
+bool Node::isPrivate() const { return isPrivate_; }
+
+void Node::setPrivate(bool value) { isPrivate_ = value; }
+
 TypeExpr::TypeExpr(SourceRange range,
                    std::string name,
                    std::vector<std::unique_ptr<TypeExpr>> args)
@@ -40,10 +44,12 @@ const std::string& TypeExpr::name() const { return name_; }
 
 const std::vector<std::unique_ptr<TypeExpr>>& TypeExpr::args() const { return args_; }
 
-IntegerLiteral::IntegerLiteral(SourceRange range, std::int64_t value)
-    : Expr(NodeKind::IntegerLiteral, range), value_(value) {}
+IntegerLiteral::IntegerLiteral(SourceRange range, std::int64_t value, bool isByte)
+    : Expr(NodeKind::IntegerLiteral, range), value_(value), isByte_(isByte) {}
 
 std::int64_t IntegerLiteral::value() const { return value_; }
+
+bool IntegerLiteral::isByte() const { return isByte_; }
 
 FloatLiteral::FloatLiteral(SourceRange range, double value, bool isF32)
     : Expr(NodeKind::FloatLiteral, range), value_(value), isF32_(isF32) {}

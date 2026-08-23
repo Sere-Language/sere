@@ -9,6 +9,7 @@
 #include "sere/diag/DiagnosticEngine.h"
 #include "sere/driver/Frontend.h"
 #include "sere/driver/Prelude.h"
+#include "sere/driver/Library.h"
 #include "sere/driver/Project.h"
 #include "sere/driver/ProjectInit.h"
 #include "sere/driver/Installer.h"
@@ -357,8 +358,16 @@ int compileInput(const CompilerOptions& options) {
     frontend.diagnostics().printAll();
     return 1;
   }
+  std::vector<std::filesystem::path> linkLibraries = options.linkLibraries;
+  prepareImportedLibraryNative(frontend.importedModulePaths());
+  appendExtractedLibraryLinks(frontend.importedModulePaths(), linkLibraries);
+  std::vector<std::filesystem::path> runtimeFiles;
+  appendExtractedLibraryRuntimes(frontend.importedModulePaths(), runtimeFiles);
+  for (const std::filesystem::path& runtime : runtimeFiles) {
+    copyBesideOutput(runtime, outputPath);
+  }
   const int code =
-      linkExecutable(irPath, outputPath, options.linkLibraries, frontend.importedModuleNames());
+      linkExecutable(irPath, outputPath, linkLibraries, frontend.importedModuleNames());
   if (code == 0) {
     llvm::outs() << "wrote " << outputPath.string() << '\n';
   }
@@ -384,8 +393,19 @@ int Compiler::run(const CompilerOptions& options) {
     }
     return code;
   }
+  if (options.projectCommand == ProjectCommand::InitLib) {
+    std::string initError;
+    const int code = initSereLibrary(options.initName, initError);
+    if (code != 0) {
+      llvm::errs() << "error: " << initError << '\n';
+    }
+    return code;
+  }
   if (options.projectCommand == ProjectCommand::Build) {
     return buildProject(options);
+  }
+  if (options.projectCommand == ProjectCommand::Pack) {
+    return packLibrary(options);
   }
   if (options.projectCommand == ProjectCommand::Run) {
     return runProject(options);

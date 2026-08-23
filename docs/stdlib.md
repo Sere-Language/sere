@@ -64,6 +64,10 @@ closed. Do not assume Qt is present in tests that only emit LLVM.
 ## Project layout vs stdlib
 
 `sere init` creates a project with its own `src/` and `libs/`. User modules
-resolve relative to the importing file. Put reusable libraries in the project
-or publish them as `.sere` files on the import path — they do not belong in
-`stdlib/` unless they are part of the language distribution.
+resolve relative to the importing file. Publish reusable code with
+`sere init-lib` + `sere pack` as a single `.slib` (reachable sources plus
+compiled native objects). Drop that file into a project's `libs/` and
+`import` it. A folder `libs/mylib/` with `lib.sere` or `mylib.sere` (and
+optional C sources) is the same import without packing. Loose `.sere` files
+on the import path still work. Neither belongs in `stdlib/` unless it is
+part of the language distribution.

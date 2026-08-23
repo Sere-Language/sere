@@ -72,6 +72,7 @@ add_library(sere_driver
   driver/Prelude.cpp
   driver/Project.cpp
   driver/ProjectInit.cpp
+  driver/Library.cpp
   driver/ProjectShell.cpp
   driver/Frontend.cpp
   driver/ImportPath.cpp

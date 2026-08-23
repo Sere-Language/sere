@@ -4,7 +4,9 @@
 #include "sere/driver/Project.h"
 
 #include "sere/driver/Compiler.h"
+#include "sere/driver/Frontend.h"
 #include "sere/driver/ImportPath.h"
+#include "sere/driver/Library.h"
 #include "sere/driver/Prelude.h"
 #include "sere/driver/Toolchain.h"
 
@@ -14,7 +16,11 @@
 
 #include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
+#include <optional>
+#include <string>
+#include <vector>
 #include <iostream>
 #include <sstream>
 #include <string_view>
@@ -61,6 +67,18 @@ namespace {
 void applyTomlKey(ProjectManifest& manifest, std::string_view key, std::string_view value) {
   if (key == "name") {
     manifest.name = std::string(value);
+    return;
+  }
+  if (key == "version") {
+    manifest.version = std::string(value);
+    return;
+  }
+  if (key == "kind") {
+    if (value == "lib" || value == "library") {
+      manifest.kind = ProjectKind::Lib;
+    } else {
+      manifest.kind = ProjectKind::App;
+    }
     return;
   }
   if (key == "src") {
@@ -113,35 +131,9 @@ void applyTomlKey(ProjectManifest& manifest, std::string_view key, std::string_v
   return code;
 }
 
-[[nodiscard]] bool isLinkLibrary(const std::filesystem::path& path) {
-  const std::string ext = path.extension().string();
-  return ext == ".lib" || ext == ".a";
-}
-
-[[nodiscard]] bool skipLibPath(const std::filesystem::path& path) {
-  const std::string text = path.generic_string();
-  return text.find("/CMakeFiles/") != std::string::npos ||
-         text.find("\\CMakeFiles\\") != std::string::npos;
-}
-
 void collectLinkLibraries(const std::filesystem::path& directory,
                           std::vector<std::filesystem::path>& libraries) {
-  std::error_code error;
-  if (!std::filesystem::exists(directory, error)) {
-    return;
-  }
-  const std::filesystem::recursive_directory_iterator end;
-  for (std::filesystem::recursive_directory_iterator it(directory, error); it != end;
-       it.increment(error)) {
-    if (error) {
-      break;
-    }
-    const std::filesystem::path path = it->path();
-    if (!it->is_regular_file(error) || skipLibPath(path) || !isLinkLibrary(path)) {
-      continue;
-    }
-    libraries.push_back(path);
-  }
+  collectNativeLinkFiles(directory, libraries);
 }
 
 [[nodiscard]] int configureNative(const std::string& cmake, const std::filesystem::path& nativeDir) {
@@ -163,13 +155,13 @@ void collectLinkLibraries(const std::filesystem::path& directory,
   return runProcess(cmake, release);
 }
 
-[[nodiscard]] int buildNativeLibs(const std::filesystem::path& nativeDir) {
+[[nodiscard]] int buildNativeCMake(const std::filesystem::path& nativeDir) {
   if (!std::filesystem::exists(nativeDir / "CMakeLists.txt")) {
     return 0;
   }
   const llvm::ErrorOr<std::string> cmake = llvm::sys::findProgramByName("cmake");
   if (!cmake) {
-    llvm::errs() << "note: cmake not found; skipping native libs in " << nativeDir.string()
+    llvm::errs() << "note: cmake not found; skipping native cmake in " << nativeDir.string()
                  << '\n';
     return 0;
   }
@@ -178,6 +170,131 @@ void collectLinkLibraries(const std::filesystem::path& directory,
     return configured;
   }
   return compileNative(*cmake, nativeDir);
+}
+
+void collectLooseNativeSources(const std::filesystem::path& directory,
+                               std::vector<std::filesystem::path>& sources) {
+  std::error_code error;
+  if (!std::filesystem::is_directory(directory, error) || error) {
+    return;
+  }
+  const std::filesystem::directory_iterator end{};
+  for (std::filesystem::directory_iterator it(directory, error); !error && it != end;
+       it.increment(error)) {
+    if (it->is_regular_file(error) && isNativeSourceFile(it->path())) {
+      sources.push_back(it->path());
+    }
+  }
+}
+
+[[nodiscard]] bool archiveNewerThanSources(const std::filesystem::path& archive,
+                                           const std::vector<std::filesystem::path>& sources) {
+  std::error_code error;
+  if (!std::filesystem::exists(archive, error) || error) {
+    return false;
+  }
+  const auto archiveTime = std::filesystem::last_write_time(archive, error);
+  if (error) {
+    return false;
+  }
+  for (const std::filesystem::path& source : sources) {
+    const auto sourceTime = std::filesystem::last_write_time(source, error);
+    if (error || sourceTime > archiveTime) {
+      return false;
+    }
+  }
+  return true;
+}
+
+[[nodiscard]] std::optional<std::string> findLlvmAr() {
+  const std::optional<std::filesystem::path> tools = llvmToolsDirectory();
+  if (tools.has_value()) {
+#ifdef _WIN32
+    const std::filesystem::path ar = *tools / "llvm-ar.exe";
+#else
+    const std::filesystem::path ar = *tools / "llvm-ar";
+#endif
+    std::error_code error;
+    if (std::filesystem::exists(ar, error)) {
+      return ar.string();
+    }
+  }
+  const llvm::ErrorOr<std::string> found = llvm::sys::findProgramByName("llvm-ar");
+  if (!found) {
+    return std::nullopt;
+  }
+  return *found;
+}
+
+[[nodiscard]] int compileLooseNative(const std::filesystem::path& nativeDir) {
+  std::vector<std::filesystem::path> sources;
+  collectLooseNativeSources(nativeDir, sources);
+  if (sources.empty()) {
+    return 0;
+  }
+#ifdef _WIN32
+  const std::filesystem::path archive = nativeDir / "sere_native.lib";
+#else
+  const std::filesystem::path archive = nativeDir / "libsere_native.a";
+#endif
+  std::vector<std::filesystem::path> existing;
+  collectNativeLinkFiles(nativeDir, existing);
+  if (!existing.empty()) {
+    bool fresh = true;
+    for (const std::filesystem::path& library : existing) {
+      fresh = fresh && archiveNewerThanSources(library, sources);
+    }
+    if (fresh) {
+      return 0;
+    }
+  }
+  const std::optional<std::string> clang = findClang();
+  if (!clang.has_value()) {
+    llvm::errs() << "note: clang not found; skipping native sources in " << nativeDir.string()
+                 << '\n';
+    return 0;
+  }
+  std::vector<std::filesystem::path> objects;
+  for (const std::filesystem::path& source : sources) {
+#ifdef _WIN32
+    const std::filesystem::path object = nativeDir / (source.stem().string() + ".obj");
+#else
+    const std::filesystem::path object = nativeDir / (source.stem().string() + ".o");
+#endif
+    const std::vector<std::string> compile{*clang, "-c", source.string(), "-o", object.string()};
+    if (runProcess(*clang, compile) != 0) {
+      return 1;
+    }
+    objects.push_back(object);
+  }
+  const std::optional<std::string> ar = findLlvmAr();
+  if (!ar.has_value()) {
+    llvm::errs() << "note: llvm-ar not found; native objects were compiled in "
+                 << nativeDir.string() << '\n';
+    return 0;
+  }
+  std::vector<std::string> archiveArgs{*ar, "rcs", archive.string()};
+  for (const std::filesystem::path& object : objects) {
+    archiveArgs.push_back(object.string());
+  }
+  return runProcess(*ar, archiveArgs);
+}
+
+[[nodiscard]] bool pathIsUnderRoot(const std::filesystem::path& file,
+                                   const std::filesystem::path& root) {
+  if (file.empty() || root.empty()) {
+    return false;
+  }
+  std::error_code error;
+  const std::string fileText = std::filesystem::weakly_canonical(file, error).generic_string();
+  const std::string rootText = std::filesystem::weakly_canonical(root, error).generic_string();
+  if (error || rootText.empty() || fileText.size() < rootText.size()) {
+    return false;
+  }
+  if (!fileText.starts_with(rootText)) {
+    return false;
+  }
+  return fileText.size() == rootText.size() || fileText[rootText.size()] == '/';
 }
 
 [[nodiscard]] std::optional<ProjectManifest> requireManifest(std::string& error) {
@@ -255,7 +372,226 @@ void copyStdlibTree(const std::filesystem::path& from, const std::filesystem::pa
                         error);
 }
 
+[[nodiscard]] std::optional<std::string> readBytes(const std::filesystem::path& path) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    return std::nullopt;
+  }
+  std::ostringstream stream;
+  stream << input.rdbuf();
+  return stream.str();
+}
+
+[[nodiscard]] std::string relativeGeneric(const std::filesystem::path& root,
+                                          const std::filesystem::path& file) {
+  std::error_code error;
+  const std::filesystem::path relative = std::filesystem::relative(file, root, error);
+  if (error || relative.empty()) {
+    return file.filename().generic_string();
+  }
+  return relative.generic_string();
+}
+
+void addPackedFile(PackedLibrary& library, const std::filesystem::path& root,
+                   const std::filesystem::path& file) {
+  if (!isSafeLibraryPath(relativeGeneric(root, file))) {
+    return;
+  }
+  const std::string relative = relativeGeneric(root, file);
+  for (const LibraryMember& existing : library.files) {
+    if (existing.relativePath == relative) {
+      return;
+    }
+  }
+  const std::optional<std::string> bytes = readBytes(file);
+  if (!bytes.has_value()) {
+    return;
+  }
+  LibraryMember member;
+  member.relativePath = relative;
+  member.bytes = *bytes;
+  library.files.push_back(std::move(member));
+}
+
+void collectPackedNative(PackedLibrary& library, const std::filesystem::path& root,
+                         const std::filesystem::path& directory) {
+  std::vector<std::filesystem::path> files;
+  collectNativeLinkFiles(directory, files);
+  collectNativeRuntimeFiles(directory, files);
+  for (const std::filesystem::path& file : files) {
+    addPackedFile(library, root, file);
+  }
+}
+
+[[nodiscard]] bool libraryHasNativeBinary(const PackedLibrary& library) {
+  for (const LibraryMember& file : library.files) {
+    const std::filesystem::path path(file.relativePath);
+    if (isNativeLinkFile(path) || isNativeRuntimeFile(path)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void collectPackedNativeSources(PackedLibrary& library, const std::filesystem::path& root,
+                                const std::filesystem::path& directory) {
+  if (libraryHasNativeBinary(library)) {
+    return;
+  }
+  std::vector<std::filesystem::path> sources;
+  collectLooseNativeSources(directory, sources);
+  for (const std::filesystem::path& file : sources) {
+    addPackedFile(library, root, file);
+  }
+  const std::filesystem::path cmake = directory / "CMakeLists.txt";
+  std::error_code error;
+  if (std::filesystem::is_regular_file(cmake, error)) {
+    addPackedFile(library, root, cmake);
+  }
+}
+
+void collectReachableSere(PackedLibrary& library, const std::filesystem::path& root,
+                          const std::filesystem::path& stdlib, const std::filesystem::path& entry,
+                          const std::vector<std::filesystem::path>& imported) {
+  addPackedFile(library, root, entry);
+  for (const std::filesystem::path& file : imported) {
+    if (isExtractedLibraryPath(file) || pathIsUnderRoot(file, stdlib) ||
+        !pathIsUnderRoot(file, root) || file.extension() != ".sere") {
+      continue;
+    }
+    addPackedFile(library, root, file);
+  }
+}
+
+void collectModuleNative(PackedLibrary& library, const std::filesystem::path& root,
+                         const std::filesystem::path& moduleFile) {
+  const std::filesystem::path parent = moduleFile.parent_path();
+  const std::string stem = moduleFile.stem().string();
+  std::error_code error;
+  for (const char* ext : {".lib", ".a", ".dll", ".so", ".dylib"}) {
+    const std::filesystem::path sibling = parent / (stem + ext);
+    if (std::filesystem::is_regular_file(sibling, error)) {
+      addPackedFile(library, root, sibling);
+    }
+  }
+  collectPackedNative(library, root, parent / "native");
+  const std::filesystem::path nativeRoot = libraryNativeRoot(moduleFile);
+  if (!nativeRoot.empty()) {
+    collectPackedNative(library, root, nativeRoot);
+    collectPackedNativeSources(library, root, nativeRoot);
+    collectPackedNativeSources(library, root, nativeRoot / "native");
+  }
+  collectPackedNativeSources(library, root, parent / "native");
+}
+
+void buildPackNative(const std::filesystem::path& root) {
+  static_cast<void>(buildNativeLibs(root / "native"));
+  static_cast<void>(buildNativeLibs(root / "libs" / "native"));
+  if (!folderLibraryEntry(root).empty()) {
+    static_cast<void>(buildNativeLibs(root));
+  }
+}
+
+struct PackCheck {
+  int code = 1;
+  std::vector<std::filesystem::path> imported;
+};
+
+[[nodiscard]] PackCheck typecheckPackedEntry(const std::filesystem::path& entry,
+                                             const std::filesystem::path& stdlib,
+                                             ColorMode colorMode) {
+  PackCheck result;
+  const std::optional<std::string> text = readBytes(entry);
+  if (!text.has_value()) {
+    llvm::errs() << "error: cannot read library entry '" << entry.string() << "'\n";
+    return result;
+  }
+  Frontend frontend;
+  const bool ok = frontend.analyze(entry.string(), *text, stdlib);
+  frontend.diagnostics().setColorMode(colorMode);
+  if (!ok || frontend.diagnostics().hasErrors()) {
+    frontend.diagnostics().printAll();
+    return result;
+  }
+  result.code = 0;
+  result.imported = frontend.importedModulePaths();
+  return result;
+}
+
+[[nodiscard]] int writeLibraryArchive(const PackedLibrary& library,
+                                      const std::filesystem::path& output) {
+  std::string error;
+  if (!writePackedLibrary(output, library, error)) {
+    llvm::errs() << "error: " << error << '\n';
+    return 1;
+  }
+  std::cout << "sere pack " << library.name << " -> " << output.string() << '\n';
+  return 0;
+}
+
+[[nodiscard]] int packStandalone(const CompilerOptions& options) {
+  const std::filesystem::path entry = std::filesystem::absolute(options.inputPath);
+  std::error_code error;
+  if (!std::filesystem::is_regular_file(entry, error)) {
+    llvm::errs() << "error: cannot pack '" << entry.string() << "'\n";
+    return 1;
+  }
+  const std::filesystem::path root = entry.parent_path();
+  PackedLibrary library;
+  library.name = entry.stem().string();
+  library.entry = entry.filename().generic_string();
+  const LanguageContext language = resolveLanguageContext(entry);
+  const std::filesystem::path stdlib =
+      language.stdlib.empty() ? findStdlibDirectory(compilerDirectory()) : language.stdlib;
+  const PackCheck check = typecheckPackedEntry(entry, stdlib, options.colorMode);
+  if (check.code != 0) {
+    return 1;
+  }
+  buildPackNative(root);
+  collectReachableSere(library, root, stdlib, entry, check.imported);
+  collectPackedNative(library, root, root / "native");
+  collectPackedNative(library, root, root / "libs" / "native");
+  collectModuleNative(library, root, entry);
+  for (const std::filesystem::path& imported : check.imported) {
+    collectModuleNative(library, root, imported);
+  }
+  const std::filesystem::path output =
+      options.outputPath.empty() ? std::filesystem::current_path() / (library.name + ".slib")
+                                 : options.outputPath;
+  return writeLibraryArchive(library, output);
+}
+
 }  // namespace
+
+int buildNativeLibs(const std::filesystem::path& nativeDir) {
+  std::error_code error;
+  if (!std::filesystem::exists(nativeDir, error) || error) {
+    return 0;
+  }
+  const int cmakeCode = buildNativeCMake(nativeDir);
+  if (cmakeCode != 0) {
+    return cmakeCode;
+  }
+  return compileLooseNative(nativeDir);
+}
+
+void prepareImportedLibraryNative(const std::vector<std::filesystem::path>& importedPaths) {
+  std::vector<std::filesystem::path> dirs;
+  for (const std::filesystem::path& imported : importedPaths) {
+    const std::filesystem::path parent = imported.parent_path();
+    if (!parent.empty()) {
+      appendImportSearchDir(dirs, parent / "native");
+    }
+    const std::filesystem::path root = libraryNativeRoot(imported);
+    if (!root.empty()) {
+      appendImportSearchDir(dirs, root);
+      appendImportSearchDir(dirs, root / "native");
+    }
+  }
+  for (const std::filesystem::path& directory : dirs) {
+    static_cast<void>(buildNativeLibs(directory));
+  }
+}
 
 void copyIfPresent(const std::filesystem::path& from, const std::filesystem::path& to) {
   std::error_code error;
@@ -317,6 +653,8 @@ bool loadProjectManifest(const std::filesystem::path& root, ProjectManifest& man
   }
   manifest.root = root;
   manifest.name = root.filename().string();
+  manifest.version = "0.1.0";
+  manifest.kind = ProjectKind::App;
   manifest.src = "src";
   manifest.entry = "src/main.sere";
   manifest.libs = "libs";
@@ -342,7 +680,11 @@ bool loadProjectManifest(const std::filesystem::path& root, ProjectManifest& man
   manifest.libs = resolvePath(root, manifest.libs);
   manifest.stdlib = resolvePath(root, manifest.stdlib);
   if (manifest.output.empty()) {
-    manifest.output = defaultOutput(root, manifest.name);
+    if (manifest.kind == ProjectKind::Lib) {
+      manifest.output = root / "dist" / (manifest.name + ".slib");
+    } else {
+      manifest.output = defaultOutput(root, manifest.name);
+    }
   } else {
     manifest.output = resolvePath(root, manifest.output);
   }
@@ -395,12 +737,57 @@ void appendLanguageContextDirs(std::vector<std::filesystem::path>& dirs,
   appendImportSearchDir(dirs, context.project->root);
 }
 
+int packLibrary(const CompilerOptions& options) {
+  if (!options.inputPath.empty()) {
+    return packStandalone(options);
+  }
+  std::string error;
+  const std::optional<ProjectManifest> manifest = requireManifest(error);
+  if (!manifest.has_value()) {
+    llvm::errs() << "error: " << error << '\n';
+    return 1;
+  }
+  std::error_code fsError;
+  if (manifest->native) {
+    const int nativeCode = buildNativeLibs(manifest->libs / "native");
+    if (nativeCode != 0) {
+      llvm::errs() << "note: native library build failed; packing Sere sources only\n";
+    }
+  }
+  prepareProjectStdlib(*manifest);
+  const std::filesystem::path stdlib = stdlibUsable(manifest->stdlib)
+                                           ? manifest->stdlib
+                                           : findStdlibDirectory(compilerDirectory());
+  const PackCheck check = typecheckPackedEntry(manifest->entry, stdlib, options.colorMode);
+  if (check.code != 0) {
+    return 1;
+  }
+  PackedLibrary library;
+  library.name = manifest->name;
+  library.version = manifest->version;
+  library.entry = relativeGeneric(manifest->root, manifest->entry);
+  collectReachableSere(library, manifest->root, stdlib, manifest->entry, check.imported);
+  collectPackedNative(library, manifest->root, manifest->libs);
+  collectPackedNative(library, manifest->root, manifest->libs / "native");
+  collectModuleNative(library, manifest->root, manifest->entry);
+  for (const std::filesystem::path& imported : check.imported) {
+    collectModuleNative(library, manifest->root, imported);
+  }
+  const std::filesystem::path output =
+      options.outputPath.empty() ? manifest->output : options.outputPath;
+  std::filesystem::create_directories(output.parent_path(), fsError);
+  return writeLibraryArchive(library, output);
+}
+
 int buildProject(const CompilerOptions& options) {
   std::string error;
   const std::optional<ProjectManifest> manifest = requireManifest(error);
   if (!manifest.has_value()) {
     llvm::errs() << "error: " << error << '\n';
     return 1;
+  }
+  if (manifest->kind == ProjectKind::Lib) {
+    return packLibrary(options);
   }
   std::error_code fsError;
   std::filesystem::create_directories(manifest->output.parent_path(), fsError);
@@ -423,6 +810,13 @@ int buildProject(const CompilerOptions& options) {
 }
 
 int runProject(const CompilerOptions& options) {
+  std::string manifestError;
+  const std::optional<ProjectManifest> current = requireManifest(manifestError);
+  if (current.has_value() && current->kind == ProjectKind::Lib) {
+    llvm::errs() << "error: '" << current->name
+                 << "' is a library; use sere pack and import the .slib\n";
+    return 1;
+  }
   const int built = buildProject(options);
   if (built != 0) {
     return built;
@@ -450,10 +844,14 @@ int cleanProject(const CompilerOptions& options) {
     return 1;
   }
   const std::filesystem::path bin = manifest->root / "bin";
+  const std::filesystem::path dist = manifest->root / "dist";
   const std::filesystem::path nativeBuild = manifest->libs / "native" / "build";
+  const std::filesystem::path extracted = manifest->libs / ".sere-lib";
   std::error_code fsError;
   std::filesystem::remove_all(bin, fsError);
+  std::filesystem::remove_all(dist, fsError);
   std::filesystem::remove_all(nativeBuild, fsError);
+  std::filesystem::remove_all(extracted, fsError);
   std::filesystem::create_directories(bin, fsError);
   std::cout << "sere clean " << manifest->name << '\n';
   return 0;

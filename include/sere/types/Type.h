@@ -40,6 +40,7 @@ struct RecordMethod {
   std::vector<std::string> paramNames{};
   std::size_t requiredAfterSelf = 0;
   bool isAbstract = false;
+  bool isPublic = true;
 };
 
 class Type {

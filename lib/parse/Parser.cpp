@@ -16,6 +16,15 @@
 namespace sere {
 namespace {
 
+void markPrivateFromDecorators(Node& node, const std::vector<std::string>& decorators) {
+  for (const std::string& name : decorators) {
+    if (name == "private") {
+      node.setPrivate(true);
+      return;
+    }
+  }
+}
+
 [[nodiscard]] bool isLineEnd(TokenKind kind) {
   return kind == TokenKind::Newline || kind == TokenKind::Dedent ||
          kind == TokenKind::EndOfFile;
@@ -353,8 +362,14 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     return std::make_unique<FloatLiteral>(previous().range(), parsed.value, parsed.isF32);
   }
   if (match(TokenKind::String)) {
-    const DecodedString decoded = decodeStringToken(previous().spelling());
-    return std::make_unique<StringLiteral>(previous().range(), decoded.value, false);
+    const Token& token = previous();
+    const DecodedString decoded = decodeStringToken(token.spelling());
+    if (isSingleQuotedLiteral(token.spelling()) && decoded.value.size() == 1) {
+      const auto byte = static_cast<unsigned char>(decoded.value[0]);
+      return std::make_unique<IntegerLiteral>(token.range(), static_cast<std::int64_t>(byte),
+                                              true);
+    }
+    return std::make_unique<StringLiteral>(token.range(), decoded.value, false);
   }
   if (match(TokenKind::Regex)) {
     const DecodedString decoded = decodeStringToken(previous().spelling());
@@ -1541,6 +1556,7 @@ std::unique_ptr<EnumDef> Parser::parseEnum() {
       }
       method->setOwnerClass(name);
       method->setDecorators(decorators);
+      markPrivateFromDecorators(*method, decorators);
       auto enumDef = std::make_unique<EnumDef>(keyword.range(), std::move(name), std::move(variants));
       // Collect remaining methods after this one by finishing the loop via a local vector.
       std::vector<std::unique_ptr<FunctionDef>> methods;
@@ -1563,6 +1579,7 @@ std::unique_ptr<EnumDef> Parser::parseEnum() {
         }
         next->setOwnerClass(enumDef->name());
         next->setDecorators(more);
+        markPrivateFromDecorators(*next, more);
         methods.push_back(std::move(next));
       }
       if (!consume(TokenKind::Dedent, "expected dedent after enum body")) {
@@ -1810,6 +1827,7 @@ std::unique_ptr<ClassDef> Parser::parseClass() {
       method->setDecorators(decorators);
       method->setAbstract(markedAbstract);
       method->setOverride(markedOverride);
+      markPrivateFromDecorators(*method, decorators);
       methods.push_back(std::move(method));
       continue;
     }
@@ -1920,12 +1938,17 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
     return parseFromImport();
   }
   if (check(TokenKind::KeywordMacro)) {
-    return parseMacroDef();
+    std::unique_ptr<MacroDef> macro = parseMacroDef();
+    if (macro != nullptr) {
+      markPrivateFromDecorators(*macro, decorators);
+    }
+    return macro;
   }
   if (check(TokenKind::KeywordDef)) {
     std::unique_ptr<FunctionDef> function = parseFunction({});
     if (function != nullptr) {
       function->setDecorators(decorators);
+      markPrivateFromDecorators(*function, decorators);
       for (const std::string& decorator : decorators) {
         if (decorator == "abstract") {
           function->setAbstract(true);
@@ -1941,6 +1964,7 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
     std::unique_ptr<ClassDef> classDef = parseClass();
     if (classDef != nullptr) {
       classDef->setDecorators(decorators);
+      markPrivateFromDecorators(*classDef, decorators);
       for (const std::string& decorator : decorators) {
         if (decorator == "frozen") {
           classDef->setFrozen(true);
@@ -1950,12 +1974,17 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
     return classDef;
   }
   if (check(TokenKind::KeywordType)) {
-    return parseTypeAlias();
+    std::unique_ptr<TypeAlias> alias = parseTypeAlias();
+    if (alias != nullptr) {
+      markPrivateFromDecorators(*alias, decorators);
+    }
+    return alias;
   }
   if (check(TokenKind::KeywordEnum)) {
     std::unique_ptr<EnumDef> enumDef = parseEnum();
     if (enumDef != nullptr) {
       enumDef->setDecorators(decorators);
+      markPrivateFromDecorators(*enumDef, decorators);
       for (const std::string& decorator : decorators) {
         if (decorator == "flags") {
           enumDef->setFlags(true);
@@ -2023,7 +2052,11 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
   }
   if (match(TokenKind::KeywordStatic)) {
     if (check(TokenKind::Identifier) && peekNth(1).kind() == TokenKind::Colon) {
-      return parseVarDecl(true);
+      std::unique_ptr<VarDecl> decl = parseVarDecl(true);
+      if (decl != nullptr) {
+        markPrivateFromDecorators(*decl, decorators);
+      }
+      return decl;
     }
     diagnostics_->error(peek().range(), "expected 'name: type' after 'static'");
     return nullptr;
@@ -2035,7 +2068,11 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
       advance();
       return parseMacroInvokeStmt(std::move(name), nameRange);
     }
-    return parseVarDecl();
+    std::unique_ptr<VarDecl> decl = parseVarDecl();
+    if (decl != nullptr) {
+      markPrivateFromDecorators(*decl, decorators);
+    }
+    return decl;
   }
   return parseAssignOrExpr();
 }

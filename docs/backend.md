@@ -41,7 +41,9 @@ On Windows the runtime also links `user32`, `gdi32`, `opengl32`, `shell32`,
 `advapi32`. Importing `qt6` adds `sere_qt6` when CMake found Qt6.
 
 `--link extra.lib` appends extra native libraries. Use this for custom GC
-implementations and C extension modules.
+implementations and C extension modules. Importing a `.slib` or a folder
+library also links native objects next to it (and compiles loose `.c` /
+`.cpp` when needed).
 
 Clang and `sere_rt` are found next to the compiler (see `Toolchain.h` /
 `findClang`, `findRuntimeLibrary`). Users compiling Sere programs do **not**

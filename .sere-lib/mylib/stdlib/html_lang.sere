@@ -1,0 +1,13 @@
+# Embedded HTML syntax for Sere macros.
+# html: captures raw markup and interpolates {expr} holes.
+
+class Html:
+    value: str
+
+    def __init__(self, value: str) -> void:
+        self.value = value
+
+macro html:
+    syntax: raw
+    interpolate: brace
+    wrapper: Html

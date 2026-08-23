@@ -1,0 +1,20 @@
+def scale(value: i32, factor: i32 = 2) -> i32:
+    return value * factor
+
+class Box:
+    @public value: i32
+
+    def __init__(self, value: i32 = 7) -> void:
+        self.value = value
+
+    def add(self, n: i32 = 1) -> i32:
+        return self.value + n
+
+def main() -> i32:
+    n: i32 | f32 = 3
+    xs: list[i32] = [x for x in range(0, ..., 3)]
+    total: i32 = 0
+    for item in xs:
+        total += item
+    box: Box = Box()
+    return scale(3) + total + box.add() + (n as i32)

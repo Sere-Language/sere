@@ -2843,9 +2843,14 @@ bool IRGenerator::emitAssert(llvm::IRBuilder<>& builder, const AssertStmt& state
 
 llvm::Value* IRGenerator::emitExpr(llvm::IRBuilder<>& builder, const Expr& expr) {
   switch (expr.kind()) {
-  case NodeKind::IntegerLiteral:
-    return builder.getInt32(
-        static_cast<std::uint32_t>(static_cast<const IntegerLiteral&>(expr).value()));
+  case NodeKind::IntegerLiteral: {
+    const auto& literal = static_cast<const IntegerLiteral&>(expr);
+    const Type* type = expr.resolvedType() == nullptr ? nullptr : expr.resolvedType()->canonical();
+    if (literal.isByte() || (type != nullptr && (type->isNamed("i8") || type->isNamed("u8")))) {
+      return builder.getInt8(static_cast<std::uint8_t>(literal.value()));
+    }
+    return builder.getInt32(static_cast<std::uint32_t>(literal.value()));
+  }
   case NodeKind::FloatLiteral: {
     const auto& literal = static_cast<const FloatLiteral&>(expr);
     llvm::Type* llvmType = literal.isF32() ? builder.getFloatTy() : builder.getDoubleTy();

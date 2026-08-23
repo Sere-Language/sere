@@ -58,7 +58,9 @@ void makeExecutable(const std::filesystem::path& path) {
 #ifdef _WIN32
   output += ".exe";
 #endif
-  return "name = \"" + name +
+  return "kind = \"app\"\n"
+         "name = \"" +
+         name +
          "\"\n"
          "src = \"src\"\n"
          "entry = \"src/main.sere\"\n"
@@ -548,6 +550,8 @@ namespace {
       "venv/lib/\n"
       "venv/bin/\n"
       "libs/native/build/\n"
+      "libs/.sere-lib/\n"
+      "dist/\n"
       "*.exe\n"
       "*.obj\n"
       "*.ll\n";
@@ -578,6 +582,7 @@ namespace {
       "  sere clean\n"
       "\n"
       "Set native = true in sere.toml to auto-build libs/native on sere build.\n"
+      "Drop a packed .slib (or .sere) into libs/ and `import` it.\n"
       "Any .sere file dropped in venv/stdlib is importable.\n"
       "prelude.sere is imported automatically.\n";
   return writeText(root / "src" / "main.sere", mainSere) &&
@@ -627,7 +632,108 @@ void copyToolchain(const std::filesystem::path& compilerDir, const std::filesyst
                root / "venv" / "include" / "sere" / "api" / "sere_gc.h");
 }
 
+[[nodiscard]] std::string libraryTomlText(const std::string& name) {
+  return "kind = \"lib\"\n"
+         "name = \"" +
+         name +
+         "\"\n"
+         "version = \"0.1.0\"\n"
+         "src = \"src\"\n"
+         "entry = \"src/lib.sere\"\n"
+         "libs = \"libs\"\n"
+         "output = \"dist/" +
+         name +
+         ".slib\"\n"
+         "opt = \"O0\"\n"
+         "native = false\n";
+}
+
+[[nodiscard]] bool writeLibraryScaffold(const std::filesystem::path& root, const std::string& name) {
+  const std::string libSere =
+      "\"\"\"Drop-in Sere library. Pack with `sere pack`, then copy dist/" + name +
+      ".slib into another project's libs/ folder and `import " + name +
+      "`.\n"
+      "\"\"\"\n"
+      "\n"
+      "def add(left: i32, right: i32) -> i32:\n"
+      "    return left + right\n";
+  const char* nativeCpp =
+      "#include \"sere/api/sere_mod.h\"\n"
+      "\n"
+      "extern \"C\" int32_t native_add(int32_t left, int32_t right) {\n"
+      "  return left + right;\n"
+      "}\n";
+  const char* nativeCmake =
+      "cmake_minimum_required(VERSION 3.20)\n"
+      "project(sere_native LANGUAGES C CXX)\n"
+      "add_library(sere_native STATIC example.cpp)\n";
+  const char* nativeSere =
+      "extern \"C\" \"native_add\"\n"
+      "def add(left: i32, right: i32) -> i32\n";
+  const char* gitignore =
+      "dist/\n"
+      ".sere-lib/\n"
+      "libs/native/build/\n"
+      "*.exe\n"
+      "*.obj\n"
+      "*.ll\n";
+  const std::string readme =
+      std::string("Sere library: ") + name +
+      "\n"
+      "====================\n"
+      "src/lib.sere   public API (no main)\n"
+      "libs/          extra Sere modules and optional native C++\n"
+      "dist/          packed .slib after `sere pack`\n"
+      "\n"
+      "Build a single file that another Sere program can import:\n"
+      "  sere pack\n"
+      "  sere pack -o dist/" +
+      name +
+      ".slib\n"
+      "\n"
+      "Drop the file into a project:\n"
+      "  copy dist/" +
+      name +
+      ".slib  other-app/libs/\n"
+      "\n"
+      "Then in that program:\n"
+      "  import " +
+      name +
+      "\n"
+      "\n"
+      "Set native = true in sere.toml to compile libs/native into the .slib.\n";
+  return writeText(root / "src" / "lib.sere", libSere) &&
+         writeText(root / "libs" / "native" / "example.cpp", nativeCpp) &&
+         writeText(root / "libs" / "native" / "CMakeLists.txt", nativeCmake) &&
+         writeText(root / "libs" / "native.sere", nativeSere) &&
+         writeText(root / "sere.toml", libraryTomlText(name)) &&
+         writeText(root / ".gitignore", gitignore) && writeText(root / "README.txt", readme);
+}
+
 }  // namespace
+
+int initSereLibrary(const std::filesystem::path& name, std::string& error) {
+  const std::filesystem::path root = std::filesystem::absolute(name);
+  const std::string projectName = root.filename().string();
+  std::error_code fsError;
+  std::filesystem::create_directories(root / "src", fsError);
+  std::filesystem::create_directories(root / "libs" / "native", fsError);
+  std::filesystem::create_directories(root / "dist", fsError);
+  if (fsError) {
+    error = "cannot create library directories: " + fsError.message();
+    return 1;
+  }
+  if (!writeLibraryScaffold(root, projectName)) {
+    error = "cannot write library files";
+    return 1;
+  }
+  std::cout << "created Sere library '" << root.string() << "'\n";
+  std::cout << "  edit:   src/lib.sere\n";
+  std::cout << "  pack:   sere pack\n";
+  std::cout << "  drop:   copy dist/" << projectName << ".slib into another project's libs/\n";
+  std::cout << "  import: import " << projectName << "\n";
+  return 0;
+}
 
 int initSereProject(const std::filesystem::path& name, const std::filesystem::path& compilerDir,
                     std::string& error) {

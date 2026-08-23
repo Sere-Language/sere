@@ -434,6 +434,8 @@ const Type* TypeContext::anyType() const { return primitive("Any"); }
 
 const Type* TypeContext::boolType() const { return primitive("bool"); }
 
+const Type* TypeContext::i8Type() const { return primitive("i8"); }
+
 const Type* TypeContext::i32Type() const { return primitive("i32"); }
 
 const Type* TypeContext::i64Type() const { return primitive("i64"); }

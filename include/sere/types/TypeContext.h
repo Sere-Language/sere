@@ -66,6 +66,7 @@ public:
   [[nodiscard]] const Type* noneType() const;
   [[nodiscard]] const Type* anyType() const;
   [[nodiscard]] const Type* boolType() const;
+  [[nodiscard]] const Type* i8Type() const;
   [[nodiscard]] const Type* i32Type() const;
   [[nodiscard]] const Type* i64Type() const;
   [[nodiscard]] const Type* f32Type() const;

@@ -33,6 +33,8 @@ ctest --preset windows-clang-cl-relwithdebinfo -R sere.test.sema --output-on-fai
 | `# type: ignore` | `tests/type_ignore.cpp` |
 | LSP hover / tokens | `tests/macro_lsp.cpp` or `tests/lsp_semantic.cpp` |
 | `sere init/build` | `tests/project_cli.cpp` |
+| `.slib` pack / import | `tests/library_pack.cpp` |
+| `@private` exports | `tests/import_private.cpp` |
 | End-to-end language feature | `examples/your.sere` + `add_test(NAME sere.example.your …)` |
 
 Example tests only require `--emit-llvm` success (typecheck + IR). That is

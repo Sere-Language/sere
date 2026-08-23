@@ -5,6 +5,7 @@
 
 #include "sere/ast/Syntax.h"
 #include "sere/diag/DiagnosticEngine.h"
+#include "sere/driver/Library.h"
 #include "sere/lex/Lexer.h"
 #include "sere/parse/Parser.h"
 #include "sere/source/SourceManager.h"
@@ -324,7 +325,15 @@ std::vector<ImportCompletionItem> importExportCompletions(const std::filesystem:
   if (prefix.empty() || star.label.starts_with(prefix)) {
     items.push_back(std::move(star));
   }
-  const std::optional<std::string> text = readText(moduleFile);
+  std::filesystem::path sourceFile = moduleFile;
+  if (isSereLibraryFile(sourceFile)) {
+    std::string extractError;
+    sourceFile = ensureLibraryExtracted(sourceFile, extractError);
+    if (sourceFile.empty()) {
+      return items;
+    }
+  }
+  const std::optional<std::string> text = readText(sourceFile);
   if (!text.has_value()) {
     return items;
   }
@@ -338,7 +347,7 @@ std::vector<ImportCompletionItem> importExportCompletions(const std::filesystem:
     return items;
   }
   for (const std::unique_ptr<Stmt>& statement : module->statements()) {
-    if (statement == nullptr || statement->fromPrelude()) {
+    if (statement == nullptr || statement->fromPrelude() || statement->isPrivate()) {
       continue;
     }
     ImportCompletionItem item = fromStmt(*statement, prefix);
