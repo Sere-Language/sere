@@ -1,11 +1,11 @@
-# 🪶 Sere
-
+# <img src="https://github.com/Sere-Language/sere/blob/main/Icon.PNG" width=64/> Sere
 Sere is a compiled **typed Python superset** with an LLVM 22 backend. It is not
 CPython: the CPython standard library, `async`/`yield`, `*args`, and capturing
 lambdas are out of scope. Unsupported constructs diagnose (often
 `NotImplementedError`) instead of generating silent wrong code.
 
-Sere now has a website! Visit https://sere-lang.vercel.app/
+Sere now has a website! Visit 
+https://sere-lang.vercel.app/
 
 ```python
 def greet(name):
