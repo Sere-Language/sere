@@ -8,6 +8,7 @@
 #include "sere/driver/ImportPath.h"
 #include "sere/driver/Library.h"
 #include "sere/driver/Prelude.h"
+#include "sere/driver/SourceOverlay.h"
 #include "sere/driver/Toolchain.h"
 
 #include <llvm/ADT/SmallVector.h>
@@ -735,6 +736,73 @@ void appendLanguageContextDirs(std::vector<std::filesystem::path>& dirs,
   appendImportSearchDir(dirs, context.project->libs);
   appendImportSearchDir(dirs, context.project->src);
   appendImportSearchDir(dirs, context.project->root);
+}
+
+bool pathIsUnderDirectory(const std::filesystem::path& path,
+                          const std::filesystem::path& directory) {
+  if (path.empty() || directory.empty()) {
+    return false;
+  }
+  std::error_code error;
+  const std::string fileText = std::filesystem::weakly_canonical(path, error).generic_string();
+  const std::string rootText =
+      std::filesystem::weakly_canonical(directory, error).generic_string();
+  if (error || rootText.empty() || fileText.size() < rootText.size()) {
+    return false;
+  }
+  if (!fileText.starts_with(rootText)) {
+    return false;
+  }
+  return fileText.size() == rootText.size() || fileText[rootText.size()] == '/';
+}
+
+bool isLanguageContextPath(const std::filesystem::path& path, const LanguageContext& context) {
+  if (path.empty()) {
+    return false;
+  }
+  if (path.filename() == "sere.toml") {
+    return true;
+  }
+  if (pathIsUnderDirectory(path, context.stdlib)) {
+    return true;
+  }
+  if (!context.project.has_value()) {
+    return false;
+  }
+  return pathIsUnderDirectory(path, context.project->stdlib);
+}
+
+std::string languageContextStamp(const LanguageContext& context) {
+  std::string stamp = SourceOverlay::normalize(context.stdlib);
+  stamp += '|';
+  if (!context.project.has_value()) {
+    return stamp;
+  }
+  const ProjectManifest& project = *context.project;
+  stamp += SourceOverlay::normalize(project.root);
+  stamp += '|';
+  stamp += SourceOverlay::normalize(project.src);
+  stamp += '|';
+  stamp += SourceOverlay::normalize(project.libs);
+  stamp += '|';
+  stamp += SourceOverlay::normalize(project.entry);
+  stamp += '|';
+  stamp += SourceOverlay::normalize(project.stdlib);
+  const std::filesystem::path manifest = project.root / "sere.toml";
+  std::error_code error;
+  if (std::filesystem::exists(manifest, error)) {
+    const auto time = std::filesystem::last_write_time(manifest, error);
+    if (!error) {
+      stamp += '|';
+      stamp += std::to_string(time.time_since_epoch().count());
+    }
+    const auto size = std::filesystem::file_size(manifest, error);
+    if (!error) {
+      stamp += '|';
+      stamp += std::to_string(size);
+    }
+  }
+  return stamp;
 }
 
 int packLibrary(const CompilerOptions& options) {

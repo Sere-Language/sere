@@ -10,7 +10,9 @@ from math import sqrt
 ```
 
 Search path (`ImportPath`): directory of the importing file, then the stdlib
-directory next to `sere` (or `SERE_STDLIB` in tests).
+directory next to `sere` (or `SERE_STDLIB` in tests). The language server
+re-analyzes open buffers when `stdlib/*.sere` or `sere.toml` changes, and
+uses unsaved editor buffers as an overlay on disk.
 
 ## Prelude
 

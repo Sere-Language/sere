@@ -32,6 +32,7 @@ ctest --preset windows-clang-cl-relwithdebinfo -R sere.test.sema --output-on-fai
 | Macros | `tests/macro_tt.cpp`, `macro_expand.cpp`, `macro_errors.cpp` |
 | `# type: ignore` | `tests/type_ignore.cpp` |
 | LSP hover / tokens | `tests/macro_lsp.cpp` or `tests/lsp_semantic.cpp` |
+| LSP stdlib / context refresh | `tests/lsp_context.cpp` |
 | `sere init/build` | `tests/project_cli.cpp` |
 | `.slib` pack / import | `tests/library_pack.cpp` |
 | `@private` exports | `tests/import_private.cpp` |

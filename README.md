@@ -167,7 +167,7 @@ Memory intrinsics: `unique[T](value)`, `shared[T](value)`, `alloc[T]()`, `load`,
 
 ## Editor IntelliSense
 
-The workspace extension in `editors/vscode` gives `.sere` files syntax highlighting, diagnostics (with exception codes such as `NameError`), markdown hover, completion, rename, semantic tokens, folding, and go-to-definition. It launches `sere --lsp`. `# type: ignore` and `# type[NameError]: ignore` suppress editor diagnostics.
+The workspace extension in `editors/vscode` gives `.sere` files syntax highlighting, diagnostics (with exception codes such as `NameError`), markdown hover, completion, rename, semantic tokens, folding, and go-to-definition. It launches `sere --lsp`. Stdlib, `sere.toml`, and project `src/` / `libs/` edits refresh open buffers automatically. `# type: ignore` and `# type[NameError]: ignore` suppress editor diagnostics.
 
 Package a VSIX:
 

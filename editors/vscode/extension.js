@@ -120,6 +120,30 @@ function findStdlib(workspaceFolder, compilerPath) {
   ]);
 }
 
+function isContextDocument(document, session) {
+  if (!document) {
+    return false;
+  }
+  const fileName = path.basename(document.uri.fsPath);
+  if (fileName === "sere.toml") {
+    return true;
+  }
+  if (document.languageId !== "sere") {
+    return false;
+  }
+  const filePath = document.uri.fsPath;
+  const stdlib = session ? session.resolvedPaths().stdlib : "";
+  const folder = session ? session.workspaceFolder() : "";
+  const roots = [
+    stdlib,
+    folder ? path.join(folder, "stdlib") : "",
+    folder ? path.join(folder, "venv", "stdlib") : "",
+    folder ? path.join(folder, "libs") : "",
+    folder ? path.join(folder, "src") : "",
+  ].filter(Boolean);
+  return roots.some((root) => filePath === root || filePath.startsWith(root + path.sep));
+}
+
 function compilerEnv(workspaceFolder, compilerPath) {
   const env = { ...process.env };
   const stdlib = findStdlib(workspaceFolder, compilerPath);
@@ -310,6 +334,12 @@ function documentPosition(document, position) {
   return { textDocument: { uri: document.uri.toString() }, position: toPosition(position) };
 }
 
+const DOCUMENT_DEBOUNCE_MS = 80;
+const CONTEXT_DEBOUNCE_MS = 120;
+const FILE_CHANGE_CREATED = 1;
+const FILE_CHANGE_CHANGED = 2;
+const FILE_CHANGE_DELETED = 3;
+
 class SereLanguageClient {
   constructor(context) {
     this.context = context;
@@ -317,13 +347,27 @@ class SereLanguageClient {
     this.child = null;
     this.stopping = false;
     this.changeTimers = new Map();
+    this.watchers = [];
+    this.pendingWatched = new Map();
+    this.watchedTimer = null;
+    this.startedCompiler = "";
+    this.startedStdlib = "";
+    this.semanticTokensChanged = new vscode.EventEmitter();
+    this.inlayHintsChanged = new vscode.EventEmitter();
+    this.codeLensesChanged = new vscode.EventEmitter();
     this.diagnostics = vscode.languages.createDiagnosticCollection("sere");
     this.status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     this.status.command = "sere.restartLanguageServer";
     this.status.text = "Sere";
     this.status.tooltip = "Sere language server — click to restart";
     this.status.show();
-    context.subscriptions.push(this.diagnostics, this.status);
+    context.subscriptions.push(
+      this.diagnostics,
+      this.status,
+      this.semanticTokensChanged,
+      this.inlayHintsChanged,
+      this.codeLensesChanged,
+    );
   }
 
   workspaceFolder() {
@@ -332,15 +376,119 @@ class SereLanguageClient {
       : undefined;
   }
 
+  resolvedPaths() {
+    const workspaceFolder = this.workspaceFolder();
+    const compiler = findSere(workspaceFolder, true);
+    return {
+      workspaceFolder,
+      compiler,
+      stdlib: findStdlib(workspaceFolder, compiler),
+    };
+  }
+
+  disposeWatchers() {
+    for (const watcher of this.watchers) {
+      watcher.dispose();
+    }
+    this.watchers = [];
+    if (this.watchedTimer) {
+      clearTimeout(this.watchedTimer);
+      this.watchedTimer = null;
+    }
+    this.pendingWatched.clear();
+  }
+
+  contextWatchPatterns() {
+    const { workspaceFolder, stdlib } = this.resolvedPaths();
+    const patterns = [];
+    const add = (base, pattern) => {
+      if (base) {
+        patterns.push(new vscode.RelativePattern(base, pattern));
+      }
+    };
+    add(stdlib, "**/*.sere");
+    add(workspaceFolder, "**/sere.toml");
+    add(workspaceFolder, "**/*.sere");
+    add(workspaceFolder, "**/*.slib");
+    return patterns;
+  }
+
+  setupContextWatchers() {
+    this.disposeWatchers();
+    for (const pattern of this.contextWatchPatterns()) {
+      const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+      watcher.onDidCreate((uri) => this.queueWatchedChange(uri, FILE_CHANGE_CREATED));
+      watcher.onDidChange((uri) => this.queueWatchedChange(uri, FILE_CHANGE_CHANGED));
+      watcher.onDidDelete((uri) => this.queueWatchedChange(uri, FILE_CHANGE_DELETED));
+      this.watchers.push(watcher);
+      this.context.subscriptions.push(watcher);
+    }
+  }
+
+  queueWatchedChange(uri, type) {
+    this.pendingWatched.set(uri.toString(), { uri: uri.toString(), type });
+    if (this.watchedTimer) {
+      clearTimeout(this.watchedTimer);
+    }
+    this.watchedTimer = setTimeout(() => {
+      this.watchedTimer = null;
+      this.flushWatchedChanges();
+    }, CONTEXT_DEBOUNCE_MS);
+  }
+
+  flushWatchedChanges() {
+    if (this.pendingWatched.size === 0) {
+      return;
+    }
+    const changes = Array.from(this.pendingWatched.values());
+    this.pendingWatched.clear();
+    this.notify("workspace/didChangeWatchedFiles", { changes });
+    this.refreshEditorProviders();
+  }
+
+  refreshEditorProviders() {
+    this.semanticTokensChanged.fire();
+    this.inlayHintsChanged.fire();
+    this.codeLensesChanged.fire();
+  }
+
+  notifyConfiguration() {
+    const { compiler, stdlib } = this.resolvedPaths();
+    this.notify("workspace/didChangeConfiguration", {
+      settings: {
+        sere: {
+          compilerPath: compiler,
+          stdlibPath: stdlib,
+        },
+      },
+    });
+    this.refreshEditorProviders();
+  }
+
+  async onSettingsChanged() {
+    const { compiler, stdlib } = this.resolvedPaths();
+    const compilerChanged = compiler !== this.startedCompiler;
+    const stdlibChanged = stdlib !== this.startedStdlib;
+    if (compilerChanged || stdlibChanged) {
+      await this.restart();
+      return;
+    }
+    this.notifyConfiguration();
+  }
+
   start() {
     this.stopping = false;
-    const workspaceFolder = this.workspaceFolder();
-    const sere = findSere(workspaceFolder, true);
+    const { workspaceFolder, compiler, stdlib } = this.resolvedPaths();
+    this.startedCompiler = compiler;
+    this.startedStdlib = stdlib;
     this.status.text = "Sere";
-    this.status.tooltip = "Sere language server: " + sere;
-    this.child = spawn(sere, ["--lsp"], {
+    this.status.tooltip = "Sere language server: " + compiler;
+    if (stdlib) {
+      this.status.tooltip += "\nstdlib: " + stdlib;
+    }
+    this.child = spawn(compiler, ["--lsp"], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: compilerEnv(workspaceFolder, sere),
+      env: compilerEnv(workspaceFolder, compiler),
     });
     this.child.on("error", (error) => {
       this.status.text = "Sere $(error)";
@@ -378,7 +526,16 @@ class SereLanguageClient {
       .request("initialize", {
         processId: process.pid,
         rootUri: workspaceFolder ? vscode.Uri.file(workspaceFolder).toString() : null,
+        initializationOptions: {
+          compilerPath: compiler,
+          stdlibPath: stdlib,
+        },
         capabilities: {
+          workspace: {
+            workspaceFolders: true,
+            didChangeConfiguration: { dynamicRegistration: false },
+            didChangeWatchedFiles: { dynamicRegistration: false },
+          },
           textDocument: {
             hover: { contentFormat: ["markdown"] },
             completion: { completionItem: { snippetSupport: true } },
@@ -389,6 +546,7 @@ class SereLanguageClient {
       .then(() => {
         this.status.text = "Sere";
         this.client.notify("initialized", {});
+        this.setupContextWatchers();
         for (const document of vscode.workspace.textDocuments) {
           this.openDocument(document);
         }
@@ -401,6 +559,7 @@ class SereLanguageClient {
 
   async stop() {
     this.stopping = true;
+    this.disposeWatchers();
     if (this.client !== null) {
       await this.client.stop();
       this.client = null;
@@ -489,9 +648,10 @@ function activate(context) {
     vscode.commands.registerCommand("sere.runProject", () =>
       runSereCommand(session, ["run"], "ran project"),
     ),
-    vscode.commands.registerCommand("sere.refreshBin", () =>
-      runSereCommand(session, ["refresh-bin"], "refreshed ./bin", true),
-    ),
+    vscode.commands.registerCommand("sere.refreshBin", () => {
+      runSereCommand(session, ["refresh-bin"], "refreshed ./bin", true);
+      session.notifyConfiguration();
+    }),
     vscode.commands.registerCommand("sere.openSettings", () =>
       vscode.commands.executeCommand("workbench.action.openSettings", "@ext:sere.sere"),
     ),
@@ -511,8 +671,31 @@ function activate(context) {
           textDocument: { uri, version: event.document.version },
           contentChanges: [{ text: event.document.getText() }],
         });
-      }, 80);
+        if (isContextDocument(event.document, session)) {
+          session.refreshEditorProviders();
+        }
+      }, DOCUMENT_DEBOUNCE_MS);
       session.changeTimers.set(uri, timer);
+    }),
+    vscode.workspace.onDidSaveTextDocument((document) => {
+      if (isContextDocument(document, session) || document.fileName.endsWith("sere.toml")) {
+        session.queueWatchedChange(document.uri, FILE_CHANGE_CHANGED);
+      }
+    }),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (
+        event.affectsConfiguration("sere.compilerPath") ||
+        event.affectsConfiguration("sere.stdlibPath")
+      ) {
+        session.onSettingsChanged();
+        return;
+      }
+      if (event.affectsConfiguration("sere")) {
+        session.refreshEditorProviders();
+      }
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      session.restart();
     }),
     vscode.workspace.onDidCloseTextDocument((document) => {
       if (document.languageId !== "sere") {
@@ -577,6 +760,7 @@ function activate(context) {
       },
     }),
     vscode.languages.registerCodeLensProvider("sere", {
+      onDidChangeCodeLenses: session.codeLensesChanged.event,
       provideCodeLenses(document) {
         if (!vscode.workspace.getConfiguration("sere").get("codeLens")) {
           return [];
@@ -679,6 +863,7 @@ function activate(context) {
       },
     ),
     vscode.languages.registerInlayHintsProvider("sere", {
+      onDidChangeInlayHints: session.inlayHintsChanged.event,
       provideInlayHints(document, range) {
         return session
           .request("textDocument/inlayHint", {
@@ -787,6 +972,7 @@ function activate(context) {
     vscode.languages.registerDocumentSemanticTokensProvider(
       "sere",
       {
+        onDidChangeSemanticTokens: session.semanticTokensChanged.event,
         provideDocumentSemanticTokens(document) {
           return session
             .request("textDocument/semanticTokens/full", {

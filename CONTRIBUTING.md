@@ -43,9 +43,11 @@ At minimum: a unit test that fails before your patch, or an `examples/*.sere`
 
 ## Editor
 
-If you change `sere`, restart the language server. The workspace compiler path
-is `build/windows-clang-cl-relwithdebinfo/bin/sere.exe`. Copying to `bin/` can
-fail while the LSP still has `bin/sere.exe` open; that is expected.
+If you change the compiler binary, restart the language server. Stdlib,
+`sere.toml`, and project `src/` / `libs/` edits refresh automatically. The
+workspace compiler path is `build/windows-clang-cl-relwithdebinfo/bin/sere.exe`.
+Copying to `bin/` can fail while the LSP still has `bin/sere.exe` open; that is
+expected.
 
 ## Docs
 

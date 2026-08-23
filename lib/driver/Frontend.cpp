@@ -12,10 +12,8 @@
 #include "sere/parse/Parser.h"
 
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <optional>
-#include <sstream>
 #include <string_view>
 #include <system_error>
 #include <vector>
@@ -75,16 +73,6 @@ private:
     text += parts[index];
   }
   return text;
-}
-
-[[nodiscard]] std::optional<std::string> readText(const std::filesystem::path& path) {
-  std::ifstream input(path, std::ios::binary);
-  if (!input) {
-    return std::nullopt;
-  }
-  std::ostringstream stream;
-  stream << input.rdbuf();
-  return stream.str();
 }
 
 void collectImportStmts(const Module& module, std::vector<const ImportStmt*>& out) {
@@ -299,7 +287,8 @@ void bindPreludeExports(TypeChecker& checker, Module& prelude) {
 
 bool Frontend::analyze(const std::string& path,
                        const std::string& text,
-                       const std::filesystem::path& stdlibDir) {
+                       const std::filesystem::path& stdlibDir,
+                       const SourceOverlay* overlay) {
   diagnostics_ = DiagnosticEngine();
   ast_.reset();
   types_.reset();
@@ -310,11 +299,11 @@ bool Frontend::analyze(const std::string& path,
   importNames_.clear();
   importIndex_.clear();
   macroUses_.clear();
+  overlay_ = overlay;
   source_ = std::make_unique<SourceManager>(path, text);
   diagnostics_.setSource(source_.get());
   const LanguageContext context = resolveLanguageContext(path);
-  const std::filesystem::path stdlib =
-      context.stdlib.empty() ? stdlibDir : context.stdlib;
+  const std::filesystem::path stdlib = !stdlibDir.empty() ? stdlibDir : context.stdlib;
   std::cerr << "sere-debug: lex/parse user module\n";
   Lexer lexer(*source_, diagnostics_);
   Parser parser(diagnostics_, lexer.tokenizeAll(), source_.get());
@@ -329,7 +318,7 @@ bool Frontend::analyze(const std::string& path,
     return false;
   }
   std::cerr << "sere-debug: imports loaded count=" << imported_.size() << "\n";
-  if (!stdlib.empty() && !loadPrelude(*ast_, diagnostics_, stdlib)) {
+  if (!stdlib.empty() && !loadPrelude(*ast_, diagnostics_, stdlib, overlay_)) {
     std::cerr << "sere-debug: loadPrelude failed\n";
     return false;
   }
@@ -351,7 +340,7 @@ bool Frontend::analyze(const std::string& path,
   types_ = std::make_unique<TypeContext>();
   std::unique_ptr<Module> preludeChecked;
   if (!stdlib.empty()) {
-    preludeChecked = parsePrelude(diagnostics_, stdlib);
+    preludeChecked = parsePrelude(diagnostics_, stdlib, overlay_);
     if (preludeChecked == nullptr) {
       std::cerr << "sere-debug: parsePrelude failed\n";
       return false;
@@ -419,7 +408,7 @@ bool Frontend::loadImports(const std::filesystem::path& origin,
       }
       return false;
     }
-    const std::optional<std::string> text = readText(file);
+    const std::optional<std::string> text = readSourceFile(file, overlay_);
     if (!text.has_value()) {
       diagnostics_.error(statement->range(), "cannot read module '" + file.string() + "'");
       return false;

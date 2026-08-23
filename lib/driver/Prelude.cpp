@@ -4,6 +4,7 @@
 #include "sere/driver/Prelude.h"
 
 #include "sere/diag/DiagnosticEngine.h"
+#include "sere/driver/SourceOverlay.h"
 #include "sere/lex/Lexer.h"
 #include "sere/parse/Parser.h"
 #include "sere/source/SourceManager.h"
@@ -11,23 +12,12 @@
 #include <cstdlib>
 #include <fstream>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
 
 namespace sere {
 namespace {
-
-[[nodiscard]] std::optional<std::string> readAll(const std::filesystem::path& path) {
-  std::ifstream input(path, std::ios::binary);
-  if (!input) {
-    return std::nullopt;
-  }
-  std::ostringstream buffer;
-  buffer << input.rdbuf();
-  return buffer.str();
-}
 
 [[nodiscard]] bool stdlibHasPrelude(const std::filesystem::path& directory) {
   std::error_code error;
@@ -103,9 +93,10 @@ std::filesystem::path findStdlibDirectory(const std::filesystem::path& compilerD
 }
 
 std::unique_ptr<Module> parsePrelude(DiagnosticEngine& diagnostics,
-                                     const std::filesystem::path& stdlibDir) {
+                                     const std::filesystem::path& stdlibDir,
+                                     const SourceOverlay* overlay) {
   const std::filesystem::path preludePath = stdlibDir / "prelude.sere";
-  const std::optional<std::string> text = readAll(preludePath);
+  const std::optional<std::string> text = readSourceFile(preludePath, overlay);
   if (!text.has_value()) {
     diagnostics.error("cannot load standard library prelude from '" + preludePath.string() + "'");
     diagnostics.help("set SERE_STDLIB or keep stdlib/ next to sere");
@@ -127,8 +118,9 @@ std::unique_ptr<Module> parsePrelude(DiagnosticEngine& diagnostics,
 
 bool loadPrelude(Module& userModule,
                  DiagnosticEngine& diagnostics,
-                 const std::filesystem::path& stdlibDir) {
-  std::unique_ptr<Module> prelude = parsePrelude(diagnostics, stdlibDir);
+                 const std::filesystem::path& stdlibDir,
+                 const SourceOverlay* overlay) {
+  std::unique_ptr<Module> prelude = parsePrelude(diagnostics, stdlibDir, overlay);
   if (prelude == nullptr) {
     return false;
   }

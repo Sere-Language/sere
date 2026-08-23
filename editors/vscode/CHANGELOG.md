@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Language server picks up stdlib, `sere.toml`, and project `src/` / `libs/`
+  updates without **Restart Language Server**
+- Unsaved stdlib and imported-module buffers overlay disk for diagnostics,
+  hover, and completion
+- Changing `sere.compilerPath` or `sere.stdlibPath` restarts the server and
+  re-watches the resolved stdlib
+
 ## 0.2.0
 
 - Grammar for builtin exceptions, `Int` / `Float`, `|>`, and macro properties

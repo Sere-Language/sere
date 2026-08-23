@@ -76,6 +76,7 @@ add_library(sere_driver
   driver/ProjectShell.cpp
   driver/Frontend.cpp
   driver/ImportPath.cpp
+  driver/SourceOverlay.cpp
   driver/Toolchain.cpp
   driver/Installer.cpp
   lsp/ImportCompletion.cpp

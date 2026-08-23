@@ -10,6 +10,7 @@
 #include "sere/driver/ImportPath.h"
 #include "sere/driver/Prelude.h"
 #include "sere/driver/Project.h"
+#include "sere/driver/SourceOverlay.h"
 #include "sere/driver/Toolchain.h"
 #include "sere/lsp/ImportCompletion.h"
 #include "sere/lsp/SemanticTokens.h"
@@ -701,9 +702,17 @@ public:
 
 private:
   void publishDiagnostics(const std::string& uri, const DiagnosticEngine& diagnostics);
+  void rebuildOverlay();
   void analyzeDocument(const std::string& uri);
+  void analyzeOpenDocuments();
+  void analyzeDependents(const std::string& changedUri);
+  [[nodiscard]] bool documentImports(const std::string& uri,
+                                     const std::filesystem::path& path) const;
+  [[nodiscard]] bool isContextAffecting(const std::filesystem::path& path) const;
   void handleInitialize(const llvm::json::Value* id, const llvm::json::Object* params);
   void captureWorkspaceRoot(const llvm::json::Object& params);
+  void applyInitializeOptions(const llvm::json::Object& params);
+  void applyClientConfiguration(const llvm::json::Object* settings);
   void applyLanguageContext(const std::filesystem::path& start);
   void fillImportCompletions(llvm::json::Array& items,
                              const ImportCompletionQuery& query,
@@ -711,6 +720,9 @@ private:
   void handleDidOpen(const llvm::json::Object& params);
   void handleDidChange(const llvm::json::Object& params);
   void handleDidClose(const llvm::json::Object& params);
+  void handleDidChangeWatchedFiles(const llvm::json::Object& params);
+  void handleDidChangeConfiguration(const llvm::json::Object& params);
+  void handleDidChangeWorkspaceFolders(const llvm::json::Object& params);
   void handleHover(const llvm::json::Value* id, const llvm::json::Object& params);
   void handleCompletion(const llvm::json::Value* id, const llvm::json::Object& params);
   void handleDefinition(const llvm::json::Value* id, const llvm::json::Object& params);
@@ -732,9 +744,13 @@ private:
   documentOffset(const llvm::json::Object& params) const;
 
   std::filesystem::path stdlibDir_;
+  std::filesystem::path configuredStdlib_{};
   std::filesystem::path workspaceRoot_{};
+  std::string contextStamp_{};
+  SourceOverlay overlay_{};
   std::unordered_map<std::string, std::string> documents_{};
   std::unordered_map<std::string, std::unique_ptr<Frontend>> frontends_{};
+  bool contextDirty_ = false;
   bool shutdown_ = false;
 };
 
@@ -770,6 +786,18 @@ bool LanguageSession::handleMessage(const llvm::json::Object& message) {
   }
   if (*method == "textDocument/didClose" && params != nullptr) {
     handleDidClose(*params);
+    return true;
+  }
+  if (*method == "workspace/didChangeWatchedFiles" && params != nullptr) {
+    handleDidChangeWatchedFiles(*params);
+    return true;
+  }
+  if (*method == "workspace/didChangeConfiguration" && params != nullptr) {
+    handleDidChangeConfiguration(*params);
+    return true;
+  }
+  if (*method == "workspace/didChangeWorkspaceFolders" && params != nullptr) {
+    handleDidChangeWorkspaceFolders(*params);
     return true;
   }
   if (*method == "textDocument/hover" && params != nullptr) {
@@ -879,6 +907,13 @@ void LanguageSession::publishDiagnostics(const std::string& uri,
   });
 }
 
+void LanguageSession::rebuildOverlay() {
+  overlay_.clear();
+  for (const auto& [uri, text] : documents_) {
+    overlay_.set(uriToPath(uri), text);
+  }
+}
+
 void LanguageSession::analyzeDocument(const std::string& uri) {
   const auto found = documents_.find(uri);
   if (found == documents_.end()) {
@@ -887,9 +922,72 @@ void LanguageSession::analyzeDocument(const std::string& uri) {
   auto frontend = std::make_unique<Frontend>();
   const std::filesystem::path file = uriToPath(uri);
   applyLanguageContext(file);
-  (void)frontend->analyze(file.string(), found->second, stdlibDir_);
+  rebuildOverlay();
+  (void)frontend->analyze(file.string(), found->second, stdlibDir_, &overlay_);
   publishDiagnostics(uri, frontend->diagnostics());
   frontends_[uri] = std::move(frontend);
+}
+
+void LanguageSession::analyzeOpenDocuments() {
+  rebuildOverlay();
+  std::vector<std::string> uris;
+  uris.reserve(documents_.size());
+  for (const auto& [uri, _] : documents_) {
+    uris.push_back(uri);
+  }
+  for (const std::string& uri : uris) {
+    analyzeDocument(uri);
+  }
+}
+
+bool LanguageSession::documentImports(const std::string& uri,
+                                      const std::filesystem::path& path) const {
+  const auto found = frontends_.find(uri);
+  if (found == frontends_.end() || found->second == nullptr) {
+    return false;
+  }
+  for (const std::filesystem::path& imported : found->second->importedModulePaths()) {
+    if (SourceOverlay::normalize(imported) == SourceOverlay::normalize(path)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool LanguageSession::isContextAffecting(const std::filesystem::path& path) const {
+  if (path.empty()) {
+    return false;
+  }
+  const LanguageContext context = resolveLanguageContext(
+      !path.empty() ? path : (!workspaceRoot_.empty() ? workspaceRoot_ : std::filesystem::current_path()));
+  if (isLanguageContextPath(path, context)) {
+    return true;
+  }
+  if (!stdlibDir_.empty() && pathIsUnderDirectory(path, stdlibDir_)) {
+    return true;
+  }
+  if (!configuredStdlib_.empty() && pathIsUnderDirectory(path, configuredStdlib_)) {
+    return true;
+  }
+  return path.filename() == "sere.toml";
+}
+
+void LanguageSession::analyzeDependents(const std::string& changedUri) {
+  const std::filesystem::path changed = uriToPath(changedUri);
+  const bool refreshAll = contextDirty_ || isContextAffecting(changed);
+  contextDirty_ = false;
+  std::vector<std::string> uris;
+  for (const auto& [uri, _] : documents_) {
+    if (uri == changedUri) {
+      continue;
+    }
+    if (refreshAll || documentImports(uri, changed)) {
+      uris.push_back(uri);
+    }
+  }
+  for (const std::string& uri : uris) {
+    analyzeDocument(uri);
+  }
 }
 
 Frontend* LanguageSession::analyzeCached(const std::string& uri) {
@@ -905,13 +1003,54 @@ Frontend* LanguageSession::analyzeCached(const std::string& uri) {
   return created->second.get();
 }
 
+void LanguageSession::applyInitializeOptions(const llvm::json::Object& params) {
+  const llvm::json::Object* options = params.getObject("initializationOptions");
+  if (options == nullptr) {
+    return;
+  }
+  if (const std::optional<llvm::StringRef> path = options->getString("stdlibPath")) {
+    if (!path->empty()) {
+      configuredStdlib_ = path->str();
+    }
+  }
+}
+
+void LanguageSession::applyClientConfiguration(const llvm::json::Object* settings) {
+  if (settings == nullptr) {
+    return;
+  }
+  const llvm::json::Object* sere = settings->getObject("sere");
+  const llvm::json::Object* root = sere != nullptr ? sere : settings;
+  if (const std::optional<llvm::StringRef> path = root->getString("stdlibPath")) {
+    configuredStdlib_ = path->empty() ? std::filesystem::path{} : std::filesystem::path(path->str());
+  }
+}
+
 void LanguageSession::applyLanguageContext(const std::filesystem::path& start) {
   const std::filesystem::path probe =
       !start.empty() ? start : (!workspaceRoot_.empty() ? workspaceRoot_ : std::filesystem::current_path());
   const LanguageContext context = resolveLanguageContext(probe);
-  stdlibDir_ = context.stdlib;
+  if (!configuredStdlib_.empty()) {
+    std::error_code error;
+    if (std::filesystem::exists(configuredStdlib_ / "prelude.sere", error)) {
+      stdlibDir_ = configuredStdlib_;
+    } else {
+      stdlibDir_ = context.stdlib;
+    }
+  } else {
+    stdlibDir_ = context.stdlib;
+  }
   if (context.project.has_value() && workspaceRoot_.empty()) {
     workspaceRoot_ = context.project->root;
+  }
+  std::string stamp = languageContextStamp(context);
+  if (!stdlibDir_.empty()) {
+    stamp += '|';
+    stamp += SourceOverlay::normalize(stdlibDir_);
+  }
+  if (stamp != contextStamp_) {
+    contextDirty_ = !contextStamp_.empty();
+    contextStamp_ = std::move(stamp);
   }
 }
 
@@ -947,7 +1086,7 @@ void LanguageSession::fillImportCompletions(llvm::json::Array& items,
                                             const std::string& uri) {
   const std::filesystem::path file = uriToPath(uri);
   const LanguageContext context = resolveLanguageContext(file);
-  const std::filesystem::path stdlib = context.stdlib.empty() ? stdlibDir_ : context.stdlib;
+  const std::filesystem::path stdlib = !stdlibDir_.empty() ? stdlibDir_ : context.stdlib;
   std::vector<std::filesystem::path> dirs = importSearchDirs(file.parent_path(), stdlib);
   appendWorkspaceImportDirs(dirs, workspaceRoot_);
   appendLanguageContextDirs(dirs, context);
@@ -972,6 +1111,7 @@ void LanguageSession::fillImportCompletions(llvm::json::Array& items,
 void LanguageSession::handleInitialize(const llvm::json::Value* id, const llvm::json::Object* params) {
   if (params != nullptr) {
     captureWorkspaceRoot(*params);
+    applyInitializeOptions(*params);
   }
   applyLanguageContext(workspaceRoot_);
   llvm::json::Array tokenTypes;
@@ -1015,6 +1155,13 @@ void LanguageSession::handleInitialize(const llvm::json::Value* id, const llvm::
       {"completionProvider",
        llvm::json::Object{{"triggerCharacters", llvm::json::Array{".", "\"", "@", "!"}},
                           {"resolveProvider", true}}},
+      {"workspace",
+       llvm::json::Object{
+           {"workspaceFolders",
+            llvm::json::Object{{"supported", true}, {"changeNotifications", true}}},
+           {"didChangeWatchedFiles", llvm::json::Object{{"dynamicRegistration", false}}},
+           {"didChangeConfiguration", llvm::json::Object{{"dynamicRegistration", false}}},
+       }},
   };
   writeResult(id, llvm::json::Object{
                       {"capabilities", std::move(capabilities)},
@@ -1035,6 +1182,7 @@ void LanguageSession::handleDidOpen(const llvm::json::Object& params) {
   }
   documents_[uri->str()] = text->str();
   analyzeDocument(uri->str());
+  analyzeDependents(uri->str());
 }
 
 void LanguageSession::handleDidChange(const llvm::json::Object& params) {
@@ -1055,6 +1203,7 @@ void LanguageSession::handleDidChange(const llvm::json::Object& params) {
     }
   }
   analyzeDocument(uri->str());
+  analyzeDependents(uri->str());
 }
 
 void LanguageSession::handleDidClose(const llvm::json::Object& params) {
@@ -1066,13 +1215,75 @@ void LanguageSession::handleDidClose(const llvm::json::Object& params) {
   if (!uri.has_value()) {
     return;
   }
+  const std::filesystem::path closed = uriToPath(uri->str());
+  const bool refreshDependents = isContextAffecting(closed);
   documents_.erase(uri->str());
   frontends_.erase(uri->str());
+  overlay_.remove(closed);
   writeMessage(llvm::json::Object{
       {"jsonrpc", "2.0"},
       {"method", "textDocument/publishDiagnostics"},
       {"params", llvm::json::Object{{"uri", uri->str()}, {"diagnostics", llvm::json::Array{}}}},
   });
+  if (refreshDependents) {
+    applyLanguageContext(workspaceRoot_);
+    analyzeOpenDocuments();
+  }
+}
+
+void LanguageSession::handleDidChangeWatchedFiles(const llvm::json::Object& params) {
+  const llvm::json::Array* changes = params.getArray("changes");
+  if (changes == nullptr || changes->empty()) {
+    return;
+  }
+  bool refresh = false;
+  for (const llvm::json::Value& changeValue : *changes) {
+    const llvm::json::Object* change = changeValue.getAsObject();
+    if (change == nullptr) {
+      continue;
+    }
+    const std::optional<llvm::StringRef> uri = change->getString("uri");
+    if (!uri.has_value()) {
+      continue;
+    }
+    const std::filesystem::path path = uriToPath(uri->str());
+    if (isContextAffecting(path) || documents_.contains(uri->str())) {
+      refresh = true;
+      continue;
+    }
+    for (const auto& [openUri, _] : documents_) {
+      if (documentImports(openUri, path)) {
+        refresh = true;
+        break;
+      }
+    }
+  }
+  if (!refresh) {
+    return;
+  }
+  applyLanguageContext(!workspaceRoot_.empty() ? workspaceRoot_ : std::filesystem::current_path());
+  analyzeOpenDocuments();
+}
+
+void LanguageSession::handleDidChangeConfiguration(const llvm::json::Object& params) {
+  applyClientConfiguration(params.getObject("settings"));
+  applyLanguageContext(!workspaceRoot_.empty() ? workspaceRoot_ : std::filesystem::current_path());
+  analyzeOpenDocuments();
+}
+
+void LanguageSession::handleDidChangeWorkspaceFolders(const llvm::json::Object& params) {
+  const llvm::json::Object* event = params.getObject("event");
+  const llvm::json::Array* added = event != nullptr ? event->getArray("added") : nullptr;
+  if (added != nullptr && !added->empty()) {
+    const llvm::json::Object* folder = (*added)[0].getAsObject();
+    if (folder != nullptr) {
+      if (const std::optional<llvm::StringRef> uri = folder->getString("uri")) {
+        workspaceRoot_ = uriToPath(uri->str());
+      }
+    }
+  }
+  applyLanguageContext(workspaceRoot_);
+  analyzeOpenDocuments();
 }
 
 std::optional<std::pair<std::string, std::uint32_t>>

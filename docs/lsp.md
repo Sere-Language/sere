@@ -9,10 +9,15 @@ The language server prefers the CMake build-tree compiler
 `./bin/sere.exe`. CLI commands still prefer workspace `bin/`. After a rebuild,
 **Sere: Refresh ./bin Compiler** (`sere refresh-bin`) copies the running
 compiler, runtime, and stdlib into `./bin`. The client debounce is 80ms on
-`didChange` so typing does not re-sema every keystroke.
+`didChange` so typing does not re-sema every keystroke. Stdlib, `sere.toml`,
+and project `src/` / `libs/` updates are watched separately (120ms) and
+re-analyze every open buffer. Open editors overlay disk: unsaved stdlib or
+imported module edits apply immediately.
 
 After rebuilding `sere`, run **Sere: Restart Language Server** if hover still
-looks stale.
+looks stale. Changing `sere.compilerPath` or `sere.stdlibPath` restarts the
+server automatically. Stdlib and language-context file edits do not require a
+restart.
 
 ## Capabilities
 
@@ -25,8 +30,15 @@ Handled in `lib/lsp/LanguageServer.cpp`:
   (`# type[Code]: ignore` quick-fix on a diagnostic line)
 - Semantic tokens, folding, formatting
 - Import-path completion (`ImportCompletion.cpp`)
+- `workspace/didChangeWatchedFiles`, `workspace/didChangeConfiguration`,
+  and `workspace/didChangeWorkspaceFolders` to pick up stdlib and project
+  context updates
 
 Each open buffer is analyzed with `Frontend::analyze`, same as the compiler.
+Open documents are passed as a `SourceOverlay` so prelude and imports see the
+latest buffers instead of only files on disk. Changing a stdlib module,
+`sere.toml`, or an imported project file invalidates dependents and refreshes
+diagnostics, semantic tokens, inlay hints, and code lens.
 
 ## Semantic tokens
 
@@ -73,6 +85,7 @@ Client commands and `sere.compilerPath` live in `editors/vscode/package.json`.
 
 - `tests/macro_lsp.cpp` — macro symbols/uses and pointer hover/tokens
 - `tests/lsp_semantic.cpp` — broader semantic-token coverage
+- `tests/lsp_context.cpp` — stdlib overlays and language-context stamps
 
 Prefer `Frontend` + `findNodeAt` / `collectSemanticTokens` over spinning up a
 JSON-RPC session in unit tests.

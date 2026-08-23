@@ -56,6 +56,17 @@ struct LanguageContext {
 void appendLanguageContextDirs(std::vector<std::filesystem::path>& dirs,
                                const LanguageContext& context);
 
+/// True when `path` is under `directory` after weakly canonicalizing both.
+[[nodiscard]] bool pathIsUnderDirectory(const std::filesystem::path& path,
+                                        const std::filesystem::path& directory);
+
+/// True for `sere.toml` and files under the resolved stdlib.
+[[nodiscard]] bool isLanguageContextPath(const std::filesystem::path& path,
+                                         const LanguageContext& context);
+
+/// Fingerprint of the resolved project/stdlib so the LSP can detect stale analysis.
+[[nodiscard]] std::string languageContextStamp(const LanguageContext& context);
+
 /// Copies compiler stdlib into the project venv when prelude.sere is missing.
 void prepareProjectStdlib(const ProjectManifest& manifest);
 

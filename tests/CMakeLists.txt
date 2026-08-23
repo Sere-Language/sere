@@ -317,3 +317,8 @@ add_executable(sere_test_import_completion import_completion.cpp)
 target_link_libraries(sere_test_import_completion PRIVATE sere_driver)
 sere_apply_warnings(sere_test_import_completion)
 add_test(NAME sere.test.import_completion COMMAND sere_test_import_completion)
+
+add_executable(sere_test_lsp_context lsp_context.cpp)
+target_link_libraries(sere_test_lsp_context PRIVATE sere_driver)
+sere_apply_warnings(sere_test_lsp_context)
+add_test(NAME sere.test.lsp_context COMMAND sere_test_lsp_context)

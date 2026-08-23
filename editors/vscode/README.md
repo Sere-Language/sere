@@ -35,7 +35,9 @@ Workspace default in this repo:
 
 `${workspaceFolder}/build/windows-clang-cl-relwithdebinfo/bin/sere.exe`
 
-After rebuilding the compiler, run **Sere: Restart Language Server**.
+After rebuilding the compiler, run **Sere: Restart Language Server**. Editing
+`stdlib/`, `sere.toml`, or project `src/` / `libs/` modules refreshes open
+editors automatically.
 
 ## Commands
 

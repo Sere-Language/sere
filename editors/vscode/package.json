@@ -1,7 +1,7 @@
 {
   "name": "sere",
   "displayName": "Sere",
-  "description": "Language support for Sere: diagnostics, hover, completion, macros, exceptions, and a restartable language server.",
+  "description": "Language support for Sere: diagnostics, hover, completion, macros, exceptions, and a language server that tracks stdlib and project context updates.",
   "version": "0.2.0",
   "publisher": "sere",
   "private": true,

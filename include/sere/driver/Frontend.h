@@ -6,6 +6,7 @@
 #include "sere/ast/Syntax.h"
 #include "sere/ast/Query.h"
 #include "sere/diag/DiagnosticEngine.h"
+#include "sere/driver/SourceOverlay.h"
 #include "sere/sema/TypeChecker.h"
 #include "sere/source/SourceManager.h"
 #include "sere/types/TypeContext.h"
@@ -22,7 +23,8 @@ class Frontend {
 public:
   [[nodiscard]] bool analyze(const std::string& path,
                              const std::string& text,
-                             const std::filesystem::path& stdlibDir);
+                             const std::filesystem::path& stdlibDir,
+                             const SourceOverlay* overlay = nullptr);
 
   [[nodiscard]] DiagnosticEngine& diagnostics();
   [[nodiscard]] const DiagnosticEngine& diagnostics() const;
@@ -44,6 +46,7 @@ private:
   [[nodiscard]] bool importsReady(std::size_t index, const std::vector<char>& done) const;
   [[nodiscard]] bool typecheckOneImported(std::size_t index, Module* prelude);
   bool typecheckImported(Module* prelude);
+  const SourceOverlay* overlay_ = nullptr;
   DiagnosticEngine diagnostics_{};
   std::unique_ptr<SourceManager> source_{};
   std::unique_ptr<Module> ast_{};

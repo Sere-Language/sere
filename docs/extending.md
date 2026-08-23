@@ -198,7 +198,8 @@ See [testing.md](testing.md). Minimum for a language change:
 - **Keyword not highlighting** — enumerator placed after `KeywordWith`, or
   missing from `kKeywords`.
 - **LSP stale** — `sere` rebuilt but language server not restarted; or editor
-  still pointing at a locked `bin/sere.exe`.
+  still pointing at a locked `bin/sere.exe`. Stdlib / `sere.toml` / project
+  module edits should refresh without a restart.
 - **Prelude parse errors after a real error** — do not early-return from
   `parseIf` / `parseWhile` solely because `diagnostics_->hasErrors()` is
   already true (that flagged later `else:` as errors in imported prelude).
