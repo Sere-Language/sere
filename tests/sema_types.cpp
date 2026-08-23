@@ -339,6 +339,45 @@ int main() {
     return fail("computed enum values must still be rejected");
   }
 
+  const std::string parseText =
+      "def main() -> i32:\n"
+      "    n: i32 = parse[i32](\"123\")\n"
+      "    hexed: i32 = parse[i32](\"0x10\")\n"
+      "    maybe: i32 | None = try_parse[i32](\"nope\")\n"
+      "    flag: bool = parse[bool](\"True\")\n"
+      "    return n\n";
+  sere::DiagnosticEngine parseDiagnostics;
+  sere::SourceManager parseSource("sema_parse.sere", parseText);
+  sere::Lexer parseLexer(parseSource, parseDiagnostics);
+  sere::Parser parseParser(parseDiagnostics, parseLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> parseModule = parseParser.parseModule();
+  sere::TypeContext parseTypes;
+  sere::TypeChecker parseChecker(parseTypes, parseDiagnostics);
+  if (parseModule == nullptr || !parseChecker.check(*parseModule)) {
+    parseDiagnostics.printAll(parseSource);
+    return fail("parse[T] and try_parse[T] should typecheck");
+  }
+
+  const std::string anyNone =
+      "def take(value: Any, maybe: i32 | None = None) -> i32 | None:\n"
+      "    other: i32 | None = void\n"
+      "    boxed: Any = 1\n"
+      "    return maybe\n"
+      "def main() -> void:\n"
+      "    take(True)\n"
+      "    take(\"hi\", 2)\n";
+  sere::DiagnosticEngine anyDiagnostics;
+  sere::SourceManager anySource("sema_any.sere", anyNone);
+  sere::Lexer anyLexer(anySource, anyDiagnostics);
+  sere::Parser anyParser(anyDiagnostics, anyLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> anyModule = anyParser.parseModule();
+  sere::TypeContext anyTypes;
+  sere::TypeChecker anyChecker(anyTypes, anyDiagnostics);
+  if (anyModule == nullptr || !anyChecker.check(*anyModule)) {
+    anyDiagnostics.printAll(anySource);
+    return fail("Any and i32 | None = None should typecheck");
+  }
+
 #if defined(_WIN32)
   const std::string platformFold =
       "def main() -> i32:\n"
@@ -361,5 +400,50 @@ int main() {
     return fail("false compile-time platform branches must be skipped");
   }
 #endif
+
+  const std::string pythonish =
+      "def greet(name):\n"
+      "    print(name)\n"
+      "def main() -> i32:\n"
+      "    xs = [1, 2, 3]\n"
+      "    xs.append(4)\n"
+      "    greet(\"sere\")\n"
+      "    a, b = 1, 2\n"
+      "    pair = (3, 4)\n"
+      "    c, d = pair\n"
+      "    add1 = lambda (x: i32) -> i32: x + 1\n"
+      "    n = add1(1)\n"
+      "    if (m := n) > 0:\n"
+      "        n = m\n"
+      "    const limit = 4\n"
+      "    n //= 1\n"
+      "    return n + a + b + c + d - limit\n";
+  sere::DiagnosticEngine pyDiagnostics;
+  sere::SourceManager pySource("sema_pythonish.sere", pythonish);
+  sere::Lexer pyLexer(pySource, pyDiagnostics);
+  sere::Parser pyParser(pyDiagnostics, pyLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> pyModule = pyParser.parseModule();
+  sere::TypeContext pyTypes;
+  sere::TypeChecker pyChecker(pyTypes, pyDiagnostics);
+  if (pyModule == nullptr || !pyChecker.check(*pyModule)) {
+    pyDiagnostics.printAll(pySource);
+    return fail("python-superset program should typecheck");
+  }
+
+  const std::string badDel =
+      "def main() -> i32:\n"
+      "    n: i32 = 1\n"
+      "    del n\n"
+      "    return 0\n";
+  sere::DiagnosticEngine delDiagnostics;
+  sere::SourceManager delSource("sema_del.sere", badDel);
+  sere::Lexer delLexer(delSource, delDiagnostics);
+  sere::Parser delParser(delDiagnostics, delLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> delModule = delParser.parseModule();
+  sere::TypeContext delTypes;
+  sere::TypeChecker delChecker(delTypes, delDiagnostics);
+  if (delModule != nullptr && delChecker.check(*delModule)) {
+    return fail("del of a name must be rejected");
+  }
   return 0;
 }

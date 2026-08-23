@@ -50,6 +50,10 @@ function firstExisting(paths) {
   return "";
 }
 
+function hasPrelude(directory) {
+  return Boolean(directory) && fs.existsSync(path.join(directory, "prelude.sere"));
+}
+
 function findProjectRoot(start) {
   let current = start;
   while (current) {
@@ -65,7 +69,7 @@ function findProjectRoot(start) {
   return "";
 }
 
-function findSere(workspaceFolder) {
+function findSere(workspaceFolder, forLsp) {
   const configured = vscode.workspace.getConfiguration("sere").get("compilerPath");
   let resolved = typeof configured === "string" ? configured : "";
   if (workspaceFolder && resolved.includes("${workspaceFolder}")) {
@@ -77,41 +81,70 @@ function findSere(workspaceFolder) {
   const name = compilerName();
   const venvBin = process.env.SERE_VENV_BIN;
   const projectRoot = workspaceFolder ? findProjectRoot(workspaceFolder) : "";
-  const found = firstExisting([
+  const projectBins = [
     venvBin ? path.join(venvBin, name) : "",
     projectRoot ? path.join(projectRoot, "venv", "bin", name) : "",
     workspaceFolder ? path.join(workspaceFolder, "bin", name) : "",
+  ];
+  const buildBins = [
     workspaceFolder
       ? path.join(workspaceFolder, "build", "windows-clang-cl-relwithdebinfo", "bin", name)
       : "",
     workspaceFolder ? path.join(workspaceFolder, "build", "bin", name) : "",
-  ]);
+  ];
+  const order = forLsp ? buildBins.concat(projectBins) : projectBins.concat(buildBins);
+  const found = firstExisting(order);
   return found || compilerName();
 }
 
-function findStdlib(workspaceFolder) {
+function findStdlib(workspaceFolder, compilerPath) {
   const configured = vscode.workspace.getConfiguration("sere").get("stdlibPath");
-  if (typeof configured === "string" && configured.length > 0 && fs.existsSync(configured)) {
+  if (typeof configured === "string" && hasPrelude(configured)) {
     return configured;
   }
-  if (process.env.SERE_STDLIB && fs.existsSync(process.env.SERE_STDLIB)) {
+  if (hasPrelude(process.env.SERE_STDLIB)) {
     return process.env.SERE_STDLIB;
   }
   const projectRoot = workspaceFolder ? findProjectRoot(workspaceFolder) : "";
-  const found = firstExisting([
-    projectRoot ? path.join(projectRoot, "venv", "stdlib") : "",
-    workspaceFolder ? path.join(workspaceFolder, "stdlib") : "",
+  const compilerDir = compilerPath ? path.dirname(compilerPath) : "";
+  return firstExisting([
+    projectRoot && hasPrelude(path.join(projectRoot, "venv", "stdlib"))
+      ? path.join(projectRoot, "venv", "stdlib")
+      : "",
+    workspaceFolder && hasPrelude(path.join(workspaceFolder, "stdlib"))
+      ? path.join(workspaceFolder, "stdlib")
+      : "",
+    compilerDir && hasPrelude(path.join(compilerDir, "stdlib"))
+      ? path.join(compilerDir, "stdlib")
+      : "",
   ]);
-  return found;
 }
 
-function compilerEnv(workspaceFolder) {
+function compilerEnv(workspaceFolder, compilerPath) {
   const env = { ...process.env };
-  const stdlib = findStdlib(workspaceFolder);
+  const stdlib = findStdlib(workspaceFolder, compilerPath);
   if (stdlib.length > 0) {
     env.SERE_STDLIB = stdlib;
   }
   return env;
+}
+
+function runSereCommand(session, args, title, forLsp) {
+  const workspaceFolder = session.workspaceFolder();
+  const sere = findSere(workspaceFolder, Boolean(forLsp));
+  const cwd = workspaceFolder ? findProjectRoot(workspaceFolder) || workspaceFolder : undefined;
+  const child = spawn(sere, args, { cwd, env: compilerEnv(workspaceFolder, sere) });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+  child.on("exit", (code) => {
+    if (code === 0) {
+      vscode.window.setStatusBarMessage("Sere: " + title, 3000);
+      return;
+    }
+    vscode.window.showErrorMessage(stderr.trim() || "Sere " + title + " failed.");
+  });
 }
 
 class LspClient {
@@ -283,6 +316,7 @@ class SereLanguageClient {
     this.client = null;
     this.child = null;
     this.stopping = false;
+    this.changeTimers = new Map();
     this.diagnostics = vscode.languages.createDiagnosticCollection("sere");
     this.status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     this.status.command = "sere.restartLanguageServer";
@@ -301,12 +335,12 @@ class SereLanguageClient {
   start() {
     this.stopping = false;
     const workspaceFolder = this.workspaceFolder();
-    const sere = findSere(workspaceFolder);
+    const sere = findSere(workspaceFolder, true);
     this.status.text = "Sere";
     this.status.tooltip = "Sere language server: " + sere;
     this.child = spawn(sere, ["--lsp"], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: compilerEnv(workspaceFolder),
+      env: compilerEnv(workspaceFolder, sere),
     });
     this.child.on("error", (error) => {
       this.status.text = "Sere $(error)";
@@ -423,8 +457,10 @@ function activate(context) {
       return;
     }
     const workspaceFolder = session.workspaceFolder();
-    const sere = findSere(workspaceFolder);
-    const child = spawn(sere, [editor.document.uri.fsPath], { env: compilerEnv(workspaceFolder) });
+    const sere = findSere(workspaceFolder, false);
+    const child = spawn(sere, [editor.document.uri.fsPath], {
+      env: compilerEnv(workspaceFolder, sere),
+    });
     let stderr = "";
     child.stderr.on("data", (chunk) => {
       stderr += chunk.toString();
@@ -447,6 +483,15 @@ function activate(context) {
   context.subscriptions.push(
     vscode.commands.registerCommand("sere.restartLanguageServer", () => session.restart()),
     vscode.commands.registerCommand("sere.compileCurrentFile", () => compileCurrentFile()),
+    vscode.commands.registerCommand("sere.buildProject", () =>
+      runSereCommand(session, ["build"], "built project"),
+    ),
+    vscode.commands.registerCommand("sere.runProject", () =>
+      runSereCommand(session, ["run"], "ran project"),
+    ),
+    vscode.commands.registerCommand("sere.refreshBin", () =>
+      runSereCommand(session, ["refresh-bin"], "refreshed ./bin", true),
+    ),
     vscode.commands.registerCommand("sere.openSettings", () =>
       vscode.commands.executeCommand("workbench.action.openSettings", "@ext:sere.sere"),
     ),
@@ -455,10 +500,19 @@ function activate(context) {
       if (event.document.languageId !== "sere") {
         return;
       }
-      session.notify("textDocument/didChange", {
-        textDocument: { uri: event.document.uri.toString(), version: event.document.version },
-        contentChanges: [{ text: event.document.getText() }],
-      });
+      const uri = event.document.uri.toString();
+      const previous = session.changeTimers.get(uri);
+      if (previous) {
+        clearTimeout(previous);
+      }
+      const timer = setTimeout(() => {
+        session.changeTimers.delete(uri);
+        session.notify("textDocument/didChange", {
+          textDocument: { uri, version: event.document.version },
+          contentChanges: [{ text: event.document.getText() }],
+        });
+      }, 80);
+      session.changeTimers.set(uri, timer);
     }),
     vscode.workspace.onDidCloseTextDocument((document) => {
       if (document.languageId !== "sere") {

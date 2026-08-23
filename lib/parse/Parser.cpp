@@ -50,6 +50,16 @@ namespace {
   return "'" + std::string(token.spelling()) + "'";
 }
 
+class BoolScope {
+public:
+  BoolScope(bool& flag, bool value) : flag_(flag), previous_(flag) { flag_ = value; }
+  ~BoolScope() { flag_ = previous_; }
+
+private:
+  bool& flag_;
+  bool previous_;
+};
+
 [[nodiscard]] std::int64_t parseIntegerOrZero(DiagnosticEngine& diagnostics, const Token& token) {
   const ParsedInteger parsed = parseIntegerToken(token.spelling());
   if (parsed.status == IntegerParseStatus::Ok) {
@@ -225,7 +235,25 @@ std::unique_ptr<Expr> Parser::parseEqualsValue() {
     advance();
     return parseMacroInvokeIndentExpr(std::move(name), nameRange);
   }
-  return parseExpr();
+  std::unique_ptr<Expr> first = parseExpr();
+  if (first == nullptr || !check(TokenKind::Comma)) {
+    return first;
+  }
+  std::vector<std::unique_ptr<Expr>> elements;
+  const SourceLocation start = first->range().start;
+  elements.push_back(std::move(first));
+  while (match(TokenKind::Comma)) {
+    if (isLineEnd(peek().kind())) {
+      break;
+    }
+    std::unique_ptr<Expr> next = parseExpr();
+    if (next == nullptr) {
+      return nullptr;
+    }
+    elements.push_back(std::move(next));
+  }
+  return std::make_unique<TupleExpr>(SourceRange{start, elements.back()->range().end},
+                                     std::move(elements));
 }
 
 std::string Parser::parseIdentifier(const char* errorMessage) {
@@ -240,6 +268,10 @@ std::string Parser::parseIdentifier(const char* errorMessage) {
 std::string Parser::parseStringValue() { return decodeStringToken(previous().spelling()).value; }
 
 std::unique_ptr<TypeExpr> Parser::parseTypeAtom() {
+  if (match(TokenKind::KeywordNone)) {
+    return std::make_unique<TypeExpr>(previous().range(), "None",
+                                      std::vector<std::unique_ptr<TypeExpr>>{});
+  }
   if (!check(TokenKind::Identifier)) {
     diagnostics_->error(peek().range(), "expected type name, found " + describeToken(peek()));
     return nullptr;
@@ -340,10 +372,20 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
   if (match(TokenKind::KeywordNone)) {
     return std::make_unique<NoneLiteral>(previous().range());
   }
+  if (match(TokenKind::KeywordLambda)) {
+    return parseLambda();
+  }
   if (match(TokenKind::KeywordSuper)) {
     return std::make_unique<NameExpr>(previous().range(), "super");
   }
   if (match(TokenKind::LParen)) {
+    const SourceLocation start = previous().range().start;
+    skipNewlines();
+    if (match(TokenKind::RParen)) {
+      return std::make_unique<TupleExpr>(SourceRange{start, previous().range().end},
+                                         std::vector<std::unique_ptr<Expr>>{});
+    }
+    const BoolScope enableCasts(allowAsCast_, true);
     std::unique_ptr<Expr> inner = parseExpr();
     if (inner == nullptr) {
       return nullptr;
@@ -355,6 +397,10 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
       }
       return comprehension;
     }
+    skipNewlines();
+    if (check(TokenKind::Comma)) {
+      return parseTupleTail(std::move(inner), start);
+    }
     if (!consume(TokenKind::RParen, "expected ')'")) {
       return nullptr;
     }
@@ -362,6 +408,15 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
   }
   if (match(TokenKind::Identifier)) {
     const Token& name = previous();
+    if (match(TokenKind::ColonEqual)) {
+      std::unique_ptr<Expr> value = parseExpr();
+      if (value == nullptr) {
+        return nullptr;
+      }
+      return std::make_unique<WalrusExpr>(
+          SourceRange{name.range().start, value->range().end}, std::string(name.spelling()),
+          std::move(value));
+    }
     if (check(TokenKind::Bang)) {
       return parseMacroInvokeExpr(std::string(name.spelling()), name.range());
     }
@@ -419,11 +474,75 @@ std::unique_ptr<Expr> Parser::parseComprehension(std::unique_ptr<Expr> element) 
       std::move(iterable));
 }
 
+std::unique_ptr<Expr> Parser::parseTupleTail(std::unique_ptr<Expr> first, SourceLocation start) {
+  std::vector<std::unique_ptr<Expr>> elements;
+  elements.push_back(std::move(first));
+  while (match(TokenKind::Comma)) {
+    skipNewlines();
+    if (check(TokenKind::RParen)) {
+      break;
+    }
+    const BoolScope enableCasts(allowAsCast_, true);
+    std::unique_ptr<Expr> next = parseExpr();
+    if (next == nullptr) {
+      return nullptr;
+    }
+    elements.push_back(std::move(next));
+    skipNewlines();
+  }
+  if (!consume(TokenKind::RParen, "expected ')' after tuple")) {
+    return nullptr;
+  }
+  return std::make_unique<TupleExpr>(SourceRange{start, previous().range().end},
+                                     std::move(elements));
+}
+
+std::unique_ptr<Expr> Parser::parseLambda() {
+  const SourceLocation start = previous().range().start;
+  std::vector<ParamDecl> params;
+  std::unique_ptr<TypeExpr> returnType;
+  if (match(TokenKind::LParen)) {
+    params = parseParams();
+    if (!consume(TokenKind::RParen, "expected ')' after lambda parameters")) {
+      return nullptr;
+    }
+    if (match(TokenKind::Arrow)) {
+      returnType = parseTypeExpr();
+      if (returnType == nullptr) {
+        return nullptr;
+      }
+    }
+  } else if (!check(TokenKind::Colon)) {
+    while (true) {
+      ParamDecl param;
+      param.range = peek().range();
+      param.name = parseIdentifier("expected lambda parameter");
+      if (param.name.empty()) {
+        return nullptr;
+      }
+      params.push_back(std::move(param));
+      if (!match(TokenKind::Comma)) {
+        break;
+      }
+    }
+  }
+  if (!consume(TokenKind::Colon, "expected ':' after lambda parameters")) {
+    return nullptr;
+  }
+  std::unique_ptr<Expr> body = parseExpr();
+  if (body == nullptr) {
+    return nullptr;
+  }
+  return std::make_unique<LambdaExpr>(SourceRange{start, body->range().end}, std::move(params),
+                                      std::move(body), std::move(returnType));
+}
+
 std::unique_ptr<Expr> Parser::parseListLiteral() {
   const SourceLocation start = peek().range().start;
   if (!consume(TokenKind::LBracket, "expected '['")) {
     return nullptr;
   }
+  const BoolScope enableCasts(allowAsCast_, true);
   std::vector<std::unique_ptr<Expr>> elements;
   if (!check(TokenKind::RBracket)) {
     std::unique_ptr<Expr> element = parseExpr();
@@ -458,6 +577,7 @@ std::unique_ptr<Expr> Parser::parseDictLiteral() {
   if (!consume(TokenKind::LBrace, "expected '{'")) {
     return nullptr;
   }
+  const BoolScope enableCasts(allowAsCast_, true);
   std::vector<std::unique_ptr<Expr>> keys;
   std::vector<std::unique_ptr<Expr>> values;
   if (!check(TokenKind::RBrace)) {
@@ -489,6 +609,7 @@ std::vector<std::unique_ptr<Expr>> Parser::parseCallArguments() {
   if (check(TokenKind::RParen)) {
     return args;
   }
+  const BoolScope enableCasts(allowAsCast_, true);
   while (true) {
     if (match(TokenKind::DotDotDot)) {
       match(TokenKind::Comma);
@@ -537,6 +658,7 @@ std::unique_ptr<Expr> Parser::parsePostfix() {
       std::unique_ptr<Expr> start;
       std::unique_ptr<Expr> stop;
       bool slice = false;
+      const BoolScope enableCasts(allowAsCast_, true);
       if (match(TokenKind::Colon)) {
         slice = true;
         if (!check(TokenKind::RBracket)) {
@@ -614,7 +736,7 @@ std::unique_ptr<Expr> Parser::parseUnary() {
 
 std::unique_ptr<Expr> Parser::parseCast() {
   std::unique_ptr<Expr> expr = parseUnary();
-  while (expr != nullptr && match(TokenKind::KeywordAs)) {
+  while (expr != nullptr && allowAsCast_ && match(TokenKind::KeywordAs)) {
     std::unique_ptr<TypeExpr> target = parseTypeExpr();
     if (target == nullptr) {
       return nullptr;
@@ -964,10 +1086,7 @@ std::vector<ParamDecl> Parser::parseParams() {
     }
     const bool inferredSelf =
         param.name == "self" && (check(TokenKind::Comma) || check(TokenKind::RParen));
-    if (!inferredSelf) {
-      if (!consume(TokenKind::Colon, "expected ':' after parameter name")) {
-        return {};
-      }
+    if (!inferredSelf && match(TokenKind::Colon)) {
       param.type = parseTypeExpr();
       if (param.type == nullptr) {
         return {};
@@ -1197,6 +1316,53 @@ std::unique_ptr<DeferStmt> Parser::parseDefer() {
     body.push_back(std::move(statement));
   }
   return std::make_unique<DeferStmt>(keyword.range(), std::move(body));
+}
+
+std::unique_ptr<Stmt> Parser::parseWith() {
+  const Token& keyword = advance();
+  std::unique_ptr<Expr> context;
+  {
+    const BoolScope disableCasts(allowAsCast_, false);
+    context = parseExpr();
+  }
+  if (context == nullptr) {
+    return nullptr;
+  }
+  std::string name;
+  if (match(TokenKind::KeywordAs)) {
+    name = parseIdentifier("expected name after 'as'");
+    if (name.empty()) {
+      return nullptr;
+    }
+  }
+  std::vector<std::unique_ptr<Stmt>> body = parseSuite();
+  return std::make_unique<WithStmt>(keyword.range(), std::move(context), std::move(name),
+                                    std::move(body));
+}
+
+std::unique_ptr<Stmt> Parser::parseConst() {
+  const Token& keyword = advance();
+  const std::string name = parseIdentifier("expected name after 'const'");
+  if (name.empty()) {
+    return nullptr;
+  }
+  std::unique_ptr<TypeExpr> type;
+  if (match(TokenKind::Colon)) {
+    type = parseTypeExpr();
+    if (type == nullptr) {
+      return nullptr;
+    }
+  }
+  if (!consume(TokenKind::Equal, "expected '=' after const name")) {
+    diagnostics_->help("write `const name = value` or `const name: i32 = value`");
+    return nullptr;
+  }
+  std::unique_ptr<Expr> init = parseEqualsValue();
+  if (init == nullptr || !finishExprLine(init.get())) {
+    return nullptr;
+  }
+  return std::make_unique<VarDecl>(keyword.range(), name, std::move(type), std::move(init), false,
+                                   true);
 }
 
 std::unique_ptr<TryStmt> Parser::parseTry() {
@@ -1446,6 +1612,23 @@ std::unique_ptr<Stmt> Parser::parseAssignOrExpr() {
   if (expr == nullptr) {
     return nullptr;
   }
+  if (check(TokenKind::Comma)) {
+    std::vector<std::unique_ptr<Expr>> elements;
+    const SourceLocation start = expr->range().start;
+    elements.push_back(std::move(expr));
+    while (match(TokenKind::Comma)) {
+      if (check(TokenKind::Equal) || check(TokenKind::PlusEqual) || isLineEnd(peek().kind())) {
+        break;
+      }
+      std::unique_ptr<Expr> next = parseExpr();
+      if (next == nullptr) {
+        return nullptr;
+      }
+      elements.push_back(std::move(next));
+    }
+    expr = std::make_unique<TupleExpr>(SourceRange{start, elements.back()->range().end},
+                                       std::move(elements));
+  }
   AssignOp op = AssignOp::Assign;
   bool compound = false;
   if (match(TokenKind::Equal)) {
@@ -1480,6 +1663,12 @@ std::unique_ptr<Stmt> Parser::parseAssignOrExpr() {
   } else if (match(TokenKind::GreaterGreaterEqual)) {
     op = AssignOp::Shr;
     compound = true;
+  } else if (match(TokenKind::SlashSlashEqual)) {
+    op = AssignOp::FloorDiv;
+    compound = true;
+  } else if (match(TokenKind::StarStarEqual)) {
+    op = AssignOp::Pow;
+    compound = true;
   }
   if (compound) {
     std::unique_ptr<Expr> value = parseEqualsValue();
@@ -1505,13 +1694,31 @@ std::unique_ptr<FunctionDef> Parser::parseFunction(std::string externName) {
     return nullptr;
   }
   std::vector<ParamDecl> params = parseParams();
-  if (!consume(TokenKind::RParen, "expected ')' after parameters") ||
-      !consume(TokenKind::Arrow, "expected '->' after parameter list")) {
+  if (!consume(TokenKind::RParen, "expected ')' after parameters")) {
     return nullptr;
   }
-  std::unique_ptr<TypeExpr> returnType = parseTypeExpr();
-  if (returnType == nullptr) {
-    return nullptr;
+  std::unique_ptr<TypeExpr> returnType;
+  bool inferredReturn = false;
+  if (match(TokenKind::Arrow)) {
+    returnType = parseTypeExpr();
+    if (returnType == nullptr) {
+      return nullptr;
+    }
+  } else {
+    inferredReturn = true;
+    const char* inferred = "Any";
+    if (name == "main") {
+      inferred = "i32";
+    } else if (name == "__init__") {
+      inferred = "void";
+    }
+    returnType = std::make_unique<TypeExpr>(previous().range(), inferred,
+                                            std::vector<std::unique_ptr<TypeExpr>>{});
+    if (!externName.empty()) {
+      diagnostics_->error(previous().range(), "extern function '" + name + "' needs a return type");
+      diagnostics_->help("write `-> void` or another type after the parameter list");
+      return nullptr;
+    }
   }
   std::vector<std::unique_ptr<Stmt>> body;
   const bool isExtern = !externName.empty();
@@ -1534,6 +1741,7 @@ std::unique_ptr<FunctionDef> Parser::parseFunction(std::string externName) {
                                                 std::move(returnType), std::move(body),
                                                 std::move(externName));
   function->setTypeParams(std::move(typeParams));
+  function->setInferredReturn(inferredReturn);
   return function;
 }
 
@@ -1785,6 +1993,12 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
   }
   if (check(TokenKind::KeywordDefer)) {
     return parseDefer();
+  }
+  if (check(TokenKind::KeywordWith)) {
+    return parseWith();
+  }
+  if (check(TokenKind::KeywordConst)) {
+    return parseConst();
   }
   if (match(TokenKind::KeywordPass)) {
     const Token& token = previous();

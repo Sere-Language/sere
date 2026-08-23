@@ -4,14 +4,28 @@
 /dist/
 /cmake-build-*/
 
-# Local convenience copies of the compiler (except the readme)
+# Local convenience copies of the compiler (except the readme and PATH helpers)
 /bin/*
 !/bin/README.md
+!/bin/sere-path.ps1
+!/bin/sere-path.cmd
+!/bin/sere-path.sh
 
 # Local CMake overrides (bootstrap may generate this)
 CMakeUserPresets.json
+
+# In-source CMake from `cmake .` — always use presets into build/
 CMakeCache.txt
-/CMakeFiles/
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+DartConfiguration.tcl
+/Testing/
+/generated/
+*.vcxproj
+*.vcxproj.filters
+*.sln
+*.dir/
 
 # Toolchains extracted into the repo by mistake
 /toolchains/

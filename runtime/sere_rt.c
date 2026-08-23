@@ -214,6 +214,19 @@ void sere_list_push(void* list, const void* item) {
   typed->len += 1;
 }
 
+void sere_list_remove(void* list, int64_t index) {
+  SereList* typed = (SereList*)list;
+  if (typed == NULL || typed->data == NULL || index < 0 || index >= typed->len) {
+    return;
+  }
+  if (index + 1 < typed->len) {
+    memmove((char*)typed->data + (size_t)(index * typed->stride),
+            (char*)typed->data + (size_t)((index + 1) * typed->stride),
+            (size_t)((typed->len - index - 1) * typed->stride));
+  }
+  typed->len -= 1;
+}
+
 void* sere_list_slice(void* list, int64_t start, int64_t end, int32_t has_start, int32_t has_end) {
   SereList* typed = (SereList*)list;
   if (typed == NULL) {
@@ -373,16 +386,25 @@ void sere_dict_set(void* dict, const void* key, const void* value) {
     dictGrow(typed);
   }
   uint64_t slot = hashKey(typed, key) % (uint64_t)typed->cap;
+  int64_t tombstone = -1;
   for (int64_t n = 0; n < typed->cap; ++n) {
     const int64_t index = (int64_t)((slot + (uint64_t)n) % (uint64_t)typed->cap);
     void* keySlot = (char*)typed->keys + (size_t)(index * typed->key_stride);
     if (typed->state[index] == 0) {
-      memcpy(keySlot, key, (size_t)typed->key_stride);
-      memcpy((char*)typed->vals + (size_t)(index * typed->val_stride), value,
+      const int64_t dest = tombstone >= 0 ? tombstone : index;
+      void* destKey = (char*)typed->keys + (size_t)(dest * typed->key_stride);
+      memcpy(destKey, key, (size_t)typed->key_stride);
+      memcpy((char*)typed->vals + (size_t)(dest * typed->val_stride), value,
              (size_t)typed->val_stride);
-      typed->state[index] = 1;
+      typed->state[dest] = 1;
       typed->len += 1;
       return;
+    }
+    if (typed->state[index] == 2) {
+      if (tombstone < 0) {
+        tombstone = index;
+      }
+      continue;
     }
     if (keysEqual(typed, keySlot, key)) {
       memcpy((char*)typed->vals + (size_t)(index * typed->val_stride), value,
@@ -406,6 +428,9 @@ int32_t sere_dict_get(void* dict, const void* key, void* out_value) {
     if (typed->state[index] == 0) {
       break;
     }
+    if (typed->state[index] == 2) {
+      continue;
+    }
     void* keySlot = (char*)typed->keys + (size_t)(index * typed->key_stride);
     if (keysEqual(typed, keySlot, key)) {
       if (out_value != NULL) {
@@ -417,6 +442,30 @@ int32_t sere_dict_get(void* dict, const void* key, void* out_value) {
   }
   if (out_value != NULL) {
     memset(out_value, 0, (size_t)typed->val_stride);
+  }
+  return 0;
+}
+
+int32_t sere_dict_del(void* dict, const void* key) {
+  SereDict* typed = (SereDict*)dict;
+  if (typed == NULL || key == NULL || typed->cap == 0) {
+    return 0;
+  }
+  uint64_t slot = hashKey(typed, key) % (uint64_t)typed->cap;
+  for (int64_t n = 0; n < typed->cap; ++n) {
+    const int64_t index = (int64_t)((slot + (uint64_t)n) % (uint64_t)typed->cap);
+    if (typed->state[index] == 0) {
+      return 0;
+    }
+    if (typed->state[index] == 2) {
+      continue;
+    }
+    void* keySlot = (char*)typed->keys + (size_t)(index * typed->key_stride);
+    if (keysEqual(typed, keySlot, key)) {
+      typed->state[index] = 2;
+      typed->len -= 1;
+      return 1;
+    }
   }
   return 0;
 }
@@ -573,6 +622,209 @@ const char* sere_error_message(int64_t* out_len) {
     *out_len = (int64_t)n;
   }
   return g_error_message;
+}
+
+static int sere_is_space(char character) {
+  return character == ' ' || character == '\t' || character == '\n' || character == '\r';
+}
+
+static int sere_digit_value(char character) {
+  if (character >= '0' && character <= '9') {
+    return character - '0';
+  }
+  if (character >= 'a' && character <= 'f') {
+    return character - 'a' + 10;
+  }
+  if (character >= 'A' && character <= 'F') {
+    return character - 'A' + 10;
+  }
+  return -1;
+}
+
+static void sere_strip_span(const char** data, int64_t* len) {
+  const char* text = *data;
+  int64_t size = *len;
+  while (size > 0 && sere_is_space(text[0])) {
+    text += 1;
+    size -= 1;
+  }
+  while (size > 0 && sere_is_space(text[size - 1])) {
+    size -= 1;
+  }
+  *data = text;
+  *len = size;
+}
+
+static int sere_span_eq(const char* data, int64_t len, const char* expected) {
+  const size_t expected_len = strlen(expected);
+  return len == (int64_t)expected_len && memcmp(data, expected, expected_len) == 0;
+}
+
+int32_t sere_parse_int(const char* data, int64_t len, int32_t bits, int32_t is_signed, int64_t* out) {
+  if (data == NULL || out == NULL || bits <= 0 || bits > 64) {
+    return 0;
+  }
+  sere_strip_span(&data, &len);
+  if (len <= 0) {
+    return 0;
+  }
+  int negative = 0;
+  if (data[0] == '+' || data[0] == '-') {
+    negative = data[0] == '-';
+    data += 1;
+    len -= 1;
+  }
+  if (is_signed == 0 && negative) {
+    return 0;
+  }
+  int base = 10;
+  if (len >= 2 && data[0] == '0') {
+    const char prefix = data[1];
+    if (prefix == 'x' || prefix == 'X') {
+      base = 16;
+      data += 2;
+      len -= 2;
+    } else if (prefix == 'b' || prefix == 'B') {
+      base = 2;
+      data += 2;
+      len -= 2;
+    } else if (prefix == 'o' || prefix == 'O') {
+      base = 8;
+      data += 2;
+      len -= 2;
+    }
+  }
+  uint64_t value = 0;
+  int saw_digit = 0;
+  int last_underscore = 0;
+  for (int64_t index = 0; index < len; ++index) {
+    const char character = data[index];
+    if (character == '_') {
+      if (saw_digit == 0 || last_underscore != 0) {
+        return 0;
+      }
+      last_underscore = 1;
+      continue;
+    }
+    const int digit = sere_digit_value(character);
+    if (digit < 0 || digit >= base) {
+      return 0;
+    }
+    if (value > (UINT64_MAX - (uint64_t)digit) / (uint64_t)base) {
+      return 0;
+    }
+    value = value * (uint64_t)base + (uint64_t)digit;
+    saw_digit = 1;
+    last_underscore = 0;
+  }
+  if (saw_digit == 0 || last_underscore != 0) {
+    return 0;
+  }
+  if (is_signed != 0) {
+    const uint64_t limit = bits == 64 ? (uint64_t)INT64_MAX + 1ull : (1ull << (bits - 1));
+    if (negative) {
+      if (value > limit) {
+        return 0;
+      }
+      *out = value == limit ? (int64_t)((uint64_t)1 << 63) : -(int64_t)value;
+      return 1;
+    }
+    if (value >= limit) {
+      return 0;
+    }
+    *out = (int64_t)value;
+    return 1;
+  }
+  const uint64_t umax = bits == 64 ? UINT64_MAX : ((1ull << bits) - 1ull);
+  if (value > umax) {
+    return 0;
+  }
+  *out = (int64_t)value;
+  return 1;
+}
+
+int32_t sere_parse_float(const char* data, int64_t len, int32_t is_f32, double* out) {
+  if (data == NULL || out == NULL) {
+    return 0;
+  }
+  sere_strip_span(&data, &len);
+  if (len <= 0 || len >= 128) {
+    return 0;
+  }
+  char cleaned[128];
+  size_t used = 0;
+  int last_underscore = 0;
+  int saw_digit = 0;
+  for (int64_t index = 0; index < len; ++index) {
+    const char character = data[index];
+    if (character == '_') {
+      if (saw_digit == 0 || last_underscore != 0) {
+        return 0;
+      }
+      last_underscore = 1;
+      continue;
+    }
+    if ((character >= '0' && character <= '9') || character == '.' || character == '+' ||
+        character == '-' || character == 'e' || character == 'E' || character == 'f' ||
+        character == 'F') {
+      if (used + 1 >= sizeof(cleaned)) {
+        return 0;
+      }
+      cleaned[used] = character;
+      used += 1;
+      last_underscore = 0;
+      if (character >= '0' && character <= '9') {
+        saw_digit = 1;
+      }
+      continue;
+    }
+    return 0;
+  }
+  if (saw_digit == 0 || last_underscore != 0 || used == 0) {
+    return 0;
+  }
+  if (cleaned[used - 1] == 'f' || cleaned[used - 1] == 'F') {
+    used -= 1;
+  }
+  cleaned[used] = '\0';
+  char* end = NULL;
+  const double value = strtod(cleaned, &end);
+  if (end == NULL || end == cleaned || *end != '\0') {
+    return 0;
+  }
+  if (is_f32 != 0) {
+    *out = (double)(float)value;
+  } else {
+    *out = value;
+  }
+  return 1;
+}
+
+int32_t sere_parse_bool(const char* data, int64_t len, int32_t* out) {
+  if (data == NULL || out == NULL) {
+    return 0;
+  }
+  sere_strip_span(&data, &len);
+  if (sere_span_eq(data, len, "True") || sere_span_eq(data, len, "true") ||
+      sere_span_eq(data, len, "1")) {
+    *out = 1;
+    return 1;
+  }
+  if (sere_span_eq(data, len, "False") || sere_span_eq(data, len, "false") ||
+      sere_span_eq(data, len, "0")) {
+    *out = 0;
+    return 1;
+  }
+  return 0;
+}
+
+int32_t sere_parse_none(const char* data, int64_t len) {
+  if (data == NULL) {
+    return 0;
+  }
+  sere_strip_span(&data, &len);
+  return sere_span_eq(data, len, "None") || sere_span_eq(data, len, "none") ||
+         sere_span_eq(data, len, "void") || len == 0;
 }
 
 void sere_panic(const char* message, int64_t len) {

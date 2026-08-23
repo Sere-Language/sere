@@ -10,6 +10,7 @@ add_library(sere_runtime
   sere_gc.c
   sere_win.c
   sere_gl.c
+  sere_http.c
 )
 target_include_directories(sere_runtime PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -29,6 +30,8 @@ if(WIN32)
     opengl32
     shell32
     advapi32
+    winhttp
+    ws2_32
   )
 endif()
 

@@ -19,6 +19,7 @@
     { "include": "#constant" },
     { "include": "#keyword" },
     { "include": "#type" },
+    { "include": "#exception" },
     { "include": "#function" },
     { "include": "#member" },
     { "include": "#operator" },
@@ -113,7 +114,7 @@
     },
     "keyword": {
       "name": "keyword.control.sere",
-      "match": "\\b(and|as|assert|break|case|continue|defer|del|elif|else|except|finally|for|from|if|import|in|is|lambda|match|not|or|pass|quote|raise|return|super|try|while|with)\\b"
+      "match": "\\b(and|as|assert|break|case|continue|defer|del|elif|else|except|finally|for|from|if|import|in|is|lambda|match|not|or|pass|quote|raise|return|super|try|while|with|syntax|interpolate|wrapper|typed)\\b"
     },
     "modifier": {
       "name": "storage.modifier.sere",
@@ -156,11 +157,15 @@
     },
     "type": {
       "name": "storage.type.sere",
-      "match": "\\b(void|bool|i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|str|regex|byte|never|Unique|Shared|Ptr|list|array|dict)\\b"
+      "match": "\\b(void|bool|i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|str|regex|byte|never|Int|Float|Unique|Shared|Ptr|list|array|dict)\\b"
+    },
+    "exception": {
+      "name": "support.type.exception.sere",
+      "match": "\\b(Exception|SyntaxError|IndentationError|NameError|AttributeError|TypeError|IndexError|ImportError|ValueError|AssertionError|PermissionError|RuntimeError|RecursionError|NotImplementedError)\\b"
     },
     "operator": {
       "name": "keyword.operator.sere",
-      "match": "(\\+\\+|\\-\\-|\\*\\*=|\\*\\*|\\*=|&=|<<=|<<|>>=|>>|<=|>=|==|!=|=>|->|\\+=|\\-=|/=|//=|//|%=|\\^=|\\||\\^|~|\\*|&|\\+|\\-|<|>|=|!|\\$)"
+      "match": "(\\|>|\\+\\+|\\-\\-|\\*\\*=|\\*\\*|\\*=|&=|<<=|<<|>>=|>>|<=|>=|==|!=|=>|->|\\+=|\\-=|/=|//=|//|%=|\\^=|\\||\\^|~|\\*|&|\\+|\\-|<|>|=|!|\\$)"
     },
     "number": {
       "name": "constant.numeric.sere",
@@ -181,7 +186,7 @@
     },
     "function": {
       "name": "entity.name.function.sere",
-      "match": "\\b(print|str|unique|shared|alloc|load|store|free|len|abs|min|max|clamp|sign|range|append|typeof|isinstance|dir|inspect|sizeof|alignof|panic)\\b"
+      "match": "\\b(print|str|unique|shared|alloc|load|store|free|len|abs|min|max|clamp|sign|range|append|typeof|isinstance|dir|inspect|sizeof|alignof|panic|parse|try_parse)\\b"
     }
   }
 }

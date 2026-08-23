@@ -95,6 +95,12 @@ const Node* searchExpr(const Expr& expr, std::uint32_t offset) {
       inner = firstNotNull(inner, searchExpr(*item, offset));
     }
     break;
+  case NodeKind::WalrusExpr:
+    inner = searchExpr(static_cast<const WalrusExpr&>(expr).value(), offset);
+    break;
+  case NodeKind::LambdaExpr:
+    inner = searchExpr(static_cast<const LambdaExpr&>(expr).body(), offset);
+    break;
   default:
     break;
   }
@@ -109,7 +115,7 @@ const Node* searchStmt(const Stmt& stmt, std::uint32_t offset) {
   switch (stmt.kind()) {
   case NodeKind::VarDecl: {
     const auto& decl = static_cast<const VarDecl&>(stmt);
-    if (rangeContains(decl.type().range(), offset)) {
+    if (decl.hasType() && rangeContains(decl.type().range(), offset)) {
       return &decl.type();
     }
     if (decl.init() != nullptr) {
@@ -216,6 +222,14 @@ const Node* searchStmt(const Stmt& stmt, std::uint32_t offset) {
       inner = firstNotNull(inner, searchStmt(*bodyStmt, offset));
     }
     break;
+  case NodeKind::WithStmt: {
+    const auto& withStmt = static_cast<const WithStmt&>(stmt);
+    inner = searchExpr(withStmt.context(), offset);
+    for (const std::unique_ptr<Stmt>& bodyStmt : withStmt.body()) {
+      inner = firstNotNull(inner, searchStmt(*bodyStmt, offset));
+    }
+    break;
+  }
   case NodeKind::EnumDef:
     for (const std::unique_ptr<FunctionDef>& method : static_cast<const EnumDef&>(stmt).methods()) {
       inner = firstNotNull(inner, searchStmt(*method, offset));

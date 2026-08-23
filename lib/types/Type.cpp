@@ -55,7 +55,13 @@ bool Type::isStruct() const { return canonical()->isStruct_; }
 
 bool Type::isFrozen() const { return canonical()->isFrozen_; }
 
+bool Type::isFlags() const { return canonical()->isFlags_; }
+
 bool Type::isNever() const { return isNamed("never"); }
+
+bool Type::isAny() const { return isNamed("Any"); }
+
+bool Type::isVoidLike() const { return isNamed("void") || isNamed("None"); }
 
 bool Type::isUnion() const { return canonical()->kind_ == TypeKind::Union; }
 
@@ -66,7 +72,12 @@ int Type::unionMemberIndex(const Type* member) const {
   member = member->canonical();
   const std::vector<const Type*>& members = canonical()->args_;
   for (std::size_t index = 0; index < members.size(); ++index) {
-    if (members[index] != nullptr && members[index]->canonical() == member) {
+    if (members[index] == nullptr) {
+      continue;
+    }
+    const Type* current = members[index]->canonical();
+    if (current == member ||
+        (current->isVoidLike() && member->isVoidLike())) {
       return static_cast<int>(index);
     }
   }

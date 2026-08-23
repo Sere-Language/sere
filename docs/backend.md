@@ -67,7 +67,7 @@ Object files:
 | `sere_stdlib.c` | Extra stdlib C helpers |
 | `sere_sys.c` | Process / env |
 | `sere_re.c` | Regex |
-| `sere_win.c` / `sere_gl.c` | Platform / OpenGL shims |
+| `sere_win.c` / `sere_gl.c` | Platform / OpenGL 2.1+ (WGL, shaders, buffers, textures, FBO) |
 | `sere_qt6.cpp` or `sere_qt6_stub.c` | Qt widgets or a stub |
 
 New runtime functions: declare in `sere_rt.h` (or a focused header), implement

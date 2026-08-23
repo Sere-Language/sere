@@ -292,6 +292,36 @@ const std::vector<std::unique_ptr<Expr>>& TupleExpr::elements() const { return e
 
 std::vector<std::unique_ptr<Expr>>& TupleExpr::elements() { return elements_; }
 
+WalrusExpr::WalrusExpr(SourceRange range, std::string name, std::unique_ptr<Expr> value)
+    : Expr(NodeKind::WalrusExpr, range), name_(std::move(name)), value_(std::move(value)) {}
+
+const std::string& WalrusExpr::name() const { return name_; }
+
+const Expr& WalrusExpr::value() const { return *value_; }
+
+Expr& WalrusExpr::value() { return *value_; }
+
+LambdaExpr::LambdaExpr(SourceRange range, std::vector<ParamDecl> params, std::unique_ptr<Expr> body,
+                       std::unique_ptr<TypeExpr> returnType)
+    : Expr(NodeKind::LambdaExpr, range),
+      params_(std::move(params)),
+      body_(std::move(body)),
+      returnType_(std::move(returnType)) {}
+
+const std::vector<ParamDecl>& LambdaExpr::params() const { return params_; }
+
+std::vector<ParamDecl>& LambdaExpr::params() { return params_; }
+
+const Expr& LambdaExpr::body() const { return *body_; }
+
+Expr& LambdaExpr::body() { return *body_; }
+
+const TypeExpr* LambdaExpr::returnType() const { return returnType_.get(); }
+
+void LambdaExpr::setLlvmName(std::string name) { llvmName_ = std::move(name); }
+
+const std::string& LambdaExpr::llvmName() const { return llvmName_; }
+
 IfStmt::IfStmt(SourceRange range, std::vector<IfBranch> branches)
     : Stmt(NodeKind::IfStmt, range), branches_(std::move(branches)) {}
 
@@ -405,6 +435,23 @@ const std::vector<std::unique_ptr<Stmt>>& DeferStmt::body() const { return body_
 
 std::vector<std::unique_ptr<Stmt>>& DeferStmt::body() { return body_; }
 
+WithStmt::WithStmt(SourceRange range, std::unique_ptr<Expr> context, std::string name,
+                   std::vector<std::unique_ptr<Stmt>> body)
+    : Stmt(NodeKind::WithStmt, range),
+      context_(std::move(context)),
+      name_(std::move(name)),
+      body_(std::move(body)) {}
+
+const Expr& WithStmt::context() const { return *context_; }
+
+Expr& WithStmt::context() { return *context_; }
+
+const std::string& WithStmt::name() const { return name_; }
+
+const std::vector<std::unique_ptr<Stmt>>& WithStmt::body() const { return body_; }
+
+std::vector<std::unique_ptr<Stmt>>& WithStmt::body() { return body_; }
+
 EnumDef::EnumDef(SourceRange range, std::string name, std::vector<EnumVariant> variants)
     : Stmt(NodeKind::EnumDef, range), name_(std::move(name)), variants_(std::move(variants)) {}
 
@@ -432,16 +479,20 @@ VarDecl::VarDecl(SourceRange range,
                  std::string name,
                  std::unique_ptr<TypeExpr> type,
                  std::unique_ptr<Expr> init,
-                 bool isStatic)
+                 bool isStatic,
+                 bool isConst)
     : Stmt(NodeKind::VarDecl, range),
       name_(std::move(name)),
       type_(std::move(type)),
       init_(std::move(init)),
-      isStatic_(isStatic) {}
+      isStatic_(isStatic),
+      isConst_(isConst) {}
 
 const std::string& VarDecl::name() const { return name_; }
 
 void VarDecl::setName(std::string name) { name_ = std::move(name); }
+
+bool VarDecl::hasType() const { return type_ != nullptr; }
 
 const TypeExpr& VarDecl::type() const { return *type_; }
 
@@ -450,6 +501,10 @@ TypeExpr& VarDecl::type() { return *type_; }
 const Expr* VarDecl::init() const { return init_.get(); }
 
 bool VarDecl::isStatic() const { return isStatic_; }
+
+bool VarDecl::isConst() const { return isConst_; }
+
+void VarDecl::setConst(bool value) { isConst_ = value; }
 
 AssignStmt::AssignStmt(SourceRange range, std::unique_ptr<Expr> target, std::unique_ptr<Expr> value,
                        AssignOp op)
@@ -544,6 +599,10 @@ void FunctionDef::setTypeParams(std::vector<std::string> typeParams) {
 }
 
 const std::vector<std::string>& FunctionDef::typeParams() const { return typeParams_; }
+
+void FunctionDef::setInferredReturn(bool value) { inferredReturn_ = value; }
+
+bool FunctionDef::hasInferredReturn() const { return inferredReturn_; }
 
 ClassDef::ClassDef(SourceRange range,
                    std::string name,

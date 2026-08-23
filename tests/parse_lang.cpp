@@ -245,5 +245,55 @@ int main() {
   if (pointers == nullptr || pointerDiagnostics.hasErrors()) {
     return fail("address-of and dereference should parse");
   }
+
+  sere::DiagnosticEngine pythonishDiagnostics;
+  const std::unique_ptr<sere::Module> pythonish = parseText(
+      "def greet(name):\n"
+      "    print(name)\n"
+      "def main() -> i32:\n"
+      "    xs = [1, 2, 3]\n"
+      "    a, b = 1, 2\n"
+      "    pair = (3, 4)\n"
+      "    if (n := 1) > 0:\n"
+      "        add1 = lambda (x: i32) -> i32: x + 1\n"
+      "        const limit = 4\n"
+      "        n //= 1\n"
+      "        n **= 1\n"
+      "    with ctx as value:\n"
+      "        defer:\n"
+      "            del xs[0]\n"
+      "        pass\n"
+      "    return 0\n",
+      pythonishDiagnostics);
+  if (pythonish == nullptr || pythonishDiagnostics.hasErrors()) {
+    return fail("python-superset syntax should parse");
+  }
+  bool foundWithBinding = false;
+  for (const std::unique_ptr<sere::Stmt>& statement : pythonish->statements()) {
+    if (statement->kind() != sere::NodeKind::FunctionDef) {
+      continue;
+    }
+    const auto& function = static_cast<const sere::FunctionDef&>(*statement);
+    for (const std::unique_ptr<sere::Stmt>& inner : function.body()) {
+      if (inner->kind() != sere::NodeKind::WithStmt) {
+        continue;
+      }
+      const auto& with = static_cast<const sere::WithStmt&>(*inner);
+      if (with.name() != "value") {
+        return fail("with ctx as value must bind 'value', not parse as a cast");
+      }
+      foundWithBinding = true;
+    }
+  }
+  if (!foundWithBinding) {
+    return fail("python-superset sample should include a with-as binding");
+  }
+
+  sere::DiagnosticEngine printStmtDiagnostics;
+  const std::unique_ptr<sere::Module> printStmt =
+      parseText("def main() -> i32:\n    print x\n    return 0\n", printStmtDiagnostics);
+  if (!printStmtDiagnostics.hasErrors()) {
+    return fail("print as a statement must be a SyntaxError");
+  }
   return 0;
 }

@@ -1,28 +1,40 @@
 {
   "name": "sere",
   "displayName": "Sere",
-  "description": "Sere language support: diagnostics with exception codes, hover, completion, rename, go to definition, folding, formatting, semantic tokens, macros, and a restartable language server.",
-  "version": "0.1.1",
+  "description": "Language support for Sere: diagnostics, hover, completion, macros, exceptions, and a restartable language server.",
+  "version": "0.2.0",
   "publisher": "sere",
   "private": true,
   "license": "UNLICENSED",
-  "scripts": {},
+  "icon": "icon.ico",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sere-Language/sere.git"
+  },
+  "homepage": "https://github.com/Sere-Language/sere",
+  "bugs": {
+    "url": "https://github.com/Sere-Language/sere/issues"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Programming Languages"
+    "Programming Languages",
+    "Snippets",
+    "Linters",
+    "Formatters"
   ],
   "keywords": [
     "sere",
     "language",
     "lsp",
-    "compiler"
+    "compiler",
+    "python-superset"
   ],
   "activationEvents": [
     "onLanguage:sere",
     "workspaceContains:**/*.sere",
-    "onStartupFinished"
+    "workspaceContains:sere.toml"
   ],
   "main": "./extension.js",
   "contributes": {
@@ -36,7 +48,11 @@
         "extensions": [
           ".sere"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icon.ico",
+          "dark": "./icon.ico"
+        }
       }
     ],
     "grammars": [
@@ -56,6 +72,7 @@
       "[sere]": {
         "editor.tabSize": 4,
         "editor.insertSpaces": true,
+        "editor.detectIndentation": false,
         "editor.semanticHighlighting.enabled": true,
         "editor.inlayHints.enabled": "on",
         "editor.parameterHints.enabled": true,
@@ -118,13 +135,13 @@
           "type": "string",
           "default": "",
           "scope": "resource",
-          "markdownDescription": "Path to `sere`. Empty uses an activated `SERE_VENV_BIN`, then `venv/bin` from the nearest `sere.toml`, then workspace `bin/`, then PATH. The language server is `sere --lsp`."
+          "markdownDescription": "Path to `sere`. Empty uses an activated `SERE_VENV_BIN`, then `venv/bin` from the nearest `sere.toml`. The language server prefers the CMake build-tree compiler so it does not lock `./bin/sere.exe`. CLI commands prefer workspace `bin/`."
         },
         "sere.stdlibPath": {
           "type": "string",
           "default": "",
           "scope": "resource",
-          "markdownDescription": "Path to the Sere standard library. Empty uses the nearest `sere.toml` project's `venv/stdlib` (or an activated `SERE_STDLIB`), then workspace `stdlib/`."
+          "markdownDescription": "Path to the Sere standard library (must contain `prelude.sere`). Empty uses a usable `SERE_STDLIB`, then the nearest project `venv/stdlib`, then `stdlib/` next to `sere` or the workspace."
         },
         "sere.codeLens": {
           "type": "boolean",
@@ -145,6 +162,21 @@
         "category": "Sere"
       },
       {
+        "command": "sere.buildProject",
+        "title": "Build Project",
+        "category": "Sere"
+      },
+      {
+        "command": "sere.runProject",
+        "title": "Run Project",
+        "category": "Sere"
+      },
+      {
+        "command": "sere.refreshBin",
+        "title": "Refresh ./bin Compiler",
+        "category": "Sere"
+      },
+      {
         "command": "sere.openSettings",
         "title": "Open Settings",
         "category": "Sere"
@@ -157,6 +189,15 @@
         },
         {
           "command": "sere.compileCurrentFile"
+        },
+        {
+          "command": "sere.buildProject"
+        },
+        {
+          "command": "sere.runProject"
+        },
+        {
+          "command": "sere.refreshBin"
         },
         {
           "command": "sere.openSettings"

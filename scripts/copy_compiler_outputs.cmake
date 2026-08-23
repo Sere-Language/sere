@@ -1,5 +1,7 @@
-# Best-effort copies of sere, runtime, stdlib, and the C API header.
-# A locked bin/sere.exe (language server) must not fail the build.
+# Copies sere, runtime, stdlib, and the C API header into the build and project bin/.
+# A locked bin/sere.exe (language server) is renamed out of the way so the new
+# compiler still lands at ./bin/sere.exe. The previous image stays as sere.exe.old
+# until that process exits.
 
 if(NOT DEFINED SERE_EXE OR NOT DEFINED SERE_RUNTIME OR NOT DEFINED SERE_STDLIB OR
    NOT DEFINED SERE_API_HEADER OR NOT DEFINED SERE_BUILD_BIN OR NOT DEFINED SERE_PROJECT_BIN)
@@ -13,6 +15,9 @@ if(NOT DEFINED SERE_QT6)
 endif()
 if(NOT DEFINED SERE_QT6_BIN)
   set(SERE_QT6_BIN "")
+endif()
+if(NOT DEFINED SERE_SUFFIX)
+  set(SERE_SUFFIX "")
 endif()
 
 function(sere_try_copy from to)
@@ -31,6 +36,47 @@ function(sere_try_copy_dir from to)
   endif()
 endfunction()
 
+# Replace dest even when a running process has it mapped (Windows allows rename).
+function(sere_install_exe from dest)
+  if(NOT EXISTS "${from}")
+    message(WARNING "missing compiler image ${from}")
+    return()
+  endif()
+  get_filename_component(_dest_dir "${dest}" DIRECTORY)
+  file(MAKE_DIRECTORY "${_dest_dir}")
+  set(_new "${dest}.new")
+  set(_old "${dest}.old")
+  set(_i 1)
+  while(EXISTS "${_old}")
+    set(_old "${dest}.old${_i}")
+    math(EXPR _i "${_i}+1")
+  endwhile()
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${from}" "${_new}"
+                  RESULT_VARIABLE _copy_new)
+  if(NOT _copy_new EQUAL 0)
+    message(WARNING "could not write ${_new}")
+    return()
+  endif()
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${_new}" "${dest}"
+                  RESULT_VARIABLE _direct)
+  if(_direct EQUAL 0)
+    execute_process(COMMAND "${CMAKE_COMMAND}" -E rm -f "${_new}")
+    return()
+  endif()
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E rename "${dest}" "${_old}"
+                  RESULT_VARIABLE _renamed)
+  if(_renamed EQUAL 0)
+    execute_process(COMMAND "${CMAKE_COMMAND}" -E copy "${_new}" "${dest}"
+                    RESULT_VARIABLE _after)
+    if(_after EQUAL 0)
+      message(STATUS "replaced locked ${dest} (previous image: ${_old})")
+      execute_process(COMMAND "${CMAKE_COMMAND}" -E rm -f "${_new}")
+      return()
+    endif()
+  endif()
+  message(WARNING "queued ${_new}; run: sere refresh-bin")
+endfunction()
+
 file(MAKE_DIRECTORY "${SERE_BUILD_BIN}")
 file(MAKE_DIRECTORY "${SERE_PROJECT_BIN}")
 file(MAKE_DIRECTORY "${SERE_BUILD_BIN}/include/sere/api")
@@ -38,7 +84,8 @@ file(MAKE_DIRECTORY "${SERE_PROJECT_BIN}/include/sere/api")
 
 sere_try_copy("${SERE_RUNTIME}" "${SERE_BUILD_BIN}")
 sere_try_copy_dir("${SERE_STDLIB}" "${SERE_BUILD_BIN}/stdlib")
-sere_try_copy("${SERE_EXE}" "${SERE_PROJECT_BIN}")
+sere_install_exe("${SERE_EXE}" "${SERE_BUILD_BIN}/sere${SERE_SUFFIX}")
+sere_install_exe("${SERE_EXE}" "${SERE_PROJECT_BIN}/sere${SERE_SUFFIX}")
 sere_try_copy("${SERE_RUNTIME}" "${SERE_PROJECT_BIN}")
 sere_try_copy_dir("${SERE_STDLIB}" "${SERE_PROJECT_BIN}/stdlib")
 if(NOT SERE_QT6 STREQUAL "")
@@ -68,3 +115,10 @@ if(NOT SERE_GC_HEADER STREQUAL SERE_API_HEADER)
   sere_try_copy("${SERE_GC_HEADER}" "${SERE_BUILD_BIN}/include/sere/api/sere_gc.h")
   sere_try_copy("${SERE_GC_HEADER}" "${SERE_PROJECT_BIN}/include/sere/api/sere_gc.h")
 endif()
+get_filename_component(_sere_root "${SERE_STDLIB}" DIRECTORY)
+sere_try_copy("${_sere_root}/scripts/sere-path.ps1" "${SERE_BUILD_BIN}/sere-path.ps1")
+sere_try_copy("${_sere_root}/scripts/sere-path.cmd" "${SERE_BUILD_BIN}/sere-path.cmd")
+sere_try_copy("${_sere_root}/scripts/sere-path.sh" "${SERE_BUILD_BIN}/sere-path.sh")
+sere_try_copy("${_sere_root}/scripts/sere-path.ps1" "${SERE_PROJECT_BIN}/sere-path.ps1")
+sere_try_copy("${_sere_root}/scripts/sere-path.cmd" "${SERE_PROJECT_BIN}/sere-path.cmd")
+sere_try_copy("${_sere_root}/scripts/sere-path.sh" "${SERE_PROJECT_BIN}/sere-path.sh")

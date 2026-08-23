@@ -34,7 +34,9 @@ calling the existing intrinsic rather than reimplementing I/O in Sere.
 | `gc`, `heap`, `memory` | Collectors, arenas, pointer docs |
 | `inspect` | Runtime inspection helpers |
 | `html_lang` | Indent-body HTML macro support |
-| `windows`, `gl`, `qt6` | Native UI / graphics bindings |
+| `windows`, `gl`, `qt6` | Native UI / graphics (GL: window, shaders, mesh, FBO) |
+| `requests` | HTTP client (`get` / `post` / `put` / `delete`) |
+| `wsgi` | Blocking HTTP server; subclass `Handler` and implement `handle` |
 
 Bindings that need C use:
 

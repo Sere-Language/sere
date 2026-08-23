@@ -327,6 +327,23 @@ void writeNullResult(const llvm::json::Value* id) {
             (match.arms().size() == 1 ? " case" : " cases");
     return text;
   }
+  if (node.kind() == NodeKind::LambdaExpr) {
+    if (node.resolvedType() != nullptr) {
+      return "lambda: " + node.resolvedType()->display();
+    }
+    return "lambda";
+  }
+  if (node.kind() == NodeKind::WalrusExpr) {
+    const auto& walrus = static_cast<const WalrusExpr&>(node);
+    std::string text = walrus.name() + " :=";
+    if (node.resolvedType() != nullptr) {
+      text += " " + node.resolvedType()->display();
+    }
+    return text;
+  }
+  if (node.kind() == NodeKind::WithStmt) {
+    return "with";
+  }
   if (node.kind() == NodeKind::NameExpr) {
     const auto& name = static_cast<const NameExpr&>(node);
     if (node.resolvedType() != nullptr && node.resolvedType()->kind() == TypeKind::Alias) {
@@ -369,6 +386,9 @@ void writeNullResult(const llvm::json::Value* id) {
       }
     }
     text += ") -> " + function.returnType().name();
+    if (function.hasInferredReturn()) {
+      text += "  (inferred)";
+    }
     return text;
   }
   if (node.kind() == NodeKind::TypeAlias) {
@@ -677,10 +697,14 @@ void addKeywordCompletions(llvm::json::Array& items, const std::string& prefix) 
                 "shared[${1:i32}](${2:value})", "0shared");
   addCompletion(items, "alloc", kCompletionSnippet, "Ptr[T] allocation", prefix,
                 "alloc[${1:i32}]()", "0alloc");
+  addCompletion(items, "parse", kCompletionSnippet, "parse string as T", prefix,
+                "parse[${1:i32}](${2:text})", "0parse");
+  addCompletion(items, "try_parse", kCompletionSnippet, "parse string as T | None", prefix,
+                "try_parse[${1:i32}](${2:text})", "0try_parse");
 }
 
 void addTypeCompletions(llvm::json::Array& items, const std::string& prefix) {
-  const char* types[] = {"void", "bool", "i8",     "i16",   "i32",  "i64", "u8",     "u16",
+  const char* types[] = {"void", "None", "Any", "bool", "i8",     "i16",   "i32",  "i64", "u8",     "u16",
                          "u32",  "u64",  "f32",    "f64",   "str",  "regex", "byte", "Unique", "Shared",
                          "Ptr",  "list", "array", "dict", "enum"};
   for (const char* typeName : types) {
@@ -968,7 +992,7 @@ void LanguageSession::fillImportCompletions(llvm::json::Array& items,
     return;
   }
   const std::filesystem::path moduleFile =
-      resolveImportFile(dirs, splitImportPath(query.modulePath));
+      resolveImportFile(dirs, splitImportPath(query.modulePath), file);
   addImportCompletionItems(items, importExportCompletions(moduleFile, query.prefix), query.prefix);
 }
 
@@ -1941,8 +1965,83 @@ void LanguageSession::handleFormatting(const llvm::json::Value* id,
 
 void LanguageSession::handleCodeAction(const llvm::json::Value* id,
                                        const llvm::json::Object& params) {
-  (void)params;
-  writeResult(id, llvm::json::Array{});
+  llvm::json::Array actions;
+  const llvm::json::Object* document = params.getObject("textDocument");
+  const llvm::json::Object* range = params.getObject("range");
+  if (document == nullptr) {
+    writeResult(id, std::move(actions));
+    return;
+  }
+  const std::optional<llvm::StringRef> uri = document->getString("uri");
+  if (!uri.has_value()) {
+    writeResult(id, std::move(actions));
+    return;
+  }
+  Frontend* frontend = analyzeCached(uri->str());
+  if (frontend == nullptr) {
+    writeResult(id, std::move(actions));
+    return;
+  }
+  const auto foundText = documents_.find(uri->str());
+  const std::string& text = foundText == documents_.end() ? std::string{} : foundText->second;
+  int startLine = 0;
+  int endLine = 1 << 30;
+  if (range != nullptr) {
+    if (const llvm::json::Object* start = range->getObject("start")) {
+      startLine = static_cast<int>(start->getInteger("line").value_or(0));
+    }
+    if (const llvm::json::Object* end = range->getObject("end")) {
+      endLine = static_cast<int>(end->getInteger("line").value_or(startLine));
+    }
+  }
+  for (const Diagnostic& diagnostic : frontend->diagnostics().diagnostics()) {
+    const int diagLine =
+        diagnostic.range.start.line == 0 ? 0 : static_cast<int>(diagnostic.range.start.line - 1);
+    if (diagLine < startLine || diagLine > endLine) {
+      continue;
+    }
+    int column = 0;
+    int line = 0;
+    std::size_t lineStart = 0;
+    for (std::size_t index = 0; index < text.size(); ++index) {
+      if (line == diagLine) {
+        lineStart = index;
+        break;
+      }
+      if (text[index] == '\n') {
+        ++line;
+      }
+    }
+    std::size_t lineEnd = lineStart;
+    while (lineEnd < text.size() && text[lineEnd] != '\n' && text[lineEnd] != '\r') {
+      ++lineEnd;
+    }
+    column = static_cast<int>(lineEnd - lineStart);
+    const std::string lineText = text.substr(lineStart, static_cast<std::size_t>(column));
+    if (lineText.find("# type") != std::string::npos) {
+      continue;
+    }
+    const std::string code{diagnosticCodeName(diagnostic.code)};
+    const std::string ignore = "  # type[" + code + "]: ignore";
+    llvm::json::Object edit{
+        {"changes",
+         llvm::json::Object{
+             {uri->str(),
+              llvm::json::Array{llvm::json::Object{
+                  {"range", llvm::json::Object{{"start", llvm::json::Object{{"line", diagLine},
+                                                                          {"character", column}}},
+                                              {"end", llvm::json::Object{{"line", diagLine},
+                                                                        {"character", column}}}}},
+                  {"newText", ignore},
+              }}}}}};
+    std::string title = "Ignore " + code + " on this line";
+    actions.push_back(llvm::json::Object{
+        {"title", title},
+        {"kind", "quickfix"},
+        {"edit", std::move(edit)},
+    });
+  }
+  writeResult(id, std::move(actions));
 }
 
 }  // namespace

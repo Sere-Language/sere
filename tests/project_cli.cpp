@@ -106,6 +106,18 @@ int checkProjectStdlibWins(const std::filesystem::path& project,
   return 0;
 }
 
+int checkEmptyStdlibEnvFallsBack(const std::filesystem::path& project) {
+  sere::setEnvironmentVariable("SERE_ACTIVE", "1");
+  sere::setEnvironmentVariable("SERE_PROJECT_ROOT", project.string());
+  sere::setEnvironmentVariable("SERE_STDLIB", (project / "venv" / "missing-stdlib").string());
+  const sere::LanguageContext context =
+      sere::resolveLanguageContext(project / "src" / "main.sere");
+  if (!pathSame(context.stdlib, project / "venv" / "stdlib")) {
+    return fail("empty SERE_STDLIB should fall back to the project venv stdlib");
+  }
+  return 0;
+}
+
 int checkActivatedShellStdlib(const std::filesystem::path& project,
                               const std::filesystem::path& otherStdlib) {
   sere::setEnvironmentVariable("SERE_ACTIVE", "1");
@@ -132,6 +144,9 @@ int checkLanguageContext(const std::filesystem::path& project,
     return fail("could not write test stdlib files");
   }
   if (const int code = checkProjectStdlibWins(project, otherStdlib); code != 0) {
+    return code;
+  }
+  if (const int code = checkEmptyStdlibEnvFallsBack(project); code != 0) {
     return code;
   }
   return checkActivatedShellStdlib(project, otherStdlib);
@@ -174,6 +189,25 @@ int main() {
     return fail("expected run args a b");
   }
 
+  sere::CompilerOptions asmOptions;
+  if (!parseArgs({"sere", "--emit-asm", "main.sere", "-o", "main.s"}, asmOptions, error)) {
+    return fail("failed to parse --emit-asm");
+  }
+  if (!asmOptions.emitAsm || asmOptions.emitLlvm) {
+    return fail("expected emitAsm from --emit-asm");
+  }
+  sere::CompilerOptions asmAlias;
+  if (!parseArgs({"sere", "-S", "main.sere"}, asmAlias, error)) {
+    return fail("failed to parse -S");
+  }
+  if (!asmAlias.emitAsm) {
+    return fail("expected emitAsm from -S");
+  }
+  sere::CompilerOptions bothEmit;
+  if (parseArgs({"sere", "--emit-llvm", "--emit-asm", "main.sere"}, bothEmit, error)) {
+    return fail("expected --emit-llvm and --emit-asm together to fail");
+  }
+
   sere::CompilerOptions shellOptions;
   if (!parseArgs({"sere", "shell", "--host", "powershell"}, shellOptions, error)) {
     return fail("failed to parse 'sere shell'");
@@ -200,6 +234,21 @@ int main() {
     return fail("expected ProjectCommand::BuildInstaller from build-installer");
   }
 
+  sere::CompilerOptions refreshOptions;
+  if (!parseArgs({"sere", "refresh-bin"}, refreshOptions, error)) {
+    return fail("failed to parse refresh-bin");
+  }
+  if (refreshOptions.projectCommand != sere::ProjectCommand::RefreshBin) {
+    return fail("expected ProjectCommand::RefreshBin from refresh-bin");
+  }
+  sere::CompilerOptions refreshFlag;
+  if (!parseArgs({"sere", "--refresh-bin"}, refreshFlag, error)) {
+    return fail("failed to parse --refresh-bin");
+  }
+  if (refreshFlag.projectCommand != sere::ProjectCommand::RefreshBin) {
+    return fail("expected ProjectCommand::RefreshBin from --refresh-bin");
+  }
+
   const std::filesystem::path temp =
       std::filesystem::temp_directory_path() / "sere-project-cli-test";
   std::error_code fsError;
@@ -213,14 +262,22 @@ int main() {
   if (!std::filesystem::exists(project / "scripts" / "activate") ||
       !std::filesystem::exists(project / "scripts" / "activate.ps1") ||
       !std::filesystem::exists(project / "scripts" / "activate.bat") ||
+      !std::filesystem::exists(project / "bin" / "sere-path.ps1") ||
+      !std::filesystem::exists(project / "bin" / "sere-path.cmd") ||
       !std::filesystem::exists(project / "venv" / "shell.ps1") ||
       !std::filesystem::exists(project / "sere.toml") ||
       !std::filesystem::exists(project / "src" / "main.sere")) {
     return fail("init did not write expected files");
   }
   const std::string activate = readAll(project / "scripts" / "activate.ps1");
-  if (activate.find("shell --host powershell") == std::string::npos) {
-    return fail("activate.ps1 does not launch sere shell");
+  if (activate.find("SERE_PROJECT_ROOT") == std::string::npos ||
+      activate.find("deactivate") == std::string::npos) {
+    return fail("activate.ps1 is not an in-process project activate");
+  }
+  const std::string shell = readAll(project / "venv" / "shell.ps1");
+  if (shell.find(". $PROFILE") != std::string::npos ||
+      shell.find("Test-Path $PROFILE") != std::string::npos) {
+    return fail("shell.ps1 must not source the user profile");
   }
   sere::ProjectManifest manifest;
   if (!sere::loadProjectManifest(project, manifest, error)) {

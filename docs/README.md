@@ -79,6 +79,7 @@ sere [options] <file.sere>
 | `init`, `build`, `run`, `clean`, `shell` | Project workflow |
 | `--build-installer` | Package a Windows setup exe (compiler, LLVM, stdlib, editor) |
 | `--emit-llvm` | Stop after writing `.ll` |
+| `--emit-asm`, `-S` | Stop after writing native assembly (`.s`) |
 | `--dump-tokens` | Print lexer output |
 | `--analyze` | JSON diagnostics, no codegen |
 | `--lsp` | Language server on stdin/stdout |

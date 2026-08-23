@@ -69,12 +69,14 @@ int64_t sere_list_len(void* list);
 void* sere_list_new(int64_t stride);
 void* sere_array_new(int64_t stride, int64_t length);
 void sere_list_push(void* list, const void* item);
+void sere_list_remove(void* list, int64_t index);
 void* sere_list_item(void* list, int64_t index);
 void* sere_list_slice(void* list, int64_t start, int64_t end, int32_t has_start, int32_t has_end);
 void* sere_list_from_argv(int argc, char** argv);
 void* sere_dict_new(int64_t key_stride, int64_t val_stride, int32_t key_kind);
 void sere_dict_set(void* dict, const void* key, const void* value);
 int32_t sere_dict_get(void* dict, const void* key, void* out_value);
+int32_t sere_dict_del(void* dict, const void* key);
 int64_t sere_dict_len(void* dict);
 
 void sere_str_index(const char* data, int64_t len, int64_t index, const char** out_data,
@@ -93,6 +95,10 @@ int32_t sere_error_isa(const char* name);
 const char* sere_error_type(void);
 const char* sere_error_message(int64_t* out_len);
 void sere_panic(const char* message, int64_t len);
+int32_t sere_parse_int(const char* data, int64_t len, int32_t bits, int32_t is_signed, int64_t* out);
+int32_t sere_parse_float(const char* data, int64_t len, int32_t is_f32, double* out);
+int32_t sere_parse_bool(const char* data, int64_t len, int32_t* out);
+int32_t sere_parse_none(const char* data, int64_t len);
 
 int32_t sere_list_contains(void* list, const void* item);
 void* sere_list_concat(void* left, void* right);
@@ -321,16 +327,47 @@ void sere_gl_window_make_current(void* window);
 void sere_gl_window_destroy(void* window);
 int32_t sere_gl_window_width(void* window);
 int32_t sere_gl_window_height(void* window);
-void sere_gl_clear_color(float r, float g, float b, float a);
+void sere_gl_window_set_title(void* window, const char* title, int64_t title_len);
+void sere_gl_window_title(void* window, const char** out_data, int64_t* out_len);
+void sere_gl_window_set_vsync(void* window, int32_t enabled);
+void sere_gl_window_show_cursor(void* window, int32_t show);
+void sere_gl_window_set_size(void* window, int32_t width, int32_t height);
+double sere_gl_window_time(void* window);
+double sere_gl_window_dt(void* window);
+int32_t sere_gl_window_key(void* window, int32_t vk);
+int32_t sere_gl_window_mouse_x(void* window);
+int32_t sere_gl_window_mouse_y(void* window);
+int32_t sere_gl_window_mouse_button(void* window, int32_t button);
+int32_t sere_gl_window_wheel(void* window);
+void sere_gl_clear_color(double r, double g, double b, double a);
 void sere_gl_clear(uint32_t mask);
 void sere_gl_viewport(int32_t x, int32_t y, int32_t width, int32_t height);
+void sere_gl_scissor(int32_t x, int32_t y, int32_t width, int32_t height);
 void sere_gl_enable(uint32_t cap);
 void sere_gl_disable(uint32_t cap);
+void sere_gl_blend_func(uint32_t src, uint32_t dst);
+void sere_gl_depth_func(uint32_t func);
+void sere_gl_depth_mask(int32_t enabled);
+void sere_gl_color_mask(int32_t r, int32_t g, int32_t b, int32_t a);
+void sere_gl_cull_face(uint32_t mode);
+void sere_gl_front_face(uint32_t mode);
+void sere_gl_polygon_mode(uint32_t face, uint32_t mode);
+void sere_gl_line_width(double width);
+void sere_gl_point_size(double size);
+void sere_gl_pixel_store(uint32_t pname, int32_t value);
+void sere_gl_finish(void);
+void sere_gl_flush(void);
 void sere_gl_begin(uint32_t mode);
 void sere_gl_end(void);
-void sere_gl_vertex3f(float x, float y, float z);
-void sere_gl_color3f(float r, float g, float b);
+void sere_gl_vertex2f(double x, double y);
+void sere_gl_vertex3f(double x, double y, double z);
+void sere_gl_color3f(double r, double g, double b);
+void sere_gl_color4f(double r, double g, double b, double a);
+void sere_gl_texcoord2f(double u, double v);
+void sere_gl_normal3f(double x, double y, double z);
 uint32_t sere_gl_get_error(void);
+int32_t sere_gl_get_integer(uint32_t pname);
+void sere_gl_get_string(uint32_t name, const char** out_data, int64_t* out_len);
 uint32_t sere_gl_create_shader(uint32_t kind);
 void sere_gl_shader_source(uint32_t shader, const char* src, int64_t src_len);
 int32_t sere_gl_compile_shader(uint32_t shader);
@@ -338,11 +375,78 @@ void sere_gl_shader_log(uint32_t shader, const char** out_data, int64_t* out_len
 void sere_gl_delete_shader(uint32_t shader);
 uint32_t sere_gl_create_program(void);
 void sere_gl_attach_shader(uint32_t program, uint32_t shader);
+void sere_gl_detach_shader(uint32_t program, uint32_t shader);
 int32_t sere_gl_link_program(uint32_t program);
 void sere_gl_program_log(uint32_t program, const char** out_data, int64_t* out_len);
 void sere_gl_use_program(uint32_t program);
 void sere_gl_delete_program(uint32_t program);
+int32_t sere_gl_uniform_location(uint32_t program, const char* name, int64_t name_len);
+int32_t sere_gl_attrib_location(uint32_t program, const char* name, int64_t name_len);
+void sere_gl_bind_attrib(uint32_t program, uint32_t index, const char* name, int64_t name_len);
+void sere_gl_uniform1f(int32_t location, double x);
+void sere_gl_uniform2f(int32_t location, double x, double y);
+void sere_gl_uniform3f(int32_t location, double x, double y, double z);
+void sere_gl_uniform4f(int32_t location, double x, double y, double z, double w);
+void sere_gl_uniform1i(int32_t location, int32_t x);
+void sere_gl_uniform_vec(int32_t location, void* values);
+void sere_gl_uniform_mat4(int32_t location, void* values);
+uint32_t sere_gl_gen_buffer(void);
+void sere_gl_delete_buffer(uint32_t buffer);
+void sere_gl_bind_buffer(uint32_t target, uint32_t buffer);
+void sere_gl_buffer_data_f64(uint32_t target, void* values, uint32_t usage);
+void sere_gl_buffer_data_i32(uint32_t target, void* values, uint32_t usage);
+void sere_gl_buffer_data_bytes(uint32_t target, void* values, uint32_t usage);
+void sere_gl_buffer_sub_f64(uint32_t target, int64_t offset_bytes, void* values);
+uint32_t sere_gl_gen_vao(void);
+void sere_gl_delete_vao(uint32_t vao);
+void sere_gl_bind_vao(uint32_t vao);
+void sere_gl_enable_attrib(uint32_t index);
+void sere_gl_disable_attrib(uint32_t index);
+void sere_gl_attrib_pointer(uint32_t index, int32_t size, uint32_t type, int32_t normalized,
+                            int32_t stride, int64_t offset);
+void sere_gl_draw_arrays(uint32_t mode, int32_t first, int32_t count);
+void sere_gl_draw_elements(uint32_t mode, int32_t count, uint32_t type, int64_t offset);
+uint32_t sere_gl_gen_texture(void);
+void sere_gl_delete_texture(uint32_t texture);
+void sere_gl_bind_texture(uint32_t target, uint32_t texture);
+void sere_gl_active_texture(uint32_t unit);
+void sere_gl_tex_param(uint32_t target, uint32_t pname, int32_t value);
+void sere_gl_tex_image2d(uint32_t target, int32_t level, int32_t internal, int32_t width,
+                         int32_t height, uint32_t format, uint32_t type, void* pixels);
+void sere_gl_tex_storage(uint32_t target, int32_t internal, int32_t width, int32_t height,
+                         uint32_t format);
+void sere_gl_tex_sub_image2d(uint32_t target, int32_t level, int32_t x, int32_t y, int32_t width,
+                             int32_t height, uint32_t format, uint32_t type, void* pixels);
+void sere_gl_generate_mipmap(uint32_t target);
+uint32_t sere_gl_gen_framebuffer(void);
+void sere_gl_delete_framebuffer(uint32_t fbo);
+void sere_gl_bind_framebuffer(uint32_t target, uint32_t fbo);
+void sere_gl_framebuffer_texture2d(uint32_t target, uint32_t attachment, uint32_t textarget,
+                                   uint32_t texture, int32_t level);
+uint32_t sere_gl_check_framebuffer(uint32_t target);
+uint32_t sere_gl_gen_renderbuffer(void);
+void sere_gl_delete_renderbuffer(uint32_t rbo);
+void sere_gl_bind_renderbuffer(uint32_t target, uint32_t rbo);
+void sere_gl_renderbuffer_storage(uint32_t target, uint32_t internal, int32_t width, int32_t height);
+void sere_gl_framebuffer_renderbuffer(uint32_t target, uint32_t attachment, uint32_t rbo_target,
+                                      uint32_t rbo);
+void* sere_gl_read_pixels(int32_t x, int32_t y, int32_t width, int32_t height, uint32_t format,
+                          uint32_t type);
+
+void sere_http_request(const char* method, int64_t method_len, const char* url, int64_t url_len,
+                       const char* body, int64_t body_len, int32_t timeout_ms,
+                       const char** out_text, int64_t* out_text_len);
+int32_t sere_http_last_status(void);
+void* sere_http_listen(const char* host, int64_t host_len, int32_t port);
+void* sere_http_accept(void* server);
+void sere_http_req_method(void* req, const char** out_data, int64_t* out_len);
+void sere_http_req_path(void* req, const char** out_data, int64_t* out_len);
+void sere_http_req_body(void* req, const char** out_data, int64_t* out_len);
+void sere_http_reply(void* req, int32_t status, const char* content_type, int64_t content_type_len,
+                     const char* body, int64_t body_len);
+void sere_http_close(void* server);
 
 #ifdef __cplusplus
 }
 #endif
+

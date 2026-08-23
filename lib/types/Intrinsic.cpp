@@ -51,6 +51,10 @@ std::string_view intrinsicName(IntrinsicKind kind) {
     return "panic";
   case IntrinsicKind::Super:
     return "super";
+  case IntrinsicKind::Parse:
+    return "parse";
+  case IntrinsicKind::TryParse:
+    return "try_parse";
   case IntrinsicKind::None:
     return "";
   }
@@ -123,6 +127,12 @@ IntrinsicKind intrinsicByName(std::string_view name) {
   }
   if (name == "super") {
     return IntrinsicKind::Super;
+  }
+  if (name == "parse") {
+    return IntrinsicKind::Parse;
+  }
+  if (name == "try_parse") {
+    return IntrinsicKind::TryParse;
   }
   return IntrinsicKind::None;
 }

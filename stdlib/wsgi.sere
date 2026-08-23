@@ -1,0 +1,65 @@
+# WSGI-like HTTP server. The application is a class with handle(environ) -> Response.
+#   import wsgi
+#   class App:
+#       def handle(self, environ: wsgi.Environ) -> wsgi.Response:
+#           return wsgi.Response(200, "text/plain", "ok")
+#   def main() -> i32:
+#       wsgi.serve(App(), "127.0.0.1", 8000)
+#       return 0
+
+extern "C" "sere_http_listen"
+def _listen(host: str, port: i32) -> Ptr[i8]
+
+extern "C" "sere_http_accept"
+def _accept(server: Ptr[i8]) -> Ptr[i8]
+
+extern "C" "sere_http_req_method"
+def _method(req: Ptr[i8]) -> str
+
+extern "C" "sere_http_req_path"
+def _path(req: Ptr[i8]) -> str
+
+extern "C" "sere_http_req_body"
+def _body(req: Ptr[i8]) -> str
+
+extern "C" "sere_http_reply"
+def _reply(req: Ptr[i8], status: i32, content_type: str, body: str) -> void
+
+extern "C" "sere_http_close"
+def _close(server: Ptr[i8]) -> void
+
+class Environ:
+    method: str
+    path: str
+    body: str
+    def __init__(self, method: str, path: str, body: str) -> void:
+        self.method = method
+        self.path = path
+        self.body = body
+
+class Response:
+    status: i32
+    content_type: str
+    body: str
+    def __init__(self, status: i32, content_type: str, body: str) -> void:
+        self.status = status
+        self.content_type = content_type
+        self.body = body
+
+class Handler:
+    def __init__(self) -> void:
+        pass
+    def handle(self, environ: Environ) -> Response:
+        return Response(200, "text/plain", "ok")
+
+def serve(app: Handler, host: str, port: i32) -> void:
+    server: Ptr[i8] = _listen(host, port)
+    if server is None:
+        return
+    while True:
+        req: Ptr[i8] = _accept(server)
+        if req is None:
+            continue
+        environ: Environ = Environ(_method(req), _path(req), _body(req))
+        resp: Response = app.handle(environ)
+        _reply(req, resp.status, resp.content_type, resp.body)

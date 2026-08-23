@@ -31,13 +31,13 @@
     }
   },
   "indentationRules": {
-    "increaseIndentPattern": "^\\s*(def|class|struct|enum|macro|if|elif|else|while|for|try|except|finally|match|case|quote).*:\\s*(#.*)?$",
+    "increaseIndentPattern": "^\\s*(def|class|struct|enum|macro|if|elif|else|while|for|try|except|finally|match|case|quote|defer).*:\\s*(#.*)?$",
     "decreaseIndentPattern": "^\\s*(elif|else|except|finally|case)\\b"
   },
   "wordPattern": "(-?\\d*\\.\\d\\w*)|([^\\`\\~\\!\\@\\#\\%\\^\\&\\*\\(\\)\\-\\=\\+\\[\\{\\]\\}\\\\\\|\\;\\:\\'\\\"\\,\\.\\<\\>\\/\\?\\s]+)",
   "onEnterRules": [
     {
-      "beforeText": "^\\s*(def|class|struct|enum|macro|if|elif|else|while|for|try|except|finally|match|case|quote).*:\\s*(#.*)?$",
+      "beforeText": "^\\s*(def|class|struct|enum|macro|if|elif|else|while|for|try|except|finally|match|case|quote|defer).*:\\s*(#.*)?$",
       "action": { "indent": "indent" }
     },
     {

@@ -11,3 +11,4 @@ def listdir(path: str) -> list[str]
 
 extern "C" "sere_os_exit"
 def exit(code: i32) -> void
+

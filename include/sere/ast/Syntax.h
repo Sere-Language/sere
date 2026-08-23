@@ -36,6 +36,7 @@ enum class NodeKind {
   TernaryExpr,
   TupleExpr,
   WalrusExpr,
+  LambdaExpr,
   VarDecl,
   AssignStmt,
   ReturnStmt,
@@ -289,6 +290,8 @@ enum class AssignOp {
   Sub,
   Mul,
   Div,
+  FloorDiv,
+  Pow,
   Mod,
   BitAnd,
   BitOr,
@@ -436,6 +439,44 @@ private:
   std::vector<std::unique_ptr<Expr>> elements_;
 };
 
+class WalrusExpr final : public Expr {
+public:
+  WalrusExpr(SourceRange range, std::string name, std::unique_ptr<Expr> value);
+  [[nodiscard]] const std::string& name() const;
+  [[nodiscard]] const Expr& value() const;
+  [[nodiscard]] Expr& value();
+
+private:
+  std::string name_;
+  std::unique_ptr<Expr> value_;
+};
+
+struct ParamDecl {
+  std::string name;
+  std::unique_ptr<TypeExpr> type;
+  std::unique_ptr<Expr> defaultValue;
+  SourceRange range{};
+};
+
+class LambdaExpr final : public Expr {
+public:
+  LambdaExpr(SourceRange range, std::vector<ParamDecl> params, std::unique_ptr<Expr> body,
+             std::unique_ptr<TypeExpr> returnType = nullptr);
+  [[nodiscard]] const std::vector<ParamDecl>& params() const;
+  [[nodiscard]] std::vector<ParamDecl>& params();
+  [[nodiscard]] const Expr& body() const;
+  [[nodiscard]] Expr& body();
+  [[nodiscard]] const TypeExpr* returnType() const;
+  void setLlvmName(std::string name);
+  [[nodiscard]] const std::string& llvmName() const;
+
+private:
+  std::vector<ParamDecl> params_;
+  std::unique_ptr<Expr> body_;
+  std::unique_ptr<TypeExpr> returnType_;
+  std::string llvmName_{};
+};
+
 struct IfBranch {
   std::unique_ptr<Expr> condition;
   std::vector<std::unique_ptr<Stmt>> body;
@@ -574,11 +615,20 @@ private:
   std::vector<std::unique_ptr<Stmt>> body_;
 };
 
-struct ParamDecl {
-  std::string name;
-  std::unique_ptr<TypeExpr> type;
-  std::unique_ptr<Expr> defaultValue;
-  SourceRange range{};
+class WithStmt final : public Stmt {
+public:
+  WithStmt(SourceRange range, std::unique_ptr<Expr> context, std::string name,
+           std::vector<std::unique_ptr<Stmt>> body);
+  [[nodiscard]] const Expr& context() const;
+  [[nodiscard]] Expr& context();
+  [[nodiscard]] const std::string& name() const;
+  [[nodiscard]] const std::vector<std::unique_ptr<Stmt>>& body() const;
+  [[nodiscard]] std::vector<std::unique_ptr<Stmt>>& body();
+
+private:
+  std::unique_ptr<Expr> context_;
+  std::string name_;
+  std::vector<std::unique_ptr<Stmt>> body_;
 };
 
 struct FieldDecl {
@@ -596,20 +646,25 @@ public:
           std::string name,
           std::unique_ptr<TypeExpr> type,
           std::unique_ptr<Expr> init,
-          bool isStatic = false);
+          bool isStatic = false,
+          bool isConst = false);
 
   [[nodiscard]] const std::string& name() const;
   void setName(std::string name);
+  [[nodiscard]] bool hasType() const;
   [[nodiscard]] const TypeExpr& type() const;
   [[nodiscard]] TypeExpr& type();
   [[nodiscard]] const Expr* init() const;
   [[nodiscard]] bool isStatic() const;
+  [[nodiscard]] bool isConst() const;
+  void setConst(bool value);
 
 private:
   std::string name_;
   std::unique_ptr<TypeExpr> type_;
   std::unique_ptr<Expr> init_;
   bool isStatic_ = false;
+  bool isConst_ = false;
 };
 
 class AssignStmt final : public Stmt {
@@ -728,6 +783,8 @@ public:
   [[nodiscard]] const std::string& modulePrefix() const;
   void setTypeParams(std::vector<std::string> typeParams);
   [[nodiscard]] const std::vector<std::string>& typeParams() const;
+  void setInferredReturn(bool value);
+  [[nodiscard]] bool hasInferredReturn() const;
 
 private:
   std::string name_;
@@ -741,6 +798,7 @@ private:
   std::vector<std::string> typeParams_{};
   bool isAbstract_ = false;
   bool isOverride_ = false;
+  bool inferredReturn_ = false;
 };
 
 class ClassDef final : public Stmt {

@@ -57,7 +57,7 @@ namespace {
          name == "abs" || name == "min" || name == "max" || name == "clamp" || name == "sign" ||
          name == "range" || name == "append" || name == "typeof" || name == "isinstance" ||
          name == "dir" || name == "inspect" || name == "sizeof" || name == "alignof" ||
-         name == "panic";
+         name == "panic" || name == "parse" || name == "try_parse";
 }
 
 [[nodiscard]] bool isOperatorToken(TokenKind kind) {

@@ -15,6 +15,8 @@
 # Collections: list[T], array[T], dict[K, V]. Index with xs[i] / ages[key].
 # Slices: xs[1:], xs[:n], xs[a:b], xs[:]
 # Introspection: typeof(x), isinstance[T](x), isinstance(x, T), dir(x), dir(), inspect(x)
+# Converters: parse[i32]("123"), try_parse[f64]("1.5") -> T | None
+#   Also bool, str, None, Int, hex/binary/octal (0xFF, 0b1010, 0o17), digit underscores.
 # Module globals: __name__, __file__, __package__, __doc__, __debug__, __sere_version__
 # Host flags (compile-time bools; false branches are not typechecked):
 #   __windows__, __linux__, __macos__, __unix__, __x86_64__, __arm64__
@@ -23,6 +25,7 @@
 #   if cfg!(linux): ...
 # Names: x.__name__, x.__type__, x.__module__, x.__qualname__
 # Types: class (identity), struct (value copy), enum (discriminant; Color.Variant only)
+#   Any accepts every value. None is void as a type: i32 | None = None (or = void)
 # Methods: super() is the first base class; super().__init__(...) / super().method(...)
 # Macros: `macro name(x): quote:` defines a compile-time rewrite.
 #   Invoke with name!(args). Indent macros use `name:`.

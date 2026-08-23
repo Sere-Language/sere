@@ -1,9 +1,18 @@
-# OpenGL + native GL window. Import with: import gl
-# Windows hosts get a real WGL window. Other hosts return available() == False.
-#   win = gl.Window("Sere GL", 640, 480)
+# OpenGL 2.1+ with a native window. Import with: import gl
+# Windows hosts get a real WGL context. Other hosts: available() == False.
+# Pair with `matrix` for camera / MVP uniforms (list[f64], 16 values, row-major).
+#
+#   win = gl.Window("Sere GL", 800, 600)
+#   prog = gl.program(vert, frag)
+#   mesh = gl.Mesh(vertices, 3)
 #   while win.poll():
-#       gl.clear_color(0.1, 0.2, 0.3, 1.0)
-#       gl.clear(gl.Buffer.Color.value)
+#       if win.key(gl.Key.Escape):
+#           break
+#       gl.clear_color(0.08, 0.09, 0.12, 1.0)
+#       gl.clear(gl.color_depth())
+#       win.fit_viewport()
+#       prog.use()
+#       mesh.draw(gl.Primitive.Triangles)
 #       win.swap()
 
 extern "C" "sere_gl_available"
@@ -30,8 +39,44 @@ def _window_width(window: Ptr[i8]) -> i32
 extern "C" "sere_gl_window_height"
 def _window_height(window: Ptr[i8]) -> i32
 
+extern "C" "sere_gl_window_set_title"
+def _window_set_title(window: Ptr[i8], title: str) -> void
+
+extern "C" "sere_gl_window_title"
+def _window_title(window: Ptr[i8]) -> str
+
+extern "C" "sere_gl_window_set_vsync"
+def _window_set_vsync(window: Ptr[i8], enabled: i32) -> void
+
+extern "C" "sere_gl_window_show_cursor"
+def _window_show_cursor(window: Ptr[i8], show: i32) -> void
+
+extern "C" "sere_gl_window_set_size"
+def _window_set_size(window: Ptr[i8], width: i32, height: i32) -> void
+
+extern "C" "sere_gl_window_time"
+def _window_time(window: Ptr[i8]) -> f64
+
+extern "C" "sere_gl_window_dt"
+def _window_dt(window: Ptr[i8]) -> f64
+
+extern "C" "sere_gl_window_key"
+def _window_key(window: Ptr[i8], vk: i32) -> i32
+
+extern "C" "sere_gl_window_mouse_x"
+def _window_mouse_x(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_mouse_y"
+def _window_mouse_y(window: Ptr[i8]) -> i32
+
+extern "C" "sere_gl_window_mouse_button"
+def _window_mouse_button(window: Ptr[i8], button: i32) -> i32
+
+extern "C" "sere_gl_window_wheel"
+def _window_wheel(window: Ptr[i8]) -> i32
+
 extern "C" "sere_gl_clear_color"
-def clear_color(r: f32, g: f32, b: f32, a: f32) -> void
+def clear_color(r: f64, g: f64, b: f64, a: f64) -> void
 
 extern "C" "sere_gl_clear"
 def clear(mask: i32) -> void
@@ -39,11 +84,50 @@ def clear(mask: i32) -> void
 extern "C" "sere_gl_viewport"
 def viewport(x: i32, y: i32, width: i32, height: i32) -> void
 
+extern "C" "sere_gl_scissor"
+def scissor(x: i32, y: i32, width: i32, height: i32) -> void
+
 extern "C" "sere_gl_enable"
 def enable(cap: i32) -> void
 
 extern "C" "sere_gl_disable"
 def disable(cap: i32) -> void
+
+extern "C" "sere_gl_blend_func"
+def blend_func(src: i32, dst: i32) -> void
+
+extern "C" "sere_gl_depth_func"
+def depth_func(func: i32) -> void
+
+extern "C" "sere_gl_depth_mask"
+def _depth_mask(enabled: i32) -> void
+
+extern "C" "sere_gl_color_mask"
+def _color_mask(r: i32, g: i32, b: i32, a: i32) -> void
+
+extern "C" "sere_gl_cull_face"
+def cull_face(mode: i32) -> void
+
+extern "C" "sere_gl_front_face"
+def front_face(mode: i32) -> void
+
+extern "C" "sere_gl_polygon_mode"
+def polygon_mode(face: i32, mode: i32) -> void
+
+extern "C" "sere_gl_line_width"
+def line_width(width: f64) -> void
+
+extern "C" "sere_gl_point_size"
+def point_size(size: f64) -> void
+
+extern "C" "sere_gl_pixel_store"
+def pixel_store(pname: i32, value: i32) -> void
+
+extern "C" "sere_gl_finish"
+def finish() -> void
+
+extern "C" "sere_gl_flush"
+def flush() -> void
 
 extern "C" "sere_gl_begin"
 def begin(mode: i32) -> void
@@ -51,14 +135,32 @@ def begin(mode: i32) -> void
 extern "C" "sere_gl_end"
 def end() -> void
 
+extern "C" "sere_gl_vertex2f"
+def vertex2(x: f64, y: f64) -> void
+
 extern "C" "sere_gl_vertex3f"
-def vertex3(x: f32, y: f32, z: f32) -> void
+def vertex3(x: f64, y: f64, z: f64) -> void
 
 extern "C" "sere_gl_color3f"
-def color3(r: f32, g: f32, b: f32) -> void
+def color3(r: f64, g: f64, b: f64) -> void
+
+extern "C" "sere_gl_color4f"
+def color4(r: f64, g: f64, b: f64, a: f64) -> void
+
+extern "C" "sere_gl_texcoord2f"
+def texcoord2(u: f64, v: f64) -> void
+
+extern "C" "sere_gl_normal3f"
+def normal3(x: f64, y: f64, z: f64) -> void
 
 extern "C" "sere_gl_get_error"
 def get_error() -> i32
+
+extern "C" "sere_gl_get_integer"
+def get_integer(pname: i32) -> i32
+
+extern "C" "sere_gl_get_string"
+def get_string(name: i32) -> str
 
 extern "C" "sere_gl_create_shader"
 def _create_shader(kind: i32) -> i32
@@ -81,6 +183,9 @@ def _create_program() -> i32
 extern "C" "sere_gl_attach_shader"
 def attach_shader(program: i32, shader: i32) -> void
 
+extern "C" "sere_gl_detach_shader"
+def detach_shader(program: i32, shader: i32) -> void
+
 extern "C" "sere_gl_link_program"
 def _link_program(program: i32) -> i32
 
@@ -93,6 +198,141 @@ def use_program(program: i32) -> void
 extern "C" "sere_gl_delete_program"
 def delete_program(program: i32) -> void
 
+extern "C" "sere_gl_uniform_location"
+def uniform_location(program: i32, name: str) -> i32
+
+extern "C" "sere_gl_attrib_location"
+def attrib_location(program: i32, name: str) -> i32
+
+extern "C" "sere_gl_bind_attrib"
+def bind_attrib(program: i32, index: i32, name: str) -> void
+
+extern "C" "sere_gl_uniform1f"
+def uniform1f(location: i32, x: f64) -> void
+
+extern "C" "sere_gl_uniform2f"
+def uniform2f(location: i32, x: f64, y: f64) -> void
+
+extern "C" "sere_gl_uniform3f"
+def uniform3f(location: i32, x: f64, y: f64, z: f64) -> void
+
+extern "C" "sere_gl_uniform4f"
+def uniform4f(location: i32, x: f64, y: f64, z: f64, w: f64) -> void
+
+extern "C" "sere_gl_uniform1i"
+def uniform1i(location: i32, x: i32) -> void
+
+extern "C" "sere_gl_uniform_vec"
+def uniform_vec(location: i32, values: list[f64]) -> void
+
+extern "C" "sere_gl_uniform_mat4"
+def uniform_mat4(location: i32, values: list[f64]) -> void
+
+extern "C" "sere_gl_gen_buffer"
+def gen_buffer() -> i32
+
+extern "C" "sere_gl_delete_buffer"
+def delete_buffer(buffer: i32) -> void
+
+extern "C" "sere_gl_bind_buffer"
+def bind_buffer(target: i32, buffer: i32) -> void
+
+extern "C" "sere_gl_buffer_data_f64"
+def buffer_data_f64(target: i32, values: list[f64], usage: i32) -> void
+
+extern "C" "sere_gl_buffer_data_i32"
+def buffer_data_i32(target: i32, values: list[i32], usage: i32) -> void
+
+extern "C" "sere_gl_buffer_data_bytes"
+def buffer_data_bytes(target: i32, values: list[byte], usage: i32) -> void
+
+extern "C" "sere_gl_buffer_sub_f64"
+def buffer_sub_f64(target: i32, offset_bytes: i64, values: list[f64]) -> void
+
+extern "C" "sere_gl_gen_vao"
+def gen_vao() -> i32
+
+extern "C" "sere_gl_delete_vao"
+def delete_vao(vao: i32) -> void
+
+extern "C" "sere_gl_bind_vao"
+def bind_vao(vao: i32) -> void
+
+extern "C" "sere_gl_enable_attrib"
+def enable_attrib(index: i32) -> void
+
+extern "C" "sere_gl_disable_attrib"
+def disable_attrib(index: i32) -> void
+
+extern "C" "sere_gl_attrib_pointer"
+def attrib_pointer(index: i32, size: i32, gltype: i32, normalized: i32, stride: i32, offset: i64) -> void
+
+extern "C" "sere_gl_draw_arrays"
+def draw_arrays(mode: i32, first: i32, count: i32) -> void
+
+extern "C" "sere_gl_draw_elements"
+def draw_elements(mode: i32, count: i32, gltype: i32, offset: i64) -> void
+
+extern "C" "sere_gl_gen_texture"
+def gen_texture() -> i32
+
+extern "C" "sere_gl_delete_texture"
+def delete_texture(texture: i32) -> void
+
+extern "C" "sere_gl_bind_texture"
+def bind_texture(target: i32, texture: i32) -> void
+
+extern "C" "sere_gl_active_texture"
+def active_texture(unit: i32) -> void
+
+extern "C" "sere_gl_tex_param"
+def tex_param(target: i32, pname: i32, value: i32) -> void
+
+extern "C" "sere_gl_tex_image2d"
+def tex_image2d(target: i32, level: i32, internal: i32, width: i32, height: i32, format: i32, gltype: i32, pixels: list[byte]) -> void
+
+extern "C" "sere_gl_tex_storage"
+def tex_storage(target: i32, internal: i32, width: i32, height: i32, format: i32) -> void
+
+extern "C" "sere_gl_tex_sub_image2d"
+def tex_sub_image2d(target: i32, level: i32, x: i32, y: i32, width: i32, height: i32, format: i32, gltype: i32, pixels: list[byte]) -> void
+
+extern "C" "sere_gl_generate_mipmap"
+def generate_mipmap(target: i32) -> void
+
+extern "C" "sere_gl_gen_framebuffer"
+def gen_framebuffer() -> i32
+
+extern "C" "sere_gl_delete_framebuffer"
+def delete_framebuffer(fbo: i32) -> void
+
+extern "C" "sere_gl_bind_framebuffer"
+def bind_framebuffer(target: i32, fbo: i32) -> void
+
+extern "C" "sere_gl_framebuffer_texture2d"
+def framebuffer_texture2d(target: i32, attachment: i32, textarget: i32, texture: i32, level: i32) -> void
+
+extern "C" "sere_gl_check_framebuffer"
+def check_framebuffer(target: i32) -> i32
+
+extern "C" "sere_gl_gen_renderbuffer"
+def gen_renderbuffer() -> i32
+
+extern "C" "sere_gl_delete_renderbuffer"
+def delete_renderbuffer(rbo: i32) -> void
+
+extern "C" "sere_gl_bind_renderbuffer"
+def bind_renderbuffer(target: i32, rbo: i32) -> void
+
+extern "C" "sere_gl_renderbuffer_storage"
+def renderbuffer_storage(target: i32, internal: i32, width: i32, height: i32) -> void
+
+extern "C" "sere_gl_framebuffer_renderbuffer"
+def framebuffer_renderbuffer(target: i32, attachment: i32, rbo_target: i32, rbo: i32) -> void
+
+extern "C" "sere_gl_read_pixels"
+def read_pixels(x: i32, y: i32, width: i32, height: i32, format: i32, gltype: i32) -> list[byte]
+
 enum Primitive:
     Points = 0
     Lines = 1
@@ -101,6 +341,16 @@ enum Primitive:
     Triangles = 4
     TriangleStrip = 5
     TriangleFan = 6
+    LinesAdjacency = 10
+    LineStripAdjacency = 11
+    TrianglesAdjacency = 12
+    TriangleStripAdjacency = 13
+    Patches = 14
+
+enum ClearMask:
+    Depth = 256
+    Stencil = 1024
+    Color = 16384
 
 enum Buffer:
     Color = 16384
@@ -108,13 +358,293 @@ enum Buffer:
     Stencil = 1024
 
 enum ShaderKind:
-    Vertex = 35633
     Fragment = 35632
+    Vertex = 35633
+    Geometry = 36313
+    TessEvaluation = 36487
+    TessControl = 36488
+    Compute = 37305
 
 enum Capability:
-    DepthTest = 2929
+    Fog = 2912
+    Lighting = 2896
+    LineSmooth = 2848
+    PointSmooth = 2832
     CullFace = 2884
+    DepthTest = 2929
+    StencilTest = 2960
+    Dither = 3024
     Blend = 3042
+    ColorMaterial = 2903
+    ScissorTest = 3089
+    Texture2D = 3553
+    Multisample = 32925
+    FramebufferSrgb = 36281
+
+enum BlendFactor:
+    Zero = 0
+    One = 1
+    SrcColor = 768
+    OneMinusSrcColor = 769
+    SrcAlpha = 770
+    OneMinusSrcAlpha = 771
+    DstAlpha = 772
+    OneMinusDstAlpha = 773
+    DstColor = 774
+    OneMinusDstColor = 775
+    SrcAlphaSaturate = 776
+
+enum DepthFn:
+    Never = 512
+    Less = 513
+    Equal = 514
+    LEqual = 515
+    Greater = 516
+    NotEqual = 517
+    GEqual = 518
+    Always = 519
+
+enum Face:
+    Front = 1028
+    Back = 1029
+    FrontAndBack = 1032
+
+enum Winding:
+    Cw = 2304
+    Ccw = 2305
+
+enum Polygon:
+    Point = 6912
+    Line = 6913
+    Filled = 6914
+
+enum DataType:
+    I8 = 5120
+    U8 = 5121
+    I16 = 5122
+    U16 = 5123
+    I32 = 5124
+    U32 = 5125
+    F32 = 5126
+
+enum GlError:
+    NoError = 0
+    InvalidEnum = 1280
+    InvalidValue = 1281
+    InvalidOperation = 1282
+    StackOverflow = 1283
+    StackUnderflow = 1284
+    OutOfMemory = 1285
+    InvalidFramebuffer = 1286
+
+enum Info:
+    Vendor = 7936
+    Renderer = 7937
+    Version = 7938
+    Extensions = 7939
+    ShadingLanguage = 35724
+    MaxTextureSize = 3379
+    MaxTextureUnits = 34018
+    MaxVertexAttribs = 34921
+    MaxColorAttachments = 36063
+
+enum BufferTarget:
+    Array = 34962
+    Element = 34963
+    PixelPack = 35051
+    PixelUnpack = 35052
+    Uniform = 35345
+    Texture = 35882
+
+enum Usage:
+    StreamDraw = 35040
+    StreamRead = 35041
+    StreamCopy = 35042
+    StaticDraw = 35044
+    StaticRead = 35045
+    StaticCopy = 35046
+    DynamicDraw = 35048
+    DynamicRead = 35049
+    DynamicCopy = 35050
+
+enum TextureTarget:
+    Texture2D = 3553
+    Texture1D = 3552
+    CubeMap = 34067
+    CubePositiveX = 34069
+    CubeNegativeX = 34070
+    CubePositiveY = 34071
+    CubeNegativeY = 34072
+    CubePositiveZ = 34073
+    CubeNegativeZ = 34074
+
+enum TextureFormat:
+    Red = 6403
+    RGB = 6407
+    RGBA = 6408
+    Luminance = 6409
+    LuminanceAlpha = 6410
+    Depth = 6402
+    DepthStencil = 34041
+    RGBA16F = 34842
+    RGBA32F = 34836
+    Depth24 = 33190
+    Depth24Stencil8 = 35056
+
+enum Filter:
+    Nearest = 9728
+    Linear = 9729
+    NearestMipmapNearest = 9984
+    LinearMipmapNearest = 9985
+    NearestMipmapLinear = 9986
+    LinearMipmapLinear = 9987
+
+enum Wrap:
+    Repeat = 10497
+    Clamp = 10496
+    ClampToEdge = 33071
+    ClampToBorder = 33069
+    MirroredRepeat = 33648
+
+enum TexParam:
+    MagFilter = 10240
+    MinFilter = 10241
+    WrapS = 10242
+    WrapT = 10243
+    WrapR = 32882
+
+enum TextureUnit:
+    T0 = 33984
+    T1 = 33985
+    T2 = 33986
+    T3 = 33987
+    T4 = 33988
+    T5 = 33989
+    T6 = 33990
+    T7 = 33991
+
+enum FramebufferTarget:
+    Framebuffer = 36160
+    Read = 36008
+    Draw = 36009
+    Renderbuffer = 36161
+
+enum Attachment:
+    Color0 = 36064
+    Color1 = 36065
+    Color2 = 36066
+    Color3 = 36067
+    Depth = 36096
+    Stencil = 36128
+    DepthStencil = 33306
+
+enum FramebufferStatus:
+    Complete = 36053
+    IncompleteAttachment = 36054
+    MissingAttachment = 36055
+    IncompleteDimensions = 36057
+    Unsupported = 36061
+
+enum PixelStore:
+    UnpackAlignment = 3317
+    PackAlignment = 3333
+    UnpackRowLength = 3314
+    PackRowLength = 3330
+
+enum Key:
+    Backspace = 8
+    Tab = 9
+    Enter = 13
+    Shift = 16
+    Control = 17
+    Alt = 18
+    Pause = 19
+    CapsLock = 20
+    Escape = 27
+    Space = 32
+    PageUp = 33
+    PageDown = 34
+    EndKey = 35
+    Home = 36
+    Left = 37
+    Up = 38
+    Right = 39
+    Down = 40
+    Insert = 45
+    Delete = 46
+    D0 = 48
+    D1 = 49
+    D2 = 50
+    D3 = 51
+    D4 = 52
+    D5 = 53
+    D6 = 54
+    D7 = 55
+    D8 = 56
+    D9 = 57
+    A = 65
+    B = 66
+    C = 67
+    D = 68
+    E = 69
+    F = 70
+    G = 71
+    H = 72
+    I = 73
+    J = 74
+    K = 75
+    L = 76
+    M = 77
+    N = 78
+    O = 79
+    P = 80
+    Q = 81
+    R = 82
+    S = 83
+    T = 84
+    U = 85
+    V = 86
+    W = 87
+    X = 88
+    Y = 89
+    Z = 90
+    F1 = 112
+    F2 = 113
+    F3 = 114
+    F4 = 115
+    F5 = 116
+    F6 = 117
+    F7 = 118
+    F8 = 119
+    F9 = 120
+    F10 = 121
+    F11 = 122
+    F12 = 123
+    NumLock = 144
+    LShift = 160
+    RShift = 161
+    LControl = 162
+    RControl = 163
+
+enum Mouse:
+    Left = 0
+    Right = 1
+    Middle = 2
+
+class Color:
+    r: f64
+    g: f64
+    b: f64
+    a: f64
+
+    def apply(self) -> void:
+        clear_color(self.r, self.g, self.b, self.a)
+
+    def use3(self) -> void:
+        color3(self.r, self.g, self.b)
+
+    def use4(self) -> void:
+        color4(self.r, self.g, self.b, self.a)
 
 class Window:
     ptr: Ptr[i8]
@@ -139,39 +669,418 @@ class Window:
     def height(self) -> i32:
         return _window_height(self.ptr)
 
+    def aspect(self) -> f64:
+        h: i32 = self.height()
+        if h == 0:
+            return 1 as f64
+        return (self.width() as f64) / (h as f64)
+
+    def set_title(self, title: str) -> void:
+        self.title = title
+        _window_set_title(self.ptr, title)
+
+    def get_title(self) -> str:
+        return _window_title(self.ptr)
+
+    def set_vsync(self, enabled: bool) -> void:
+        _window_set_vsync(self.ptr, enabled as i32)
+
+    def show_cursor(self, show: bool) -> void:
+        _window_show_cursor(self.ptr, show as i32)
+
+    def set_size(self, width: i32, height: i32) -> void:
+        _window_set_size(self.ptr, width, height)
+
+    def time(self) -> f64:
+        return _window_time(self.ptr)
+
+    def dt(self) -> f64:
+        return _window_dt(self.ptr)
+
+    def key(self, code: Key) -> bool:
+        return _window_key(self.ptr, code.value) as bool
+
+    def key_code(self, vk: i32) -> bool:
+        return _window_key(self.ptr, vk) as bool
+
+    def mouse_x(self) -> i32:
+        return _window_mouse_x(self.ptr)
+
+    def mouse_y(self) -> i32:
+        return _window_mouse_y(self.ptr)
+
+    def button(self, which: Mouse) -> bool:
+        return _window_mouse_button(self.ptr, which.value) as bool
+
+    def wheel(self) -> i32:
+        return _window_wheel(self.ptr)
+
+    def fit_viewport(self) -> void:
+        viewport(0, 0, self.width(), self.height())
+
     def destroy(self) -> void:
         _window_destroy(self.ptr)
 
 class Shader:
     id: i32
     kind: ShaderKind
+    compiled: i32
 
     def __init__(self, kind: ShaderKind, source: str) -> void:
         self.kind = kind
         self.id = _create_shader(kind.value)
         _shader_source(self.id, source)
-        _compile_shader(self.id)
+        self.compiled = _compile_shader(self.id)
 
     def ok(self) -> bool:
-        return self.id != 0
+        if self.id == 0:
+            return False
+        return self.compiled != 0
 
     def log(self) -> str:
         return shader_log(self.id)
 
+    def destroy(self) -> void:
+        delete_shader(self.id)
+        self.id = 0
+        self.compiled = 0
+
 class Program:
     id: i32
+    linked: i32
 
     def __init__(self, vertex: Shader, fragment: Shader) -> void:
         self.id = _create_program()
         attach_shader(self.id, vertex.id)
         attach_shader(self.id, fragment.id)
-        _link_program(self.id)
+        self.linked = _link_program(self.id)
 
     def use(self) -> void:
         use_program(self.id)
 
+    def ok(self) -> bool:
+        if self.id == 0:
+            return False
+        return self.linked != 0
+
     def log(self) -> str:
         return program_log(self.id)
 
+    def loc(self, name: str) -> i32:
+        return uniform_location(self.id, name)
+
+    def attrib(self, name: str) -> i32:
+        return attrib_location(self.id, name)
+
+    def bind_name(self, index: i32, name: str) -> void:
+        bind_attrib(self.id, index, name)
+
+    def set_f(self, name: str, x: f64) -> void:
+        uniform1f(self.loc(name), x)
+
+    def set_f2(self, name: str, x: f64, y: f64) -> void:
+        uniform2f(self.loc(name), x, y)
+
+    def set_f3(self, name: str, x: f64, y: f64, z: f64) -> void:
+        uniform3f(self.loc(name), x, y, z)
+
+    def set_f4(self, name: str, x: f64, y: f64, z: f64, w: f64) -> void:
+        uniform4f(self.loc(name), x, y, z, w)
+
+    def set_i(self, name: str, x: i32) -> void:
+        uniform1i(self.loc(name), x)
+
+    def set_vec(self, name: str, values: list[f64]) -> void:
+        uniform_vec(self.loc(name), values)
+
+    def set_mat4(self, name: str, values: list[f64]) -> void:
+        uniform_mat4(self.loc(name), values)
+
+    def destroy(self) -> void:
+        delete_program(self.id)
+        self.id = 0
+        self.linked = 0
+
+class GpuBuffer:
+    id: i32
+    target: i32
+
+    def __init__(self, target: BufferTarget) -> void:
+        self.target = target.value
+        self.id = gen_buffer()
+
+    def bind(self) -> void:
+        bind_buffer(self.target, self.id)
+
+    def data_f64(self, values: list[f64], usage: Usage) -> void:
+        self.bind()
+        buffer_data_f64(self.target, values, usage.value)
+
+    def data_i32(self, values: list[i32], usage: Usage) -> void:
+        self.bind()
+        buffer_data_i32(self.target, values, usage.value)
+
+    def data_bytes(self, values: list[byte], usage: Usage) -> void:
+        self.bind()
+        buffer_data_bytes(self.target, values, usage.value)
+
+    def sub_f64(self, offset_bytes: i64, values: list[f64]) -> void:
+        self.bind()
+        buffer_sub_f64(self.target, offset_bytes, values)
+
+    def destroy(self) -> void:
+        delete_buffer(self.id)
+        self.id = 0
+
+class VertexArray:
+    id: i32
+
+    def __init__(self) -> void:
+        self.id = gen_vao()
+
+    def bind(self) -> void:
+        bind_vao(self.id)
+
+    def unbind(self) -> void:
+        bind_vao(0)
+
+    def attrib(self, index: i32, size: i32, stride_bytes: i32, offset_bytes: i64) -> void:
+        enable_attrib(index)
+        attrib_pointer(index, size, DataType.F32.value, 0, stride_bytes, offset_bytes)
+
+    def attrib_typed(self, index: i32, size: i32, gltype: DataType, normalized: bool, stride_bytes: i32, offset_bytes: i64) -> void:
+        enable_attrib(index)
+        attrib_pointer(index, size, gltype.value, normalized as i32, stride_bytes, offset_bytes)
+
+    def destroy(self) -> void:
+        delete_vao(self.id)
+        self.id = 0
+
+class Texture:
+    id: i32
+    width: i32
+    height: i32
+    target: i32
+
+    def __init__(self, width: i32, height: i32) -> void:
+        self.id = gen_texture()
+        self.width = width
+        self.height = height
+        self.target = TextureTarget.Texture2D.value
+        self.bind_unit(0)
+        tex_param(self.target, TexParam.MinFilter.value, Filter.Linear.value)
+        tex_param(self.target, TexParam.MagFilter.value, Filter.Linear.value)
+        tex_param(self.target, TexParam.WrapS.value, Wrap.ClampToEdge.value)
+        tex_param(self.target, TexParam.WrapT.value, Wrap.ClampToEdge.value)
+
+    def bind_unit(self, unit: i32) -> void:
+        active_texture(TextureUnit.T0.value + unit)
+        bind_texture(self.target, self.id)
+
+    def bind(self) -> void:
+        self.bind_unit(0)
+
+    def filter(self, min_filter: Filter, mag_filter: Filter) -> void:
+        self.bind()
+        tex_param(self.target, TexParam.MinFilter.value, min_filter.value)
+        tex_param(self.target, TexParam.MagFilter.value, mag_filter.value)
+
+    def wrap(self, s: Wrap, t: Wrap) -> void:
+        self.bind()
+        tex_param(self.target, TexParam.WrapS.value, s.value)
+        tex_param(self.target, TexParam.WrapT.value, t.value)
+
+    def upload(self, pixels: list[byte]) -> void:
+        self.bind()
+        tex_image2d(self.target, 0, TextureFormat.RGBA.value, self.width, self.height, TextureFormat.RGBA.value, DataType.U8.value, pixels)
+
+    def upload_rgb(self, pixels: list[byte]) -> void:
+        self.bind()
+        tex_image2d(self.target, 0, TextureFormat.RGB.value, self.width, self.height, TextureFormat.RGB.value, DataType.U8.value, pixels)
+
+    def allocate(self, format: TextureFormat) -> void:
+        self.bind()
+        tex_storage(self.target, format.value, self.width, self.height, format.value)
+
+    def mipmaps(self) -> void:
+        self.bind()
+        generate_mipmap(self.target)
+
+    def destroy(self) -> void:
+        delete_texture(self.id)
+        self.id = 0
+
+class Renderbuffer:
+    id: i32
+    width: i32
+    height: i32
+
+    def __init__(self, width: i32, height: i32, internal: TextureFormat) -> void:
+        self.id = gen_renderbuffer()
+        self.width = width
+        self.height = height
+        bind_renderbuffer(FramebufferTarget.Renderbuffer.value, self.id)
+        renderbuffer_storage(FramebufferTarget.Renderbuffer.value, internal.value, width, height)
+
+    def bind(self) -> void:
+        bind_renderbuffer(FramebufferTarget.Renderbuffer.value, self.id)
+
+    def destroy(self) -> void:
+        delete_renderbuffer(self.id)
+        self.id = 0
+
+class Framebuffer:
+    id: i32
+    width: i32
+    height: i32
+
+    def __init__(self, width: i32, height: i32) -> void:
+        self.id = gen_framebuffer()
+        self.width = width
+        self.height = height
+
+    def bind(self) -> void:
+        bind_framebuffer(FramebufferTarget.Framebuffer.value, self.id)
+
+    def unbind(self) -> void:
+        bind_framebuffer(FramebufferTarget.Framebuffer.value, 0)
+
+    def color(self, texture: Texture) -> void:
+        self.bind()
+        framebuffer_texture2d(FramebufferTarget.Framebuffer.value, Attachment.Color0.value, texture.target, texture.id, 0)
+
+    def depth_texture(self, texture: Texture) -> void:
+        self.bind()
+        framebuffer_texture2d(FramebufferTarget.Framebuffer.value, Attachment.Depth.value, texture.target, texture.id, 0)
+
+    def depth(self, buffer: Renderbuffer) -> void:
+        self.bind()
+        framebuffer_renderbuffer(FramebufferTarget.Framebuffer.value, Attachment.Depth.value, FramebufferTarget.Renderbuffer.value, buffer.id)
+
+    def ok(self) -> bool:
+        self.bind()
+        return check_framebuffer(FramebufferTarget.Framebuffer.value) == FramebufferStatus.Complete.value
+
+    def status(self) -> i32:
+        self.bind()
+        return check_framebuffer(FramebufferTarget.Framebuffer.value)
+
+    def destroy(self) -> void:
+        delete_framebuffer(self.id)
+        self.id = 0
+
+class Mesh:
+    vao: VertexArray
+    vbo: GpuBuffer
+    ibo: GpuBuffer
+    count: i32
+    index_count: i32
+    stride: i32
+    indexed: i32
+
+    def __init__(self, vertices: list[f64], floats_per_vertex: i32) -> void:
+        self.vao = VertexArray()
+        self.vbo = GpuBuffer(BufferTarget.Array)
+        self.ibo = GpuBuffer(BufferTarget.Element)
+        self.stride = floats_per_vertex * 4
+        n: i64 = len(vertices)
+        if floats_per_vertex <= 0:
+            self.count = 0
+        else:
+            self.count = (n as i32) // floats_per_vertex
+        self.index_count = 0
+        self.indexed = 0
+        self.vao.bind()
+        self.vbo.data_f64(vertices, Usage.StaticDraw)
+        if floats_per_vertex <= 4:
+            self.vao.attrib(0, floats_per_vertex, self.stride, 0 as i64)
+
+    def layout(self, index: i32, size: i32, offset_floats: i32) -> void:
+        self.vao.bind()
+        self.vbo.bind()
+        self.vao.attrib(index, size, self.stride, (offset_floats * 4) as i64)
+
+    def indices(self, values: list[i32]) -> void:
+        self.vao.bind()
+        self.ibo.data_i32(values, Usage.StaticDraw)
+        self.index_count = len(values) as i32
+        self.indexed = 1
+
+    def draw(self, mode: Primitive) -> void:
+        self.vao.bind()
+        if self.indexed != 0:
+            draw_elements(mode.value, self.index_count, DataType.U32.value, 0 as i64)
+        else:
+            draw_arrays(mode.value, 0, self.count)
+
+    def destroy(self) -> void:
+        self.vao.destroy()
+        self.vbo.destroy()
+        self.ibo.destroy()
+
 def available() -> bool:
     return _available() as bool
+
+def color_depth() -> i32:
+    return ClearMask.Color.value + ClearMask.Depth.value
+
+def color_depth_stencil() -> i32:
+    return ClearMask.Color.value + ClearMask.Depth.value + ClearMask.Stencil.value
+
+def enable_cap(cap: Capability) -> void:
+    enable(cap.value)
+
+def disable_cap(cap: Capability) -> void:
+    disable(cap.value)
+
+def set_blend(src: BlendFactor, dst: BlendFactor) -> void:
+    enable(Capability.Blend.value)
+    blend_func(src.value, dst.value)
+
+def set_depth(func: DepthFn) -> void:
+    enable(Capability.DepthTest.value)
+    depth_func(func.value)
+
+def depth_write(enabled: bool) -> void:
+    _depth_mask(enabled as i32)
+
+def color_write(r: bool, g: bool, b: bool, a: bool) -> void:
+    _color_mask(r as i32, g as i32, b as i32, a as i32)
+
+def set_cull(face: Face) -> void:
+    enable(Capability.CullFace.value)
+    cull_face(face.value)
+
+def wireframe(on: bool) -> void:
+    if on:
+        polygon_mode(Face.FrontAndBack.value, Polygon.Line.value)
+    else:
+        polygon_mode(Face.FrontAndBack.value, Polygon.Filled.value)
+
+def vendor() -> str:
+    return get_string(Info.Vendor.value)
+
+def renderer() -> str:
+    return get_string(Info.Renderer.value)
+
+def version() -> str:
+    return get_string(Info.Version.value)
+
+def shading_language() -> str:
+    return get_string(Info.ShadingLanguage.value)
+
+def ok() -> bool:
+    return get_error() == GlError.NoError.value
+
+def capture(x: i32, y: i32, width: i32, height: i32) -> list[byte]:
+    return read_pixels(x, y, width, height, TextureFormat.RGBA.value, DataType.U8.value)
+
+def program(vertex_src: str, fragment_src: str) -> Program:
+    vs = Shader(ShaderKind.Vertex, vertex_src)
+    fs = Shader(ShaderKind.Fragment, fragment_src)
+    return Program(vs, fs)
+
+def texture_color(width: i32, height: i32, format: TextureFormat) -> Texture:
+    tex = Texture(width, height)
+    tex.allocate(format)
+    return tex

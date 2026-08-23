@@ -15,7 +15,7 @@ Compiler::run
       ├── Frontend::analyze()     lex, parse, import, prelude, macros, sema
       ├── IRGenerator::emit()     typed AST → LLVM module
       ├── runOptPipeline()
-      └── clang/lld + sere_rt     unless --emit-llvm
+      └── clang/lld + sere_rt     unless --emit-llvm or --emit-asm
 ```
 
 `--analyze` runs `Frontend` and prints JSON diagnostics. It never touches LLVM.

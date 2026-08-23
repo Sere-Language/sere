@@ -113,6 +113,7 @@ private:
   bool emitFor(llvm::IRBuilder<>& builder, const ForStmt& statement, const Type* returnType);
   bool emitAssert(llvm::IRBuilder<>& builder, const AssertStmt& statement);
   llvm::Value* emitRange(llvm::IRBuilder<>& builder, const CallExpr& expr);
+  llvm::Value* emitParse(llvm::IRBuilder<>& builder, const CallExpr& expr, bool optional);
   bool emitBlock(llvm::IRBuilder<>& builder,
                  const std::vector<std::unique_ptr<Stmt>>& body,
                  const Type* returnType);
@@ -134,6 +135,25 @@ private:
   llvm::Value* emitComprehension(llvm::IRBuilder<>& builder, const ComprehensionExpr& expr);
   llvm::Value* emitTernary(llvm::IRBuilder<>& builder, const TernaryExpr& expr);
   llvm::Value* emitTuple(llvm::IRBuilder<>& builder, const TupleExpr& expr);
+  llvm::Value* emitWalrus(llvm::IRBuilder<>& builder, const WalrusExpr& expr);
+  llvm::Value* emitLambda(llvm::IRBuilder<>& builder, const LambdaExpr& expr);
+  bool emitLambdaFunction(const LambdaExpr& expr);
+  void declareLambdas(const Module& ast);
+  void collectLambdas(const Expr& expr, std::vector<const LambdaExpr*>& out);
+  void collectLambdas(const Stmt& stmt, std::vector<const LambdaExpr*>& out);
+  llvm::FunctionType* llvmFunctionTypeFrom(const Type* type);
+  bool emitDel(llvm::IRBuilder<>& builder, const DelStmt& statement);
+  struct WithFrame {
+    const WithStmt* stmt = nullptr;
+    llvm::Value* self = nullptr;
+  };
+  bool emitWith(llvm::IRBuilder<>& builder, const WithStmt& statement, const Type* returnType);
+  bool emitWithExit(llvm::IRBuilder<>& builder, const WithFrame& frame);
+  llvm::Value* emitDunderOnSelf(llvm::IRBuilder<>& builder, const Type* record, llvm::Value* self,
+                                std::string_view name, const std::vector<llvm::Value*>& extra);
+  void emitDeferred(llvm::IRBuilder<>& builder, const Type* returnType);
+  bool emitUnpack(llvm::IRBuilder<>& builder, const TupleExpr& targets, llvm::Value* value,
+                  const Type* valueType);
   llvm::Value* packStr(llvm::IRBuilder<>& builder, llvm::Value* data, llvm::Value* len);
   llvm::Value* emitEnumTag(llvm::IRBuilder<>& builder, llvm::Value* value);
   llvm::Value* emitEnumUnit(llvm::IRBuilder<>& builder, const Type* type, unsigned tag);
@@ -171,6 +191,8 @@ private:
   int tryDepth_ = 0;
   const FunctionDef* userMain_ = nullptr;
   std::unordered_map<std::string, const Type*> subst_{};
+  std::vector<const DeferStmt*> defers_{};
+  std::vector<WithFrame> withStack_{};
 };
 
 }  // namespace sere

@@ -31,7 +31,8 @@ void appendWorkspaceImportDirs(std::vector<std::filesystem::path>& dirs,
                                const std::filesystem::path& workspaceRoot);
 
 [[nodiscard]] std::filesystem::path resolveImportFile(
-    const std::vector<std::filesystem::path>& searchDirs, const std::vector<std::string>& parts);
+    const std::vector<std::filesystem::path>& searchDirs, const std::vector<std::string>& parts,
+    const std::filesystem::path& skipFile = {});
 
 [[nodiscard]] std::vector<ImportModuleEntry> listImportModules(
     const std::vector<std::filesystem::path>& searchDirs,

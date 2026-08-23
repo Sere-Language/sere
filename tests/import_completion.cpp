@@ -120,6 +120,18 @@ int testModulesAndExports() {
   if (!hasModule(nested, "pkg.inner")) {
     return fail("pkg. should list pkg.inner");
   }
+  writeFile(root / "util.sere", "def local() -> i32:\n    return 1\n");
+  const std::filesystem::path shadowed =
+      sere::resolveImportFile(dirs, sere::splitImportPath("util"));
+  if (shadowed.empty() || shadowed.filename() != "util.sere" ||
+      shadowed.parent_path().filename() != root.filename()) {
+    return fail("workspace util.sere should shadow stdlib without skipFile");
+  }
+  const std::filesystem::path skipped =
+      sere::resolveImportFile(dirs, sere::splitImportPath("util"), root / "util.sere");
+  if (skipped.empty() || skipped == shadowed) {
+    return fail("skipFile should fall through to stdlib util.sere");
+  }
   const std::filesystem::path resolved =
       sere::resolveImportFile(dirs, sere::splitImportPath("pkg.inner"));
   if (resolved.empty() || resolved.filename() != "inner.sere") {

@@ -41,6 +41,7 @@ public:
   void setRecordEnum(const Type* record, bool isEnum);
   void setRecordStruct(const Type* record, bool isStruct);
   void setRecordFrozen(const Type* record, bool isFrozen);
+  void setRecordFlags(const Type* record, bool isFlags);
   void replaceRecordMethod(const Type* record, RecordMethod method);
   [[nodiscard]] const Type* defineAlias(const std::string& name, const Type* underlying);
   [[nodiscard]] const Type* defineTypeParam(const std::string& name);
@@ -62,6 +63,8 @@ public:
 
   [[nodiscard]] const Type* neverType() const;
   [[nodiscard]] const Type* voidType() const;
+  [[nodiscard]] const Type* noneType() const;
+  [[nodiscard]] const Type* anyType() const;
   [[nodiscard]] const Type* boolType() const;
   [[nodiscard]] const Type* i32Type() const;
   [[nodiscard]] const Type* i64Type() const;

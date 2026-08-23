@@ -1,0 +1,42 @@
+# Colored triangle. Close the window or press Escape.
+# Pair with `matrix` for cameras; this sample is clip-space only.
+
+import gl
+
+def main() -> i32:
+    if not gl.available():
+        print("OpenGL is not available on this host")
+        return 0
+
+    win = gl.Window("Sere GL", 800, 600)
+    win.set_vsync(True)
+    gl.set_depth(gl.DepthFn.Less)
+    gl.set_blend(gl.BlendFactor.SrcAlpha, gl.BlendFactor.OneMinusSrcAlpha)
+
+    vert: str = "#version 120\nattribute vec3 aPos;\nattribute vec3 aColor;\nvarying vec3 vColor;\nvoid main() {\n  vColor = aColor;\n  gl_Position = vec4(aPos, 1.0);\n}\n"
+    frag: str = "#version 120\nvarying vec3 vColor;\nvoid main() {\n  gl_FragColor = vec4(vColor, 1.0);\n}\n"
+    prog = gl.program(vert, frag)
+    if not prog.ok():
+        print(prog.log())
+        win.destroy()
+        return 1
+
+    vertices: list[f64] = [-0.6, -0.5, 0.0, 1.0, 0.3, 0.2, 0.6, -0.5, 0.0, 0.2, 0.8, 0.3, 0.0, 0.6, 0.0, 0.2, 0.4, 1.0]
+    mesh = gl.Mesh(vertices, 6)
+    mesh.layout(0, 3, 0)
+    mesh.layout(1, 3, 3)
+
+    while win.poll():
+        if win.key(gl.Key.Escape):
+            break
+        gl.Color(0.08, 0.09, 0.12, 1.0).apply()
+        gl.clear(gl.color_depth())
+        win.fit_viewport()
+        prog.use()
+        mesh.draw(gl.Primitive.Triangles)
+        win.swap()
+
+    mesh.destroy()
+    prog.destroy()
+    win.destroy()
+    return 0

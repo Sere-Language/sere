@@ -4,7 +4,9 @@
 #include "sere/driver/ProjectShell.h"
 
 #include "sere/Version.h"
+#include "sere/driver/Prelude.h"
 #include "sere/driver/Project.h"
+#include "sere/driver/ProjectInit.h"
 #include "sere/driver/Toolchain.h"
 
 #include <llvm/ADT/SmallVector.h>
@@ -110,21 +112,27 @@ namespace {
 
 void exportProjectEnv(const ProjectManifest& manifest) {
   const std::filesystem::path venvBin = manifest.root / "venv" / "bin";
+  prepareProjectStdlib(manifest);
   setEnvironmentVariable("SERE_ACTIVE", "1");
   setEnvironmentVariable("SERE_PROJECT_ROOT", manifest.root.string());
   setEnvironmentVariable("SERE_PROJECT_NAME", manifest.name);
   setEnvironmentVariable("SERE_VENV_BIN", venvBin.string());
-  setEnvironmentVariable("SERE_STDLIB", manifest.stdlib.string());
+  if (std::filesystem::exists(manifest.stdlib / "prelude.sere")) {
+    setEnvironmentVariable("SERE_STDLIB", manifest.stdlib.string());
+  } else {
+    setEnvironmentVariable("SERE_STDLIB", findStdlibDirectory(compilerDirectory()).string());
+  }
   prependToPath(venvBin);
-  prependLlvmToolsToPath();
+  prependToPath(compilerDirectory());
 }
 
 void printBanner(const ProjectManifest& manifest) {
   std::cout << "sere " << SERE_VERSION_STRING << "  " << manifest.name << '\n';
+  std::cout << "  nested shell  your original terminal is still open\n";
   std::cout << "  sere build    compile " << manifest.entry.filename().string() << '\n';
   std::cout << "  sere run      build and run\n";
   std::cout << "  sere clean    remove bin artifacts\n";
-  std::cout << "  deactivate    leave this shell\n";
+  std::cout << "  deactivate    close this nested shell (or type exit)\n";
 }
 
 [[nodiscard]] int spawnPowerShell(const ProjectManifest& manifest) {
@@ -134,7 +142,8 @@ void printBanner(const ProjectManifest& manifest) {
     return 1;
   }
   const std::filesystem::path rc = manifest.root / "venv" / "shell.ps1";
-  std::vector<std::string> args{*exe, "-NoLogo", "-NoExit", "-ExecutionPolicy", "Bypass"};
+  std::vector<std::string> args{*exe, "-NoProfile", "-NoLogo", "-NoExit",
+                                "-ExecutionPolicy", "Bypass"};
   if (std::filesystem::exists(rc)) {
     args.insert(args.end(), {"-File", rc.string()});
   } else {
@@ -196,6 +205,7 @@ int enterProjectShell(const CompilerOptions& options) {
     return 1;
   }
   std::filesystem::current_path(manifest.root);
+  writeProjectShellRc(manifest.root);
   exportProjectEnv(manifest);
   printBanner(manifest);
   const std::string host = detectHost(options.shellHost);
