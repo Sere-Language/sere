@@ -1,0 +1,8 @@
+import gl 
+
+
+def init_window(width: i32, height: i32, title: str = "Blank Window") -> gl.Window:
+    window = gl.Window(title, width, height)
+    
+def main() -> void:
+    print("Hello, world!")

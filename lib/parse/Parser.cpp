@@ -286,14 +286,28 @@ std::unique_ptr<TypeExpr> Parser::parseTypeAtom() {
     return nullptr;
   }
   const Token& name = advance();
+  std::string spelling(name.spelling());
+  const SourceLocation start = name.range().start;
+  SourceLocation end = name.range().end;
+  while (match(TokenKind::Dot)) {
+    if (!check(TokenKind::Identifier)) {
+      diagnostics_->error(peek().range(), "expected type name after '.', found " +
+                                              describeToken(peek()));
+      return nullptr;
+    }
+    spelling += '.';
+    spelling += advance().spelling();
+    end = previous().range().end;
+  }
   std::vector<std::unique_ptr<TypeExpr>> args;
   if (match(TokenKind::LBracket)) {
     args = parseTypeArgList();
     if (!consume(TokenKind::RBracket, "expected ']' after type arguments")) {
       return nullptr;
     }
+    end = previous().range().end;
   }
-  return std::make_unique<TypeExpr>(name.range(), std::string(name.spelling()), std::move(args));
+  return std::make_unique<TypeExpr>(SourceRange{start, end}, std::move(spelling), std::move(args));
 }
 
 std::unique_ptr<TypeExpr> Parser::parseTypeExpr() {
@@ -619,12 +633,13 @@ std::unique_ptr<Expr> Parser::parseDictLiteral() {
                                        std::move(values));
 }
 
-std::vector<std::unique_ptr<Expr>> Parser::parseCallArguments() {
-  std::vector<std::unique_ptr<Expr>> args;
+ParsedCallArguments Parser::parseCallArguments() {
+  ParsedCallArguments parsed;
   if (check(TokenKind::RParen)) {
-    return args;
+    return parsed;
   }
   const BoolScope enableCasts(allowAsCast_, true);
+  bool seenKeyword = false;
   while (true) {
     if (match(TokenKind::DotDotDot)) {
       match(TokenKind::Comma);
@@ -633,22 +648,38 @@ std::vector<std::unique_ptr<Expr>> Parser::parseCallArguments() {
       }
       continue;
     }
-    std::unique_ptr<Expr> arg = parseExpr();
-    if (arg == nullptr) {
-      break;
-    }
-    if (check(TokenKind::KeywordFor)) {
-      arg = parseComprehension(std::move(arg));
-      if (arg == nullptr) {
+    if (check(TokenKind::Identifier) && peekNth(1).kind() == TokenKind::Equal) {
+      seenKeyword = true;
+      NamedArgument keyword;
+      keyword.name = advance().spelling();
+      (void)advance();
+      keyword.value = parseExpr();
+      if (keyword.value == nullptr) {
         return {};
       }
+      parsed.keyword.push_back(std::move(keyword));
+    } else {
+      if (seenKeyword) {
+        diagnostics_->error(peek().range(), "positional argument follows keyword argument");
+        return {};
+      }
+      std::unique_ptr<Expr> arg = parseExpr();
+      if (arg == nullptr) {
+        break;
+      }
+      if (check(TokenKind::KeywordFor)) {
+        arg = parseComprehension(std::move(arg));
+        if (arg == nullptr) {
+          return {};
+        }
+      }
+      parsed.positional.push_back(std::move(arg));
     }
-    args.push_back(std::move(arg));
     if (!match(TokenKind::Comma)) {
       break;
     }
   }
-  return args;
+  return parsed;
 }
 
 std::unique_ptr<Expr> Parser::parsePostfix() {
@@ -664,10 +695,11 @@ std::unique_ptr<Expr> Parser::parsePostfix() {
             !consume(TokenKind::LParen, "expected '(' after type arguments")) {
           return nullptr;
         }
-        std::vector<std::unique_ptr<Expr>> args = parseCallArguments();
+        ParsedCallArguments callArgs = parseCallArguments();
         (void)consume(TokenKind::RParen, "expected ')'");
         expr = std::make_unique<CallExpr>(SourceRange{expr->range().start, previous().range().end},
-                                          std::move(expr), std::move(typeArgs), std::move(args));
+                                          std::move(expr), std::move(typeArgs),
+                                          std::move(callArgs.positional), std::move(callArgs.keyword));
         continue;
       }
       std::unique_ptr<Expr> start;
@@ -705,11 +737,11 @@ std::unique_ptr<Expr> Parser::parsePostfix() {
       continue;
     }
     if (match(TokenKind::LParen)) {
-      std::vector<std::unique_ptr<Expr>> args = parseCallArguments();
+      ParsedCallArguments callArgs = parseCallArguments();
       (void)consume(TokenKind::RParen, "expected ')'");
       expr = std::make_unique<CallExpr>(SourceRange{expr->range().start, previous().range().end},
                                         std::move(expr), std::vector<std::unique_ptr<TypeExpr>>{},
-                                        std::move(args));
+                                        std::move(callArgs.positional), std::move(callArgs.keyword));
       continue;
     }
     if (match(TokenKind::Dot)) {
@@ -1092,12 +1124,42 @@ std::vector<ParamDecl> Parser::parseParams() {
   if (check(TokenKind::RParen)) {
     return params;
   }
+  bool sawVarArg = false;
+  bool sawKwArg = false;
   while (true) {
     ParamDecl param;
     param.range = peek().range();
-    param.name = parseIdentifier("expected parameter name");
-    if (param.name.empty()) {
-      return {};
+    if (match(TokenKind::StarStar)) {
+      if (sawKwArg) {
+        diagnostics_->error(previous().range(), "**kwargs may appear only once");
+        return {};
+      }
+      sawKwArg = true;
+      param.kind = ParamKind::KwArg;
+      param.name = parseIdentifier("expected parameter name after '**'");
+      if (param.name.empty()) {
+        return {};
+      }
+    } else if (match(TokenKind::Star)) {
+      if (sawVarArg || sawKwArg) {
+        diagnostics_->error(previous().range(), "*args may appear only once");
+        return {};
+      }
+      if (check(TokenKind::Comma) || check(TokenKind::RParen)) {
+        diagnostics_->error(previous().range(), "bare '*' is not supported; name the vararg parameter");
+        return {};
+      }
+      sawVarArg = true;
+      param.kind = ParamKind::VarArg;
+      param.name = parseIdentifier("expected parameter name after '*'");
+      if (param.name.empty()) {
+        return {};
+      }
+    } else {
+      param.name = parseIdentifier("expected parameter name");
+      if (param.name.empty()) {
+        return {};
+      }
     }
     const bool inferredSelf =
         param.name == "self" && (check(TokenKind::Comma) || check(TokenKind::RParen));
@@ -1116,6 +1178,10 @@ std::vector<ParamDecl> Parser::parseParams() {
     params.push_back(std::move(param));
     if (!match(TokenKind::Comma)) {
       break;
+    }
+    if (sawKwArg) {
+      diagnostics_->error(peek().range(), "parameters may not follow **kwargs");
+      return {};
     }
   }
   return params;

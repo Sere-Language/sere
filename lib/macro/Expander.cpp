@@ -566,8 +566,19 @@ std::unique_ptr<Expr> MacroExpander::expandExpr(const Expr& expr) {
     for (const std::unique_ptr<TypeExpr>& arg : call.typeArgs()) {
       typeArgs.push_back(cloneTypeExpr(*arg));
     }
+    std::vector<NamedArgument> keywordArgs;
+    for (const NamedArgument& kw : call.keywordArguments()) {
+      std::unique_ptr<Expr> expanded = expandExpr(*kw.value);
+      if (expanded == nullptr) {
+        return nullptr;
+      }
+      NamedArgument named;
+      named.name = kw.name;
+      named.value = std::move(expanded);
+      keywordArgs.push_back(std::move(named));
+    }
     return std::make_unique<CallExpr>(expr.range(), std::move(callee), std::move(typeArgs),
-                                      std::move(args));
+                                      std::move(args), std::move(keywordArgs));
   }
   case NodeKind::BinaryExpr: {
     const auto& binary = static_cast<const BinaryExpr&>(expr);

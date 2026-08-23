@@ -1,0 +1,18 @@
+def add(a: i32, b: i32 = 0) -> i32:
+    return a + b
+
+def join(prefix: str, *parts: list[str], sep: str = " ") -> void:
+    print(prefix, end=": ")
+    i: i32 = 0
+    while i < len(parts):
+        if i > 0:
+            print(sep, end="")
+        print(parts[i], end="")
+        i = i + 1
+    print(end="\n")
+
+def main() -> void:
+    print(1, 2, 3, end="")
+    print("done")
+    print(add(b=2, a=3))
+    join("items", "one", "two", "three", sep=", ")

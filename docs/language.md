@@ -349,6 +349,9 @@ def identity[T](value: T) -> T:
   infers `void`, other functions infer `Any`
 - Parameter types may be omitted (`Any`)
 - Default arguments are allowed
+- Keyword arguments at call sites: `scale(factor=3, value=1)`
+- Varargs and kwargs: `def log(prefix: str, *parts: list[str], **opts: dict[str, str]) -> void`
+- `print(..., sep=" ", end="\n")` — `end=""` suppresses the trailing newline
 - Generic type parameters: `[T]` on `def` or `class`
 - Methods take `self` as the first parameter
 - `super()` is the first base class: `super().__init__(name)`, `super().id()`
@@ -438,6 +441,8 @@ enum Message:
 - Unit variants: `Color.Green`
 - Payload variants: `Message.Move(1, 2)`
 - `.name` → `str`, `.value` → discriminant, `i32(tone)` → tag
+- Unit / `@flags` enums (no payload) are integers in context: pass to `i32`
+  parameters, assign to `i32`, compare with ints, and use `| & ^` without `.value`
 - `Color.variants()` → `list[str]`
 - `tone is Color.Green` compares identity of the variant
 - `@flags` on an enum marks it as a flag set; `Flag.A in mask` is a bitwise test
@@ -748,7 +753,7 @@ Import the rest:
 | `util` | Tiny helpers (`double`); used by import examples |
 | `html_lang` | `html:` raw macro + `Html` |
 | `windows` | Win32 message box, beep, clipboard, … (stub off Windows) |
-| `gl` | OpenGL 2.1+ (WGL window, shaders, VBO/VAO, textures, FBO, input) |
+| `gl` | OpenGL 2.1+ (WGL window, `should_close`, shaders, VBO/VAO, textures, FBO, input) |
 | `qt6` | Qt 6 widgets; linked automatically if the compiler was built with Qt |
 
 Failed C bindings typically return `""` / `0` / `False` rather than throwing.
@@ -829,7 +834,7 @@ are `ValueError`.
 Sere is a **typed Python superset**, not CPython. These remain out of scope or
 incomplete. They diagnose instead of generating silent wrong code:
 
-- `*args` / `**kwargs`, keyword-only parameters, `global` / `nonlocal`
+- keyword-only parameters (after `*args`), `global` / `nonlocal`
 - Nested `def`, `async` / `await`, `yield`
 - Unmodified CPython stdlib (use Sere modules such as `requests` and `wsgi`)
 - Lambda capture of enclosing locals (pass parameters instead)

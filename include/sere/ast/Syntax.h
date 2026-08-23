@@ -195,17 +195,29 @@ private:
   bool compileTimeBool_ = false;
 };
 
+enum class ParamKind { Normal, VarArg, KwArg };
+
+struct NamedArgument {
+  std::string name;
+  std::unique_ptr<Expr> value;
+};
+
 class CallExpr final : public Expr {
 public:
   CallExpr(SourceRange range,
            std::unique_ptr<Expr> callee,
            std::vector<std::unique_ptr<TypeExpr>> typeArgs,
-           std::vector<std::unique_ptr<Expr>> arguments);
+           std::vector<std::unique_ptr<Expr>> arguments,
+           std::vector<NamedArgument> keywordArguments = {});
 
   [[nodiscard]] const Expr& callee() const;
   [[nodiscard]] Expr& callee();
   [[nodiscard]] const std::vector<std::unique_ptr<TypeExpr>>& typeArgs() const;
   [[nodiscard]] const std::vector<std::unique_ptr<Expr>>& arguments() const;
+  [[nodiscard]] const std::vector<NamedArgument>& keywordArguments() const;
+  [[nodiscard]] const std::vector<const Expr*>& boundArguments() const;
+  void setBoundArguments(std::vector<const Expr*> arguments,
+                        std::vector<std::unique_ptr<Expr>> owned);
   [[nodiscard]] IntrinsicKind intrinsic() const;
   void setIntrinsic(IntrinsicKind kind);
   [[nodiscard]] const std::string& loweredName() const;
@@ -225,6 +237,9 @@ private:
   std::unique_ptr<Expr> callee_;
   std::vector<std::unique_ptr<TypeExpr>> typeArgs_;
   std::vector<std::unique_ptr<Expr>> arguments_;
+  std::vector<NamedArgument> keywordArguments_;
+  std::vector<const Expr*> boundArguments_;
+  std::vector<std::unique_ptr<Expr>> boundStorage_;
   IntrinsicKind intrinsic_ = IntrinsicKind::None;
   std::string loweredName_;
   std::vector<std::string> paramNames_{};
@@ -461,6 +476,7 @@ struct ParamDecl {
   std::unique_ptr<TypeExpr> type;
   std::unique_ptr<Expr> defaultValue;
   SourceRange range{};
+  ParamKind kind = ParamKind::Normal;
 };
 
 class LambdaExpr final : public Expr {

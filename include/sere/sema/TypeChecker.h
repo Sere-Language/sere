@@ -98,6 +98,14 @@ private:
                                              bool reportMissing);
   [[nodiscard]] const Type* resolveParamType(const FunctionDef& function,
                                              std::size_t index);
+  [[nodiscard]] const Type* resolveParamDeclType(const ParamDecl& param);
+  [[nodiscard]] bool validateParamList(const std::vector<ParamDecl>& params, SourceRange range);
+  [[nodiscard]] bool checkFunctionArguments(CallExpr& expr,
+                                            const std::vector<ParamDecl>& params,
+                                            const std::vector<const Type*>& paramTypes,
+                                            std::string_view calleeLabel,
+                                            std::size_t selfSkip = 0);
+  [[nodiscard]] FunctionDef* findMethodDef(const Type* record, std::string_view methodName);
   [[nodiscard]] const Type* checkExpr(Expr& expr);
   [[nodiscard]] const Type* checkName(NameExpr& expr);
   [[nodiscard]] const Type* checkCall(CallExpr& expr);

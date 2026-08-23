@@ -81,6 +81,8 @@ public:
   [[nodiscard]] bool isModule() const;
   [[nodiscard]] bool isAbstract() const;
   [[nodiscard]] bool isEnum() const;
+  /// Unit / flags enum (no payload variants). Usable as an integer.
+  [[nodiscard]] bool isIntEnum() const;
   [[nodiscard]] bool isStruct() const;
   [[nodiscard]] bool isFrozen() const;
   [[nodiscard]] bool isFlags() const;

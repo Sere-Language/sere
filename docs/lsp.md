@@ -51,8 +51,9 @@ Member completion after `.` uses the record type of the object. Dereference
 is **not** implicit: `p.field` is invalid when `p` is `Unique[T]`; `(*p).field`
 uses the pointee. That matches C.
 
-Snippets include `unique[T](value)`, `shared[T](value)`, `alloc[T]()`, and type
-inserts `Ptr[${1:T}]`.
+Completion triggers on `.`, `"`, `@`, and `!` only. `:` and space do not open
+the suggest widget, so `def main() -> i32:` then Enter starts a new indented
+line instead of inserting a snippet.
 
 ## Grammar
 

@@ -20,7 +20,6 @@
   },
   "categories": [
     "Programming Languages",
-    "Snippets",
     "Linters",
     "Formatters"
   ],
@@ -62,12 +61,6 @@
         "path": "./syntaxes/sere.tmLanguage.json"
       }
     ],
-    "snippets": [
-      {
-        "language": "sere",
-        "path": "./snippets/sere.json"
-      }
-    ],
     "configurationDefaults": {
       "[sere]": {
         "editor.tabSize": 4,
@@ -77,7 +70,10 @@
         "editor.inlayHints.enabled": "on",
         "editor.parameterHints.enabled": true,
         "editor.parameterHints.cycle": true,
-        "editor.codeLens": true
+        "editor.codeLens": true,
+        "editor.suggest.showSnippets": false,
+        "editor.snippetSuggestions": "none",
+        "editor.acceptSuggestionOnEnter": "off"
       }
     },
     "semanticTokenTypes": [

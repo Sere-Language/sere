@@ -51,6 +51,8 @@ bool Type::isAbstract() const { return canonical()->isAbstract_; }
 
 bool Type::isEnum() const { return canonical()->isEnum_; }
 
+bool Type::isIntEnum() const { return isEnum() && !hasEnumPayload(); }
+
 bool Type::isStruct() const { return canonical()->isStruct_; }
 
 bool Type::isFrozen() const { return canonical()->isFrozen_; }
