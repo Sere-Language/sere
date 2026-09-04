@@ -31,8 +31,7 @@ void attachFunctionDecorators(FunctionDef& function, std::vector<std::unique_ptr
 }
 
 [[nodiscard]] bool isLineEnd(TokenKind kind) {
-  return kind == TokenKind::Newline || kind == TokenKind::Dedent ||
-         kind == TokenKind::EndOfFile;
+  return kind == TokenKind::Newline || kind == TokenKind::Dedent || kind == TokenKind::EndOfFile;
 }
 
 [[nodiscard]] std::string describeToken(const Token& token) {
@@ -147,15 +146,21 @@ struct ParsedFloat {
   }
 }
 
-}  // namespace
+} // namespace
 
-Parser::Parser(DiagnosticEngine& diagnostics, std::vector<Token> tokens,
+Parser::Parser(DiagnosticEngine& diagnostics,
+               std::vector<Token> tokens,
                const SourceManager* source)
-    : diagnostics_(&diagnostics), source_(source), tokens_(std::move(tokens)) {}
+    : diagnostics_(&diagnostics), source_(source), tokens_(std::move(tokens)) {
+}
 
-bool Parser::isAtEnd() const { return peek().kind() == TokenKind::EndOfFile; }
+bool Parser::isAtEnd() const {
+  return peek().kind() == TokenKind::EndOfFile;
+}
 
-const Token& Parser::peek() const { return tokens_.at(current_); }
+const Token& Parser::peek() const {
+  return tokens_.at(current_);
+}
 
 const Token& Parser::peekNth(std::size_t ahead) const {
   const std::size_t index = current_ + ahead;
@@ -165,7 +170,9 @@ const Token& Parser::peekNth(std::size_t ahead) const {
   return tokens_[index];
 }
 
-const Token& Parser::previous() const { return tokens_.at(current_ - 1); }
+const Token& Parser::previous() const {
+  return tokens_.at(current_ - 1);
+}
 
 const Token& Parser::advance() {
   if (!isAtEnd()) {
@@ -174,7 +181,9 @@ const Token& Parser::advance() {
   return previous();
 }
 
-bool Parser::check(TokenKind kind) const { return peek().kind() == kind; }
+bool Parser::check(TokenKind kind) const {
+  return peek().kind() == kind;
+}
 
 bool Parser::match(TokenKind kind) {
   if (!check(kind)) {
@@ -243,8 +252,7 @@ bool Parser::finishLine() {
     match(TokenKind::Newline);
     return true;
   }
-  diagnostics_->error(peek().range(),
-                      "expected end of statement, found " + describeToken(peek()));
+  diagnostics_->error(peek().range(), "expected end of statement, found " + describeToken(peek()));
   synchronize();
   return false;
 }
@@ -295,17 +303,19 @@ std::string Parser::parseIdentifier(const char* errorMessage) {
   return std::string(advance().spelling());
 }
 
-std::string Parser::parseStringValue() { return decodeStringToken(previous().spelling()).value; }
+std::string Parser::parseStringValue() {
+  return decodeStringToken(previous().spelling()).value;
+}
 
 std::unique_ptr<TypeExpr> Parser::parseTypeAtom() {
   if (match(TokenKind::KeywordNone)) {
-    return std::make_unique<TypeExpr>(previous().range(), "None",
-                                      std::vector<std::unique_ptr<TypeExpr>>{});
+    return std::make_unique<TypeExpr>(
+        previous().range(), "None", std::vector<std::unique_ptr<TypeExpr>>{});
   }
   if (check(TokenKind::Integer)) {
     const Token& number = advance();
-    return std::make_unique<TypeExpr>(number.range(), std::string(number.spelling()),
-                                      std::vector<std::unique_ptr<TypeExpr>>{});
+    return std::make_unique<TypeExpr>(
+        number.range(), std::string(number.spelling()), std::vector<std::unique_ptr<TypeExpr>>{});
   }
   if (match(TokenKind::KeywordType)) {
     const Token& name = previous();
@@ -322,8 +332,8 @@ std::unique_ptr<TypeExpr> Parser::parseTypeAtom() {
     return std::make_unique<TypeExpr>(SourceRange{start, end}, "type", std::move(args));
   }
   if (match(TokenKind::DotDotDot)) {
-    return std::make_unique<TypeExpr>(previous().range(), "...",
-                                      std::vector<std::unique_ptr<TypeExpr>>{});
+    return std::make_unique<TypeExpr>(
+        previous().range(), "...", std::vector<std::unique_ptr<TypeExpr>>{});
   }
   if (match(TokenKind::LBracket)) {
     const SourceLocation start = previous().range().start;
@@ -331,8 +341,8 @@ std::unique_ptr<TypeExpr> Parser::parseTypeAtom() {
     if (!consume(TokenKind::RBracket, "expected ']' after type list")) {
       return nullptr;
     }
-    return std::make_unique<TypeExpr>(SourceRange{start, previous().range().end}, "[]",
-                                      std::move(args));
+    return std::make_unique<TypeExpr>(
+        SourceRange{start, previous().range().end}, "[]", std::move(args));
   }
   if (!check(TokenKind::Identifier)) {
     diagnostics_->error(peek().range(), "expected type name, found " + describeToken(peek()));
@@ -378,8 +388,8 @@ std::unique_ptr<TypeExpr> Parser::parseTypeExpr() {
     }
     members.push_back(std::move(next));
   }
-  return std::make_unique<TypeExpr>(SourceRange{start, previous().range().end}, "|",
-                                    std::move(members));
+  return std::make_unique<TypeExpr>(
+      SourceRange{start, previous().range().end}, "|", std::move(members));
 }
 
 std::vector<std::unique_ptr<TypeExpr>> Parser::parseTypeArgList() {
@@ -440,8 +450,7 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     const DecodedString decoded = decodeStringToken(token.spelling());
     if (isSingleQuotedLiteral(token.spelling()) && decoded.value.size() == 1) {
       const auto byte = static_cast<unsigned char>(decoded.value[0]);
-      return std::make_unique<IntegerLiteral>(token.range(), static_cast<std::int64_t>(byte),
-                                              true);
+      return std::make_unique<IntegerLiteral>(token.range(), static_cast<std::int64_t>(byte), true);
     }
     return std::make_unique<StringLiteral>(token.range(), decoded.value, false);
   }
@@ -502,9 +511,9 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
       if (value == nullptr) {
         return nullptr;
       }
-      return std::make_unique<WalrusExpr>(
-          SourceRange{name.range().start, value->range().end}, std::string(name.spelling()),
-          std::move(value));
+      return std::make_unique<WalrusExpr>(SourceRange{name.range().start, value->range().end},
+                                          std::string(name.spelling()),
+                                          std::move(value));
     }
     if (check(TokenKind::Bang)) {
       return parseMacroInvokeExpr(std::string(name.spelling()), name.range());
@@ -515,7 +524,8 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     return parseSplice();
   }
   if (check(TokenKind::Unknown)) {
-    diagnostics_->error(peek().range(), "unexpected character '" + std::string(peek().spelling()) + "'");
+    diagnostics_->error(peek().range(),
+                        "unexpected character '" + std::string(peek().spelling()) + "'");
     return nullptr;
   }
   if (check(TokenKind::LBracket)) {
@@ -577,7 +587,8 @@ std::unique_ptr<Expr> Parser::parseComprehension(std::unique_ptr<Expr> element) 
     return nullptr;
   }
   const std::string name = parseIdentifier("expected comprehension variable");
-  if (name.empty() || !consume(TokenKind::KeywordIn, "expected 'in' after comprehension variable")) {
+  if (name.empty() ||
+      !consume(TokenKind::KeywordIn, "expected 'in' after comprehension variable")) {
     return nullptr;
   }
   std::unique_ptr<Expr> iterable = parseExpr();
@@ -585,7 +596,9 @@ std::unique_ptr<Expr> Parser::parseComprehension(std::unique_ptr<Expr> element) 
     return nullptr;
   }
   return std::make_unique<ComprehensionExpr>(
-      SourceRange{element->range().start, iterable->range().end}, std::move(element), name,
+      SourceRange{element->range().start, iterable->range().end},
+      std::move(element),
+      name,
       std::move(iterable));
 }
 
@@ -648,8 +661,10 @@ std::unique_ptr<Expr> Parser::parseLambda() {
   if (body == nullptr) {
     return nullptr;
   }
-  return std::make_unique<LambdaExpr>(SourceRange{start, body->range().end}, std::move(params),
-                                      std::move(body), std::move(returnType));
+  return std::make_unique<LambdaExpr>(SourceRange{start, body->range().end},
+                                      std::move(params),
+                                      std::move(body),
+                                      std::move(returnType));
 }
 
 std::unique_ptr<Expr> Parser::parseListLiteral() {
@@ -732,8 +747,8 @@ std::unique_ptr<Expr> Parser::parseDictLiteral() {
   if (!consume(TokenKind::RBrace, "expected '}' after dict")) {
     return nullptr;
   }
-  return std::make_unique<DictLiteral>(SourceRange{start, previous().range().end}, std::move(keys),
-                                       std::move(values));
+  return std::make_unique<DictLiteral>(
+      SourceRange{start, previous().range().end}, std::move(keys), std::move(values));
 }
 
 ParsedCallArguments Parser::parseCallArguments() {
@@ -818,8 +833,10 @@ std::unique_ptr<Expr> Parser::parsePostfix() {
         ParsedCallArguments callArgs = parseCallArguments();
         (void)consume(TokenKind::RParen, "expected ')'");
         expr = std::make_unique<CallExpr>(SourceRange{expr->range().start, previous().range().end},
-                                          std::move(expr), std::move(typeArgs),
-                                          std::move(callArgs.positional), std::move(callArgs.keyword));
+                                          std::move(expr),
+                                          std::move(typeArgs),
+                                          std::move(callArgs.positional),
+                                          std::move(callArgs.keyword));
         continue;
       }
       if (expr->kind() == NodeKind::NameExpr) {
@@ -831,10 +848,12 @@ std::unique_ptr<Expr> Parser::parsePostfix() {
           if (!consume(TokenKind::RBracket, "expected ']' after type arguments")) {
             return nullptr;
           }
-          expr = std::make_unique<CallExpr>(
-              SourceRange{expr->range().start, previous().range().end}, std::move(expr),
-              std::move(typeArgs), std::vector<std::unique_ptr<Expr>>{},
-              std::vector<NamedArgument>{});
+          expr =
+              std::make_unique<CallExpr>(SourceRange{expr->range().start, previous().range().end},
+                                         std::move(expr),
+                                         std::move(typeArgs),
+                                         std::vector<std::unique_ptr<Expr>>{},
+                                         std::vector<NamedArgument>{});
           continue;
         }
       }
@@ -869,15 +888,20 @@ std::unique_ptr<Expr> Parser::parsePostfix() {
         return nullptr;
       }
       expr = std::make_unique<IndexExpr>(SourceRange{expr->range().start, previous().range().end},
-                                         std::move(expr), std::move(start), std::move(stop), slice);
+                                         std::move(expr),
+                                         std::move(start),
+                                         std::move(stop),
+                                         slice);
       continue;
     }
     if (match(TokenKind::LParen)) {
       ParsedCallArguments callArgs = parseCallArguments();
       (void)consume(TokenKind::RParen, "expected ')'");
       expr = std::make_unique<CallExpr>(SourceRange{expr->range().start, previous().range().end},
-                                        std::move(expr), std::vector<std::unique_ptr<TypeExpr>>{},
-                                        std::move(callArgs.positional), std::move(callArgs.keyword));
+                                        std::move(expr),
+                                        std::vector<std::unique_ptr<TypeExpr>>{},
+                                        std::move(callArgs.positional),
+                                        std::move(callArgs.keyword));
       continue;
     }
     if (match(TokenKind::Dot)) {
@@ -886,14 +910,15 @@ std::unique_ptr<Expr> Parser::parsePostfix() {
         field = parseIdentifier("expected field name");
       }
       expr = std::make_unique<MemberExpr>(SourceRange{expr->range().start, previous().range().end},
-                                          std::move(expr), std::move(field));
+                                          std::move(expr),
+                                          std::move(field));
       continue;
     }
     if (match(TokenKind::PlusPlus) || match(TokenKind::MinusMinus)) {
       const UnaryOp op =
           previous().kind() == TokenKind::PlusPlus ? UnaryOp::PostInc : UnaryOp::PostDec;
-      expr = std::make_unique<UnaryExpr>(SourceRange{expr->range().start, previous().range().end},
-                                         op, std::move(expr));
+      expr = std::make_unique<UnaryExpr>(
+          SourceRange{expr->range().start, previous().range().end}, op, std::move(expr));
       continue;
     }
     break;
@@ -911,8 +936,8 @@ std::unique_ptr<Expr> Parser::parseUnary() {
     if (operand == nullptr) {
       return nullptr;
     }
-    return std::make_unique<UnaryExpr>(SourceRange{start, operand->range().end}, op,
-                                       std::move(operand));
+    return std::make_unique<UnaryExpr>(
+        SourceRange{start, operand->range().end}, op, std::move(operand));
   }
   return parsePostfix();
 }
@@ -924,8 +949,8 @@ std::unique_ptr<Expr> Parser::parseCast() {
     if (target == nullptr) {
       return nullptr;
     }
-    expr = std::make_unique<CastExpr>(SourceRange{expr->range().start, target->range().end},
-                                      std::move(expr), std::move(target));
+    expr = std::make_unique<CastExpr>(
+        SourceRange{expr->range().start, target->range().end}, std::move(expr), std::move(target));
   }
   return expr;
 }
@@ -944,8 +969,8 @@ std::unique_ptr<Expr> Parser::parseRange() {
   args.push_back(std::move(expr));
   args.push_back(std::move(stop));
   auto callee = std::make_unique<NameExpr>(range, "range");
-  return std::make_unique<CallExpr>(range, std::move(callee),
-                                    std::vector<std::unique_ptr<TypeExpr>>{}, std::move(args));
+  return std::make_unique<CallExpr>(
+      range, std::move(callee), std::vector<std::unique_ptr<TypeExpr>>{}, std::move(args));
 }
 
 std::unique_ptr<Expr> Parser::parseMul() {
@@ -968,8 +993,10 @@ std::unique_ptr<Expr> Parser::parseMul() {
     if (right == nullptr) {
       return nullptr;
     }
-    expr = std::make_unique<BinaryExpr>(SourceRange{expr->range().start, right->range().end}, op,
-                                        std::move(expr), std::move(right));
+    expr = std::make_unique<BinaryExpr>(SourceRange{expr->range().start, right->range().end},
+                                        op,
+                                        std::move(expr),
+                                        std::move(right));
   }
   return expr;
 }
@@ -983,8 +1010,10 @@ std::unique_ptr<Expr> Parser::parseAdd() {
     if (right == nullptr) {
       return nullptr;
     }
-    expr = std::make_unique<BinaryExpr>(SourceRange{expr->range().start, right->range().end}, op,
-                                        std::move(expr), std::move(right));
+    expr = std::make_unique<BinaryExpr>(SourceRange{expr->range().start, right->range().end},
+                                        op,
+                                        std::move(expr),
+                                        std::move(right));
   }
   return expr;
 }
@@ -998,8 +1027,10 @@ std::unique_ptr<Expr> Parser::parseShift() {
     if (right == nullptr) {
       return nullptr;
     }
-    expr = std::make_unique<BinaryExpr>(SourceRange{expr->range().start, right->range().end}, op,
-                                        std::move(expr), std::move(right));
+    expr = std::make_unique<BinaryExpr>(SourceRange{expr->range().start, right->range().end},
+                                        op,
+                                        std::move(expr),
+                                        std::move(right));
   }
   return expr;
 }
@@ -1012,7 +1043,9 @@ std::unique_ptr<Expr> Parser::parseBitAnd() {
       return nullptr;
     }
     expr = std::make_unique<BinaryExpr>(SourceRange{expr->range().start, right->range().end},
-                                        BinaryOp::BitAnd, std::move(expr), std::move(right));
+                                        BinaryOp::BitAnd,
+                                        std::move(expr),
+                                        std::move(right));
   }
   return expr;
 }
@@ -1025,7 +1058,9 @@ std::unique_ptr<Expr> Parser::parseBitXor() {
       return nullptr;
     }
     expr = std::make_unique<BinaryExpr>(SourceRange{expr->range().start, right->range().end},
-                                        BinaryOp::BitXor, std::move(expr), std::move(right));
+                                        BinaryOp::BitXor,
+                                        std::move(expr),
+                                        std::move(right));
   }
   return expr;
 }
@@ -1038,7 +1073,9 @@ std::unique_ptr<Expr> Parser::parseBitOr() {
       return nullptr;
     }
     expr = std::make_unique<BinaryExpr>(SourceRange{expr->range().start, right->range().end},
-                                        BinaryOp::BitOr, std::move(expr), std::move(right));
+                                        BinaryOp::BitOr,
+                                        std::move(expr),
+                                        std::move(right));
   }
   return expr;
 }
@@ -1089,8 +1126,8 @@ std::unique_ptr<Expr> Parser::parseComparison() {
   if (right == nullptr) {
     return nullptr;
   }
-  return std::make_unique<BinaryExpr>(SourceRange{expr->range().start, right->range().end}, op,
-                                      std::move(expr), std::move(right));
+  return std::make_unique<BinaryExpr>(
+      SourceRange{expr->range().start, right->range().end}, op, std::move(expr), std::move(right));
 }
 
 std::unique_ptr<Expr> Parser::parseAnd() {
@@ -1101,7 +1138,9 @@ std::unique_ptr<Expr> Parser::parseAnd() {
       return nullptr;
     }
     expr = std::make_unique<BinaryExpr>(SourceRange{expr->range().start, right->range().end},
-                                        BinaryOp::And, std::move(expr), std::move(right));
+                                        BinaryOp::And,
+                                        std::move(expr),
+                                        std::move(right));
   }
   return expr;
 }
@@ -1114,7 +1153,9 @@ std::unique_ptr<Expr> Parser::parseOr() {
       return nullptr;
     }
     expr = std::make_unique<BinaryExpr>(SourceRange{expr->range().start, right->range().end},
-                                        BinaryOp::Or, std::move(expr), std::move(right));
+                                        BinaryOp::Or,
+                                        std::move(expr),
+                                        std::move(right));
   }
   return expr;
 }
@@ -1132,12 +1173,15 @@ std::unique_ptr<Expr> Parser::parseTernary() {
   if (otherwise == nullptr) {
     return nullptr;
   }
-  return std::make_unique<TernaryExpr>(
-      SourceRange{expr->range().start, otherwise->range().end}, std::move(expr),
-      std::move(condition), std::move(otherwise));
+  return std::make_unique<TernaryExpr>(SourceRange{expr->range().start, otherwise->range().end},
+                                       std::move(expr),
+                                       std::move(condition),
+                                       std::move(otherwise));
 }
 
-std::unique_ptr<Expr> Parser::parseExpr() { return parseTernary(); }
+std::unique_ptr<Expr> Parser::parseExpr() {
+  return parseTernary();
+}
 
 std::unique_ptr<Expr> Parser::parseEmbeddedExpr(std::string_view text, SourceLocation base) {
   DiagnosticEngine nested;
@@ -1282,7 +1326,8 @@ std::vector<ParamDecl> Parser::parseParams() {
         return {};
       }
       if (check(TokenKind::Comma) || check(TokenKind::RParen)) {
-        diagnostics_->error(previous().range(), "bare '*' is not supported; name the vararg parameter");
+        diagnostics_->error(previous().range(),
+                            "bare '*' is not supported; name the vararg parameter");
         return {};
       }
       sawVarArg = true;
@@ -1415,8 +1460,8 @@ std::unique_ptr<VarDecl> Parser::parseVarDecl(bool isStatic) {
   if (!finishExprLine(init.get())) {
     return nullptr;
   }
-  return std::make_unique<VarDecl>(name.range(), std::string(name.spelling()), std::move(type),
-                                   std::move(init), isStatic);
+  return std::make_unique<VarDecl>(
+      name.range(), std::string(name.spelling()), std::move(type), std::move(init), isStatic);
 }
 
 std::unique_ptr<ReturnStmt> Parser::parseReturn() {
@@ -1481,8 +1526,8 @@ std::unique_ptr<ForStmt> Parser::parseFor() {
     return nullptr;
   }
   std::vector<std::unique_ptr<Stmt>> body = parseSuite();
-  return std::make_unique<ForStmt>(keyword.range(), std::move(name), std::move(iterable),
-                                   std::move(body));
+  return std::make_unique<ForStmt>(
+      keyword.range(), std::move(name), std::move(iterable), std::move(body));
 }
 
 std::unique_ptr<AssertStmt> Parser::parseAssert() {
@@ -1561,8 +1606,8 @@ std::unique_ptr<Stmt> Parser::parseWith() {
     }
   }
   std::vector<std::unique_ptr<Stmt>> body = parseSuite();
-  return std::make_unique<WithStmt>(keyword.range(), std::move(context), std::move(name),
-                                    std::move(body));
+  return std::make_unique<WithStmt>(
+      keyword.range(), std::move(context), std::move(name), std::move(body));
 }
 
 std::unique_ptr<Stmt> Parser::parseConst() {
@@ -1586,8 +1631,8 @@ std::unique_ptr<Stmt> Parser::parseConst() {
   if (init == nullptr || !finishExprLine(init.get())) {
     return nullptr;
   }
-  return std::make_unique<VarDecl>(keyword.range(), name, std::move(type), std::move(init), false,
-                                   true);
+  return std::make_unique<VarDecl>(
+      keyword.range(), name, std::move(type), std::move(init), false, true);
 }
 
 std::unique_ptr<TryStmt> Parser::parseTry() {
@@ -1621,8 +1666,11 @@ std::unique_ptr<TryStmt> Parser::parseTry() {
     diagnostics_->error(keyword.range(), "try needs except or finally");
     return nullptr;
   }
-  return std::make_unique<TryStmt>(keyword.range(), std::move(body), std::move(handlers),
-                                   std::move(elseBody), std::move(finallyBody));
+  return std::make_unique<TryStmt>(keyword.range(),
+                                   std::move(body),
+                                   std::move(handlers),
+                                   std::move(elseBody),
+                                   std::move(finallyBody));
 }
 
 std::unique_ptr<MatchStmt> Parser::parseMatch() {
@@ -1668,7 +1716,8 @@ std::unique_ptr<MatchStmt> Parser::parseMatch() {
     return nullptr;
   }
   return std::make_unique<MatchStmt>(SourceRange{keyword.range().start, previous().range().end},
-                                     std::move(subject), std::move(arms));
+                                     std::move(subject),
+                                     std::move(arms));
 }
 
 bool Parser::parseEnumVariant(EnumVariant& variant) {
@@ -1728,6 +1777,7 @@ bool Parser::parseInlineEnumVariants(std::vector<EnumVariant>& variants) {
 std::unique_ptr<EnumDef> Parser::parseEnum() {
   const Token& keyword = advance();
   std::string name = parseIdentifier("expected enum name");
+  std::vector<std::string> typeParams = parseTypeParamList();
   if (name.empty()) {
     return nullptr;
   }
@@ -1737,7 +1787,8 @@ std::unique_ptr<EnumDef> Parser::parseEnum() {
         !consume(TokenKind::RBrace, "expected '}' after enum variants") || !finishLine()) {
       return nullptr;
     }
-    return std::make_unique<EnumDef>(keyword.range(), std::move(name), std::move(variants));
+    return std::make_unique<EnumDef>(
+        keyword.range(), std::move(name), std::move(typeParams), std::move(variants));
   }
   if (!consume(TokenKind::Colon, "expected ':' or '{' after enum name")) {
     return nullptr;
@@ -1746,7 +1797,8 @@ std::unique_ptr<EnumDef> Parser::parseEnum() {
     if (!parseInlineEnumVariants(variants) || !finishLine()) {
       return nullptr;
     }
-    return std::make_unique<EnumDef>(keyword.range(), std::move(name), std::move(variants));
+    return std::make_unique<EnumDef>(
+        keyword.range(), std::move(name), std::move(typeParams), std::move(variants));
   }
   if (!consume(TokenKind::Newline, "expected newline after enum header") ||
       !consume(TokenKind::Indent, "expected indented enum body")) {
@@ -1768,7 +1820,8 @@ std::unique_ptr<EnumDef> Parser::parseEnum() {
       method->setOwnerClass(name);
       attachFunctionDecorators(*method, std::move(decoratorExprs));
       markPrivateFromDecorators(*method, method->decorators());
-      auto enumDef = std::make_unique<EnumDef>(keyword.range(), std::move(name), std::move(variants));
+      auto enumDef = std::make_unique<EnumDef>(
+          keyword.range(), std::move(name), std::move(typeParams), std::move(variants));
       // Collect remaining methods after this one by finishing the loop via a local vector.
       std::vector<std::unique_ptr<FunctionDef>> methods;
       methods.push_back(std::move(method));
@@ -1833,7 +1886,8 @@ std::unique_ptr<EnumDef> Parser::parseEnum() {
   if (!consume(TokenKind::Dedent, "expected dedent after enum body")) {
     return nullptr;
   }
-  return std::make_unique<EnumDef>(keyword.range(), std::move(name), std::move(variants));
+  return std::make_unique<EnumDef>(
+      keyword.range(), std::move(name), std::move(typeParams), std::move(variants));
 }
 
 std::unique_ptr<Stmt> Parser::parseAssignOrExpr() {
@@ -1941,8 +1995,8 @@ std::unique_ptr<FunctionDef> Parser::parseFunction(std::string externName) {
     } else if (name == "__init__") {
       inferred = "void";
     }
-    returnType = std::make_unique<TypeExpr>(previous().range(), inferred,
-                                            std::vector<std::unique_ptr<TypeExpr>>{});
+    returnType = std::make_unique<TypeExpr>(
+        previous().range(), inferred, std::vector<std::unique_ptr<TypeExpr>>{});
     if (!externName.empty()) {
       diagnostics_->error(previous().range(), "extern function '" + name + "' needs a return type");
       diagnostics_->help("write `-> void` or another type after the parameter list");
@@ -1966,15 +2020,19 @@ std::unique_ptr<FunctionDef> Parser::parseFunction(std::string externName) {
   if (!body.empty()) {
     range.end = body.back()->range().end;
   }
-  auto function = std::make_unique<FunctionDef>(range, std::move(name), std::move(params),
-                                                std::move(returnType), std::move(body),
+  auto function = std::make_unique<FunctionDef>(range,
+                                                std::move(name),
+                                                std::move(params),
+                                                std::move(returnType),
+                                                std::move(body),
                                                 std::move(externName));
   function->setTypeParams(std::move(typeParams));
   function->setInferredReturn(inferredReturn);
   return function;
 }
 
-std::unique_ptr<FunctionDef> Parser::parsePropertyAccessor(std::string name, SourceRange nameRange) {
+std::unique_ptr<FunctionDef> Parser::parsePropertyAccessor(std::string name,
+                                                           SourceRange nameRange) {
   if (!consume(TokenKind::Dot, "expected '.' after property name")) {
     return nullptr;
   }
@@ -2024,8 +2082,8 @@ std::unique_ptr<FunctionDef> Parser::parsePropertyAccessor(std::string name, Sou
     }
   } else {
     inferredReturn = true;
-    returnType = std::make_unique<TypeExpr>(previous().range(), isGet ? "Any" : "void",
-                                            std::vector<std::unique_ptr<TypeExpr>>{});
+    returnType = std::make_unique<TypeExpr>(
+        previous().range(), isGet ? "Any" : "void", std::vector<std::unique_ptr<TypeExpr>>{});
   }
   const std::size_t beforeSuite = current_;
   std::vector<std::unique_ptr<Stmt>> body = parseSuite();
@@ -2037,8 +2095,8 @@ std::unique_ptr<FunctionDef> Parser::parsePropertyAccessor(std::string name, Sou
     range.end = body.back()->range().end;
   }
   const std::string methodName = (isGet ? "__get_" : "__set_") + name;
-  auto function = std::make_unique<FunctionDef>(range, methodName, std::move(params),
-                                                std::move(returnType), std::move(body), "");
+  auto function = std::make_unique<FunctionDef>(
+      range, methodName, std::move(params), std::move(returnType), std::move(body), "");
   function->setInferredReturn(inferredReturn);
   function->setProperty(isGet ? PropertyKind::Get : PropertyKind::Set, std::move(name));
   return function;
@@ -2080,8 +2138,8 @@ std::unique_ptr<ClassDef> Parser::parseClass() {
     }
   }
   if (name.empty() ||
-      !consume(TokenKind::Colon, isStruct ? "expected ':' after struct name"
-                                          : "expected ':' after class name") ||
+      !consume(TokenKind::Colon,
+               isStruct ? "expected ':' after struct name" : "expected ':' after class name") ||
       !consume(TokenKind::Newline, "expected newline after type header") ||
       !consume(TokenKind::Indent, "expected indented type body")) {
     return nullptr;
@@ -2179,8 +2237,12 @@ std::unique_ptr<ClassDef> Parser::parseClass() {
   if (!consume(TokenKind::Dedent, "expected dedent after type body")) {
     return nullptr;
   }
-  auto def = std::make_unique<ClassDef>(keyword.range(), std::move(name), std::move(fields),
-                                        std::move(methods), std::move(bases), std::move(typeParams));
+  auto def = std::make_unique<ClassDef>(keyword.range(),
+                                        std::move(name),
+                                        std::move(fields),
+                                        std::move(methods),
+                                        std::move(bases),
+                                        std::move(typeParams));
   def->setBaseTypes(std::move(baseTypes));
   def->setStruct(isStruct);
   return def;
@@ -2196,8 +2258,8 @@ std::unique_ptr<ImportStmt> Parser::parseImport() {
   if (path.empty() || !finishLine()) {
     return nullptr;
   }
-  return std::make_unique<ImportStmt>(keyword.range(), std::move(path), std::move(alias),
-                                      std::vector<std::string>{}, false);
+  return std::make_unique<ImportStmt>(
+      keyword.range(), std::move(path), std::move(alias), std::vector<std::string>{}, false);
 }
 
 std::unique_ptr<ImportStmt> Parser::parseFromImport() {
@@ -2227,8 +2289,8 @@ std::unique_ptr<ImportStmt> Parser::parseFromImport() {
   if (!finishLine()) {
     return nullptr;
   }
-  return std::make_unique<ImportStmt>(keyword.range(), std::move(path), "", std::move(names), star,
-                                      std::move(nameAliases));
+  return std::make_unique<ImportStmt>(
+      keyword.range(), std::move(path), "", std::move(names), star, std::move(nameAliases));
 }
 
 std::unique_ptr<TypeAlias> Parser::parseTypeAlias() {
@@ -2475,14 +2537,20 @@ std::string Parser::joinTokenSpellings(const std::vector<Token>& tokens) const {
   return raw;
 }
 
-std::unique_ptr<MacroInvokeExpr> Parser::makeMacroInvokeExpr(
-    SourceRange nameRange, std::string name, MacroDelimiter delimiter, std::string raw,
-    SourceRange rawRange, std::vector<Token> tokens) {
+std::unique_ptr<MacroInvokeExpr> Parser::makeMacroInvokeExpr(SourceRange nameRange,
+                                                             std::string name,
+                                                             MacroDelimiter delimiter,
+                                                             std::string raw,
+                                                             SourceRange rawRange,
+                                                             std::vector<Token> tokens) {
   if (raw.empty()) {
     raw = joinTokenSpellings(tokens);
   }
   return std::make_unique<MacroInvokeExpr>(SourceRange{nameRange.start, previous().range().end},
-                                           std::move(name), delimiter, std::move(raw), rawRange,
+                                           std::move(name),
+                                           delimiter,
+                                           std::move(raw),
+                                           rawRange,
                                            std::move(tokens));
 }
 
@@ -2599,8 +2667,8 @@ std::unique_ptr<Expr> Parser::parseMacroInvokeExpr(std::string name, SourceRange
     return nullptr;
   }
   std::string raw = rawSlice(rawRange);
-  return makeMacroInvokeExpr(nameRange, std::move(name), delimiter, std::move(raw), rawRange,
-                             std::move(tokens));
+  return makeMacroInvokeExpr(
+      nameRange, std::move(name), delimiter, std::move(raw), rawRange, std::move(tokens));
 }
 
 std::unique_ptr<Expr> Parser::parseMacroInvokeIndentExpr(std::string name, SourceRange nameRange) {
@@ -2610,8 +2678,12 @@ std::unique_ptr<Expr> Parser::parseMacroInvokeIndentExpr(std::string name, Sourc
     return nullptr;
   }
   std::string raw = rawSlice(rawRange);
-  return makeMacroInvokeExpr(nameRange, std::move(name), MacroDelimiter::Indent, std::move(raw),
-                             rawRange, std::move(tokens));
+  return makeMacroInvokeExpr(nameRange,
+                             std::move(name),
+                             MacroDelimiter::Indent,
+                             std::move(raw),
+                             rawRange,
+                             std::move(tokens));
 }
 
 std::unique_ptr<Stmt> Parser::parseMacroInvokeStmt(std::string name, SourceRange nameRange) {
@@ -2620,8 +2692,12 @@ std::unique_ptr<Stmt> Parser::parseMacroInvokeStmt(std::string name, SourceRange
     return nullptr;
   }
   const auto& invoke = static_cast<const MacroInvokeExpr&>(*expr);
-  return std::make_unique<MacroInvokeStmt>(invoke.range(), invoke.name(), invoke.delimiter(),
-                                           invoke.rawText(), invoke.rawRange(), invoke.tokens());
+  return std::make_unique<MacroInvokeStmt>(invoke.range(),
+                                           invoke.name(),
+                                           invoke.delimiter(),
+                                           invoke.rawText(),
+                                           invoke.rawRange(),
+                                           invoke.tokens());
 }
 
 std::unique_ptr<MacroDef> Parser::parseMacroDef() {
@@ -2661,8 +2737,8 @@ std::unique_ptr<MacroDef> Parser::parseMacroDef() {
       !consume(TokenKind::Indent, "expected indented macro body")) {
     return nullptr;
   }
-  auto def = std::make_unique<MacroDef>(SourceRange{start, previous().range().end}, std::move(name),
-                                        std::move(params), nameRange);
+  auto def = std::make_unique<MacroDef>(
+      SourceRange{start, previous().range().end}, std::move(name), std::move(params), nameRange);
   def->setVariadic(variadic);
   while (!check(TokenKind::Dedent) && !isAtEnd()) {
     skipNewlines();
@@ -2766,4 +2842,4 @@ std::unique_ptr<MacroDef> Parser::parseMacroDef() {
   return def;
 }
 
-}  // namespace sere
+} // namespace sere

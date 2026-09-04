@@ -53,7 +53,7 @@ std::string functionKey(const std::vector<const Type*>& params, const Type* retu
   return key;
 }
 
-}  // namespace
+} // namespace
 
 TypeContext::TypeContext() {
   internPrimitive("void");
@@ -154,7 +154,8 @@ Type* TypeContext::writable(const Type* type) {
   return nullptr;
 }
 
-const Type* TypeContext::defineRecord(const std::string& name, std::vector<RecordField> fields,
+const Type* TypeContext::defineRecord(const std::string& name,
+                                      std::vector<RecordField> fields,
                                       const std::string& qualifier) {
   const std::string qualified = qualifier.empty() ? name : qualifier + "." + name;
   const std::string key = "R:" + qualified;
@@ -334,13 +335,23 @@ const Type* TypeContext::instantiate(const Type* generic, const std::vector<cons
   std::vector<RecordField> fields;
   for (const RecordField& field : generic->fields()) {
     RecordField copy = field;
-    copy.type = substitute(field.type, subst);
+    copy.type = nullptr;
+    copy.payloadTypes.clear();
+    for (const Type* payload : field.payloadTypes) {
+      copy.payloadTypes.push_back(substitute(payload, subst));
+    }
     fields.push_back(std::move(copy));
   }
-  const Type* instance = defineRecord(instName, std::move(fields));
+  const Type* instance = defineRecord(instName, {});
+  for (RecordField& field : fields) {
+    field.type =
+        generic->isEnum() ? instance : substitute(generic->findField(field.name)->type, subst);
+  }
+  setRecordFields(instance, std::move(fields));
   std::vector<const Type*> bases;
   for (const Type* base : generic->bases()) {
-    if (base != nullptr && !base->typeParams().empty() && base->typeParams().size() == args.size()) {
+    if (base != nullptr && !base->typeParams().empty() &&
+        base->typeParams().size() == args.size()) {
       bases.push_back(instantiate(base, args));
     } else {
       bases.push_back(base);
@@ -348,6 +359,10 @@ const Type* TypeContext::instantiate(const Type* generic, const std::vector<cons
   }
   setRecordBases(instance, std::move(bases));
   setRecordAbstract(instance, generic->isAbstract());
+  setRecordEnum(instance, generic->isEnum());
+  setRecordStruct(instance, generic->isStruct());
+  setRecordFrozen(instance, generic->isFrozen());
+  setRecordFlags(instance, generic->isFlags());
   if (Type* writableInstance = writable(instance)) {
     writableInstance->args_ = args;
   }
@@ -372,11 +387,11 @@ const Type* TypeContext::instantiate(const Type* generic, const std::vector<cons
   return instance;
 }
 
-const FunctionInstantiation* TypeContext::instantiateFunction(
-    const std::string& name,
-    const std::vector<std::string>& typeParams,
-    const Type* genericType,
-    const std::vector<const Type*>& args) {
+const FunctionInstantiation*
+TypeContext::instantiateFunction(const std::string& name,
+                                 const std::vector<std::string>& typeParams,
+                                 const Type* genericType,
+                                 const std::vector<const Type*>& args) {
   if (genericType == nullptr || typeParams.size() != args.size() || args.empty()) {
     return nullptr;
   }
@@ -456,29 +471,53 @@ const Type* TypeContext::alias(std::string_view name) const {
   return found->second;
 }
 
-const Type* TypeContext::neverType() const { return primitive("never"); }
+const Type* TypeContext::neverType() const {
+  return primitive("never");
+}
 
-const Type* TypeContext::voidType() const { return primitive("void"); }
+const Type* TypeContext::voidType() const {
+  return primitive("void");
+}
 
-const Type* TypeContext::noneType() const { return primitive("None"); }
+const Type* TypeContext::noneType() const {
+  return primitive("None");
+}
 
-const Type* TypeContext::anyType() const { return primitive("Any"); }
+const Type* TypeContext::anyType() const {
+  return primitive("Any");
+}
 
-const Type* TypeContext::boolType() const { return primitive("bool"); }
+const Type* TypeContext::boolType() const {
+  return primitive("bool");
+}
 
-const Type* TypeContext::i8Type() const { return primitive("i8"); }
+const Type* TypeContext::i8Type() const {
+  return primitive("i8");
+}
 
-const Type* TypeContext::i32Type() const { return primitive("i32"); }
+const Type* TypeContext::i32Type() const {
+  return primitive("i32");
+}
 
-const Type* TypeContext::i64Type() const { return primitive("i64"); }
+const Type* TypeContext::i64Type() const {
+  return primitive("i64");
+}
 
-const Type* TypeContext::f32Type() const { return primitive("f32"); }
+const Type* TypeContext::f32Type() const {
+  return primitive("f32");
+}
 
-const Type* TypeContext::f64Type() const { return primitive("f64"); }
+const Type* TypeContext::f64Type() const {
+  return primitive("f64");
+}
 
-const Type* TypeContext::strType() const { return primitive("str"); }
+const Type* TypeContext::strType() const {
+  return primitive("str");
+}
 
-const Type* TypeContext::regexType() const { return primitive("regex"); }
+const Type* TypeContext::regexType() const {
+  return primitive("regex");
+}
 
 const Type* TypeContext::uniqueType(const Type* pointee) {
   return generic("Unique", {pointee});
@@ -488,11 +527,17 @@ const Type* TypeContext::sharedType(const Type* pointee) {
   return generic("Shared", {pointee});
 }
 
-const Type* TypeContext::ptrType(const Type* pointee) { return generic("Ptr", {pointee}); }
+const Type* TypeContext::ptrType(const Type* pointee) {
+  return generic("Ptr", {pointee});
+}
 
-const Type* TypeContext::typeObject(const Type* instance) { return generic("type", {instance}); }
+const Type* TypeContext::typeObject(const Type* instance) {
+  return generic("type", {instance});
+}
 
-const Type* TypeContext::ellipsisType() { return primitive("..."); }
+const Type* TypeContext::ellipsisType() {
+  return primitive("...");
+}
 
 const Type* TypeContext::paramList(const std::vector<const Type*>& params) {
   return generic("[]", params);
@@ -510,7 +555,9 @@ const Type* TypeContext::listType(const Type* element, std::int64_t size) {
   return generic("list", {element});
 }
 
-const Type* TypeContext::arrayType(const Type* element) { return generic("array", {element}); }
+const Type* TypeContext::arrayType(const Type* element) {
+  return generic("array", {element});
+}
 
 const Type* TypeContext::dictType(const Type* key, const Type* value) {
   return generic("dict", {key, value});
@@ -600,4 +647,4 @@ const Type* TypeContext::unionType(std::vector<const Type*> members) {
   return pointer;
 }
 
-}  // namespace sere
+} // namespace sere

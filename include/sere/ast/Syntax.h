@@ -220,7 +220,7 @@ public:
   [[nodiscard]] const std::vector<NamedArgument>& keywordArguments() const;
   [[nodiscard]] const std::vector<const Expr*>& boundArguments() const;
   void setBoundArguments(std::vector<const Expr*> arguments,
-                        std::vector<std::unique_ptr<Expr>> owned);
+                         std::vector<std::unique_ptr<Expr>> owned);
   [[nodiscard]] IntrinsicKind intrinsic() const;
   void setIntrinsic(IntrinsicKind kind);
   [[nodiscard]] const std::string& loweredName() const;
@@ -344,7 +344,10 @@ enum class AssignOp {
 
 class BinaryExpr final : public Expr {
 public:
-  BinaryExpr(SourceRange range, BinaryOp op, std::unique_ptr<Expr> left, std::unique_ptr<Expr> right);
+  BinaryExpr(SourceRange range,
+             BinaryOp op,
+             std::unique_ptr<Expr> left,
+             std::unique_ptr<Expr> right);
   [[nodiscard]] BinaryOp op() const;
   [[nodiscard]] const Expr& left() const;
   [[nodiscard]] Expr& left();
@@ -503,7 +506,9 @@ struct ParamDecl {
 
 class LambdaExpr final : public Expr {
 public:
-  LambdaExpr(SourceRange range, std::vector<ParamDecl> params, std::unique_ptr<Expr> body,
+  LambdaExpr(SourceRange range,
+             std::vector<ParamDecl> params,
+             std::unique_ptr<Expr> body,
              std::unique_ptr<TypeExpr> returnType = nullptr);
   [[nodiscard]] const std::vector<ParamDecl>& params() const;
   [[nodiscard]] std::vector<ParamDecl>& params();
@@ -537,7 +542,9 @@ private:
 
 class WhileStmt final : public Stmt {
 public:
-  WhileStmt(SourceRange range, std::unique_ptr<Expr> condition, std::vector<std::unique_ptr<Stmt>> body);
+  WhileStmt(SourceRange range,
+            std::unique_ptr<Expr> condition,
+            std::vector<std::unique_ptr<Stmt>> body);
   [[nodiscard]] const Expr& condition() const;
   [[nodiscard]] Expr& condition();
   [[nodiscard]] const std::vector<std::unique_ptr<Stmt>>& body() const;
@@ -660,7 +667,9 @@ private:
 
 class WithStmt final : public Stmt {
 public:
-  WithStmt(SourceRange range, std::unique_ptr<Expr> context, std::string name,
+  WithStmt(SourceRange range,
+           std::unique_ptr<Expr> context,
+           std::string name,
            std::vector<std::unique_ptr<Stmt>> body);
   [[nodiscard]] const Expr& context() const;
   [[nodiscard]] Expr& context();
@@ -712,7 +721,9 @@ private:
 
 class AssignStmt final : public Stmt {
 public:
-  AssignStmt(SourceRange range, std::unique_ptr<Expr> target, std::unique_ptr<Expr> value,
+  AssignStmt(SourceRange range,
+             std::unique_ptr<Expr> target,
+             std::unique_ptr<Expr> value,
              AssignOp op = AssignOp::Assign);
   [[nodiscard]] const Expr& target() const;
   [[nodiscard]] const Expr& value() const;
@@ -776,8 +787,12 @@ struct EnumVariant {
 
 class EnumDef final : public Stmt {
 public:
-  EnumDef(SourceRange range, std::string name, std::vector<EnumVariant> variants);
+  EnumDef(SourceRange range,
+          std::string name,
+          std::vector<std::string> typeParams,
+          std::vector<EnumVariant> variants);
   [[nodiscard]] const std::string& name() const;
+  [[nodiscard]] const std::vector<std::string>& typeParams() const;
   [[nodiscard]] const std::vector<EnumVariant>& variants() const;
   [[nodiscard]] std::vector<EnumVariant>& variants();
   [[nodiscard]] const std::vector<std::unique_ptr<FunctionDef>>& methods() const;
@@ -792,6 +807,7 @@ public:
 
 private:
   std::string name_;
+  std::vector<std::string> typeParams_{};
   std::vector<EnumVariant> variants_;
   std::vector<std::unique_ptr<FunctionDef>> methods_{};
   std::vector<std::string> decorators_{};
@@ -999,7 +1015,9 @@ private:
 
 class MacroDef final : public Stmt {
 public:
-  MacroDef(SourceRange range, std::string name, std::vector<std::string> params,
+  MacroDef(SourceRange range,
+           std::string name,
+           std::vector<std::string> params,
            SourceRange nameRange = {});
 
   [[nodiscard]] const std::string& name() const;
@@ -1107,8 +1125,8 @@ private:
 [[nodiscard]] bool isReservedDecoratorName(std::string_view name);
 [[nodiscard]] bool isReservedDecoratorExpr(const Expr& expr);
 [[nodiscard]] std::string decoratorExprName(const Expr& expr);
-[[nodiscard]] std::vector<std::string> decoratorExprNames(
-    const std::vector<std::unique_ptr<Expr>>& exprs);
+[[nodiscard]] std::vector<std::string>
+decoratorExprNames(const std::vector<std::unique_ptr<Expr>>& exprs);
 [[nodiscard]] bool hasRuntimeDecorators(const std::vector<std::unique_ptr<Expr>>& exprs);
 
-}  // namespace sere
+} // namespace sere
