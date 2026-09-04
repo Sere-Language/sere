@@ -5707,7 +5707,11 @@ llvm::Type* IRGenerator::callableFatType() {
 llvm::Value* IRGenerator::packCallable(llvm::IRBuilder<>& builder, llvm::Value* fn,
                                        llvm::Value* env) {
   llvm::Type* fat = callableFatType();
-  llvm::Value* slot = builder.CreateAlloca(fat, nullptr, "cb.pack");
+  // Callable values can escape their defining frame (decorators and nested
+  // functions both rely on this), so the pair must not live in a stack alloca.
+  llvm::Function* allocate =
+      runtimeDecl("sere_alloc", builder.getPtrTy(), {builder.getInt64Ty()});
+  llvm::Value* slot = builder.CreateCall(allocate, {builder.getInt64(16)}, "cb.pack");
   llvm::Value* fnPtr = fn == nullptr
                            ? llvm::ConstantPointerNull::get(builder.getPtrTy())
                            : builder.CreateBitCast(fn, builder.getPtrTy());

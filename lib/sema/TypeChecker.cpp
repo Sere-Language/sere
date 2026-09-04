@@ -126,6 +126,34 @@ namespace {
   return std::fabs(value) <= static_cast<double>(std::numeric_limits<float>::max());
 }
 
+[[nodiscard]] bool inferTypeBindings(const Type* pattern,
+                                     const Type* actual,
+                                     std::unordered_map<std::string, const Type*>& bindings) {
+  if (pattern == nullptr || actual == nullptr) {
+    return false;
+  }
+  pattern = pattern->canonical();
+  actual = actual->canonical();
+  if (pattern->isTypeParam()) {
+    const auto found = bindings.find(pattern->name());
+    if (found == bindings.end()) {
+      bindings[pattern->name()] = actual;
+      return true;
+    }
+    return found->second->canonical() == actual;
+  }
+  if (pattern->kind() == TypeKind::Generic && actual->kind() == TypeKind::Generic &&
+      pattern->name() == actual->name() && pattern->args().size() == actual->args().size()) {
+    for (std::size_t index = 0; index < pattern->args().size(); ++index) {
+      if (!inferTypeBindings(pattern->args()[index], actual->args()[index], bindings)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return true;
+}
+
 [[nodiscard]] bool abstractMethodNeedsOverride(const FunctionDef& method) {
   if (!method.isAbstract()) {
     return false;
@@ -3270,8 +3298,59 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
                                 " payload argument(s)");
         return nullptr;
       }
-      for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
-        const Type* argType = checkExpr(*expr.arguments()[index]);
+      std::vector<const Type*> argumentTypes;
+      argumentTypes.reserve(expr.arguments().size());
+      for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
+        const Type* argType = checkExpr(*argument);
+        if (argType == nullptr) {
+          return nullptr;
+        }
+        argumentTypes.push_back(argType);
+      }
+      if (!objectType->typeParams().empty()) {
+        if (!expr.typeArgs().empty()) {
+          const auto* enumName = asName(member.object());
+          objectType =
+              enumName == nullptr
+                  ? nullptr
+                  : resolveNamedType(enumName->name(), expr.typeArgs(), expr.range(), true);
+        } else {
+          std::unordered_map<std::string, const Type*> bindings;
+          for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+            if (!inferTypeBindings(variant->payloadTypes[index], argumentTypes[index], bindings)) {
+              diagnostics_->error(expr.arguments()[index]->range(),
+                                  "conflicting generic enum payload types");
+              return nullptr;
+            }
+          }
+          std::vector<const Type*> inferred;
+          for (const std::string& param : objectType->typeParams()) {
+            const auto found = bindings.find(param);
+            if (found == bindings.end()) {
+              diagnostics_->error(expr.range(),
+                                  "cannot infer type argument '" + param + "' for enum '" +
+                                      objectType->name() + "'");
+              diagnostics_->help("provide it explicitly, like " + objectType->name() + "." +
+                                 member.field() + "[i32](...)");
+              return nullptr;
+            }
+            inferred.push_back(found->second);
+          }
+          objectType = types_->instantiate(objectType, inferred);
+        }
+        if (objectType == nullptr) {
+          return nullptr;
+        }
+        variant = objectType->findField(member.field());
+      } else if (!expr.typeArgs().empty()) {
+        diagnostics_->error(expr.range(), "enum '" + objectType->name() + "' is not generic");
+        return nullptr;
+      }
+      if (variant == nullptr) {
+        return nullptr;
+      }
+      for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+        const Type* argType = argumentTypes[index];
         if (argType == nullptr || (variant->payloadTypes[index] != nullptr &&
                                    !isAssignable(argType, variant->payloadTypes[index]))) {
           diagnostics_->error(expr.arguments()[index]->range(), "payload type mismatch");
@@ -4246,6 +4325,17 @@ bool TypeChecker::collectEnums(Module& module) {
       continue;
     }
     auto& enumDef = static_cast<EnumDef&>(*statement);
+    const std::string qualifier = enumDef.fromPrelude() ? "prelude" : moduleName_;
+    const Type* existing =
+        enumDef.fromPrelude() ? types_->record("prelude." + enumDef.name()) : nullptr;
+    const Type* record =
+        existing != nullptr ? existing : types_->defineRecord(enumDef.name(), {}, qualifier);
+    types_->setRecordTypeParams(record, enumDef.typeParams());
+    for (const std::string& param : enumDef.typeParams()) {
+      (void)types_->defineTypeParam(param);
+    }
+    types_->setRecordEnum(record, true);
+    types_->setRecordFlags(record, enumDef.isFlags());
     std::vector<RecordField> fields;
     std::int64_t next = 0;
     for (EnumVariant& variant : enumDef.variants()) {
@@ -4275,13 +4365,6 @@ bool TypeChecker::collectEnums(Module& module) {
       fields.push_back(std::move(field));
       ++next;
     }
-    const std::string qualifier = enumDef.fromPrelude() ? "prelude" : moduleName_;
-    const Type* existing =
-        enumDef.fromPrelude() ? types_->record("prelude." + enumDef.name()) : nullptr;
-    const Type* record =
-        existing != nullptr ? existing : types_->defineRecord(enumDef.name(), {}, qualifier);
-    types_->setRecordEnum(record, true);
-    types_->setRecordFlags(record, enumDef.isFlags());
     for (RecordField& field : fields) {
       field.type = record;
     }
