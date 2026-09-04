@@ -33,6 +33,8 @@ struct DecodedString {
 };
 
 [[nodiscard]] std::string_view stringLiteralInner(std::string_view spelling);
+// Decode escapes in literal text after separating interpolation expressions.
+[[nodiscard]] std::string unescapeStringBody(std::string_view body, bool regex = false);
 [[nodiscard]] DecodedString decodeStringToken(std::string_view spelling);
 
 /// True for `'...'` but not `'''...'''` or `"..."`.

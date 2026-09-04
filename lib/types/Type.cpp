@@ -47,6 +47,21 @@ bool Type::isRecord() const {
   return kind == TypeKind::Record;
 }
 
+bool Type::isClass() const {
+  return !isVoidLike() && !isModule() && !isTypeParam() && !isSizeLiteral() &&
+         !isEllipsis() && !isParamList();
+}
+
+const Type* Type::valueType() const {
+  const Type* type = canonical();
+  if (type->isRecord()) {
+    if (const RecordField* payload = type->findField("$value")) {
+      return payload->type->canonical();
+    }
+  }
+  return type;
+}
+
 bool Type::isTypeParam() const { return canonical()->kind_ == TypeKind::TypeParam; }
 
 bool Type::isModule() const { return canonical()->kind_ == TypeKind::Module; }

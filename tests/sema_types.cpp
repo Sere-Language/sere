@@ -22,6 +22,81 @@ int fail(const char* message) {
 } // namespace
 
 int main() {
+  const auto checkSnippet = [](const std::string& text, bool expected) {
+    sere::DiagnosticEngine diagnostics;
+    sere::SourceManager source("gradual_types.sere", text);
+    sere::Lexer lexer(source, diagnostics);
+    sere::Parser parser(diagnostics, lexer.tokenizeAll());
+    auto module = parser.parseModule();
+    if (!module || diagnostics.hasErrors()) {
+      diagnostics.printAll(source);
+      return false;
+    }
+    sere::TypeContext types;
+    sere::TypeChecker checker(types, diagnostics);
+    const bool accepted = checker.check(*module);
+    if (accepted != expected) diagnostics.printAll(source);
+    return accepted == expected;
+  };
+  if (!checkSnippet(R"(
+class Box:
+    value: i32
+def identity(value: Any) -> Any:
+    return value
+def empty() -> list[str]:
+    return []
+def take(values: list[Any], mapping: dict[str, Any]) -> void:
+    pass
+def main() -> i32:
+    number: i32 = identity(42)
+    text: str = identity("hello")
+    box: Box = identity(Box(7))
+    values: list[i32] = identity([1, 2])
+    flag: bool = identity(True)
+    identity(None)
+    identity((1, "two"))
+    identity(identity)
+    take([], {})
+    take([1, "two", Box(3)], {"one": 1, "two": "two"})
+    return number
+)", true)) return fail("Any and contextual collection arguments/returns should typecheck");
+  if (!checkSnippet(R"(
+def main() -> i32:
+    narrow: i8 = 1
+    wide: i64 = 300
+    first = [narrow, wide]
+    second = [wide, narrow]
+    a: list[i64] = first
+    b: list[i64] = second
+    mapping = {"first": narrow, "second": wide}
+    c: dict[str, i64] = mapping
+    unsigned: u8 = 255
+    mixed = [narrow, unsigned]
+    reversed = [unsigned, narrow]
+    d: list[i16] = mixed
+    e: list[i16] = reversed
+    return 0
+)", true)) return fail("numeric collections should infer the widest element type in either order");
+  for (const std::string& body : {
+      "    values: list[i32] = [1]\n    erased: list[Any] = values\n",
+      "    values: list[Any] = [1]\n    concrete: list[i32] = values\n",
+      "    values: dict[str, i32] = {\"a\": 1}\n    erased: dict[str, Any] = values\n",
+      "    value: i32 = \"wrong\"\n",
+      "    value: i8 = 300\n"}) {
+    if (!checkSnippet("def main() -> void:\n" + body, false))
+      return fail("concrete type, range, and mutable container safety must be preserved");
+  }
+  if (!checkSnippet(R"(
+def concrete(value: i32) -> i32:
+    return value
+def main() -> void:
+    callback: Callable[[Any], i32] = concrete
+)", false) || !checkSnippet(R"(
+def concrete(value: i32) -> i32:
+    return value
+def main() -> void:
+    callback: Callable[[i32], Any] = concrete
+)", false)) return fail("callable annotations must not silently change the Any ABI");
   {
     const std::string genericEnum = "enum Result[T]:\n"
                                     "    Ok(T)\n"

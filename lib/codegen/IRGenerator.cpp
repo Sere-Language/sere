@@ -244,7 +244,8 @@ llvm::Type* IRGenerator::lower(const Type* type) {
     llvmType = llvm::Type::getVoidTy(*context_);
   } else if (type->isAny()) {
     llvmType = llvm::StructType::get(
-        *context_, {llvm::Type::getInt32Ty(*context_), llvm::Type::getInt64Ty(*context_)});
+        *context_, {llvm::PointerType::getUnqual(*context_),
+                    llvm::PointerType::getUnqual(*context_)});
   } else if (type->isNamed("bool") || type->isNamed("i8") || type->isNamed("u8")) {
     llvmType = llvm::Type::getIntNTy(*context_, type->isNamed("bool") ? 1 : 8);
   } else if (type->isNamed("i16") || type->isNamed("u16")) {
@@ -898,6 +899,23 @@ valueFromBits(llvm::IRBuilder<>& builder, llvm::Value* bits, const Type* to, llv
 
 } // namespace
 
+llvm::Value* IRGenerator::emitAnyTypeMatch(llvm::IRBuilder<>& builder, llvm::Value* value,
+                                         const Type* target) {
+  target = target->canonical();
+  if (target->isAny()) {
+    return builder.getTrue();
+  }
+  llvm::Value* tag = builder.CreateExtractValue(value, {0});
+  // A default-initialized Any represents None.
+  tag = builder.CreateSelect(builder.CreateIsNull(tag),
+                             builder.CreateGlobalString("None"), tag);
+  llvm::Value* wanted = builder.CreateGlobalString(
+      target->isVoidLike() ? "None" : target->display());
+  llvm::Function* compare =
+      runtimeDecl("strcmp", builder.getInt32Ty(), {builder.getPtrTy(), builder.getPtrTy()});
+  return builder.CreateICmpEQ(builder.CreateCall(compare, {tag, wanted}), builder.getInt32(0));
+}
+
 llvm::Value* IRGenerator::emitCoerce(llvm::IRBuilder<>& builder,
                                      llvm::Value* value,
                                      const Type* from,
@@ -905,30 +923,58 @@ llvm::Value* IRGenerator::emitCoerce(llvm::IRBuilder<>& builder,
   if (to != nullptr && to->isVoidLike()) {
     return nullptr;
   }
-  if (value == nullptr || from == nullptr || to == nullptr) {
+  if (from == nullptr || to == nullptr) {
     return value;
   }
   from = from->canonical();
   to = to->canonical();
+  if (to->isAny() && !from->isAny()) {
+    if (std::find(boxedTypes_.begin(), boxedTypes_.end(), from) == boxedTypes_.end()) {
+      boxedTypes_.push_back(from);
+    }
+    llvm::Value* memory = llvm::ConstantPointerNull::get(builder.getPtrTy());
+    if (!from->isVoidLike() && value != nullptr && !value->getType()->isVoidTy()) {
+      llvm::Function* alloc = runtimeDecl("sere_alloc", builder.getPtrTy(), {builder.getInt64Ty()});
+      // Use the LLVM allocation size, including aggregate padding and closures.
+      llvm::Constant* size = llvm::ConstantExpr::getSizeOf(value->getType());
+      memory = builder.CreateCall(alloc, {size});
+      builder.CreateStore(value, memory);
+    }
+    llvm::Value* packed = llvm::UndefValue::get(lower(to));
+    packed = builder.CreateInsertValue(packed, builder.CreateGlobalString(
+        from->isVoidLike() ? "None" : from->display()), {0});
+    return builder.CreateInsertValue(packed, memory, {1});
+  }
+  if (value == nullptr) {
+    return value;
+  }
   if (from->isVoidLike()) {
     return emitDefault(to);
   }
   if (from == to) {
     return value;
   }
+  if (from->valueType() != from && !to->isRecord()) {
+    llvm::Value* payload = builder.CreateExtractValue(value,
+        {llvmFieldIndex(from, from->fieldIndex("$value"))});
+    return emitCoerce(builder, payload, from->valueType(), to);
+  }
   llvm::Type* fromTy = lower(from);
   llvm::Type* toTy = lower(to);
-  if (to->isAny()) {
-    if (from->isAny()) {
-      return value;
-    }
-    llvm::Value* packed = llvm::UndefValue::get(toTy);
-    packed = builder.CreateInsertValue(packed, builder.getInt32(0), {0});
-    packed = builder.CreateInsertValue(packed, bitsFromValue(builder, value, from), {1});
-    return packed;
-  }
-  if (from->isAny() && fromTy != toTy) {
-    return valueFromBits(builder, builder.CreateExtractValue(value, {1}), to, toTy);
+  if (from->isAny()) {
+    llvm::Function* function = builder.GetInsertBlock()->getParent();
+    auto* success = llvm::BasicBlock::Create(*context_, "any.checked", function);
+    auto* failure = llvm::BasicBlock::Create(*context_, "any.mismatch", function);
+    builder.CreateCondBr(emitAnyTypeMatch(builder, value, to), success, failure);
+    builder.SetInsertPoint(failure);
+    llvm::Value* message = emitStrLiteral(builder, "Any type mismatch: expected " + to->display());
+    llvm::Function* panic =
+        runtimeDecl("sere_panic", builder.getVoidTy(), {builder.getPtrTy(), builder.getInt64Ty()});
+    builder.CreateCall(panic, {builder.CreateExtractValue(message, {0}),
+                               builder.CreateExtractValue(message, {1})});
+    builder.CreateUnreachable();
+    builder.SetInsertPoint(success);
+    return builder.CreateLoad(toTy, builder.CreateExtractValue(value, {1}));
   }
   if (to->isUnion()) {
     if (fromTy == toTy) {
@@ -1231,7 +1277,8 @@ llvm::Value* IRGenerator::emitAddress(llvm::IRBuilder<>& builder, const Expr& ex
       }
       return nullptr;
     }
-    const Type* objectType = index.object().resolvedType();
+    const Type* objectType = index.object().resolvedType() == nullptr ? nullptr
+        : index.object().resolvedType()->valueType();
     if (objectType == nullptr || !objectType->isSequence() || !index.hasStart()) {
       if (required) {
         diagnostics_->error(expr.range(), "expression is not assignable");
@@ -1241,7 +1288,7 @@ llvm::Value* IRGenerator::emitAddress(llvm::IRBuilder<>& builder, const Expr& ex
     llvm::Function* itemFn = runtimeDecl(
         "sere_list_item", builder.getPtrTy(), {builder.getPtrTy(), builder.getInt64Ty()});
     return builder.CreateCall(
-        itemFn, {emitExpr(builder, index.object()), emitIndexI64(builder, *index.start())});
+        itemFn, {emitBuiltinExpr(builder, index.object()), emitIndexI64(builder, *index.start())});
   }
   if (expr.kind() == NodeKind::UnaryExpr) {
     const auto& unary = static_cast<const UnaryExpr&>(expr);
@@ -1258,8 +1305,11 @@ llvm::Value* IRGenerator::emitAddress(llvm::IRBuilder<>& builder, const Expr& ex
 llvm::Value* IRGenerator::emitIndex(llvm::IRBuilder<>& builder, const IndexExpr& expr) {
   const Type* objectType =
       expr.object().resolvedType() == nullptr ? nullptr : expr.object().resolvedType()->canonical();
+  if (objectType != nullptr && objectType->methodIndex("__getitem__") < 0) {
+    objectType = objectType->valueType();
+  }
   if (expr.isSlice() && objectType != nullptr && objectType->isNamed("str")) {
-    llvm::Value* str = emitExpr(builder, expr.object());
+    llvm::Value* str = emitBuiltinExpr(builder, expr.object());
     llvm::Function* fn = runtimeDecl("sere_str_slice",
                                      builder.getVoidTy(),
                                      {builder.getPtrTy(),
@@ -1300,7 +1350,7 @@ llvm::Value* IRGenerator::emitIndex(llvm::IRBuilder<>& builder, const IndexExpr&
         expr.hasStart() ? emitIndexI64(builder, *expr.start()) : builder.getInt64(0);
     llvm::Value* stop = expr.hasStop() ? emitIndexI64(builder, *expr.stop()) : builder.getInt64(0);
     return builder.CreateCall(sliceFn,
-                              {emitExpr(builder, expr.object()),
+                              {emitBuiltinExpr(builder, expr.object()),
                                start,
                                stop,
                                         builder.getInt32(expr.hasStart() ? 1 : 0),
@@ -1314,13 +1364,13 @@ llvm::Value* IRGenerator::emitIndex(llvm::IRBuilder<>& builder, const IndexExpr&
     llvm::Value* out = builder.CreateAlloca(lower(expr.resolvedType()), nullptr, "dict.out");
     builder.CreateCall(
         getFn,
-        {emitExpr(builder, expr.object()),
+        {emitBuiltinExpr(builder, expr.object()),
          emitTempSlot(builder, emitExpr(builder, *expr.start()), expr.start()->resolvedType()),
                                out});
     return builder.CreateLoad(lower(expr.resolvedType()), out);
   }
   if (objectType != nullptr && objectType->isNamed("str") && expr.hasStart()) {
-    llvm::Value* str = emitExpr(builder, expr.object());
+    llvm::Value* str = emitBuiltinExpr(builder, expr.object());
     llvm::Function* fn = runtimeDecl("sere_str_index",
                                      builder.getVoidTy(),
                                      {builder.getPtrTy(),
@@ -1501,9 +1551,9 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
     return nullptr;
   }
   const auto& member = static_cast<const MemberExpr&>(expr.callee());
-  llvm::Value* object = emitExpr(builder, member.object());
+  llvm::Value* object = emitBuiltinExpr(builder, member.object());
   const Type* objectType =
-      member.object().resolvedType() == nullptr ? nullptr : member.object().resolvedType()->canonical();
+      member.object().resolvedType() == nullptr ? nullptr : member.object().resolvedType()->valueType();
   const std::string& name = expr.loweredName();
   auto toI64 = [&](llvm::Value* value) -> llvm::Value* {
     if (value->getType() != builder.getInt64Ty()) {
@@ -1840,8 +1890,12 @@ llvm::Value* IRGenerator::emitIntrinsic(llvm::IRBuilder<>& builder, const CallEx
   }
   if (kind == IntrinsicKind::Len) {
     const Type* argType = expr.arguments()[0]->resolvedType();
+    if (argType != nullptr && argType->methodIndex("__len__") >= 0) {
+      return emitDunderCall(builder, *expr.arguments()[0], "__len__", {});
+    }
+    argType = argType == nullptr ? nullptr : argType->valueType();
     if (argType != nullptr && argType->isStrLayout()) {
-      llvm::Value* str = emitExpr(builder, *expr.arguments()[0]);
+      llvm::Value* str = emitBuiltinExpr(builder, *expr.arguments()[0]);
       return builder.CreateExtractValue(str, {1});
     }
     if (argType != nullptr && argType->methodIndex("__len__") >= 0) {
@@ -1850,9 +1904,9 @@ llvm::Value* IRGenerator::emitIntrinsic(llvm::IRBuilder<>& builder, const CallEx
     if (argType != nullptr && argType->isDict()) {
       llvm::Function* dictLen =
           runtimeDecl("sere_dict_len", builder.getInt64Ty(), {builder.getPtrTy()});
-      return builder.CreateCall(dictLen, {emitExpr(builder, *expr.arguments()[0])});
+      return builder.CreateCall(dictLen, {emitBuiltinExpr(builder, *expr.arguments()[0])});
     }
-    return builder.CreateCall(lenFn, {emitExpr(builder, *expr.arguments()[0])});
+    return builder.CreateCall(lenFn, {emitBuiltinExpr(builder, *expr.arguments()[0])});
   }
   if (kind == IntrinsicKind::Append) {
     return emitAppend(builder, expr);
@@ -1873,8 +1927,22 @@ llvm::Value* IRGenerator::emitIntrinsic(llvm::IRBuilder<>& builder, const CallEx
   if (kind == IntrinsicKind::Str) {
     return emitToStr(builder, *expr.arguments()[0]);
   }
+  if (kind == IntrinsicKind::Repr) {
+    return emitValueRepr(builder, emitExpr(builder, *expr.arguments()[0]),
+        expr.arguments()[0]->resolvedType());
+  }
   if (kind == IntrinsicKind::TypeOf) {
     const Type* type = expr.arguments()[0]->resolvedType();
+    llvm::Value* value = emitExpr(builder, *expr.arguments()[0]);
+    if (type != nullptr && type->isAny()) {
+      llvm::Value* tag = builder.CreateExtractValue(value, {0});
+      tag = builder.CreateSelect(builder.CreateIsNull(tag),
+                                 builder.CreateGlobalString("None"), tag);
+      llvm::Function* length = runtimeDecl("strlen", builder.getInt64Ty(), {builder.getPtrTy()});
+      llvm::Value* result = llvm::UndefValue::get(lower(types_->strType()));
+      result = builder.CreateInsertValue(result, tag, {0});
+      return builder.CreateInsertValue(result, builder.CreateCall(length, {tag}), {1});
+    }
     return emitStrLiteral(builder, type == nullptr ? "?" : type->display());
   }
   if (kind == IntrinsicKind::IsInstance) {
@@ -1887,7 +1955,12 @@ llvm::Value* IRGenerator::emitIntrinsic(llvm::IRBuilder<>& builder, const CallEx
     } else if (expr.arguments().size() >= 2 && expr.arguments()[1]->resolvedType() != nullptr) {
       target = expr.arguments()[1]->resolvedType()->canonical();
     }
-    bool match = valueType != nullptr && target != nullptr && valueType->matchesInstance(target);
+    llvm::Value* value = emitExpr(builder, *expr.arguments()[0]);
+    if (valueType != nullptr && valueType->isAny() && target != nullptr) {
+      return emitAnyTypeMatch(builder, value, target);
+    }
+    bool match = valueType != nullptr && target != nullptr &&
+                 (target->isAny() || valueType->matchesInstance(target));
     return builder.getInt1(match);
   }
   if (kind == IntrinsicKind::Inspect) {
@@ -2032,7 +2105,8 @@ llvm::Value* IRGenerator::emitRecordStr(llvm::IRBuilder<>& builder, const Expr& 
   }
   const int index = record->methodIndex("__str__");
   if (index < 0) {
-    return emitStrLiteral(builder, record->name());
+    if (record->valueType()->isStrLayout()) return emitBuiltinExpr(builder, object);
+    return emitValueRepr(builder, emitExpr(builder, object), record);
   }
   const RecordMethod& method = record->methods()[static_cast<std::size_t>(index)];
   llvm::Value* thisPtr = emitAddress(builder, object, false);
@@ -2170,6 +2244,9 @@ llvm::Value* IRGenerator::emitUnionStr(llvm::IRBuilder<>& builder, const Expr& e
 
 llvm::Value* IRGenerator::emitToStr(llvm::IRBuilder<>& builder, const Expr& expr) {
   const Type* type = expr.resolvedType() == nullptr ? nullptr : expr.resolvedType()->canonical();
+  if (type != nullptr && type->isAny()) {
+    return emitValueRepr(builder, emitExpr(builder, expr), type);
+  }
   if (type != nullptr && type->isEnum()) {
     return emitEnumStr(builder, expr);
   }
@@ -2221,15 +2298,164 @@ llvm::Value* IRGenerator::emitPointerStr(llvm::IRBuilder<>& builder, const Expr&
       builder, emitStrConcat(builder, prefix, address), emitStrLiteral(builder, ")"));
 }
 
-llvm::Value* IRGenerator::emitListStr(llvm::IRBuilder<>& builder, const Expr& expr) {
+llvm::Value* IRGenerator::emitBuiltinExpr(llvm::IRBuilder<>& builder, const Expr& expr) {
+  llvm::Value* value = emitExpr(builder, expr);
   const Type* type = expr.resolvedType();
-  const char* lenName = type != nullptr && type->isDict() ? "sere_dict_len" : "sere_list_len";
-  llvm::Function* lenFn = runtimeDecl(lenName, builder.getInt64Ty(), {builder.getPtrTy()});
-  llvm::Value* prefix = emitStrLiteral(builder, type->display() + "(len=");
-  llvm::Value* length = emitStrFromC(
-      builder, "sere_str_i64_data", builder.CreateCall(lenFn, {emitExpr(builder, expr)}));
-  return emitStrConcat(
-      builder, emitStrConcat(builder, prefix, length), emitStrLiteral(builder, ")"));
+  return type == nullptr ? value : emitCoerce(builder, value, type, type->valueType());
+}
+
+llvm::Value* IRGenerator::emitBuiltinDefault(llvm::IRBuilder<>& builder, const Type* type) {
+  if (type->isStrLayout()) return emitStrLiteral(builder, "");
+  if (type->isSequence()) {
+    return builder.CreateCall(runtimeDecl("sere_list_new", builder.getPtrTy(),
+        {builder.getInt64Ty()}), {builder.getInt64(valueSize(type->elementType()))});
+  }
+  if (type->isDict()) {
+    return builder.CreateCall(runtimeDecl("sere_dict_new", builder.getPtrTy(),
+        {builder.getInt64Ty(), builder.getInt64Ty(), builder.getInt32Ty()}),
+        {builder.getInt64(valueSize(type->dictKeyType())),
+         builder.getInt64(valueSize(type->dictValueType())),
+         builder.getInt32(dictKeyKind(type->dictKeyType()))});
+  }
+  return emitDefault(type);
+}
+
+llvm::Value* IRGenerator::emitListStr(llvm::IRBuilder<>& builder, const Expr& expr) {
+  return emitValueRepr(builder, emitExpr(builder, expr), expr.resolvedType());
+}
+
+llvm::Value* IRGenerator::emitValueRepr(llvm::IRBuilder<>& builder, llvm::Value* value,
+                                      const Type* type) {
+  if (type == nullptr) return emitStrLiteral(builder, "?");
+  type = type->canonical();
+  if (type->isVoidLike()) return emitStrLiteral(builder, "None");
+  if (value == nullptr) return emitStrLiteral(builder, "?");
+  if (type->isAny()) {
+    return builder.CreateCall(runtimeDecl("__sere_repr_any", lower(types_->strType()),
+        {lower(type)}), {value});
+  }
+  if (type->isStrLayout()) {
+    llvm::Value* length = builder.CreateAlloca(builder.getInt64Ty());
+    llvm::Function* quote = runtimeDecl("sere_str_repr_data", builder.getPtrTy(),
+        {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy()});
+    llvm::Value* data = builder.CreateCall(quote, {builder.CreateExtractValue(value, {0}),
+        builder.CreateExtractValue(value, {1}), length});
+    llvm::Value* str = llvm::UndefValue::get(lower(types_->strType()));
+    str = builder.CreateInsertValue(str, data, {0});
+    return builder.CreateInsertValue(str, builder.CreateLoad(builder.getInt64Ty(), length), {1});
+  }
+  if (!type->isRecord() && !type->isSequence() && !type->isDict()) {
+    return emitScalarToStr(builder, value, type);
+  }
+  // Declare before generating the body so recursive container types can call it.
+  const std::string name = "__sere_repr_" + type->display();
+  if (llvm::Function* existing = module_->getFunction(name)) {
+    return builder.CreateCall(existing, {value});
+  }
+  llvm::Function* function = llvm::Function::Create(
+      llvm::FunctionType::get(lower(types_->strType()), {lower(type)}, false),
+      llvm::GlobalValue::InternalLinkage, name, module_);
+  llvm::IRBuilder<> body(llvm::BasicBlock::Create(*context_, "entry", function));
+  llvm::Value* object = function->getArg(0);
+  llvm::Value* result = nullptr;
+  if (type->isRecord()) {
+    const int repr = type->methodIndex("__repr__");
+    if (repr >= 0 && functions_.contains(type->methods()[repr].llvmName)) {
+      llvm::Value* address = body.CreateAlloca(lower(type));
+      body.CreateStore(object, address);
+      result = body.CreateCall(functions_.at(type->methods()[repr].llvmName), {address});
+    } else if (type->valueType() != type) {
+      result = emitValueRepr(body, body.CreateExtractValue(object,
+          {llvmFieldIndex(type, type->fieldIndex("$value"))}), type->valueType());
+    } else if (type->isStruct()) {
+      result = emitStrLiteral(body, "{");
+      bool first = true;
+      for (const RecordField& field : type->fields()) {
+        if (field.isStatic || !field.stored) continue;
+        if (!first) result = emitStrConcat(body, result, emitStrLiteral(body, ", "));
+        first = false;
+        result = emitStrConcat(body, result,
+            emitValueRepr(body, emitStrLiteral(body, field.name), types_->strType()));
+        result = emitStrConcat(body, result, emitStrLiteral(body, ": "));
+        llvm::Value* item = body.CreateExtractValue(object,
+            {llvmFieldIndex(type, type->fieldIndex(field.name))});
+        result = emitStrConcat(body, result, emitValueRepr(body, item, field.type));
+      }
+      result = emitStrConcat(body, result, emitStrLiteral(body, "}"));
+    } else {
+      result = emitStrLiteral(body, type->name());
+    }
+  } else {
+    const bool dict = type->isDict();
+    llvm::Value* keys = object;
+    llvm::Value* values = nullptr;
+    if (dict) {
+      keys = body.CreateCall(runtimeDecl("sere_dict_keys", body.getPtrTy(), {body.getPtrTy()}), {object});
+      values = body.CreateCall(runtimeDecl("sere_dict_values", body.getPtrTy(), {body.getPtrTy()}), {object});
+    }
+    llvm::Value* length = body.CreateCall(
+        runtimeDecl("sere_list_len", body.getInt64Ty(), {body.getPtrTy()}), {keys});
+    llvm::Value* slot = body.CreateAlloca(lower(types_->strType()));
+    body.CreateStore(emitStrLiteral(body, dict ? "{" : "["), slot);
+    llvm::BasicBlock* header = llvm::BasicBlock::Create(*context_, "loop", function);
+    llvm::BasicBlock* itemBlock = llvm::BasicBlock::Create(*context_, "item", function);
+    llvm::BasicBlock* end = llvm::BasicBlock::Create(*context_, "end", function);
+    llvm::BasicBlock* entry = body.GetInsertBlock();
+    body.CreateBr(header);
+    body.SetInsertPoint(header);
+    llvm::PHINode* index = body.CreatePHI(body.getInt64Ty(), 2);
+    index->addIncoming(body.getInt64(0), entry);
+    body.CreateCondBr(body.CreateICmpSLT(index, length), itemBlock, end);
+    body.SetInsertPoint(itemBlock);
+    llvm::Value* separator = body.CreateSelect(body.CreateICmpEQ(index, body.getInt64(0)),
+        emitStrLiteral(body, ""), emitStrLiteral(body, ", "));
+    llvm::Value* text = emitStrConcat(body, body.CreateLoad(lower(types_->strType()), slot), separator);
+    const auto item = [&](llvm::Value* list, const Type* element) {
+      llvm::Value* address = body.CreateCall(runtimeDecl("sere_list_item", body.getPtrTy(),
+          {body.getPtrTy(), body.getInt64Ty()}), {list, index});
+      return emitValueRepr(body, body.CreateLoad(lower(element), address), element);
+    };
+    text = emitStrConcat(body, text, item(keys, dict ? type->dictKeyType() : type->elementType()));
+    if (dict) {
+      text = emitStrConcat(body, text, emitStrLiteral(body, ": "));
+      text = emitStrConcat(body, text, item(values, type->dictValueType()));
+    }
+    body.CreateStore(text, slot);
+    llvm::Value* next = body.CreateAdd(index, body.getInt64(1));
+    index->addIncoming(next, body.GetInsertBlock());
+    body.CreateBr(header);
+    body.SetInsertPoint(end);
+    result = emitStrConcat(body, body.CreateLoad(lower(types_->strType()), slot),
+        emitStrLiteral(body, dict ? "}" : "]"));
+  }
+  body.CreateRet(result);
+  return builder.CreateCall(function, {value});
+}
+
+void IRGenerator::emitAnyRepr() {
+  llvm::Function* function = module_->getFunction("__sere_repr_any");
+  if (function == nullptr || !function->empty()) return;
+  function->setLinkage(llvm::GlobalValue::InternalLinkage);
+  llvm::IRBuilder<> builder(llvm::BasicBlock::Create(*context_, "entry", function));
+  llvm::Value* value = function->getArg(0);
+  llvm::Value* memory = builder.CreateExtractValue(value, {1});
+  llvm::BasicBlock* none = llvm::BasicBlock::Create(*context_, "none", function);
+  llvm::BasicBlock* dispatch = llvm::BasicBlock::Create(*context_, "dispatch", function);
+  builder.CreateCondBr(builder.CreateIsNull(memory), none, dispatch);
+  builder.SetInsertPoint(none);
+  builder.CreateRet(emitStrLiteral(builder, "None"));
+  builder.SetInsertPoint(dispatch);
+  for (std::size_t index = 0; index < boxedTypes_.size(); ++index) {
+    const Type* type = boxedTypes_[index];
+    if (type->isVoidLike()) continue;
+    llvm::BasicBlock* match = llvm::BasicBlock::Create(*context_, "match", function);
+    llvm::BasicBlock* next = llvm::BasicBlock::Create(*context_, "next", function);
+    builder.CreateCondBr(emitAnyTypeMatch(builder, value, type), match, next);
+    builder.SetInsertPoint(match);
+    builder.CreateRet(emitValueRepr(builder, builder.CreateLoad(lower(type), memory), type));
+    builder.SetInsertPoint(next);
+  }
+  builder.CreateRet(emitStrLiteral(builder, "Any"));
 }
 
 llvm::Value* IRGenerator::emitNumericCast(llvm::IRBuilder<>& builder,
@@ -2643,6 +2869,29 @@ llvm::Value* IRGenerator::emitConstruct(llvm::IRBuilder<>& builder, const CallEx
     return nullptr;
   }
   record = record->canonical();
+  if (!record->isRecord() || record->valueType() != record) {
+    const Type* payloadType = record->valueType();
+    llvm::Value* payload = nullptr;
+    if (expr.arguments().empty()) {
+      payload = emitBuiltinDefault(builder, payloadType);
+    } else if (payloadType->isNamed("str")) {
+      payload = emitToStr(builder, *expr.arguments()[0]);
+    } else {
+      payload = emitCoerce(builder, emitExpr(builder, *expr.arguments()[0]),
+          expr.arguments()[0]->resolvedType(), payloadType);
+      if (payloadType->isSequence() || payloadType->isDict()) {
+        payload = builder.CreateCall(runtimeDecl(payloadType->isDict() ? "sere_dict_copy" :
+            "sere_list_copy", builder.getPtrTy(), {builder.getPtrTy()}), {payload});
+      }
+    }
+    if (!record->isRecord()) return payload;
+    llvm::Value* aggregate = emitDefault(record);
+    if (recordHasTypeId(record)) {
+      aggregate = builder.CreateInsertValue(aggregate, builder.getInt32(recordTypeId(record)), {0});
+    }
+    return builder.CreateInsertValue(aggregate, payload,
+        {llvmFieldIndex(record, record->fieldIndex("$value"))});
+  }
   if (record->isEnum() && expr.callee().kind() == NodeKind::MemberExpr) {
     const auto& member = static_cast<const MemberExpr&>(expr.callee());
     const RecordField* field = record->findField(member.field());
@@ -2954,6 +3203,14 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
       expr.left().resolvedType() == nullptr ? nullptr : expr.left().resolvedType()->canonical();
   const Type* rightType =
       expr.right().resolvedType() == nullptr ? nullptr : expr.right().resolvedType()->canonical();
+  if (leftType != nullptr) {
+    left = emitCoerce(builder, left, leftType, leftType->valueType());
+    leftType = leftType->valueType();
+  }
+  if (rightType != nullptr) {
+    right = emitCoerce(builder, right, rightType, rightType->valueType());
+    rightType = rightType->valueType();
+  }
   if (expr.op() == BinaryOp::Add && leftType != nullptr && leftType->isNamed("str") &&
       rightType != nullptr && rightType->isNamed("str")) {
     return emitStrConcat(builder, left, right);
@@ -3181,7 +3438,7 @@ llvm::Value* IRGenerator::emitUnary(llvm::IRBuilder<>& builder, const UnaryExpr&
     builder.CreateStore(next, address);
     return expr.op() == UnaryOp::PostInc || expr.op() == UnaryOp::PostDec ? current : next;
   }
-  llvm::Value* operand = emitExpr(builder, expr.operand());
+  llvm::Value* operand = emitBuiltinExpr(builder, expr.operand());
   if (operand == nullptr) {
     return nullptr;
   }
@@ -4873,6 +5130,7 @@ std::unique_ptr<llvm::Module> IRGenerator::emit(const Module& ast,
   if (userMain_ != nullptr) {
     emitCMainWrapper(module_->getFunction("sere_main"));
   }
+  emitAnyRepr();
   std::string verifyError;
   llvm::raw_string_ostream errorStream(verifyError);
   if (llvm::verifyModule(*module, &errorStream)) {

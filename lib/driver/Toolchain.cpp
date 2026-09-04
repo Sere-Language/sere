@@ -10,6 +10,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -50,16 +51,6 @@ std::optional<std::filesystem::path> llvmToolsDirectory() {
   auto hasClang = [](const std::filesystem::path& bin) {
     return isFile(bin / "clang.exe") || isFile(bin / "clang");
   };
-  if (const char* fromEnv = std::getenv("SERE_LLVM_DIR")) {
-    const std::filesystem::path bin = std::filesystem::path(fromEnv) / "bin";
-    if (hasClang(bin)) {
-      return bin;
-    }
-  }
-  const std::filesystem::path compiledIn(SERE_LLVM_TOOLS_DIR);
-  if (hasClang(compiledIn)) {
-    return compiledIn;
-  }
   const std::filesystem::path compilerDir = compilerDirectory();
   const std::filesystem::path installed =
       compilerDir.parent_path() / "toolchains" / ("llvm-" SERE_PINNED_LLVM_VERSION) / "bin";
@@ -69,6 +60,33 @@ std::optional<std::filesystem::path> llvmToolsDirectory() {
   const std::filesystem::path nextToCompiler = compilerDir / "llvm" / "bin";
   if (hasClang(nextToCompiler)) {
     return nextToCompiler;
+  }
+  // Virtual environments share their original installation's toolchain.
+  auto homeDir = compilerDir;
+  for (int depth = 0; depth < 16; ++depth) {
+    std::ifstream config(homeDir.parent_path() / "sere.cfg");
+    std::string line;
+    std::filesystem::path nextHome;
+    while (std::getline(config, line)) {
+      if (line.starts_with("home = ")) {
+        nextHome = std::filesystem::path(line.substr(7));
+        break;
+      }
+    }
+    if (nextHome.empty() || nextHome == homeDir) break;
+    homeDir = nextHome;
+    const auto bin = homeDir.parent_path() / "toolchains" / ("llvm-" SERE_PINNED_LLVM_VERSION) / "bin";
+    if (hasClang(bin)) return bin;
+  }
+  if (const char* fromEnv = std::getenv("SERE_LLVM_DIR")) {
+    const std::filesystem::path bin = std::filesystem::path(fromEnv) / "bin";
+    if (hasClang(bin)) {
+      return bin;
+    }
+  }
+  const std::filesystem::path compiledIn(SERE_LLVM_TOOLS_DIR);
+  if (hasClang(compiledIn)) {
+    return compiledIn;
   }
 #ifdef _WIN32
   if (const char* localAppData = std::getenv("LOCALAPPDATA")) {
@@ -255,6 +273,12 @@ namespace {
 
 [[nodiscard]] std::vector<std::filesystem::path> windowsLibDirectories() {
   std::vector<std::filesystem::path> dirs;
+  if (const auto tools = llvmToolsDirectory()) {
+    const auto bundled = tools->parent_path() / "sysroot" / "lib";
+    if (isFile(bundled / "libcmt.lib") && isFile(bundled / "kernel32.lib")) {
+      return {bundled};
+    }
+  }
   const std::filesystem::path vsRoots[] = {
       programFilesX86() / "Microsoft Visual Studio" / "2022" / "BuildTools",
       programFiles() / "Microsoft Visual Studio" / "2022" / "BuildTools",
@@ -306,6 +330,17 @@ void applyHostLinkEnvironment() {
     lib += existing;
   }
   setEnvironmentVariable("LIB", lib);
+  if (const auto tools = llvmToolsDirectory()) {
+    const auto includeRoot = tools->parent_path() / "sysroot" / "include";
+    if (std::filesystem::is_directory(includeRoot)) {
+      std::string includes;
+      for (const char* name : {"msvc", "ucrt", "shared", "um", "winrt"}) {
+        if (!includes.empty()) includes += ';';
+        includes += (includeRoot / name).string();
+      }
+      setEnvironmentVariable("INCLUDE", includes);
+    }
+  }
 #endif
 }
 

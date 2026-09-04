@@ -1,0 +1,1 @@
+b39fe07c52182b483e8ebd359c5008a02e5528abeb0aa1be74e46bbb6d6af9c4  Sere-pre-0.1.5-windows-x64-setup.exe

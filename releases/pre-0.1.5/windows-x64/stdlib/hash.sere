@@ -1,0 +1,8 @@
+# Hash helpers. Import with: import hash
+# fnv1a is FNV-1a 64-bit over UTF-8 / raw string bytes.
+
+extern "C" "sere_hash_fnv1a"
+def fnv1a(text: str) -> i64
+
+extern "C" "sere_hash_combine"
+def combine(left: i64, right: i64) -> i64

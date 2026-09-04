@@ -33,6 +33,10 @@ set_target_properties(sere_runtime PROPERTIES
   C_VISIBILITY_PRESET hidden
 )
 
+if(MSVC)
+  set_property(TARGET sere_runtime PROPERTY MSVC_RUNTIME_LIBRARY MultiThreaded)
+endif()
+
 if(WIN32)
   target_link_libraries(sere_runtime PUBLIC
     user32

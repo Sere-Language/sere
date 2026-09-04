@@ -1,0 +1,6 @@
+def identity(value: Any) -> Any:
+    return value
+
+def main() -> i32:
+    value: i32 = identity("this is not an integer")
+    return value

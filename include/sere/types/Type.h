@@ -63,6 +63,9 @@ public:
   [[nodiscard]] bool isNamed(std::string_view name) const;
   [[nodiscard]] bool isStrLayout() const;
   [[nodiscard]] bool isRecord() const;
+  [[nodiscard]] bool isClass() const;
+  /// Built-in payload of a subclass, or this type when no payload is present.
+  [[nodiscard]] const Type* valueType() const;
   [[nodiscard]] bool isInteger() const;
   /// Named integer primitive such as i32, not an integer union like Int.
   [[nodiscard]] bool isScalarInteger() const;

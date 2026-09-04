@@ -26,5 +26,6 @@
     "editor.snippetSuggestions": "none",
     "editor.acceptSuggestionOnEnter": "off"
   },
-  "sere.stdlibPath": ""
+  "sere.stdlibPath": "",
+  "CodeGPT.apiKey": "CodeGPT Plus Beta"
 }

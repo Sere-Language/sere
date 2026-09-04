@@ -228,6 +228,12 @@ const Type* resolveMemberType(Frontend* frontend, const MemberAccessQuery& query
   if (frontend->checker() != nullptr) {
     if (const Type* fromChecker = frontend->checker()->typeOfPath(query.receiver)) {
       fromChecker = completionType(fromChecker);
+      // Subclasses of a builtin carry their payload in a "$value" field; member
+      // access falls through to the value type (mirrors TypeChecker::checkMethodCall).
+      if (fromChecker != nullptr && !fromChecker->isRecord() && !fromChecker->isModule() &&
+          !fromChecker->isList() && !fromChecker->isDict() && !fromChecker->isStrLayout()) {
+        fromChecker = fromChecker->valueType();
+      }
       if (isCompletionType(fromChecker)) {
         return fromChecker;
       }

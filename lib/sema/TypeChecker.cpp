@@ -343,6 +343,17 @@ struct CallableShape {
     }
     return right;
   }
+  if (left->isUnsignedInteger() != right->isUnsignedInteger()) {
+    const Type* signedType = left->isUnsignedInteger() ? right : left;
+    const Type* unsignedType = left->isUnsignedInteger() ? left : right;
+    const unsigned needed = std::max(signedType->integerBitWidth(),
+                                     unsignedType->integerBitWidth() + 1);
+    if (needed <= 8) return types.primitive("i8");
+    if (needed <= 16) return types.primitive("i16");
+    if (needed <= 32) return types.i32Type();
+    if (needed <= 64) return types.primitive("i64");
+    return types.anyType();
+  }
   return left->integerBitWidth() >= right->integerBitWidth() ? left : right;
 }
 
@@ -746,7 +757,7 @@ void TypeChecker::registerBuiltins() {
   const IntrinsicKind kinds[] = {
       IntrinsicKind::UniqueNew,  IntrinsicKind::SharedNew, IntrinsicKind::Alloc,
       IntrinsicKind::Free,       IntrinsicKind::Load,      IntrinsicKind::Store,
-      IntrinsicKind::Len,        IntrinsicKind::Print,     IntrinsicKind::Str,
+      IntrinsicKind::Len,        IntrinsicKind::Print,     IntrinsicKind::Str, IntrinsicKind::Repr,
       IntrinsicKind::Append,     IntrinsicKind::ListNew,   IntrinsicKind::ArrayNew,
       IntrinsicKind::DictNew,    IntrinsicKind::Range,     IntrinsicKind::TypeOf,
       IntrinsicKind::IsInstance, IntrinsicKind::Dir,       IntrinsicKind::Inspect,
@@ -811,7 +822,7 @@ bool TypeChecker::isAssignable(const Type* from, const Type* to) const {
   if (from == to || from->canonical() == to->canonical()) {
     return true;
   }
-  if (to->isAny()) {
+  if (to->isAny() || from->isAny()) {
     return true;
   }
   if (from->isVoidLike() && to->isVoidLike()) {
@@ -820,22 +831,26 @@ bool TypeChecker::isAssignable(const Type* from, const Type* to) const {
   if (from->isNamed("null") && to->isPointerLike()) {
     return true;
   }
-  if (from->isRecord() && to->isRecord() && from->isSubtypeOf(to)) {
+  if (from->isSubtypeOf(to)) {
     return true;
+  }
+  if (from->valueType() != from->canonical() && !to->isRecord()) {
+    return isAssignable(from->valueType(), to);
   }
   if (from->isTypeObject() && to->isTypeObject()) {
     const Type* fromInst = from->typeObjectInstance();
     const Type* toInst = to->typeObjectInstance();
     if (fromInst != nullptr && toInst != nullptr &&
         (fromInst->canonical() == toInst->canonical() ||
-         (fromInst->isRecord() && toInst->isRecord() && fromInst->isSubtypeOf(toInst)))) {
+         fromInst->isSubtypeOf(toInst))) {
       return true;
     }
   }
   if (from->isList() && to->isList()) {
     const Type* fromElem = from->elementType();
     const Type* toElem = to->elementType();
-    if (fromElem != nullptr && toElem != nullptr && isAssignable(fromElem, toElem)) {
+    if (fromElem != nullptr && toElem != nullptr &&
+        fromElem->canonical() == toElem->canonical()) {
       const std::int64_t wanted = to->listSize();
       return wanted < 0 || from->listSize() == wanted;
     }
@@ -846,7 +861,8 @@ bool TypeChecker::isAssignable(const Type* from, const Type* to) const {
     const Type* fromValue = from->dictValueType();
     const Type* toValue = to->dictValueType();
     return fromKey != nullptr && toKey != nullptr && fromValue != nullptr && toValue != nullptr &&
-           isAssignable(fromKey, toKey) && isAssignable(fromValue, toValue);
+           fromKey->canonical() == toKey->canonical() &&
+           fromValue->canonical() == toValue->canonical();
   }
   if ((from->isEnum() && to->isEnum() && from->canonical() == to->canonical())) {
     return true;
@@ -939,6 +955,12 @@ bool TypeChecker::callableSatisfies(const Type* from, const Type* to) const {
     return false;
   }
   from = from->canonical();
+  // Value conversions need boxing/unboxing instructions. A callable constraint
+  // cannot change a function's ABI merely by changing its annotation.
+  const auto signatureAssignable = [&](const Type* source, const Type* destType) {
+    return source != nullptr && destType != nullptr &&
+           source->isAny() == destType->isAny() && isAssignable(source, destType);
+  };
   auto paramsMatch = [&](const std::vector<const Type*>& source) -> bool {
     if (!dest.hasParams) {
       return true;
@@ -949,7 +971,7 @@ bool TypeChecker::callableSatisfies(const Type* from, const Type* to) const {
       }
       for (std::size_t index = 0; index < dest.params.size(); ++index) {
         if (dest.params[index] == nullptr || source[index] == nullptr ||
-            !isAssignable(dest.params[index], source[index])) {
+            !signatureAssignable(dest.params[index], source[index])) {
           return false;
         }
       }
@@ -960,7 +982,7 @@ bool TypeChecker::callableSatisfies(const Type* from, const Type* to) const {
     }
     for (std::size_t index = 0; index < dest.params.size(); ++index) {
       if (dest.params[index] == nullptr || source[index] == nullptr ||
-          !isAssignable(dest.params[index], source[index])) {
+          !signatureAssignable(dest.params[index], source[index])) {
         return false;
       }
     }
@@ -969,7 +991,7 @@ bool TypeChecker::callableSatisfies(const Type* from, const Type* to) const {
   if (from->kind() == TypeKind::Function) {
     if (dest.hasReturn) {
       const Type* ret = from->returnType();
-      if (ret == nullptr || dest.returnType == nullptr || !isAssignable(ret, dest.returnType)) {
+      if (ret == nullptr || dest.returnType == nullptr || !signatureAssignable(ret, dest.returnType)) {
         return false;
       }
     }
@@ -983,7 +1005,7 @@ bool TypeChecker::callableSatisfies(const Type* from, const Type* to) const {
     if (record == nullptr || record->isEnum() || record->isAbstract()) {
       return false;
     }
-    if (dest.hasReturn && (dest.returnType == nullptr || !isAssignable(record, dest.returnType))) {
+    if (dest.hasReturn && (dest.returnType == nullptr || !signatureAssignable(record, dest.returnType))) {
       return false;
     }
     std::vector<const Type*> params;
@@ -1002,7 +1024,7 @@ bool TypeChecker::callableSatisfies(const Type* from, const Type* to) const {
     }
     if (dest.hasReturn &&
         (!src.hasReturn || src.returnType == nullptr || dest.returnType == nullptr ||
-         !isAssignable(src.returnType, dest.returnType))) {
+         !signatureAssignable(src.returnType, dest.returnType))) {
       return false;
     }
     if (!dest.hasParams) {
@@ -1247,6 +1269,7 @@ const Type* TypeChecker::resolveNamedType(const std::string& name,
     return types_->generic(name, resolvedArgs);
   }
   if (name == "list" || name == "array") {
+    if (resolvedArgs.empty()) return types_->generic(name, {types_->anyType()});
     if (resolvedArgs.empty() || resolvedArgs.size() > 2) {
       diagnostics_->error(range, name + " requires a type argument, optionally a size");
       return nullptr;
@@ -1264,11 +1287,25 @@ const Type* TypeChecker::resolveNamedType(const std::string& name,
     return types_->generic(name, std::vector<const Type*>{resolvedArgs[0]});
   }
   if (name == "dict") {
+    if (resolvedArgs.empty()) return types_->dictType(types_->anyType(), types_->anyType());
     if (resolvedArgs.size() != 2) {
       diagnostics_->error(range, "dict requires key and value type arguments");
       return nullptr;
     }
     return types_->generic(name, resolvedArgs);
+  }
+  if (name == "tuple") {
+    if (resolvedArgs.empty()) {
+      diagnostics_->error(range, "tuple requires element type arguments");
+      return nullptr;
+    }
+    return types_->generic(name, resolvedArgs);
+  }
+  if (resolvedArgs.empty() && name == "None") {
+    return types_->noneType();
+  }
+  if (resolvedArgs.empty() && name == "Any") {
+    return types_->anyType();
   }
   if (const Type* param = types_->typeParam(name)) {
     if (!resolvedArgs.empty()) {
@@ -1460,13 +1497,23 @@ const Type* TypeChecker::checkName(NameExpr& expr) {
     return types_->noneType();
   }
   if (symbol == nullptr && expr.name() == "Any") {
-    expr.setResolvedType(types_->anyType());
-    return types_->anyType();
+    expr.setResolvedType(types_->typeObject(types_->anyType()));
+    return expr.resolvedType();
   }
   if (symbol == nullptr && expr.name() == "super") {
     diagnostics_->error(expr.range(), "super must be called");
     diagnostics_->help("write super().__init__(...) or super().method(...)");
     return nullptr;
+  }
+  if (symbol == nullptr || symbol->kind == SymbolKind::Intrinsic) {
+    const Type* builtin = types_->primitive(expr.name());
+    if (expr.name() == "list") builtin = types_->listType(types_->anyType());
+    if (expr.name() == "array") builtin = types_->arrayType(types_->anyType());
+    if (expr.name() == "dict") builtin = types_->dictType(types_->anyType(), types_->anyType());
+    if (builtin != nullptr && builtin->isClass()) {
+      expr.setResolvedType(types_->typeObject(builtin));
+      return expr.resolvedType();
+    }
   }
   if (symbol == nullptr) {
     reportUnknown(expr.range(), "name", expr.name());
@@ -1489,7 +1536,8 @@ const Type* TypeChecker::checkName(NameExpr& expr) {
     diagnostics_->error(expr.range(), "cannot use '" + expr.name() + "' as a value");
     return nullptr;
   }
-  if (symbol->kind == SymbolKind::Class && symbol->type->isRecord() && !symbol->type->isEnum()) {
+  if ((symbol->kind == SymbolKind::Class || symbol->kind == SymbolKind::Type) &&
+      symbol->type->isClass()) {
     const Type* meta = types_->typeObject(symbol->type);
     expr.setResolvedType(meta);
     return meta;
@@ -1687,6 +1735,7 @@ const Type* TypeChecker::checkIndex(IndexExpr& expr) {
     return nullptr;
   }
   objectType = objectType->canonical();
+  if (objectType->methodIndex("__getitem__") < 0) objectType = objectType->valueType();
   if (expr.isSlice()) {
     if (!(objectType->isSequence() || objectType->isNamed("str") ||
           objectType->methodIndex("__getitem__") >= 0)) {
@@ -1784,15 +1833,12 @@ const Type* TypeChecker::checkListLiteral(ListLiteral& expr) {
     }
     if (element == nullptr) {
       element = itemType;
+    } else if (element->isAny() || itemType->isAny()) {
+      element = types_->primitive("Any");
+    } else if (const Type* numeric = joinNumeric(*types_, element, itemType)) {
+      element = numeric;
     } else if (!isAssignable(itemType, element)) {
-      const Type* joined = joinNumeric(*types_, element, itemType);
-      if (joined == nullptr || !isAssignable(element, joined) || !isAssignable(itemType, joined)) {
-        diagnostics_->error(item->range(),
-                            "list elements must share a type, found " + quoteType(itemType) +
-                                " then " + quoteType(element));
-        return nullptr;
-      }
-      element = joined;
+      element = types_->primitive("Any");
     }
   }
   const Type* result = types_->listType(element);
@@ -1818,7 +1864,9 @@ const Type* TypeChecker::checkDictLiteral(DictLiteral& expr) {
       valueType = nextValue;
       continue;
     }
-    if (!isAssignable(nextKey, keyType)) {
+    if (const Type* numeric = joinNumeric(*types_, keyType, nextKey)) {
+      keyType = numeric;
+    } else if (!isAssignable(nextKey, keyType)) {
       const Type* joinedKey = joinNumeric(*types_, keyType, nextKey);
       if (joinedKey == nullptr || !isAssignable(keyType, joinedKey) ||
           !isAssignable(nextKey, joinedKey)) {
@@ -1828,15 +1876,12 @@ const Type* TypeChecker::checkDictLiteral(DictLiteral& expr) {
       }
       keyType = joinedKey;
     }
-    if (!isAssignable(nextValue, valueType)) {
-      const Type* joinedValue = joinNumeric(*types_, valueType, nextValue);
-      if (joinedValue == nullptr || !isAssignable(valueType, joinedValue) ||
-          !isAssignable(nextValue, joinedValue)) {
-        diagnostics_->error(expr.keys()[index]->range(),
-                            "dict entries must share key and value types");
-        return nullptr;
-      }
-      valueType = joinedValue;
+    if (valueType->isAny() || nextValue->isAny()) {
+      valueType = types_->primitive("Any");
+    } else if (const Type* numeric = joinNumeric(*types_, valueType, nextValue)) {
+      valueType = numeric;
+    } else if (!isAssignable(nextValue, valueType)) {
+      valueType = types_->primitive("Any");
     }
   }
   const Type* result = types_->dictType(keyType, valueType);
@@ -1849,10 +1894,18 @@ bool TypeChecker::bindCollectionInit(Expr& init, const Type* dest) {
     return false;
   }
   dest = dest->canonical();
+  const auto checkElement = [&](Expr& value, const Type* expected) -> const Type* {
+    if (expected != nullptr &&
+        ((value.kind() == NodeKind::ListLiteral && expected->isSequence()) ||
+         (value.kind() == NodeKind::DictLiteral && expected->isDict()))) {
+      return bindCollectionInit(value, expected) ? expected : nullptr;
+    }
+    return checkExpr(value);
+  };
   if (init.kind() == NodeKind::ListLiteral && dest->isSequence()) {
     auto& literal = static_cast<ListLiteral&>(init);
     for (const std::unique_ptr<Expr>& item : literal.elements()) {
-      const Type* itemType = checkExpr(*item);
+      const Type* itemType = checkElement(*item, dest->elementType());
       if (itemType == nullptr || !isAssignable(itemType, dest->elementType())) {
         diagnostics_->error(item->range(),
                             "cannot store " + quoteType(itemType) + " in " + quoteType(dest));
@@ -1874,8 +1927,8 @@ bool TypeChecker::bindCollectionInit(Expr& init, const Type* dest) {
   if (init.kind() == NodeKind::DictLiteral && dest->isDict()) {
     auto& literal = static_cast<DictLiteral&>(init);
     for (std::size_t index = 0; index < literal.keys().size(); ++index) {
-      const Type* keyType = checkExpr(*literal.keys()[index]);
-      const Type* valueType = checkExpr(*literal.values()[index]);
+      const Type* keyType = checkElement(*literal.keys()[index], dest->dictKeyType());
+      const Type* valueType = checkElement(*literal.values()[index], dest->dictValueType());
       if (keyType == nullptr || valueType == nullptr ||
           !isAssignable(keyType, dest->dictKeyType()) ||
           !isAssignable(valueType, dest->dictValueType())) {
@@ -2031,6 +2084,8 @@ const Type* TypeChecker::checkBinary(BinaryExpr& expr) {
   if (const Type* overloaded = rewriteDunderBinary(expr, left, right)) {
     return overloaded;
   }
+  left = left->valueType();
+  right = right->valueType();
   if (op == BinaryOp::Add && left->isNamed("str") && right->isNamed("str")) {
     expr.setResolvedType(types_->strType());
     return types_->strType();
@@ -2133,6 +2188,7 @@ const Type* TypeChecker::checkUnary(UnaryExpr& expr) {
   if (expr.op() == UnaryOp::AddrOf) {
     return checkAddrOf(expr, operand);
   }
+  operand = operand->valueType();
   if (expr.op() == UnaryOp::Not) {
     if (!operand->isNamed("bool") && operand->methodIndex("__bool__") < 0) {
       diagnostics_->error(expr.range(), "'not' requires a bool, found " + quoteType(operand));
@@ -2486,7 +2542,7 @@ const Type* TypeChecker::checkIntrinsicCall(CallExpr& expr, IntrinsicKind kind) 
       diagnostics_->error(expr.range(), "len() requires one argument");
       return nullptr;
     }
-    if (!(valueTypes[0]->isSequence() || valueTypes[0]->isDict() || valueTypes[0]->isStrLayout() ||
+    if (!(valueTypes[0]->valueType()->isSequence() || valueTypes[0]->valueType()->isDict() || valueTypes[0]->valueType()->isStrLayout() ||
           valueTypes[0]->methodIndex("__len__") >= 0)) {
       diagnostics_->error(expr.range(),
                           "len() requires a list, array, dict, str, regex, or __len__");
@@ -2596,7 +2652,7 @@ const Type* TypeChecker::checkIntrinsicCall(CallExpr& expr, IntrinsicKind kind) 
       }
     }
     result = types_->voidType();
-  } else if (kind == IntrinsicKind::Str) {
+  } else if (kind == IntrinsicKind::Str || kind == IntrinsicKind::Repr) {
     if (valueTypes.size() != 1 || !typeArgs.empty() || !isPrintable(valueTypes[0])) {
       diagnostics_->error(expr.range(), "str() requires one printable argument");
       return nullptr;
@@ -2789,6 +2845,10 @@ const Type* TypeChecker::checkCall(CallExpr& expr) {
       return result;
     }
   }
+  if (symbol == nullptr || symbol->kind == SymbolKind::Type) {
+    const Type* target = resolveNamedType(name->name(), expr.typeArgs(), expr.range(), false);
+    if (target != nullptr && target->isClass()) return checkConstructor(expr, target);
+  }
   if (symbol == nullptr || symbol->type == nullptr) {
     if (symbol != nullptr && symbol->kind != SymbolKind::Function) {
       diagnostics_->error(expr.range(), "'" + name->name() + "' is not a function");
@@ -2908,6 +2968,28 @@ const Type* TypeChecker::checkConstructor(CallExpr& expr, const Type* record) {
       diagnostics_->help("implement abstract method(s): " + missing);
     }
     return nullptr;
+  }
+  const Type* payload = record->valueType();
+  if ((!record->isRecord() || payload != record) && record->methodIndex("__init__") < 0) {
+    if (!record->isClass() || expr.arguments().size() > 1 || !expr.keywordArguments().empty()) {
+      diagnostics_->error(expr.range(), "built-in constructor takes zero or one value");
+      return nullptr;
+    }
+    if (!expr.arguments().empty()) {
+      const Type* argument = checkExpr(*expr.arguments()[0]);
+      if (argument == nullptr) return nullptr;
+      if (!payload->isNamed("str") && !isAssignable(argument, payload) &&
+          !canCast(argument->valueType(), payload)) {
+        diagnostics_->error(expr.range(), "cannot construct " + quoteType(record) +
+            " from " + quoteType(argument));
+        return nullptr;
+      }
+    }
+    expr.setConstructor(true);
+    expr.setParamNames({"value"});
+    expr.setResolvedType(record);
+    expr.callee().setResolvedType(types_->typeObject(record));
+    return record;
   }
   const int initIndex = record->methodIndex("__init__");
   if (initIndex >= 0) {
@@ -3268,6 +3350,10 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
     member.setResolvedType(functionType);
     expr.setResolvedType(functionType->returnType());
     return functionType->returnType();
+  }
+  if (objectType != nullptr &&
+      objectType->valueType() != objectType && objectType->methodIndex(member.field()) < 0) {
+    return checkBuiltinMethod(expr, objectType->valueType(), member.field());
   }
   if (objectType != nullptr &&
       (objectType->isList() || objectType->isDict() || objectType->isStrLayout())) {
@@ -3801,7 +3887,12 @@ bool TypeChecker::checkReturn(ReturnStmt& statement, const Type* expectedReturn)
     }
     return true;
   }
-  const Type* actual = checkExpr(const_cast<Expr&>(*statement.value()));
+  Expr& value = const_cast<Expr&>(*statement.value());
+  if ((value.kind() == NodeKind::ListLiteral && expectedReturn->isSequence()) ||
+      (value.kind() == NodeKind::DictLiteral && expectedReturn->isDict())) {
+    return bindCollectionInit(value, expectedReturn);
+  }
+  const Type* actual = checkExpr(value);
   if (actual == nullptr) {
     return false;
   }
@@ -4115,6 +4206,11 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
   };
   const auto checkArg =
       [&](Expr& argument, const Type* expected, const std::string& label) -> bool {
+    if (expected != nullptr &&
+        ((argument.kind() == NodeKind::ListLiteral && expected->isSequence()) ||
+         (argument.kind() == NodeKind::DictLiteral && expected->isDict()))) {
+      return bindCollectionInit(argument, expected);
+    }
     const Type* argType = checkExpr(argument);
     if (argType == nullptr) {
       return false;
@@ -4413,6 +4509,11 @@ bool TypeChecker::flattenClass(ClassDef& classDef) {
   std::vector<RecordField> fields;
   std::vector<const Type*> bases;
   const auto inheritFields = [&](const Type* base) {
+    if (!base->isRecord()) {
+      bool exists = false;
+      for (const RecordField& field : fields) exists = exists || field.name == "$value";
+      if (!exists) fields.push_back(RecordField{"$value", base, false, false});
+    }
     for (const RecordField& field : base->fields()) {
       bool exists = false;
       for (const RecordField& seen : fields) {
@@ -4441,6 +4542,7 @@ bool TypeChecker::flattenClass(ClassDef& classDef) {
     if (const Type* record = unwrapRecordType(base)) {
       return record;
     }
+    if (base != nullptr && base->isClass()) return base;
     if (base == nullptr) {
       diagnostics_->error(range, "unknown base class '" + baseName + "'");
     } else {

@@ -3,11 +3,15 @@
 # Run on Linux after a Linux build. Do not cross-compile.
 set -euo pipefail
 
-NAME="${1:-pre-0.1.4}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DEST="${ROOT}/linux"
-ZIP="${ROOT}/releases/Sere-${NAME}-linux-x64.zip"
-TGZ="${ROOT}/releases/Sere-${NAME}-linux-x64.tar.gz"
+VERSION="$(sed -nE 's/^[[:space:]]*VERSION ([0-9]+\.[0-9]+\.[0-9]+).*$/\1/p' "${ROOT}/CMakeLists.txt" | head -n 1)"
+NAME="${1:-pre-${VERSION}}"
+[[ "$NAME" =~ ^pre-[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid release name' >&2; exit 2; }
+RELEASE="${ROOT}/releases/${NAME}"
+DEST="${RELEASE}/linux-x64"
+mkdir -p "$RELEASE"
+ZIP="${RELEASE}/Sere-${NAME}-linux-x64-portable.zip"
+TGZ="${RELEASE}/Sere-${NAME}-linux-x64-portable.tar.gz"
 LLVM_VERSION="22.1.8"
 
 find_sere() {
@@ -114,9 +118,9 @@ echo "staging ${NAME} into ${DEST}"
 echo "bundling LLVM from ${LLVM_SRC}"
 
 KEEP="$(mktemp -d)"
-cp -f "${ROOT}/linux/install.sh" "${KEEP}/install.sh"
-cp -f "${ROOT}/linux/uninstall.sh" "${KEEP}/uninstall.sh"
-cp -f "${ROOT}/linux/README.md" "${KEEP}/README.md"
+cp -f "${ROOT}/packaging/install.sh" "${KEEP}/install.sh"
+cp -f "${ROOT}/packaging/uninstall.sh" "${KEEP}/uninstall.sh"
+cp -f "${ROOT}/packaging/README-linux.md" "${KEEP}/README.md"
 
 rm -rf "${DEST}"
 mkdir -p "${DEST}/bin" "${DEST}/include/sere/api" "${DEST}/examples" "${DEST}/docs" \
@@ -217,3 +221,21 @@ fi
 echo "tar.gz  ${TGZ}"
 echo "install with:  ${DEST}/install.sh"
 echo "in-place:      . ${DEST}/bin/sere-path.sh"
+
+# A single offline command-line installer carrying the same portable payload.
+INSTALLER="${RELEASE}/Sere-${NAME}-linux-x64-setup.run"
+cat > "$INSTALLER" <<'HEADER'
+#!/usr/bin/env bash
+set -euo pipefail
+work="$(mktemp -d)"
+trap 'rm -rf -- "$work"' EXIT
+line="$(awk '/^__SERE_PAYLOAD__$/ {print NR + 1; exit}' "$0")"
+tail -n +"$line" "$0" | tar -xz -C "$work"
+bash "$work/install.sh" "$@"
+exit 0
+__SERE_PAYLOAD__
+HEADER
+cat "$TGZ" >> "$INSTALLER"
+chmod +x "$INSTALLER"
+( cd "$RELEASE" && sha256sum "$(basename "$TGZ")" "$(basename "$INSTALLER")" > SHA256SUMS-linux.txt )
+echo "installer $INSTALLER"

@@ -40,6 +40,8 @@ public:
 
 private:
   llvm::Type* lower(const Type* type);
+  llvm::Value* emitAnyTypeMatch(llvm::IRBuilder<>& builder, llvm::Value* value,
+                              const Type* target);
   std::uint64_t valueSize(const Type* type) const;
   llvm::Function* runtimeDecl(const char* name,
                               llvm::Type* returnType,
@@ -100,6 +102,10 @@ private:
   llvm::Value* emitStrConcat(llvm::IRBuilder<>& builder, llvm::Value* left, llvm::Value* right);
   llvm::Value* emitToStr(llvm::IRBuilder<>& builder, const Expr& expr);
   llvm::Value* emitScalarToStr(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* type);
+  llvm::Value* emitValueRepr(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* type);
+  llvm::Value* emitBuiltinExpr(llvm::IRBuilder<>& builder, const Expr& expr);
+  llvm::Value* emitBuiltinDefault(llvm::IRBuilder<>& builder, const Type* type);
+  void emitAnyRepr();
   llvm::Value* emitUnionStr(llvm::IRBuilder<>& builder, const Expr& expr);
   llvm::Value* emitRecordStr(llvm::IRBuilder<>& builder, const Expr& object);
   llvm::Value* emitEnumStr(llvm::IRBuilder<>& builder, const Expr& expr);
@@ -204,6 +210,7 @@ private:
   DiagnosticEngine* diagnostics_;
   TypeContext* types_;
   llvm::Module* module_ = nullptr;
+  std::vector<const Type*> boxedTypes_{};
   std::unordered_map<const Type*, llvm::Type*> lowered_{};
   std::unordered_map<std::string, llvm::Value*> locals_{};
   std::unordered_map<std::string, llvm::Value*> globals_{};

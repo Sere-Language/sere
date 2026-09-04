@@ -379,10 +379,22 @@ void writeNullResult(const llvm::json::Value* id) {
       }
       text += function.params()[index].name;
       if (function.params()[index].type != nullptr) {
-        text += ": " + function.params()[index].type->name();
+        const Type* paramType = function.params()[index].type->resolvedType();
+        text += paramType != nullptr ? ": " + paramType->display()
+                                     : ": " + function.params()[index].type->name();
       }
     }
-    text += ") -> " + function.returnType().name();
+    text += ") -> ";
+    const Type* fnReturn = function.returnType().resolvedType();
+    if (fnReturn != nullptr) {
+      text += fnReturn->display();
+    } else if (function.resolvedType() != nullptr &&
+               function.resolvedType()->kind() == TypeKind::Function &&
+               function.resolvedType()->returnType() != nullptr) {
+      text += function.resolvedType()->returnType()->display();
+    } else {
+      text += function.returnType().name().empty() ? "void" : function.returnType().name();
+    }
     if (function.hasInferredReturn()) {
       text += "  (inferred)";
     }
@@ -390,7 +402,9 @@ void writeNullResult(const llvm::json::Value* id) {
   }
   if (node.kind() == NodeKind::TypeAlias) {
     const auto& alias = static_cast<const TypeAlias&>(node);
-    return "type " + alias.name() + " = " + alias.type().name();
+    const Type* aliasType = alias.type().resolvedType();
+    return "type " + alias.name() + " = " +
+           (aliasType != nullptr ? aliasType->display() : alias.type().name());
   }
   if (node.kind() == NodeKind::TypeExpr) {
     const auto& typeExpr = static_cast<const TypeExpr&>(node);
@@ -416,7 +430,13 @@ void writeNullResult(const llvm::json::Value* id) {
     return formatClass(*node.resolvedType());
   }
   if (node.resolvedType() != nullptr) {
-    return node.resolvedType()->display();
+    // `Any` now resolves to a class object; show the dynamic top type instead.
+    const Type* shown = node.resolvedType();
+    if (shown->isTypeObject() && shown->typeObjectInstance() != nullptr &&
+        shown->typeObjectInstance()->isAny()) {
+      return "Any  (dynamic — any value can be stored, checked with isinstance)";
+    }
+    return shown->display();
   }
   if (node.kind() == NodeKind::TypeExpr) {
     return static_cast<const TypeExpr&>(node).name();
@@ -766,7 +786,8 @@ void addTypeCompletions(llvm::json::Array& items, const std::string& prefix) {
   const char* types[] = {"void",  "None",  "Any",  "bool",     "i8",       "i16",  "i32",
                          "i64",   "u8",    "u16",  "u32",      "u64",      "f32",  "f64",
                          "str",   "regex", "byte", "Unique",   "Shared",   "Ptr",  "list",
-                         "array", "dict",  "enum", "Callable", "Function", "Class"};
+                         "array", "dict",  "enum", "Callable", "Function", "Class",
+                         "tuple"};
   for (const char* typeName : types) {
     std::string insert;
     if (std::string_view(typeName) == "Unique" || std::string_view(typeName) == "Shared" ||
@@ -782,6 +803,39 @@ void addTypeCompletions(llvm::json::Array& items, const std::string& prefix) {
       insert = "Class[${1:T}]";
     }
     addCompletion(items, typeName, kCompletionType, "type", prefix, insert);
+  }
+}
+
+// Built-in values callable as constructors: repr(x), print(...), i32(x), list[T](...)...
+// The type checker now resolves these names to class objects even when no symbol exists.
+void addBuiltinCompletions(llvm::json::Array& items, const std::string& prefix) {
+  struct Builtin {
+    const char* name;
+    const char* detail;
+    const char* insert;
+  };
+  const Builtin builtins[] = {
+      {"print", "print(*values)", "print(${1:value})"},
+      {"str", "str(value) -> str", "str(${1:value})"},
+      {"repr", "repr(value) -> str", "repr(${1:value})"},
+      {"len", "len(value) -> i64", "len(${1:value})"},
+      {"range", "range(start, stop, step?)", "range(${1:stop})"},
+      {"typeof", "typeof(value) -> str", "typeof(${1:value})"},
+      {"isinstance", "isinstance(value, type) -> bool", "isinstance(${1:value}, ${2:type})"},
+      {"dir", "dir(value)", "dir(${1:value})"},
+      {"inspect", "inspect(value)", "inspect(${1:value})"},
+      {"sizeof", "sizeof(type) -> i64", "sizeof(${1:type})"},
+      {"alignof", "alignof(type) -> i64", "alignof(${1:type})"},
+      {"panic", "panic(message)", "panic(${1:message})"},
+      {"parse", "parse(type, text)", "parse(${1:type}, ${2:text})"},
+      {"try_parse", "try_parse(type, text)", "try_parse(${1:type}, ${2:text})"},
+      {"i32", "i32(value) -> i32", "i32(${1:value})"},
+      {"i64", "i64(value) -> i64", "i64(${1:value})"},
+      {"f64", "f64(value) -> f64", "f64(${1:value})"},
+      {"bool", "bool(value) -> bool", "bool(${1:value})"},
+  };
+  for (const Builtin& builtin : builtins) {
+    addCompletion(items, builtin.name, kCompletionFunction, builtin.detail, prefix, builtin.insert);
   }
 }
 
@@ -1505,6 +1559,7 @@ void LanguageSession::handleCompletion(const llvm::json::Value* id,
   }
   addKeywordCompletions(items, prefix);
   addTypeCompletions(items, prefix);
+  addBuiltinCompletions(items, prefix);
   if (frontend != nullptr && frontend->checker() != nullptr) {
     for (const SemanticSymbol* candidate : frontend->checker()->visibleSymbolsAt(located->second)) {
       if (candidate == nullptr) {
@@ -1819,6 +1874,22 @@ void LanguageSession::handleSignatureHelp(const llvm::json::Value* id,
       if (match != nullptr) {
         macro = match->kind == "macro";
         collectCallableParams(*match, names, types, returnType);
+      }
+    }
+    if (names.empty() && frontend->types() != nullptr) {
+      // Built-in constructors: `i32(x)`, `str(x)`, `list[T](...)`, `Any()` — the
+      // type checker resolves these through resolveNamedType, not symbols.
+      const Type* target = frontend->checker()->typeOfName(site.callee);
+      if (target != nullptr && target->isTypeObject() &&
+          target->typeObjectInstance() != nullptr) {
+        const Type* instance = target->typeObjectInstance();
+        if (instance->isAny()) {
+          returnType = "Any";
+        } else {
+          returnType = instance->display();
+          types.push_back(instance->valueType()->display());
+          names.push_back("value");
+        }
       }
     }
   }

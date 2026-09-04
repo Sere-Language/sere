@@ -185,16 +185,17 @@ That writes `dist/sere-0.2.6.vsix`. In Cursor / VS Code: **Extensions → … �
 
 ## Windows installer
 
-A **manual / zip** release is built into `dist/`:
+Build both a portable ZIP and an offline per-user setup EXE:
 
 ```powershell
-.\scripts\package-vsix.ps1
-.\releases\stage.ps1                    # dist/Sere-dev-0.1.4 + zip
-.\releases\dev-0.1.4\install.ps1        # %LOCALAPPDATA%\Programs\Sere and PATH
+.\releases\stage.ps1
+# Install the extracted portable package; -Editor is optional:
+.\releases\pre-0.1.5\windows-x64\install.ps1 -Editor
 ```
 
-The Inno Setup wizard is a later option (`sere --build-installer` →
-`dist/Sere-<version>-setup.exe`). See [docs/packaging.md](docs/packaging.md).
+Outputs are in `releases/pre-<version>/`. LLVM and Windows linking support are
+bundled; recipients need no admin access or separate development tool install.
+See [releases/README.md](releases/README.md) for build options and validation.
 
 ## Layout
 
@@ -214,7 +215,7 @@ scripts/        bootstrap, sere-path, project activate templates, Inno Setup hel
 cmake/          LLVM discovery and warning policy
 docs/           language reference plus compiler internals handbook
 packaging/      Windows installer templates
-releases/       stage.ps1 plus the historical pre-0.1.0 tree
+releases/       packaging scripts and versioned release artifacts
 ```
 
 ## Documentation
@@ -222,3 +223,6 @@ releases/       stage.ps1 plus the historical pre-0.1.0 tree
 - **Language:** [`docs/language.md`](docs/language.md) — types, syntax, macros, stdlib surface, as implemented.
 - **Compiler internals:** [`docs/README.md`](docs/README.md) — pipeline, libraries, how to add a keyword or module.
 - **Patches:** [`CONTRIBUTING.md`](CONTRIBUTING.md)
+
+Release packaging and per-user installation are documented in [releases/README.md](releases/README.md).
+See [docs/projects.md](docs/projects.md) for sectioned project configuration.

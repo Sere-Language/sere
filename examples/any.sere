@@ -1,0 +1,71 @@
+class Box:
+    @public value: i32
+
+enum Message:
+    Text(str)
+
+def identity(value: Any) -> Any:
+    return value
+
+def collect(values: list[Any]) -> list[Any]:
+    return values
+
+def empty() -> list[str]:
+    return []
+
+def plus_one(value: i32) -> i32:
+    return value + 1
+
+def main() -> i32:
+    number: i32 = identity(42)
+    text: str = identity("hello")
+    box: Box = identity(Box(7))
+    values: list[i32] = identity([1, 2])
+    flag: bool = identity(True)
+    real: f64 = identity(2.5)
+    message: Message = identity(Message.Text("payload"))
+    assert number == 42
+    assert text == "hello"
+    assert box.value == 7
+    assert values[1] == 2
+    assert flag
+    assert real == 2.5
+    match message:
+        case Message.Text(value):
+            assert value == "payload"
+    erased: Any = identity("dynamic")
+    assert isinstance(erased, str)
+    assert typeof(erased) == "str"
+    assert not isinstance(erased, i32)
+    assert isinstance(identity(None), None)
+    assert isinstance(identity(1), Any)
+    mixed = collect([1, "two", Box(3)])
+    first: i32 = mixed[0]
+    second: str = mixed[1]
+    third: Box = mixed[2]
+    assert first == 1
+    assert second == "two"
+    assert third.value == 3
+    assert len(collect([])) == 0
+    assert len(empty()) == 0
+    inferred = [1, "two", Box(3)]
+    inferred_text: str = inferred[1]
+    assert inferred_text == "two"
+    mapping = {"number": 1, "text": "hello"}
+    mapped_text: str = mapping["text"]
+    assert mapped_text == "hello"
+    nested: list[list[i32]] = [[], [1, 2]]
+    assert len(nested[0]) == 0
+    pair: tuple[i32, str] = identity((1, "pair"))
+    left, right = pair
+    assert left == 1
+    assert right == "pair"
+    callback: Callable[[i32], i32] = plus_one
+    restored: Callable[[i32], i32] = identity(callback)
+    assert restored(4) == 5
+    unsigned: u8 = 255
+    signed: i8 = -1
+    widened = [signed, unsigned]
+    assert widened[0] == -1
+    assert widened[1] == 255
+    return 0

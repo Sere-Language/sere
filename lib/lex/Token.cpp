@@ -298,8 +298,6 @@ std::string_view tokenKindName(TokenKind kind) {
   }
 }
 
-namespace {
-
 std::string unescapeStringBody(std::string_view body, bool regex) {
   std::string out;
   out.reserve(body.size());
@@ -339,8 +337,6 @@ std::string unescapeStringBody(std::string_view body, bool regex) {
   }
   return out;
 }
-
-}  // namespace
 
 std::string_view stringLiteralInner(std::string_view spelling) {
   if (spelling.empty()) {

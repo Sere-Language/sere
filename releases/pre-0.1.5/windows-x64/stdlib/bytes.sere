@@ -1,0 +1,143 @@
+# Bytes, buffers, and endian I/O. Import with: import bytes
+# byte is a builtin alias of u8. bytearray is list[byte] via bytes.alloc / Buffer.
+
+extern "C" "sere_bytes_alloc"
+def _alloc(length: i64) -> list[byte]
+
+extern "C" "sere_bytes_copy"
+def copy(buffer: list[byte]) -> list[byte]
+
+extern "C" "sere_bytes_concat"
+def concat(left: list[byte], right: list[byte]) -> list[byte]
+
+extern "C" "sere_bytes_fill"
+def fill(buffer: list[byte], value: byte) -> void
+
+extern "C" "sere_bytes_set"
+def set(buffer: list[byte], index: i64, value: byte) -> void
+
+extern "C" "sere_bytes_get"
+def get(buffer: list[byte], index: i64) -> byte
+
+extern "C" "sere_bytes_eq"
+def _eq(left: list[byte], right: list[byte]) -> i32
+
+extern "C" "sere_bytes_find"
+def find(hay: list[byte], needle: list[byte]) -> i64
+
+extern "C" "sere_bytes_from_str"
+def from_str(text: str) -> list[byte]
+
+extern "C" "sere_bytes_to_str"
+def to_str(buffer: list[byte]) -> str
+
+extern "C" "sere_bytes_hex"
+def hex(buffer: list[byte]) -> str
+
+extern "C" "sere_bytes_from_hex"
+def from_hex(text: str) -> list[byte]
+
+extern "C" "sere_bytes_xor"
+def xor(left: list[byte], right: list[byte]) -> list[byte]
+
+extern "C" "sere_bytes_and"
+def bitand(left: list[byte], right: list[byte]) -> list[byte]
+
+extern "C" "sere_bytes_or"
+def bitor(left: list[byte], right: list[byte]) -> list[byte]
+
+extern "C" "sere_bytes_not"
+def bitnot(buffer: list[byte]) -> list[byte]
+
+extern "C" "sere_bytes_read_u16_le"
+def read_u16_le(buffer: list[byte], index: i64) -> u16
+
+extern "C" "sere_bytes_read_u32_le"
+def read_u32_le(buffer: list[byte], index: i64) -> u32
+
+extern "C" "sere_bytes_read_u64_le"
+def read_u64_le(buffer: list[byte], index: i64) -> u64
+
+extern "C" "sere_bytes_read_u16_be"
+def read_u16_be(buffer: list[byte], index: i64) -> u16
+
+extern "C" "sere_bytes_read_u32_be"
+def read_u32_be(buffer: list[byte], index: i64) -> u32
+
+extern "C" "sere_bytes_read_u64_be"
+def read_u64_be(buffer: list[byte], index: i64) -> u64
+
+extern "C" "sere_bytes_read_f32_le"
+def read_f32_le(buffer: list[byte], index: i64) -> f64
+
+extern "C" "sere_bytes_read_f64_le"
+def read_f64_le(buffer: list[byte], index: i64) -> f64
+
+extern "C" "sere_bytes_write_u16_le"
+def write_u16_le(buffer: list[byte], index: i64, value: u16) -> void
+
+extern "C" "sere_bytes_write_u32_le"
+def write_u32_le(buffer: list[byte], index: i64, value: u32) -> void
+
+extern "C" "sere_bytes_write_u64_le"
+def write_u64_le(buffer: list[byte], index: i64, value: u64) -> void
+
+extern "C" "sere_bytes_write_u16_be"
+def write_u16_be(buffer: list[byte], index: i64, value: u16) -> void
+
+extern "C" "sere_bytes_write_u32_be"
+def write_u32_be(buffer: list[byte], index: i64, value: u32) -> void
+
+extern "C" "sere_bytes_write_u64_be"
+def write_u64_be(buffer: list[byte], index: i64, value: u64) -> void
+
+extern "C" "sere_bytes_write_f32_le"
+def write_f32_le(buffer: list[byte], index: i64, value: f64) -> void
+
+extern "C" "sere_bytes_write_f64_le"
+def write_f64_le(buffer: list[byte], index: i64, value: f64) -> void
+
+def eq(left: list[byte], right: list[byte]) -> bool:
+    return _eq(left, right) as bool
+
+def zeros(length: i64) -> list[byte]:
+    return _alloc(length)
+
+def bytearray(length: i64) -> list[byte]:
+    return _alloc(length)
+
+class Buffer:
+    data: list[byte]
+
+    def __init__(self, size: i64) -> void:
+        self.data = _alloc(size)
+
+    def __len__(self) -> i64:
+        return len(self.data)
+
+    def __getitem__(self, index: i64) -> byte:
+        return get(self.data, index)
+
+    def get(self, index: i64) -> byte:
+        return get(self.data, index)
+
+    def set(self, index: i64, value: byte) -> void:
+        set(self.data, index, value)
+
+    def fill(self, value: byte) -> void:
+        fill(self.data, value)
+
+    def push(self, value: byte) -> void:
+        self.data.append(value)
+
+    def copy(self) -> list[byte]:
+        return copy(self.data)
+
+    def hex(self) -> str:
+        return hex(self.data)
+
+    def to_str(self) -> str:
+        return to_str(self.data)
+
+def from_buffer(buffer: Buffer) -> list[byte]:
+    return buffer.data

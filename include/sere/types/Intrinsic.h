@@ -18,6 +18,7 @@ enum class IntrinsicKind {
   Len,
   Print,
   Str,
+  Repr,
   Append,
   BuiltinMethod,
   ListNew,

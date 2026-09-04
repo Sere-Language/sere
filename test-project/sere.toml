@@ -1,0 +1,22 @@
+# Sere project configuration. Paths are relative to this file.
+[project]
+version = "0.1.0"
+kind = "app"
+name = "test-project"
+
+[toolchain]
+sere = "pre-0.1.5"
+
+[paths]
+src = "src"
+entry = "src/main.sere"
+libs = "libs"
+stdlib = "venv/stdlib"
+
+[build]
+output = "bin/test-project.exe"
+opt = "O0"
+# Build loose C/C++ files in libs/native when enabled.
+native = false
+
+# Custom tool settings belong in [tool.<name>] tables.

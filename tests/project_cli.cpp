@@ -310,6 +310,11 @@ int main() {
   std::error_code fsError;
   std::filesystem::remove_all(temp, fsError);
   std::filesystem::create_directories(temp / "app", fsError);
+  std::filesystem::create_directories(temp / "stdlib" / "stdlib", fsError);
+  std::filesystem::create_directories(temp / "stdlib" / "package", fsError);
+  (void)writeAll(temp / "stdlib" / "prelude.sere", "# prelude\n");
+  (void)writeAll(temp / "stdlib" / "stdlib" / "prelude.sere", "# legacy duplicate\n");
+  (void)writeAll(temp / "stdlib" / "package" / "module.sere", "# nested module\n");
   const std::filesystem::path project = temp / "demo";
   if (sere::initSereProject(project, temp, error) != 0) {
     std::cerr << error << '\n';
@@ -325,6 +330,17 @@ int main() {
       !std::filesystem::exists(project / "src" / "main.sere")) {
     return fail("init did not write expected files");
   }
+  sere::copyProjectToolchain(temp, project);
+  if (!std::filesystem::exists(project / "venv/stdlib/prelude.sere") ||
+      !std::filesystem::exists(project / "venv/stdlib/package/module.sere") ||
+      std::filesystem::exists(project / "venv/stdlib/stdlib")) {
+    return fail("stdlib contents must be copied once, preserving nested modules");
+  }
+  const auto generated = readAll(project / "sere.toml");
+  for (const char* section : {"[project]", "[toolchain]", "[paths]", "[build]"}) {
+    if (generated.find(section) == std::string::npos) return fail("missing manifest section");
+  }
+  (void)writeAll(project / "sere.toml", generated + "\n[tool.example]\nname = \"ignored\"\nopt = \"O3\"\n");
   const std::string activate = readAll(project / "scripts" / "activate.ps1");
   if (activate.find("SERE_PROJECT_ROOT") == std::string::npos ||
       activate.find("deactivate") == std::string::npos) {
@@ -348,6 +364,16 @@ int main() {
   if (const int contextCode = checkLanguageContext(project, temp); contextCode != 0) {
     std::filesystem::remove_all(temp, fsError);
     return contextCode;
+  }
+  if (manifest.name != "demo" || manifest.optLevel != sere::OptLevel::O0) {
+    return fail("custom table keys must not override compiler settings");
+  }
+  (void)writeAll(temp / "app/sere.toml",
+      "name = \"legacy\" # comment\nentry = 'src/a#b.sere'\nopt = \"O2\"\n");
+  sere::ProjectManifest legacy;
+  if (!sere::loadProjectManifest(temp / "app", legacy, error) || legacy.name != "legacy" ||
+      legacy.entry.filename() != "a#b.sere" || legacy.optLevel != sere::OptLevel::O2) {
+    return fail("legacy flat manifests and quoted comments must remain supported");
   }
   const std::filesystem::path library = temp / "mathlib";
   if (sere::initSereLibrary(library, error) != 0) {
