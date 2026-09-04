@@ -9,6 +9,7 @@
 #include <llvm/Support/Program.h>
 
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -46,33 +47,60 @@ std::filesystem::path compilerDirectory() {
 }
 
 std::optional<std::filesystem::path> llvmToolsDirectory() {
+  auto hasClang = [](const std::filesystem::path& bin) {
+    return isFile(bin / "clang.exe") || isFile(bin / "clang");
+  };
   if (const char* fromEnv = std::getenv("SERE_LLVM_DIR")) {
     const std::filesystem::path bin = std::filesystem::path(fromEnv) / "bin";
-    if (isFile(bin / "clang.exe") || isFile(bin / "clang")) {
+    if (hasClang(bin)) {
       return bin;
     }
   }
   const std::filesystem::path compiledIn(SERE_LLVM_TOOLS_DIR);
-  if (isFile(compiledIn / "clang.exe") || isFile(compiledIn / "clang")) {
+  if (hasClang(compiledIn)) {
     return compiledIn;
   }
   const std::filesystem::path compilerDir = compilerDirectory();
   const std::filesystem::path installed =
       compilerDir.parent_path() / "toolchains" / ("llvm-" SERE_PINNED_LLVM_VERSION) / "bin";
-  if (isFile(installed / "clang.exe") || isFile(installed / "clang")) {
+  if (hasClang(installed)) {
     return installed;
   }
+  const std::filesystem::path nextToCompiler = compilerDir / "llvm" / "bin";
+  if (hasClang(nextToCompiler)) {
+    return nextToCompiler;
+  }
+#ifdef _WIN32
   if (const char* localAppData = std::getenv("LOCALAPPDATA")) {
     const std::filesystem::path pinned = std::filesystem::path(localAppData) / "sere" / "toolchains" /
                                          ("llvm-" SERE_PINNED_LLVM_VERSION) / "bin";
-    if (isFile(pinned / "clang.exe")) {
+    if (isFile(pinned / "clang.exe") || isFile(pinned / "clang")) {
       return pinned;
     }
   }
-  const std::filesystem::path nextToCompiler = compilerDir / "llvm" / "bin";
-  if (isFile(nextToCompiler / "clang.exe") || isFile(nextToCompiler / "clang")) {
-    return nextToCompiler;
+#else
+  std::filesystem::path dataHome;
+  if (const char* xdg = std::getenv("XDG_DATA_HOME")) {
+    dataHome = std::filesystem::path(xdg);
+  } else if (const char* home = std::getenv("HOME")) {
+    dataHome = std::filesystem::path(home) / ".local" / "share";
   }
+  if (!dataHome.empty()) {
+    const std::filesystem::path pinned =
+        dataHome / "sere" / "toolchains" / ("llvm-" SERE_PINNED_LLVM_VERSION) / "bin";
+    if (hasClang(pinned)) {
+      return pinned;
+    }
+  }
+  if (const char* home = std::getenv("HOME")) {
+    const std::filesystem::path local =
+        std::filesystem::path(home) / ".local" / "sere" / "toolchains" /
+        ("llvm-" SERE_PINNED_LLVM_VERSION) / "bin";
+    if (hasClang(local)) {
+      return local;
+    }
+  }
+#endif
   return std::nullopt;
 }
 
@@ -95,16 +123,31 @@ std::optional<std::string> findClang() {
 std::optional<std::string> findLld() {
   std::vector<std::filesystem::path> candidates;
   if (const std::optional<std::filesystem::path> tools = llvmToolsDirectory()) {
+#ifdef _WIN32
     candidates.push_back(*tools / "lld-link.exe");
     candidates.push_back(*tools / "ld.lld");
+#else
+    candidates.push_back(*tools / "ld.lld");
+    candidates.push_back(*tools / "lld");
+#endif
   }
   if (const std::optional<std::filesystem::path> found = firstExisting(candidates)) {
     return found->string();
   }
+#ifdef _WIN32
   const llvm::ErrorOr<std::string> fromPath = llvm::sys::findProgramByName("lld-link");
+#else
+  const llvm::ErrorOr<std::string> fromPath = llvm::sys::findProgramByName("ld.lld");
+#endif
   if (fromPath) {
     return *fromPath;
   }
+#ifndef _WIN32
+  const llvm::ErrorOr<std::string> lld = llvm::sys::findProgramByName("lld");
+  if (lld) {
+    return *lld;
+  }
+#endif
   return std::nullopt;
 }
 
@@ -300,8 +343,39 @@ std::optional<std::filesystem::path> findSystemLibrary(std::string_view name) {
 
 namespace {
 
+[[nodiscard]] bool samePath(const std::filesystem::path& left, const std::filesystem::path& right) {
+  if (left.empty() || right.empty()) {
+    return false;
+  }
+  std::error_code error;
+  if (std::filesystem::equivalent(left, right, error) && !error) {
+    return true;
+  }
+  std::error_code leftError;
+  std::error_code rightError;
+  const std::filesystem::path canonicalLeft = std::filesystem::weakly_canonical(left, leftError);
+  const std::filesystem::path canonicalRight = std::filesystem::weakly_canonical(right, rightError);
+  return !leftError && !rightError && canonicalLeft == canonicalRight;
+}
+
+[[nodiscard]] std::filesystem::path stdlibBeside(const std::filesystem::path& compilerDir) {
+  std::error_code error;
+  const std::filesystem::path nested = compilerDir / "stdlib";
+  if (std::filesystem::exists(nested / "prelude.sere", error)) {
+    return nested;
+  }
+  const std::filesystem::path sibling = compilerDir.parent_path() / "stdlib";
+  if (std::filesystem::exists(sibling / "prelude.sere", error)) {
+    return sibling;
+  }
+  return {};
+}
+
 bool copyFileOverwrite(const std::filesystem::path& from, const std::filesystem::path& to,
                        std::string& error) {
+  if (samePath(from, to)) {
+    return true;
+  }
   std::error_code code;
   std::filesystem::create_directories(to.parent_path(), code);
   std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing, code);
@@ -317,6 +391,9 @@ bool installRunningSafe(const std::filesystem::path& from, const std::filesystem
   if (!std::filesystem::exists(from)) {
     error = "missing " + from.string();
     return false;
+  }
+  if (samePath(from, dest)) {
+    return true;
   }
   const std::filesystem::path neu = std::filesystem::path(dest.string() + ".new");
   const std::filesystem::path old = std::filesystem::path(dest.string() + ".old");
@@ -343,10 +420,8 @@ bool installRunningSafe(const std::filesystem::path& from, const std::filesystem
   return true;
 }
 
-}  // namespace
-
-int refreshCompilerBin(const std::filesystem::path& destBin, std::string& error) {
-  const std::filesystem::path fromDir = compilerDirectory();
+int copyCompilerBinImpl(const std::filesystem::path& fromDir, const std::filesystem::path& destBin,
+                        std::string& error) {
 #ifdef _WIN32
   const std::filesystem::path exeName = "sere.exe";
 #else
@@ -354,21 +429,50 @@ int refreshCompilerBin(const std::filesystem::path& destBin, std::string& error)
 #endif
   const std::filesystem::path dest =
       destBin.empty() ? (std::filesystem::current_path() / "bin") : destBin;
+  if (fromDir.empty() || !std::filesystem::exists(fromDir / exeName)) {
+    error = "missing compiler in " + fromDir.string();
+    return 1;
+  }
+  if (samePath(fromDir, dest)) {
+    error.clear();
+    return 0;
+  }
   std::error_code code;
   std::filesystem::create_directories(dest, code);
   if (!installRunningSafe(fromDir / exeName, dest / exeName, error)) {
     return 1;
   }
-  if (const auto runtime = findRuntimeLibrary()) {
-    const std::filesystem::path runtimeDest = dest / runtime->filename();
-    (void)copyFileOverwrite(*runtime, runtimeDest, error);
+  const std::filesystem::path runtimeLib =
+#ifdef _WIN32
+      fromDir / "sere_rt.lib";
+#else
+      fromDir / "libsere_rt.a";
+#endif
+  if (std::filesystem::exists(runtimeLib, code)) {
+    (void)copyFileOverwrite(runtimeLib, dest / runtimeLib.filename(), error);
   }
-  const std::filesystem::path stdlibFrom = fromDir / "stdlib";
-  const std::filesystem::path stdlibSrc =
-      std::filesystem::exists(stdlibFrom) ? stdlibFrom
-                                          : fromDir.parent_path().parent_path().parent_path() / "stdlib";
-  if (std::filesystem::exists(stdlibSrc)) {
-    std::filesystem::copy(stdlibSrc, dest / "stdlib",
+#ifndef _WIN32
+  const std::filesystem::path altRuntime = fromDir / "sere_rt.a";
+  if (std::filesystem::exists(altRuntime, code)) {
+    (void)copyFileOverwrite(altRuntime, dest / altRuntime.filename(), error);
+  }
+#endif
+  if (!std::filesystem::exists(dest /
+#ifdef _WIN32
+                                   "sere_rt.lib"
+#else
+                                   "libsere_rt.a"
+#endif
+                               ,
+                               code)) {
+    if (const auto runtime = findRuntimeLibrary()) {
+      (void)copyFileOverwrite(*runtime, dest / runtime->filename(), error);
+    }
+  }
+  const std::filesystem::path stdlibSrc = stdlibBeside(fromDir);
+  const std::filesystem::path stdlibDest = dest / "stdlib";
+  if (!stdlibSrc.empty() && !samePath(stdlibSrc, stdlibDest)) {
+    std::filesystem::copy(stdlibSrc, stdlibDest,
                           std::filesystem::copy_options::overwrite_existing |
                               std::filesystem::copy_options::recursive,
                           code);
@@ -376,6 +480,17 @@ int refreshCompilerBin(const std::filesystem::path& destBin, std::string& error)
   error.clear();
   std::cout << "updated " << (dest / exeName).string() << '\n';
   return 0;
+}
+
+}  // namespace
+
+int copyCompilerBin(const std::filesystem::path& fromDir, const std::filesystem::path& destBin,
+                    std::string& error) {
+  return copyCompilerBinImpl(fromDir, destBin, error);
+}
+
+int refreshCompilerBin(const std::filesystem::path& destBin, std::string& error) {
+  return copyCompilerBin(compilerDirectory(), destBin, error);
 }
 
 }  // namespace sere

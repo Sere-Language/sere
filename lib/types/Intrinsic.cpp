@@ -27,6 +27,8 @@ std::string_view intrinsicName(IntrinsicKind kind) {
     return "str";
   case IntrinsicKind::Append:
     return "append";
+  case IntrinsicKind::BuiltinMethod:
+    return "";
   case IntrinsicKind::ListNew:
     return "list";
   case IntrinsicKind::ArrayNew:

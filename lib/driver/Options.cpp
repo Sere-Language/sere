@@ -23,6 +23,7 @@ void printUsage(std::string& error) {
       "  clean               Remove bin/ and dist/ artifacts\n"
       "  shell               Enter the Sere project shell\n"
       "  refresh-bin         Copy this compiler into ./bin (stdlib and runtime too)\n"
+      "  update              Copy this compiler into %LOCALAPPDATA%\\Programs\\Sere if it differs, then the project venv\n"
       "  build-installer     Package a Windows installer (compiler, LLVM, stdlib, editor)\n"
       "\n"
       "After init:\n"
@@ -42,6 +43,7 @@ void printUsage(std::string& error) {
       "  --analyze           Print JSON diagnostics and stop\n"
       "  --lsp               Run the language server on stdin/stdout\n"
       "  --refresh-bin       Same as refresh-bin\n"
+      "  --update            Same as update\n"
       "  --build-installer   Same as build-installer\n"
       "  --init <name>       Same as init\n"
       "  --init-lib <name>   Same as init-lib\n"
@@ -100,6 +102,10 @@ void printUsage(std::string& error) {
     command = ProjectCommand::RefreshBin;
     return true;
   }
+  if (argument == "update") {
+    command = ProjectCommand::Update;
+    return true;
+  }
   return false;
 }
 
@@ -152,6 +158,10 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
     }
     if (argument == "--refresh-bin") {
       options.projectCommand = ProjectCommand::RefreshBin;
+      continue;
+    }
+    if (argument == "--update") {
+      options.projectCommand = ProjectCommand::Update;
       continue;
     }
     if (argument == "--build-installer") {

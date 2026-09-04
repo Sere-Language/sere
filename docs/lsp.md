@@ -75,7 +75,7 @@ The client in `editors/vscode/extension.js` registers every server capability
 (hover, completion, definition, type definition, implementation, references,
 rename, highlight, symbols, signature help, inlay hints, folding, formatting,
 code actions, code lens, and semantic tokens). Package with
-`.\scripts\package-vsix.ps1` (writes `dist/sere-0.2.1.vsix`).
+`.\scripts\package-vsix.ps1` (writes `dist/sere-0.2.4.vsix`).
 
 Client commands and `sere.compilerPath` live in `editors/vscode/package.json`.
 

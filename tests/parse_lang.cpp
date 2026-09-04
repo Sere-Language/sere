@@ -173,6 +173,23 @@ int main() {
     return fail("slices, type aliases, and inspect calls should parse");
   }
 
+  sere::DiagnosticEngine typeObjectDiagnostics;
+  const std::unique_ptr<sere::Module> typeObjects = parseText(
+      "class BaseApplication:\n"
+      "    pass\n"
+      "class BaseWindow:\n"
+      "    pass\n"
+      "class s2d:\n"
+      "    @public version: str = \"0.1.0\"\n"
+      "    @public static Application: type[BaseApplication] = BaseApplication\n"
+      "    @public static Window: type[BaseWindow] = BaseWindow\n"
+      "def main() -> i32:\n"
+      "    return 0\n",
+      typeObjectDiagnostics);
+  if (typeObjects == nullptr || typeObjectDiagnostics.hasErrors()) {
+    return fail("type[T] class fields should parse");
+  }
+
   sere::DiagnosticEngine floatParseDiagnostics;
   const std::unique_ptr<sere::Module> floats = parseText(
       "def main() -> f64:\n"
@@ -349,6 +366,83 @@ int main() {
   }
   if (!sawGetX || !sawGetY || !sawSetX) {
     return fail("x.get / y.get / x.set must become __get_x / __get_y / __set_x");
+  }
+
+  sere::DiagnosticEngine callableDiagnostics;
+  const std::unique_ptr<sere::Module> callables = parseText(
+      "def apply(cb: Callable[[str, str, i32], i32], name: str) -> i32:\n"
+      "    return cb(name, name, 1)\n"
+      "def ret_only(cb: Callable[i32]) -> i32:\n"
+      "    return cb(1)\n"
+      "def prefix(cb: Callable[[i32, ...], i32]) -> i32:\n"
+      "    return cb(1, 2)\n"
+      "def any_cb(cb: Callable) -> void:\n"
+      "    cb()\n"
+      "def fn_only(cb: Function[[i32], i32]) -> i32:\n"
+      "    return cb(1)\n"
+      "def make(cls: Class[i32]) -> void:\n"
+      "    pass\n",
+      callableDiagnostics);
+  if (callables == nullptr || callableDiagnostics.hasErrors()) {
+    callableDiagnostics.printAll();
+    return fail("Callable / Function / Class type syntax must parse");
+  }
+
+  sere::DiagnosticEngine listDiagnostics;
+  const std::unique_ptr<sere::Module> lists = parseText(
+      "def main() -> i32:\n"
+      "    a: i32 = 1\n"
+      "    b: i32 = 2\n"
+      "    xs = [\n"
+      "        a,\n"
+      "        b,\n"
+      "    ]\n"
+      "    return xs[0]\n",
+      listDiagnostics);
+  if (lists == nullptr || listDiagnostics.hasErrors()) {
+    listDiagnostics.printAll();
+    return fail("multiline list literals with trailing commas must parse");
+  }
+
+  sere::DiagnosticEngine decoDiagnostics;
+  const std::unique_ptr<sere::Module> decos = parseText(
+      "def identity(fn: Callable) -> Callable:\n"
+      "    return fn\n"
+      "class Hook:\n"
+      "    def wrap(self, fn: Callable) -> Callable:\n"
+      "        return fn\n"
+      "@identity\n"
+      "@identity(with_params=True)\n"
+      "@Hook.wrap\n"
+      "def f() -> i32:\n"
+      "    return 1\n"
+      "@identity\n"
+      "class Box:\n"
+      "    x: i32\n"
+      "    @identity\n"
+      "    def get(self) -> i32:\n"
+      "        return self.x\n"
+      "@identity\n"
+      "struct Point:\n"
+      "    x: i32\n",
+      decoDiagnostics);
+  if (decos == nullptr || decoDiagnostics.hasErrors()) {
+    decoDiagnostics.printAll();
+    return fail("custom decorators including Class.method must parse");
+  }
+
+  sere::DiagnosticEngine dottedBaseDiagnostics;
+  const std::unique_ptr<sere::Module> dottedBases = parseText(
+      "class App(seres2d.Application):\n"
+      "    window: seres2d.Window\n"
+      "    def draw(self, batch: seres2d.Batch) -> void:\n"
+      "        pass\n"
+      "class Child(ui.widget.View, mixin.Drawable):\n"
+      "    pass\n",
+      dottedBaseDiagnostics);
+  if (dottedBases == nullptr || dottedBaseDiagnostics.hasErrors()) {
+    dottedBaseDiagnostics.printAll();
+    return fail("dotted class bases and field types must parse");
   }
   return 0;
 }

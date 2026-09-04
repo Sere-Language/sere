@@ -49,18 +49,21 @@ private:
   std::unordered_map<std::string, const FunctionDef*> functionDefs_{};
   std::unordered_map<std::string, bool> externFunctions_{};
   std::unordered_set<std::string> reachable_{};
+  std::vector<const Type*> classTypes_{};
   void collectReachable(const std::vector<const Module*>& modules);
+  void collectClassTypes(const Module& ast);
   [[nodiscard]] bool shouldEmit(const FunctionDef& function) const;
   void declareFunctions(const Module& ast);
   void declareGlobals(const Module& ast);
   llvm::Value* declareGlobal(const std::string& name, const Type* type);
   void rememberStaticDecl(const std::string& name, const FunctionDef& function, const VarDecl& decl);
-  void emitModuleInitFn(const Module& ast);
+  void emitModuleInitFn(const Module& ast, const std::vector<const Module*>* imported = nullptr);
   llvm::Value* emitIndex(llvm::IRBuilder<>& builder, const IndexExpr& expr);
   llvm::Value* emitListLiteral(llvm::IRBuilder<>& builder, const ListLiteral& expr);
   llvm::Value* emitDictLiteral(llvm::IRBuilder<>& builder, const DictLiteral& expr);
   llvm::Value* emitCollectionNew(llvm::IRBuilder<>& builder, const CallExpr& expr);
   llvm::Value* emitAppend(llvm::IRBuilder<>& builder, const CallExpr& expr);
+  llvm::Value* emitBuiltinMethod(llvm::IRBuilder<>& builder, const CallExpr& expr);
   bool emitDictAssign(llvm::IRBuilder<>& builder, const IndexExpr& target, const Expr& value);
   llvm::Value* emitTempSlot(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* type);
   llvm::Value* emitIndexI64(llvm::IRBuilder<>& builder, const Expr& index);
@@ -139,9 +142,19 @@ private:
   llvm::Value* emitLambda(llvm::IRBuilder<>& builder, const LambdaExpr& expr);
   bool emitLambdaFunction(const LambdaExpr& expr);
   void declareLambdas(const Module& ast);
+  void declareNestedFunctions(const FunctionDef& function);
+  bool emitNestedFunctions(const FunctionDef& function);
   void collectLambdas(const Expr& expr, std::vector<const LambdaExpr*>& out);
   void collectLambdas(const Stmt& stmt, std::vector<const LambdaExpr*>& out);
   llvm::FunctionType* llvmFunctionTypeFrom(const Type* type);
+  llvm::FunctionType* llvmFunctionTypeFromCall(const CallExpr& expr);
+  llvm::Type* callableFatType();
+  llvm::Value* packCallable(llvm::IRBuilder<>& builder, llvm::Value* fn, llvm::Value* env);
+  llvm::Value* emitIndirectCallable(llvm::IRBuilder<>& builder,
+                                    llvm::Value* callable,
+                                    llvm::FunctionType* freeType,
+                                    const std::vector<llvm::Value*>& args);
+  llvm::Value* emitConstructorThunk(const Type* record);
   bool emitDel(llvm::IRBuilder<>& builder, const DelStmt& statement);
   struct WithFrame {
     const WithStmt* stmt = nullptr;
@@ -195,6 +208,7 @@ private:
   std::unordered_map<std::string, llvm::Value*> locals_{};
   std::unordered_map<std::string, llvm::Value*> globals_{};
   llvm::Function* moduleInitFn_ = nullptr;
+  std::unordered_map<std::string, llvm::Value*> decoratorSlots_{};
   const FunctionDef* currentFunction_ = nullptr;
   std::vector<std::pair<llvm::Value*, const Type*>> dropStack_{};
   std::vector<std::pair<llvm::BasicBlock*, llvm::BasicBlock*>> loops_{};

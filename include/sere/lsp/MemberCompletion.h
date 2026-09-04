@@ -16,12 +16,14 @@ class Type;
 struct MemberAccessQuery {
   bool active = false;
   std::vector<std::string> receiver;
+  std::string receiverType;
   std::string prefix;
 };
 
 struct MemberCompletionItem {
   std::string label;
   std::string detail;
+  std::string insertText;
   int kind = 0;
   std::string sortText;
 };
@@ -34,4 +36,4 @@ struct MemberCompletionItem {
 
 [[nodiscard]] std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type);
 
-}  // namespace sere
+} // namespace sere

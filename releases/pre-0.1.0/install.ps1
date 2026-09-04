@@ -14,11 +14,11 @@ param(
 $ErrorActionPreference = "Stop"
 $ReleaseRoot = $PSScriptRoot
 $LlvmVersion = "22.1.8"
-$ReleaseName = "Sere"
+$ReleaseName = "Sere " + (Split-Path -Leaf $ReleaseRoot)
 $ManifestPath = Join-Path $ReleaseRoot "MANIFEST.txt"
 if (Test-Path $ManifestPath) {
   $first = (Get-Content -LiteralPath $ManifestPath -TotalCount 1).Trim()
-  if ($first) {
+  if ($first -and $first -like "Sere $(Split-Path -Leaf $ReleaseRoot)*") {
     $ReleaseName = $first
   }
 }

@@ -395,6 +395,10 @@ std::unique_ptr<Expr> substOne(const Expr& tmpl, const MacroBindings& env, Sourc
 std::unique_ptr<TypeExpr> cloneTypeExpr(const TypeExpr& expr) {
   std::vector<std::unique_ptr<TypeExpr>> args;
   for (const std::unique_ptr<TypeExpr>& arg : expr.args()) {
+    if (arg == nullptr) {
+      args.push_back(nullptr);
+      continue;
+    }
     args.push_back(cloneTypeExpr(*arg));
   }
   return std::make_unique<TypeExpr>(expr.range(), expr.name(), std::move(args));

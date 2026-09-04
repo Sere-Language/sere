@@ -3,6 +3,8 @@
 
 #include "sere/types/Type.h"
 
+#include <cstdlib>
+
 namespace sere {
 
 Type::Type(TypeKind kind, std::string name) : kind_(kind), name_(std::move(name)) {}
@@ -10,6 +12,8 @@ Type::Type(TypeKind kind, std::string name) : kind_(kind), name_(std::move(name)
 TypeKind Type::kind() const { return kind_; }
 
 const std::string& Type::name() const { return name_; }
+
+const std::string& Type::qualifier() const { return qualifier_; }
 
 const std::vector<const Type*>& Type::args() const { return canonical()->args_; }
 
@@ -107,6 +111,71 @@ bool Type::isSubtypeOf(const Type* other) const {
   return false;
 }
 
+bool Type::isSizeLiteral() const {
+  const Type* type = canonical();
+  if (type->kind_ != TypeKind::Primitive || type->name_.empty()) {
+    return false;
+  }
+  std::size_t index = type->name_[0] == '-' ? 1 : 0;
+  if (index >= type->name_.size()) {
+    return false;
+  }
+  for (; index < type->name_.size(); ++index) {
+    if (type->name_[index] < '0' || type->name_[index] > '9') {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::int64_t Type::sizeLiteral() const {
+  if (!isSizeLiteral()) {
+    return -1;
+  }
+  return std::strtoll(canonical()->name_.c_str(), nullptr, 10);
+}
+
+std::int64_t Type::listSize() const {
+  if (!isList() || args().size() < 2 || args()[1] == nullptr) {
+    return -1;
+  }
+  return args()[1]->sizeLiteral();
+}
+
+bool Type::matchesInstance(const Type* target) const {
+  if (target == nullptr) {
+    return false;
+  }
+  const Type* from = canonical();
+  const Type* to = target->canonical();
+  if (from == to || from->isSubtypeOf(to)) {
+    return true;
+  }
+  if (from->isInteger() && to->isInteger()) {
+    return true;
+  }
+  if (from->isList() && to->isList()) {
+    const Type* fromElem = from->elementType();
+    const Type* toElem = to->elementType();
+    if (fromElem == nullptr || toElem == nullptr) {
+      return false;
+    }
+    if (fromElem->canonical() != toElem->canonical() && !fromElem->isSubtypeOf(toElem) &&
+        !toElem->isAny()) {
+      return false;
+    }
+    const std::int64_t wanted = to->listSize();
+    return wanted < 0 || from->listSize() == wanted;
+  }
+  if (from->isArray() && to->isArray()) {
+    const Type* fromElem = from->elementType();
+    const Type* toElem = to->elementType();
+    return fromElem != nullptr && toElem != nullptr &&
+           (fromElem->canonical() == toElem->canonical() || fromElem->isSubtypeOf(toElem));
+  }
+  return false;
+}
+
 bool Type::isInteger() const {
   if (isUnion()) {
     for (const Type* member : canonical()->args_) {
@@ -165,6 +234,22 @@ bool Type::isGenericCtor(std::string_view name) const {
   const Type* type = canonical();
   return type->kind_ == TypeKind::Generic && type->name_ == name;
 }
+
+bool Type::isTypeObject() const { return isGenericCtor("type"); }
+
+const Type* Type::typeObjectInstance() const { return isTypeObject() ? genericArg(0) : nullptr; }
+
+bool Type::isEllipsis() const { return isNamed("..."); }
+
+bool Type::isParamList() const { return isGenericCtor("[]"); }
+
+bool Type::isCallableConstraint() const {
+  return isGenericCtor("Callable") || isGenericCtor("Function");
+}
+
+bool Type::isClassConstraint() const { return isGenericCtor("Class"); }
+
+bool Type::isFunctionValue() const { return canonical()->kind() == TypeKind::Function; }
 
 const Type* Type::genericArg(std::size_t index) const {
   const Type* type = canonical();
@@ -276,17 +361,34 @@ std::string Type::display() const {
     }
     return text;
   }
+  if (kind_ == TypeKind::Record && !qualifier_.empty()) {
+    return qualifier_ + "." + name_;
+  }
   if (kind_ == TypeKind::Primitive || kind_ == TypeKind::Record || kind_ == TypeKind::Alias ||
       kind_ == TypeKind::TypeParam || kind_ == TypeKind::Module) {
     return name_;
   }
   if (kind_ == TypeKind::Generic) {
+    if (name_ == "[]") {
+      std::string text = "[";
+      for (std::size_t index = 0; index < args_.size(); ++index) {
+        if (index != 0) {
+          text += ", ";
+        }
+        text += args_[index] == nullptr ? "?" : args_[index]->display();
+      }
+      text += "]";
+      return text;
+    }
+    if (args_.empty() && (name_ == "Callable" || name_ == "Function" || name_ == "Class")) {
+      return name_;
+    }
     std::string text = name_ + "[";
     for (std::size_t index = 0; index < args_.size(); ++index) {
       if (index != 0) {
         text += ", ";
       }
-      text += args_[index]->display();
+      text += args_[index] == nullptr ? "?" : args_[index]->display();
     }
     text += "]";
     return text;

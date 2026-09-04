@@ -3,10 +3,24 @@
 
 #include "sere/driver/ProjectInit.h"
 
+#include "sere/Version.h"
+#include "sere/driver/Project.h"
+#include "sere/driver/Toolchain.h"
+
+#include <llvm/ADT/SmallVector.h>
+#include <llvm/Support/FileSystem.h>
+#include <llvm/Support/Program.h>
+
+#include <cctype>
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace sere {
 namespace {
@@ -20,9 +34,27 @@ namespace {
   return static_cast<bool>(output);
 }
 
+[[nodiscard]] bool samePath(const std::filesystem::path& left, const std::filesystem::path& right) {
+  if (left.empty() || right.empty()) {
+    return false;
+  }
+  std::error_code error;
+  if (std::filesystem::equivalent(left, right, error) && !error) {
+    return true;
+  }
+  std::error_code leftError;
+  std::error_code rightError;
+  const std::filesystem::path canonicalLeft = std::filesystem::weakly_canonical(left, leftError);
+  const std::filesystem::path canonicalRight = std::filesystem::weakly_canonical(right, rightError);
+  return !leftError && !rightError && canonicalLeft == canonicalRight;
+}
+
 void copyIfExists(const std::filesystem::path& from, const std::filesystem::path& to) {
   std::error_code error;
   if (!std::filesystem::exists(from, error)) {
+    return;
+  }
+  if (samePath(from, to)) {
     return;
   }
   if (std::filesystem::is_directory(from)) {
@@ -62,6 +94,7 @@ void makeExecutable(const std::filesystem::path& path) {
          "name = \"" +
          name +
          "\"\n"
+         "sere = \"" SERE_VERSION_STRING "\"\n"
          "src = \"src\"\n"
          "entry = \"src/main.sere\"\n"
          "libs = \"libs\"\n"
@@ -595,18 +628,33 @@ namespace {
          writePathScripts(root);
 }
 
+[[nodiscard]] std::filesystem::path stdlibBesideCompiler(const std::filesystem::path& compilerDir) {
+  std::error_code error;
+  const std::filesystem::path nested = compilerDir / "stdlib";
+  if (std::filesystem::exists(nested / "prelude.sere", error)) {
+    return nested;
+  }
+  const std::filesystem::path sibling = compilerDir.parent_path() / "stdlib";
+  if (std::filesystem::exists(sibling / "prelude.sere", error)) {
+    return sibling;
+  }
+  const std::filesystem::path cwd = std::filesystem::current_path() / "stdlib";
+  if (std::filesystem::exists(cwd / "prelude.sere", error)) {
+    return cwd;
+  }
+  return {};
+}
+
 void copyToolchain(const std::filesystem::path& compilerDir, const std::filesystem::path& root) {
-  const std::filesystem::path cwdStdlib = std::filesystem::current_path() / "stdlib";
-  const std::filesystem::path compilerStdlib = compilerDir / "stdlib";
   const std::filesystem::path venvBin = root / "venv" / "bin";
   const std::filesystem::path venvLib = root / "venv" / "lib";
-  copyIfExists(std::filesystem::exists(compilerStdlib / "prelude.sere") ? compilerStdlib
-                                                                       : cwdStdlib,
-               root / "venv" / "stdlib");
+  copyIfExists(stdlibBesideCompiler(compilerDir), root / "venv" / "stdlib");
   copyIfExists(compilerDir / "sere_rt.lib", venvLib / "sere_rt.lib");
   copyIfExists(compilerDir / "sere_rt.a", venvLib / "sere_rt.a");
+  copyIfExists(compilerDir / "libsere_rt.a", venvLib / "libsere_rt.a");
   copyIfExists(compilerDir / "sere_rt.lib", venvBin / "sere_rt.lib");
   copyIfExists(compilerDir / "sere_rt.a", venvBin / "sere_rt.a");
+  copyIfExists(compilerDir / "libsere_rt.a", venvBin / "libsere_rt.a");
   copyNamed(compilerDir, "sere", venvBin);
   copyIfExists(compilerDir / "sere-path.ps1", root / "bin" / "sere-path.ps1");
   copyIfExists(compilerDir / "sere-path.cmd", root / "bin" / "sere-path.cmd");
@@ -638,6 +686,7 @@ void copyToolchain(const std::filesystem::path& compilerDir, const std::filesyst
          name +
          "\"\n"
          "version = \"0.1.0\"\n"
+         "sere = \"" SERE_VERSION_STRING "\"\n"
          "src = \"src\"\n"
          "entry = \"src/lib.sere\"\n"
          "libs = \"libs\"\n"
@@ -757,9 +806,10 @@ int initSereProject(const std::filesystem::path& name, const std::filesystem::pa
     return 1;
   }
   writeProjectShellRc(root);
-  copyToolchain(compilerDir, root);
+  copyProjectToolchain(compilerDir, root);
   if (!writeText(root / "venv" / "sere.cfg",
-                 "home = " + compilerDir.string() + "\nstdlib = venv/stdlib\n")) {
+                 "home = " + compilerDir.string() + "\nstdlib = venv/stdlib\nversion = " +
+                     SERE_VERSION_STRING + "\n")) {
     error = "cannot write venv/sere.cfg";
     return 1;
   }
@@ -770,6 +820,307 @@ int initSereProject(const std::filesystem::path& name, const std::filesystem::pa
   std::cout << "  then:        sere build | sere run | deactivate\n";
   std::cout << "  compiler:    .\\bin\\sere-path.ps1\n";
   std::cout << "               .\\bin\\sere-path.ps1 -Persistent\n";
+  return 0;
+}
+
+void copyProjectToolchain(const std::filesystem::path& compilerDir,
+                          const std::filesystem::path& root) {
+  copyToolchain(compilerDir, root);
+}
+
+namespace {
+
+[[nodiscard]] std::string trimCopy(std::string_view text) {
+  std::size_t begin = 0;
+  std::size_t end = text.size();
+  while (begin < end && std::isspace(static_cast<unsigned char>(text[begin])) != 0) {
+    ++begin;
+  }
+  while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1])) != 0) {
+    --end;
+  }
+  return std::string(text.substr(begin, end - begin));
+}
+
+[[nodiscard]] std::string unquote(std::string text) {
+  text = trimCopy(text);
+  if (text.size() >= 2 && ((text.front() == '"' && text.back() == '"') ||
+                           (text.front() == '\'' && text.back() == '\''))) {
+    return text.substr(1, text.size() - 2);
+  }
+  return text;
+}
+
+[[nodiscard]] std::string shortVersionLabel(std::string_view text) {
+  std::string trimmed = trimCopy(text);
+  if (trimmed.rfind("sere ", 0) == 0) {
+    trimmed = trimCopy(trimmed.substr(5));
+  }
+  const std::size_t paren = trimmed.find('(');
+  if (paren != std::string::npos) {
+    trimmed = trimCopy(trimmed.substr(0, paren));
+  }
+  return trimmed;
+}
+
+[[nodiscard]] std::filesystem::path sereExecutable(const std::filesystem::path& directory) {
+#ifdef _WIN32
+  return directory / "sere.exe";
+#else
+  return directory / "sere";
+#endif
+}
+
+[[nodiscard]] std::string readKeyedValue(const std::filesystem::path& path, std::string_view key) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    return {};
+  }
+  std::string line;
+  while (std::getline(input, line)) {
+    const std::string trimmed = trimCopy(line);
+    const std::size_t eq = trimmed.find('=');
+    if (eq == std::string::npos) {
+      continue;
+    }
+    if (trimCopy(trimmed.substr(0, eq)) == key) {
+      return unquote(trimmed.substr(eq + 1));
+    }
+  }
+  return {};
+}
+
+[[nodiscard]] std::string readTextFile(const std::filesystem::path& path) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    return {};
+  }
+  std::ostringstream stream;
+  stream << input.rdbuf();
+  return stream.str();
+}
+
+bool writeKeyedFile(const std::filesystem::path& path, const std::string& text) {
+  return writeText(path, text);
+}
+
+[[nodiscard]] std::string queryCompilerVersion(const std::filesystem::path& exe) {
+  std::error_code existsError;
+  if (exe.empty() || !std::filesystem::exists(exe, existsError)) {
+    return {};
+  }
+  std::error_code selfError;
+  const std::filesystem::path self = sereExecutable(compilerDirectory());
+  if (std::filesystem::exists(self, selfError) &&
+      std::filesystem::equivalent(exe, self, selfError) && !selfError) {
+    return SERE_VERSION_STRING;
+  }
+  llvm::SmallString<260> temp;
+  if (llvm::sys::fs::createTemporaryFile("sere-ver", "txt", temp)) {
+    return {};
+  }
+  const std::string tempPath = std::string(temp);
+  std::optional<llvm::StringRef> redirects[3] = {std::nullopt, llvm::StringRef(tempPath),
+                                                 std::nullopt};
+  const std::string exeString = exe.string();
+  llvm::SmallVector<llvm::StringRef, 2> args{exeString, "--version"};
+  std::string launchError;
+  bool failed = false;
+  const int code =
+      llvm::sys::ExecuteAndWait(exeString, args, std::nullopt, redirects, 8, 0, &launchError,
+                                &failed);
+  const std::string output = readTextFile(tempPath);
+  std::error_code removeError;
+  std::filesystem::remove(tempPath, removeError);
+  if (code != 0 || failed) {
+    return {};
+  }
+  return shortVersionLabel(output);
+}
+
+[[nodiscard]] std::string projectEnvironmentVersion(const ProjectManifest& manifest) {
+  const std::string fromCfg = readKeyedValue(manifest.root / "venv" / "sere.cfg", "version");
+  if (!fromCfg.empty()) {
+    return fromCfg;
+  }
+  if (!manifest.sereVersion.empty()) {
+    return manifest.sereVersion;
+  }
+  const std::string fromVenv = queryCompilerVersion(sereExecutable(manifest.root / "venv" / "bin"));
+  if (!fromVenv.empty()) {
+    return fromVenv;
+  }
+  return {};
+}
+
+bool patchTomlSereVersion(const std::filesystem::path& tomlPath, const std::string& version) {
+  const std::string original = readTextFile(tomlPath);
+  if (original.empty() && !std::filesystem::exists(tomlPath)) {
+    return false;
+  }
+  std::istringstream input(original);
+  std::ostringstream output;
+  std::string line;
+  bool replaced = false;
+  while (std::getline(input, line)) {
+    const std::string trimmed = trimCopy(line);
+    if (trimmed.rfind("sere", 0) == 0) {
+      const std::size_t eq = trimmed.find('=');
+      if (eq != std::string::npos && trimCopy(trimmed.substr(0, eq)) == "sere") {
+        output << "sere = \"" << version << "\"\n";
+        replaced = true;
+        continue;
+      }
+    }
+    output << line << '\n';
+  }
+  if (!replaced) {
+    output << "sere = \"" << version << "\"\n";
+  }
+  return writeKeyedFile(tomlPath, output.str());
+}
+
+[[nodiscard]] std::filesystem::path globalInstallPrefix() {
+#ifdef _WIN32
+  if (const char* local = std::getenv("LOCALAPPDATA")) {
+    return std::filesystem::path(local) / "Programs" / "Sere";
+  }
+#endif
+  return {};
+}
+
+[[nodiscard]] bool compilerFilesDiffer(const std::filesystem::path& fromExe,
+                                       const std::filesystem::path& destExe) {
+  std::error_code error;
+  if (!std::filesystem::exists(destExe, error)) {
+    return true;
+  }
+  if (samePath(fromExe, destExe)) {
+    return false;
+  }
+  const std::string destVersion = shortVersionLabel(queryCompilerVersion(destExe));
+  if (destVersion != SERE_VERSION_STRING) {
+    return true;
+  }
+  error.clear();
+  const auto fromSize = std::filesystem::file_size(fromExe, error);
+  if (error) {
+    return true;
+  }
+  error.clear();
+  const auto destSize = std::filesystem::file_size(destExe, error);
+  if (error || fromSize != destSize) {
+    return true;
+  }
+  return false;
+}
+
+[[nodiscard]] int updateGlobalInstall(std::string& error) {
+  const std::filesystem::path prefix = globalInstallPrefix();
+  if (prefix.empty()) {
+    error.clear();
+    std::cout << "no global install prefix; skip system compiler update\n";
+    return 0;
+  }
+  const std::filesystem::path fromDir = compilerDirectory();
+  const std::filesystem::path fromExe = sereExecutable(fromDir);
+  const std::filesystem::path destBin = prefix / "bin";
+  const std::filesystem::path destExe = sereExecutable(destBin);
+  std::error_code existsError;
+  if (!std::filesystem::exists(fromExe, existsError)) {
+    error.clear();
+    std::cout << "this process is not sere.exe; skip system compiler update\n";
+    return 0;
+  }
+  if (samePath(fromDir, destBin) || samePath(fromExe, destExe)) {
+    std::cout << "system install is already this compiler (" << SERE_VERSION_STRING << ")\n";
+    error.clear();
+    return 0;
+  }
+  const std::string destVersion = shortVersionLabel(queryCompilerVersion(destExe));
+  if (!compilerFilesDiffer(fromExe, destExe)) {
+    std::cout << "system install already matches this compiler (" << SERE_VERSION_STRING << ")\n";
+    error.clear();
+    return 0;
+  }
+  std::error_code dirError;
+  std::filesystem::create_directories(destBin, dirError);
+  std::cout << "this compiler:    " << SERE_VERSION_STRING << "  (" << fromDir.string() << ")\n";
+  std::cout << "system install:   "
+            << (destVersion.empty() ? "(missing or unknown)" : destVersion) << "  ("
+            << destBin.string() << ")\n";
+  std::cout << "updating " << prefix.string() << "\n";
+  if (copyCompilerBin(fromDir, destBin, error) != 0) {
+    return 1;
+  }
+  copyIfExists(stdlibBesideCompiler(fromDir), prefix / "stdlib");
+  const std::filesystem::path includeSrc = fromDir.parent_path() / "include";
+  if (std::filesystem::exists(includeSrc / "sere" / "api" / "sere_mod.h", existsError)) {
+    copyIfExists(includeSrc, prefix / "include");
+  }
+  error.clear();
+  std::cout << "system compiler is now " << SERE_VERSION_STRING << "\n";
+  return 0;
+}
+
+}  // namespace
+
+int updateSereEnvironment(const std::filesystem::path& start, std::string& error) {
+  if (updateGlobalInstall(error) != 0) {
+    return 1;
+  }
+  std::error_code cwdError;
+  const std::filesystem::path from =
+      start.empty() ? std::filesystem::current_path(cwdError) : start;
+  const std::optional<std::filesystem::path> root = findProjectRoot(from);
+  const std::filesystem::path sourceDir = compilerDirectory();
+  if (!root) {
+    return 0;
+  }
+  ProjectManifest manifest;
+  if (!loadProjectManifest(*root, manifest, error)) {
+    return 1;
+  }
+  if (manifest.kind == ProjectKind::Lib) {
+    std::error_code existsError;
+    if (!std::filesystem::exists(*root / "venv" / "sere.cfg", existsError)) {
+      std::cout << "library project has no local compiler environment to update\n";
+      return 0;
+    }
+  }
+
+  const std::string installed = SERE_VERSION_STRING;
+  const std::string current = shortVersionLabel(projectEnvironmentVersion(manifest));
+
+  std::cout << "this compiler:    " << installed << "  (" << sourceDir.string() << ")\n";
+  std::cout << "project Sere:     " << (current.empty() ? "(unknown)" : current) << "  ("
+            << root->string() << ")\n";
+
+  std::error_code preludeError;
+  const bool stdlibPresent =
+      std::filesystem::exists(*root / "venv" / "stdlib" / "prelude.sere", preludeError);
+  if (current == installed && stdlibPresent) {
+    std::cout << "project already matches this compiler\n";
+    return 0;
+  }
+
+  std::error_code dirError;
+  std::filesystem::create_directories(*root / "venv" / "bin", dirError);
+  std::filesystem::create_directories(*root / "venv" / "stdlib", dirError);
+  std::filesystem::create_directories(*root / "bin", dirError);
+  copyProjectToolchain(sourceDir, *root);
+  std::string refreshError;
+  (void)copyCompilerBin(sourceDir, *root / "bin", refreshError);
+  (void)copyCompilerBin(sourceDir, *root / "venv" / "bin", refreshError);
+  if (!writeText(*root / "venv" / "sere.cfg",
+                 "home = " + sourceDir.string() + "\nstdlib = venv/stdlib\nversion = " +
+                     installed + "\n")) {
+    error = "cannot write venv/sere.cfg";
+    return 1;
+  }
+  (void)patchTomlSereVersion(*root / "sere.toml", installed);
+  std::cout << "updated compiler, stdlib, and venv to " << installed
+            << " (project source left unchanged)\n";
   return 0;
 }
 

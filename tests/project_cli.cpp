@@ -1,6 +1,7 @@
 /// @file project_cli.cpp
 /// Checks sere.toml loading, init scaffolding, and project subcommand parsing.
 
+#include "sere/Version.h"
 #include "sere/driver/Options.h"
 #include "sere/driver/Project.h"
 #include "sere/driver/ProjectInit.h"
@@ -249,6 +250,21 @@ int main() {
     return fail("expected ProjectCommand::RefreshBin from --refresh-bin");
   }
 
+  sere::CompilerOptions updateOptions;
+  if (!parseArgs({"sere", "update"}, updateOptions, error)) {
+    return fail("failed to parse update");
+  }
+  if (updateOptions.projectCommand != sere::ProjectCommand::Update) {
+    return fail("expected ProjectCommand::Update from update");
+  }
+  sere::CompilerOptions updateFlag;
+  if (!parseArgs({"sere", "--update"}, updateFlag, error)) {
+    return fail("failed to parse --update");
+  }
+  if (updateFlag.projectCommand != sere::ProjectCommand::Update) {
+    return fail("expected ProjectCommand::Update from --update");
+  }
+
   sere::CompilerOptions initLib;
   if (!parseArgs({"sere", "init-lib", "mathlib"}, initLib, error)) {
     return fail("failed to parse init-lib");
@@ -354,6 +370,34 @@ int main() {
     std::filesystem::remove_all(temp, fsError);
     return fail("library manifest should be kind=lib with src/lib.sere");
   }
+
+  if (!writeAll(project / "venv" / "sere.cfg",
+                "home = C:/old-sere\nstdlib = venv/stdlib\nversion = pre-0.1.0\n")) {
+    std::filesystem::remove_all(temp, fsError);
+    return fail("could not write an old venv/sere.cfg");
+  }
+  const std::string originalMain = readAll(project / "src" / "main.sere");
+  std::string updateError;
+  if (sere::updateSereEnvironment(project, updateError) != 0) {
+    std::cerr << updateError << '\n';
+    std::filesystem::remove_all(temp, fsError);
+    return fail("updateSereEnvironment failed");
+  }
+  const std::string cfg = readAll(project / "venv" / "sere.cfg");
+  if (cfg.find(SERE_VERSION_STRING) == std::string::npos) {
+    std::filesystem::remove_all(temp, fsError);
+    return fail("update should write the installed compiler version into venv/sere.cfg");
+  }
+  if (readAll(project / "src" / "main.sere") != originalMain) {
+    std::filesystem::remove_all(temp, fsError);
+    return fail("update must not change project source");
+  }
+  const std::string toml = readAll(project / "sere.toml");
+  if (toml.find(std::string("sere = \"") + SERE_VERSION_STRING + "\"") == std::string::npos) {
+    std::filesystem::remove_all(temp, fsError);
+    return fail("update should pin sere.toml to the installed compiler");
+  }
+
   std::filesystem::remove_all(temp, fsError);
   return 0;
 }

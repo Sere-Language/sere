@@ -3,7 +3,7 @@
 
 [CmdletBinding()]
 param(
-  [string]$Name = "pre-0.1.1"
+  [string]$Name = "pre-0.1.4"
 )
 
 $ErrorActionPreference = "Stop"
@@ -50,7 +50,8 @@ function Copy-TreeTo([string]$From, [string]$To) {
 
 $repo = Find-RepoRoot
 $dist = Join-Path $repo "dist"
-$dest = Join-Path $repo "releases\$Name"
+$destRoot = Join-Path $repo "releases\$Name"
+$dest = Join-Path $destRoot "windows-x64"
 $zip = Join-Path $repo "releases\Sere-$Name-windows-x64.zip"
 $payloadScripts = Join-Path $repo "releases\pre-0.1.0"
 
@@ -58,13 +59,16 @@ $binCandidates = @(
   (Join-Path $repo "bin\sere.exe"),
   (Join-Path $repo "build\windows-clang-cl-relwithdebinfo\bin\sere.exe")
 )
-$exe = $binCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+$exe = $binCandidates |
+  Where-Object { Test-Path $_ } |
+  Sort-Object { (Get-Item -LiteralPath $_).LastWriteTimeUtc } -Descending |
+  Select-Object -First 1
 if (-not $exe) {
   throw "sere.exe not found. Build the compiler first."
 }
 $compilerDir = Split-Path -Parent $exe
 
-Write-Host "staging $Name from $compilerDir -> $dest"
+Write-Host "staging $Name windows-x64 from $compilerDir -> $dest"
 
 if (Test-Path $dest) {
   Remove-Item -LiteralPath $dest -Recurse -Force
@@ -120,6 +124,7 @@ if (-not (Copy-TreeTo (Join-Path $repo "stdlib") (Join-Path $dest "stdlib"))) {
 [void](Copy-FileTo (Join-Path $repo "LICENSE") (Join-Path $dest "LICENSE"))
 [void](Copy-FileTo (Join-Path $repo "docs\language.md") (Join-Path $dest "docs\language.md"))
 [void](Copy-FileTo (Join-Path $repo "examples\hello.sere") (Join-Path $dest "examples\hello.sere"))
+[void](Copy-FileTo (Join-Path $repo "examples\callable.sere") (Join-Path $dest "examples\callable.sere"))
 [void](Copy-FileTo (Join-Path $repo "packaging\ensure-msvc.ps1") (Join-Path $dest "packaging\ensure-msvc.ps1"))
 [void](Copy-FileTo (Join-Path $repo "packaging\install-vsix.ps1") (Join-Path $dest "packaging\install-vsix.ps1"))
 [void](Copy-FileTo (Join-Path $repo "scripts\bootstrap.ps1") (Join-Path $dest "packaging\bootstrap-llvm.ps1"))
@@ -139,6 +144,7 @@ if ($vsix) {
 $stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss zzz"
 $lines = @(
   "Sere $Name",
+  "platform: windows-x64",
   "staged: $stamp",
   "compiler: $exe"
 )
@@ -164,21 +170,46 @@ use **Extensions → Install from VSIX…** in Cursor / VS Code.
 "@
 Set-Content -LiteralPath (Join-Path $dest "README.md") -Value $readme.TrimStart() -Encoding utf8
 
-if (Test-Path $zip) {
-  Remove-Item -LiteralPath $zip -Force
-}
-$zipStaging = Join-Path ([System.IO.Path]::GetTempPath()) ("sere-zip-" + [Guid]::NewGuid().ToString("N"))
-New-Item -ItemType Directory -Force -Path $zipStaging | Out-Null
-try {
-  Copy-Item -LiteralPath $dest -Destination (Join-Path $zipStaging $Name) -Recurse -Force
-  Compress-Archive -Path (Join-Path $zipStaging $Name) -DestinationPath $zip -Force
-} finally {
-  Remove-Item -LiteralPath $zipStaging -Recurse -Force -ErrorAction SilentlyContinue
-}
-
 Write-Host "staged $dest"
-Write-Host "zip     $zip"
 if ($vsix) {
   Write-Host "vsix    $($vsix.FullName)"
 }
+if (Test-Path $zip) {
+  Remove-Item -LiteralPath $zip -Force
+}
+Compress-Archive -Path (Join-Path $dest "*") -DestinationPath $zip -Force
+Write-Host "zip     $zip"
 Write-Host "install with:  $dest\install.ps1"
+
+$index = @"
+# Sere $Name
+
+Two installable trees. Do not mix ``sere.exe`` and the Linux ELF in one ``bin/``.
+
+| Platform | Tree | Archive |
+| --- | --- | --- |
+| Windows x64 | ``windows-x64/`` | ``../Sere-$Name-windows-x64.zip`` |
+| Linux x64 | ``linux-x64/`` | ``../Sere-$Name-linux-x64.tar.gz`` (and ``.zip`` if staged on Linux) |
+
+## Windows
+
+``````powershell
+.\windows-x64\install.ps1
+sere --version
+``````
+
+## Linux (x86_64, Ubuntu 22.04 / glibc 2.35)
+
+This ELF will not run on RISC-V [NanoVM](https://userland.run/docs/).
+The Linux archive is self-contained (compiler + LLVM 22.1.8 + stdlib).
+
+``````bash
+chmod +x linux-x64/install.sh
+./linux-x64/install.sh
+sere --version
+``````
+
+Linux stdlib does not include the ``windows`` module.
+"@
+Set-Content -LiteralPath (Join-Path $destRoot "README.md") -Value $index.TrimStart() -Encoding utf8
+Write-Host "index   $(Join-Path $destRoot 'README.md')"

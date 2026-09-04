@@ -63,6 +63,31 @@
         "CMAKE_C_COMPILER": "cl",
         "CMAKE_CXX_COMPILER": "cl"
       }
+    },
+    {
+      "name": "linux-clang-relwithdebinfo",
+      "displayName": "Linux clang RelWithDebInfo",
+      "description": "Ubuntu 22.04 x86_64: clang + ld.lld + LLVM 22.1.8.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "LLVM_DIR": "$env{SERE_LLVM_DIR}/lib/cmake/llvm",
+        "CMAKE_C_COMPILER": "$env{SERE_LLVM_DIR}/bin/clang",
+        "CMAKE_CXX_COMPILER": "$env{SERE_LLVM_DIR}/bin/clang++",
+        "CMAKE_LINKER": "$env{SERE_LLVM_DIR}/bin/ld.lld",
+        "CMAKE_AR": "$env{SERE_LLVM_DIR}/bin/llvm-ar",
+        "CMAKE_RANLIB": "$env{SERE_LLVM_DIR}/bin/llvm-ranlib"
+      },
+      "environment": {
+        "PATH": "$env{SERE_LLVM_DIR}/bin:$penv{PATH}"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
     }
   ],
   "buildPresets": [
@@ -77,12 +102,23 @@
     {
       "name": "windows-msvc-relwithdebinfo",
       "configurePreset": "windows-msvc-relwithdebinfo"
+    },
+    {
+      "name": "linux-clang-relwithdebinfo",
+      "configurePreset": "linux-clang-relwithdebinfo"
     }
   ],
   "testPresets": [
     {
       "name": "windows-clang-cl-relwithdebinfo",
       "configurePreset": "windows-clang-cl-relwithdebinfo",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-clang-relwithdebinfo",
+      "configurePreset": "linux-clang-relwithdebinfo",
       "output": {
         "outputOnFailure": true
       }

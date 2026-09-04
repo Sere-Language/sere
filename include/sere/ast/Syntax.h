@@ -8,9 +8,11 @@
 #include "sere/types/Intrinsic.h"
 #include "sere/types/Type.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace sere {
@@ -200,6 +202,7 @@ enum class ParamKind { Normal, VarArg, KwArg };
 struct NamedArgument {
   std::string name;
   std::unique_ptr<Expr> value;
+  bool splat = false;
 };
 
 class CallExpr final : public Expr {
@@ -228,6 +231,8 @@ public:
   void setMethod(bool value);
   [[nodiscard]] bool isCast() const;
   void setCast(bool value);
+  void setUnboundMethodCall(bool value);
+  [[nodiscard]] bool isUnboundMethodCall() const;
   [[nodiscard]] const std::vector<std::string>& paramNames() const;
   void setParamNames(std::vector<std::string> names);
   void setCompileTimeNames(std::vector<std::string> names);
@@ -247,6 +252,7 @@ private:
   bool isConstructor_ = false;
   bool isMethod_ = false;
   bool isCast_ = false;
+  bool isUnboundMethodCall_ = false;
 };
 
 class MemberExpr final : public Expr {
@@ -263,6 +269,11 @@ public:
   [[nodiscard]] const std::string& propertySet() const;
   void setBackingField(bool value);
   [[nodiscard]] bool usesBackingField() const;
+  void setBoundMethod(std::string llvmName);
+  void setUnboundMethod(std::string llvmName);
+  [[nodiscard]] bool isBoundMethod() const;
+  [[nodiscard]] bool isUnboundMethod() const;
+  [[nodiscard]] const std::string& boundMethodLlvm() const;
 
 private:
   std::unique_ptr<Expr> object_;
@@ -270,7 +281,9 @@ private:
   std::string compileTimeText_{};
   std::string propertyGet_{};
   std::string propertySet_{};
+  std::string boundMethodLlvm_{};
   bool backingField_ = false;
+  bool unboundMethod_ = false;
 };
 
 enum class BinaryOp {
@@ -773,12 +786,16 @@ public:
   [[nodiscard]] bool isFlags() const;
   void setDecorators(std::vector<std::string> decorators);
   [[nodiscard]] const std::vector<std::string>& decorators() const;
+  void setDecoratorExprs(std::vector<std::unique_ptr<Expr>> exprs);
+  [[nodiscard]] const std::vector<std::unique_ptr<Expr>>& decoratorExprs() const;
+  [[nodiscard]] std::vector<std::unique_ptr<Expr>>& decoratorExprs();
 
 private:
   std::string name_;
   std::vector<EnumVariant> variants_;
   std::vector<std::unique_ptr<FunctionDef>> methods_{};
   std::vector<std::string> decorators_{};
+  std::vector<std::unique_ptr<Expr>> decoratorExprs_{};
   bool isFlags_ = false;
 };
 
@@ -790,6 +807,10 @@ enum class PropertyKind {
 
 class FunctionDef final : public Stmt {
 public:
+  struct Capture {
+    std::string name;
+    const Type* type = nullptr;
+  };
   FunctionDef(SourceRange range,
               std::string name,
               std::vector<ParamDecl> params,
@@ -815,6 +836,11 @@ public:
   void setOverride(bool value);
   void setDecorators(std::vector<std::string> decorators);
   [[nodiscard]] const std::vector<std::string>& decorators() const;
+  void setDecoratorExprs(std::vector<std::unique_ptr<Expr>> exprs);
+  [[nodiscard]] const std::vector<std::unique_ptr<Expr>>& decoratorExprs() const;
+  [[nodiscard]] std::vector<std::unique_ptr<Expr>>& decoratorExprs();
+  void setDecoratedType(const Type* type);
+  [[nodiscard]] const Type* decoratedType() const;
   void setModulePrefix(std::string prefix);
   [[nodiscard]] const std::string& modulePrefix() const;
   void setTypeParams(std::vector<std::string> typeParams);
@@ -824,6 +850,8 @@ public:
   void setProperty(PropertyKind kind, std::string name);
   [[nodiscard]] PropertyKind propertyKind() const;
   [[nodiscard]] const std::string& propertyName() const;
+  void addCapture(std::string name, const Type* type);
+  [[nodiscard]] const std::vector<Capture>& captures() const;
 
 private:
   std::string name_;
@@ -833,6 +861,8 @@ private:
   std::string externName_;
   std::string ownerClass_;
   std::vector<std::string> decorators_{};
+  std::vector<std::unique_ptr<Expr>> decoratorExprs_{};
+  const Type* decoratedType_ = nullptr;
   std::string modulePrefix_{};
   std::vector<std::string> typeParams_{};
   std::string propertyName_{};
@@ -840,6 +870,7 @@ private:
   bool isAbstract_ = false;
   bool isOverride_ = false;
   bool inferredReturn_ = false;
+  std::vector<Capture> captures_{};
 };
 
 class ClassDef final : public Stmt {
@@ -855,9 +886,17 @@ public:
   [[nodiscard]] const std::vector<std::unique_ptr<FunctionDef>>& methods() const;
   [[nodiscard]] std::vector<std::unique_ptr<FunctionDef>>& methods();
   [[nodiscard]] const std::vector<std::string>& bases() const;
+  [[nodiscard]] const std::vector<std::unique_ptr<TypeExpr>>& baseTypes() const;
+  [[nodiscard]] std::vector<std::unique_ptr<TypeExpr>>& baseTypes();
+  void setBaseTypes(std::vector<std::unique_ptr<TypeExpr>> bases);
   [[nodiscard]] const std::vector<std::string>& typeParams() const;
   void setDecorators(std::vector<std::string> decorators);
   [[nodiscard]] const std::vector<std::string>& decorators() const;
+  void setDecoratorExprs(std::vector<std::unique_ptr<Expr>> exprs);
+  [[nodiscard]] const std::vector<std::unique_ptr<Expr>>& decoratorExprs() const;
+  [[nodiscard]] std::vector<std::unique_ptr<Expr>>& decoratorExprs();
+  void setDecoratedType(const Type* type);
+  [[nodiscard]] const Type* decoratedType() const;
   void setStruct(bool value);
   [[nodiscard]] bool isStruct() const;
   void setFrozen(bool value);
@@ -868,8 +907,11 @@ private:
   std::vector<FieldDecl> fields_;
   std::vector<std::unique_ptr<FunctionDef>> methods_;
   std::vector<std::string> bases_{};
+  std::vector<std::unique_ptr<TypeExpr>> baseTypes_{};
   std::vector<std::string> typeParams_{};
   std::vector<std::string> decorators_{};
+  std::vector<std::unique_ptr<Expr>> decoratorExprs_{};
+  const Type* decoratedType_ = nullptr;
   bool isStruct_ = false;
   bool isFrozen_ = false;
 };
@@ -880,11 +922,14 @@ public:
              std::vector<std::string> modulePath,
              std::string alias,
              std::vector<std::string> names,
-             bool star);
+             bool star,
+             std::vector<std::string> nameAliases = {});
 
   [[nodiscard]] const std::vector<std::string>& modulePath() const;
   [[nodiscard]] const std::string& alias() const;
   [[nodiscard]] const std::vector<std::string>& names() const;
+  [[nodiscard]] const std::vector<std::string>& nameAliases() const;
+  [[nodiscard]] std::string boundName(std::size_t index) const;
   [[nodiscard]] bool star() const;
   [[nodiscard]] bool isFrom() const;
 
@@ -892,6 +937,7 @@ private:
   std::vector<std::string> modulePath_;
   std::string alias_;
   std::vector<std::string> names_;
+  std::vector<std::string> nameAliases_{};
   bool star_ = false;
 };
 
@@ -1033,15 +1079,36 @@ private:
   std::vector<Token> tokens_;
 };
 
+enum class ModuleExportMode {
+  Default,
+  Replace,
+  Append,
+};
+
 class Module final : public Node {
 public:
   Module(SourceRange range, std::vector<std::unique_ptr<Stmt>> statements);
   [[nodiscard]] const std::vector<std::unique_ptr<Stmt>>& statements() const;
   [[nodiscard]] std::vector<std::unique_ptr<Stmt>>& statements();
   void insertFront(std::vector<std::unique_ptr<Stmt>> extra);
+  void setExportList(ModuleExportMode mode, std::vector<std::string> names);
+  [[nodiscard]] ModuleExportMode exportMode() const;
+  [[nodiscard]] const std::vector<std::string>& exportNames() const;
+  void addExportAlias(RecordField field);
+  [[nodiscard]] const std::vector<RecordField>& exportAliases() const;
 
 private:
   std::vector<std::unique_ptr<Stmt>> statements_;
+  ModuleExportMode exportMode_ = ModuleExportMode::Default;
+  std::vector<std::string> exportNames_{};
+  std::vector<RecordField> exportAliases_{};
 };
+
+[[nodiscard]] bool isReservedDecoratorName(std::string_view name);
+[[nodiscard]] bool isReservedDecoratorExpr(const Expr& expr);
+[[nodiscard]] std::string decoratorExprName(const Expr& expr);
+[[nodiscard]] std::vector<std::string> decoratorExprNames(
+    const std::vector<std::unique_ptr<Expr>>& exprs);
+[[nodiscard]] bool hasRuntimeDecorators(const std::vector<std::unique_ptr<Expr>>& exprs);
 
 }  // namespace sere

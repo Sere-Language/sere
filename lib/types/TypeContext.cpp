@@ -4,6 +4,9 @@
 #include "sere/types/TypeContext.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <string>
+#include <string_view>
 
 namespace sere {
 namespace {
@@ -16,7 +19,7 @@ std::string genericKey(std::string_view ctor, const std::vector<const Type*>& ar
     if (index != 0) {
       key += ',';
     }
-    key += args[index]->display();
+    key += args[index] == nullptr ? "?" : args[index]->display();
   }
   key += '>';
   return key;
@@ -43,10 +46,10 @@ std::string functionKey(const std::vector<const Type*>& params, const Type* retu
     if (index != 0) {
       key += ',';
     }
-    key += params[index]->display();
+    key += params[index] == nullptr ? "?" : params[index]->display();
   }
   key += ")->";
-  key += returnType->display();
+  key += returnType == nullptr ? "?" : returnType->display();
   return key;
 }
 
@@ -70,6 +73,7 @@ TypeContext::TypeContext() {
   internPrimitive("never");
   internPrimitive("None");
   internPrimitive("Any");
+  internPrimitive("...");
   static_cast<void>(defineAlias("byte", primitive("u8")));
 }
 
@@ -150,17 +154,27 @@ Type* TypeContext::writable(const Type* type) {
   return nullptr;
 }
 
-const Type* TypeContext::defineRecord(const std::string& name, std::vector<RecordField> fields) {
-  const std::string key = "R:" + name;
+const Type* TypeContext::defineRecord(const std::string& name, std::vector<RecordField> fields,
+                                      const std::string& qualifier) {
+  const std::string qualified = qualifier.empty() ? name : qualifier + "." + name;
+  const std::string key = "R:" + qualified;
   const auto found = interned_.find(key);
   if (found != interned_.end()) {
     return found->second.get();
   }
   auto type = std::unique_ptr<Type>(new Type(TypeKind::Record, name));
   type->fields_ = std::move(fields);
+  type->qualifier_ = qualifier;
   const Type* pointer = type.get();
   interned_.emplace(key, std::move(type));
-  records_[name] = pointer;
+  records_[qualified] = pointer;
+  // Only prelude (and unqualified) records occupy the short name. Imported
+  // modules keep `gl.Window` distinct from a local `Window`.
+  if (qualifier.empty() || qualifier == "prelude" || qualifier == "__main__") {
+    if (records_.find(name) == records_.end()) {
+      records_[name] = pointer;
+    }
+  }
   return pointer;
 }
 
@@ -431,10 +445,6 @@ const Type* TypeContext::lookupNamed(std::string_view name) const {
   if (const Type* module = moduleType(name)) {
     return module;
   }
-  const auto dot = name.rfind('.');
-  if (dot != std::string_view::npos && dot + 1 < name.size()) {
-    return lookupNamed(name.substr(dot + 1));
-  }
   return nullptr;
 }
 
@@ -480,7 +490,25 @@ const Type* TypeContext::sharedType(const Type* pointee) {
 
 const Type* TypeContext::ptrType(const Type* pointee) { return generic("Ptr", {pointee}); }
 
-const Type* TypeContext::listType(const Type* element) { return generic("list", {element}); }
+const Type* TypeContext::typeObject(const Type* instance) { return generic("type", {instance}); }
+
+const Type* TypeContext::ellipsisType() { return primitive("..."); }
+
+const Type* TypeContext::paramList(const std::vector<const Type*>& params) {
+  return generic("[]", params);
+}
+
+const Type* TypeContext::sizeType(std::int64_t value) {
+  const std::string name = std::to_string(value);
+  return intern("N:" + name, TypeKind::Primitive, name);
+}
+
+const Type* TypeContext::listType(const Type* element, std::int64_t size) {
+  if (size >= 0) {
+    return generic("list", {element, sizeType(size)});
+  }
+  return generic("list", {element});
+}
 
 const Type* TypeContext::arrayType(const Type* element) { return generic("array", {element}); }
 
@@ -543,6 +571,12 @@ const Type* TypeContext::unionType(std::vector<const Type*> members) {
     return unique[0];
   }
   std::sort(unique.begin(), unique.end(), [](const Type* left, const Type* right) {
+    if (left == nullptr) {
+      return right != nullptr;
+    }
+    if (right == nullptr) {
+      return false;
+    }
     return left->display() < right->display();
   });
   std::string key = "U:";

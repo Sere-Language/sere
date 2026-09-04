@@ -52,6 +52,7 @@ class Type {
 public:
   [[nodiscard]] TypeKind kind() const;
   [[nodiscard]] const std::string& name() const;
+  [[nodiscard]] const std::string& qualifier() const;
   [[nodiscard]] const std::vector<const Type*>& args() const;
   [[nodiscard]] const std::vector<RecordField>& fields() const;
   [[nodiscard]] const std::vector<RecordMethod>& methods() const;
@@ -70,6 +71,14 @@ public:
   [[nodiscard]] int integerBitWidth() const;
   [[nodiscard]] bool isGenericCtor(std::string_view name) const;
   [[nodiscard]] const Type* genericArg(std::size_t index) const;
+  /// `type[T]`: a class object that constructs T.
+  [[nodiscard]] bool isTypeObject() const;
+  [[nodiscard]] const Type* typeObjectInstance() const;
+  [[nodiscard]] bool isEllipsis() const;
+  [[nodiscard]] bool isParamList() const;
+  [[nodiscard]] bool isCallableConstraint() const;
+  [[nodiscard]] bool isClassConstraint() const;
+  [[nodiscard]] bool isFunctionValue() const;
   [[nodiscard]] bool isPointerLike() const;
   [[nodiscard]] bool isList() const;
   [[nodiscard]] bool isArray() const;
@@ -102,6 +111,10 @@ public:
   [[nodiscard]] const std::vector<const Type*>& bases() const;
   [[nodiscard]] const std::vector<std::string>& typeParams() const;
   [[nodiscard]] bool isSubtypeOf(const Type* other) const;
+  [[nodiscard]] bool matchesInstance(const Type* target) const;
+  [[nodiscard]] bool isSizeLiteral() const;
+  [[nodiscard]] std::int64_t sizeLiteral() const;
+  [[nodiscard]] std::int64_t listSize() const;
   [[nodiscard]] const Type* dunderReturn(std::string_view methodName) const;
 
 private:
@@ -110,6 +123,7 @@ private:
 
   TypeKind kind_;
   std::string name_;
+  std::string qualifier_{};
   std::vector<const Type*> args_{};
   std::vector<RecordField> fields_{};
   std::vector<RecordMethod> methods_{};

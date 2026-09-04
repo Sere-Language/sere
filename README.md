@@ -68,6 +68,12 @@ Put the compiler on `PATH` from the repo or a project:
 `sere build` compiles `src/main.sere`; `sere run` builds and executes `bin/<name>.exe`.
 `sere refresh-bin` copies this compiler, runtime, and stdlib into `./bin` even
 when the previous `sere.exe` is locked (it is renamed to `sere.exe.old`).
+`sere --update` (or `sere update`) copies **this** compiler into
+`%LOCALAPPDATA%\\Programs\\Sere` if the system install is a different version
+or binary. Run it from the `sere.exe` you want on PATH (for example
+`.\releases\dev-0.1.4\bin\sere.exe update`). If you run it from a project with
+`sere.toml`, it also refreshes that project's venv **without changing your
+source**.
 
 ## Libraries
 
@@ -175,7 +181,7 @@ Package a VSIX:
 .\scripts\package-vsix.ps1
 ```
 
-That writes `dist/sere-0.2.1.vsix`. In Cursor / VS Code: **Extensions → … → Install from VSIX…** and choose that file. Reload the window. The language server uses the RelWithDebInfo `sere.exe` under `build/` so it does not lock `./bin/sere.exe`.
+That writes `dist/sere-0.2.6.vsix`. In Cursor / VS Code: **Extensions → … → Install from VSIX…** and choose that file. Reload the window. The language server uses the RelWithDebInfo `sere.exe` under `build/` so it does not lock `./bin/sere.exe`.
 
 ## Windows installer
 
@@ -183,8 +189,8 @@ A **manual / zip** release is built into `dist/`:
 
 ```powershell
 .\scripts\package-vsix.ps1
-.\releases\stage.ps1                    # dist/Sere-pre-0.1.1 + zip
-.\dist\Sere-pre-0.1.1\install.ps1       # %LOCALAPPDATA%\Programs\Sere and PATH
+.\releases\stage.ps1                    # dist/Sere-dev-0.1.4 + zip
+.\releases\dev-0.1.4\install.ps1        # %LOCALAPPDATA%\Programs\Sere and PATH
 ```
 
 The Inno Setup wizard is a later option (`sere --build-installer` →

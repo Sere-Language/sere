@@ -924,6 +924,158 @@ void* sere_string_split(const char* data, int64_t len, const char* sep, int64_t 
   return list;
 }
 
+void sere_string_join(const char* sep, int64_t sep_len, void* parts, const char** out_data,
+                      int64_t* out_len) {
+  const SereList* list = (const SereList*)parts;
+  if (list == NULL || list->len <= 0) {
+    outStr(emptyStr(), out_data, out_len);
+    return;
+  }
+  if (sep == NULL || sep_len < 0) {
+    sep = "";
+    sep_len = 0;
+  }
+  int64_t total = 0;
+  for (int64_t index = 0; index < list->len; ++index) {
+    const SereStr* item = (const SereStr*)((char*)list->data + (size_t)(index * list->stride));
+    total += item->len;
+    if (index + 1 < list->len) {
+      total += sep_len;
+    }
+  }
+  char* out = (char*)malloc((size_t)total + 1);
+  if (out == NULL) {
+    outStr(emptyStr(), out_data, out_len);
+    return;
+  }
+  int64_t n = 0;
+  for (int64_t index = 0; index < list->len; ++index) {
+    const SereStr* item = (const SereStr*)((char*)list->data + (size_t)(index * list->stride));
+    if (item->len > 0 && item->data != NULL) {
+      memcpy(out + n, item->data, (size_t)item->len);
+      n += item->len;
+    }
+    if (index + 1 < list->len && sep_len > 0) {
+      memcpy(out + n, sep, (size_t)sep_len);
+      n += sep_len;
+    }
+  }
+  out[n] = '\0';
+  outStr(ownBytes(out, n), out_data, out_len);
+}
+
+int64_t sere_string_rfind(const char* data, int64_t len, const char* needle, int64_t needle_len) {
+  if (data == NULL || needle == NULL || needle_len < 0 || needle_len > len) {
+    return -1;
+  }
+  if (needle_len == 0) {
+    return len;
+  }
+  for (int64_t index = len - needle_len; index >= 0; --index) {
+    if (memcmp(data + index, needle, (size_t)needle_len) == 0) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+int64_t sere_string_count(const char* data, int64_t len, const char* needle, int64_t needle_len) {
+  if (data == NULL || needle == NULL || needle_len <= 0 || needle_len > len) {
+    return 0;
+  }
+  int64_t count = 0;
+  for (int64_t index = 0; index + needle_len <= len;) {
+    if (memcmp(data + index, needle, (size_t)needle_len) == 0) {
+      count += 1;
+      index += needle_len;
+    } else {
+      index += 1;
+    }
+  }
+  return count;
+}
+
+void sere_string_capitalize(const char* data, int64_t len, const char** out_data, int64_t* out_len) {
+  SereStr mapped = mapAscii(data, len, tolower);
+  if (mapped.len > 0 && mapped.data != NULL) {
+    char* mut = (char*)mapped.data;
+    mut[0] = (char)toupper((unsigned char)mut[0]);
+  }
+  outStr(mapped, out_data, out_len);
+}
+
+void sere_string_title(const char* data, int64_t len, const char** out_data, int64_t* out_len) {
+  SereStr mapped = mapAscii(data, len, tolower);
+  int cap = 1;
+  for (int64_t i = 0; i < mapped.len; ++i) {
+    char* ch = (char*)mapped.data + i;
+    if (*ch == ' ' || *ch == '\t' || *ch == '\n') {
+      cap = 1;
+    } else if (cap) {
+      *ch = (char)toupper((unsigned char)*ch);
+      cap = 0;
+    }
+  }
+  outStr(mapped, out_data, out_len);
+}
+
+void sere_string_lstrip(const char* data, int64_t len, const char** out_data, int64_t* out_len) {
+  int64_t begin = 0;
+  while (begin < len && isspace((unsigned char)data[begin])) {
+    begin += 1;
+  }
+  outStr(copyBytes(data + begin, len - begin), out_data, out_len);
+}
+
+void sere_string_rstrip(const char* data, int64_t len, const char** out_data, int64_t* out_len) {
+  int64_t end = len;
+  while (end > 0 && isspace((unsigned char)data[end - 1])) {
+    end -= 1;
+  }
+  outStr(copyBytes(data, end), out_data, out_len);
+}
+
+int32_t sere_string_is_empty(const char* data, int64_t len) {
+  (void)data;
+  return len <= 0 ? 1 : 0;
+}
+
+int32_t sere_string_is_digit(const char* data, int64_t len) {
+  if (len <= 0) {
+    return 0;
+  }
+  for (int64_t i = 0; i < len; ++i) {
+    if (!isdigit((unsigned char)data[i])) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+int32_t sere_string_is_alpha(const char* data, int64_t len) {
+  if (len <= 0) {
+    return 0;
+  }
+  for (int64_t i = 0; i < len; ++i) {
+    if (!isalpha((unsigned char)data[i])) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+int32_t sere_string_is_space(const char* data, int64_t len) {
+  if (len <= 0) {
+    return 0;
+  }
+  for (int64_t i = 0; i < len; ++i) {
+    if (!isspace((unsigned char)data[i])) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 double sere_math_sqrt(double value) { return sqrt(value); }
 double sere_math_sin(double value) { return sin(value); }
 double sere_math_cos(double value) { return cos(value); }

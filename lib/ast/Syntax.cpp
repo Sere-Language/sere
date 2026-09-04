@@ -10,10 +10,55 @@
 #include <iterator>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace sere {
+
+bool isReservedDecoratorName(std::string_view name) {
+  return name == "public" || name == "private" || name == "abstract" || name == "override" ||
+         name == "frozen" || name == "flags" || name == "static";
+}
+
+std::string decoratorExprName(const Expr& expr) {
+  const Expr* current = &expr;
+  if (current->kind() == NodeKind::CallExpr) {
+    current = &static_cast<const CallExpr*>(current)->callee();
+  }
+  if (current->kind() == NodeKind::MemberExpr) {
+    return static_cast<const MemberExpr*>(current)->field();
+  }
+  if (current->kind() == NodeKind::NameExpr) {
+    return static_cast<const NameExpr*>(current)->name();
+  }
+  return {};
+}
+
+bool isReservedDecoratorExpr(const Expr& expr) {
+  if (expr.kind() != NodeKind::NameExpr) {
+    return false;
+  }
+  return isReservedDecoratorName(static_cast<const NameExpr&>(expr).name());
+}
+
+std::vector<std::string> decoratorExprNames(const std::vector<std::unique_ptr<Expr>>& exprs) {
+  std::vector<std::string> names;
+  names.reserve(exprs.size());
+  for (const std::unique_ptr<Expr>& expr : exprs) {
+    names.push_back(expr == nullptr ? std::string{} : decoratorExprName(*expr));
+  }
+  return names;
+}
+
+bool hasRuntimeDecorators(const std::vector<std::unique_ptr<Expr>>& exprs) {
+  for (const std::unique_ptr<Expr>& expr : exprs) {
+    if (expr != nullptr && !isReservedDecoratorExpr(*expr)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 Node::Node(NodeKind kind, SourceRange range) : kind_(kind), range_(range) {}
 
@@ -148,6 +193,10 @@ bool CallExpr::isCast() const { return isCast_; }
 
 void CallExpr::setCast(bool value) { isCast_ = value; }
 
+void CallExpr::setUnboundMethodCall(bool value) { isUnboundMethodCall_ = value; }
+
+bool CallExpr::isUnboundMethodCall() const { return isUnboundMethodCall_; }
+
 const std::vector<std::string>& CallExpr::paramNames() const { return paramNames_; }
 
 void CallExpr::setParamNames(std::vector<std::string> names) { paramNames_ = std::move(names); }
@@ -182,6 +231,22 @@ const std::string& MemberExpr::propertySet() const { return propertySet_; }
 void MemberExpr::setBackingField(bool value) { backingField_ = value; }
 
 bool MemberExpr::usesBackingField() const { return backingField_; }
+
+void MemberExpr::setBoundMethod(std::string llvmName) {
+  boundMethodLlvm_ = std::move(llvmName);
+  unboundMethod_ = false;
+}
+
+void MemberExpr::setUnboundMethod(std::string llvmName) {
+  boundMethodLlvm_ = std::move(llvmName);
+  unboundMethod_ = true;
+}
+
+bool MemberExpr::isBoundMethod() const { return !boundMethodLlvm_.empty() && !unboundMethod_; }
+
+bool MemberExpr::isUnboundMethod() const { return unboundMethod_ && !boundMethodLlvm_.empty(); }
+
+const std::string& MemberExpr::boundMethodLlvm() const { return boundMethodLlvm_; }
 
 BinaryExpr::BinaryExpr(SourceRange range,
                        BinaryOp op,
@@ -505,6 +570,16 @@ void EnumDef::setDecorators(std::vector<std::string> decorators) {
 
 const std::vector<std::string>& EnumDef::decorators() const { return decorators_; }
 
+void EnumDef::setDecoratorExprs(std::vector<std::unique_ptr<Expr>> exprs) {
+  decoratorExprs_ = std::move(exprs);
+}
+
+const std::vector<std::unique_ptr<Expr>>& EnumDef::decoratorExprs() const {
+  return decoratorExprs_;
+}
+
+std::vector<std::unique_ptr<Expr>>& EnumDef::decoratorExprs() { return decoratorExprs_; }
+
 VarDecl::VarDecl(SourceRange range,
                  std::string name,
                  std::unique_ptr<TypeExpr> type,
@@ -620,6 +695,20 @@ void FunctionDef::setDecorators(std::vector<std::string> decorators) {
 
 const std::vector<std::string>& FunctionDef::decorators() const { return decorators_; }
 
+void FunctionDef::setDecoratorExprs(std::vector<std::unique_ptr<Expr>> exprs) {
+  decoratorExprs_ = std::move(exprs);
+}
+
+const std::vector<std::unique_ptr<Expr>>& FunctionDef::decoratorExprs() const {
+  return decoratorExprs_;
+}
+
+std::vector<std::unique_ptr<Expr>>& FunctionDef::decoratorExprs() { return decoratorExprs_; }
+
+void FunctionDef::setDecoratedType(const Type* type) { decoratedType_ = type; }
+
+const Type* FunctionDef::decoratedType() const { return decoratedType_; }
+
 void FunctionDef::setModulePrefix(std::string prefix) { modulePrefix_ = std::move(prefix); }
 
 const std::string& FunctionDef::modulePrefix() const { return modulePrefix_; }
@@ -642,6 +731,17 @@ void FunctionDef::setProperty(PropertyKind kind, std::string name) {
 PropertyKind FunctionDef::propertyKind() const { return propertyKind_; }
 
 const std::string& FunctionDef::propertyName() const { return propertyName_; }
+
+void FunctionDef::addCapture(std::string name, const Type* type) {
+  for (const Capture& capture : captures_) {
+    if (capture.name == name) {
+      return;
+    }
+  }
+  captures_.push_back({std::move(name), type});
+}
+
+const std::vector<FunctionDef::Capture>& FunctionDef::captures() const { return captures_; }
 
 ClassDef::ClassDef(SourceRange range,
                    std::string name,
@@ -666,6 +766,14 @@ std::vector<std::unique_ptr<FunctionDef>>& ClassDef::methods() { return methods_
 
 const std::vector<std::string>& ClassDef::bases() const { return bases_; }
 
+const std::vector<std::unique_ptr<TypeExpr>>& ClassDef::baseTypes() const { return baseTypes_; }
+
+std::vector<std::unique_ptr<TypeExpr>>& ClassDef::baseTypes() { return baseTypes_; }
+
+void ClassDef::setBaseTypes(std::vector<std::unique_ptr<TypeExpr>> types) {
+  baseTypes_ = std::move(types);
+}
+
 const std::vector<std::string>& ClassDef::typeParams() const { return typeParams_; }
 
 void ClassDef::setDecorators(std::vector<std::string> decorators) {
@@ -673,6 +781,20 @@ void ClassDef::setDecorators(std::vector<std::string> decorators) {
 }
 
 const std::vector<std::string>& ClassDef::decorators() const { return decorators_; }
+
+void ClassDef::setDecoratorExprs(std::vector<std::unique_ptr<Expr>> exprs) {
+  decoratorExprs_ = std::move(exprs);
+}
+
+const std::vector<std::unique_ptr<Expr>>& ClassDef::decoratorExprs() const {
+  return decoratorExprs_;
+}
+
+std::vector<std::unique_ptr<Expr>>& ClassDef::decoratorExprs() { return decoratorExprs_; }
+
+void ClassDef::setDecoratedType(const Type* type) { decoratedType_ = type; }
+
+const Type* ClassDef::decoratedType() const { return decoratedType_; }
 
 void ClassDef::setStruct(bool value) { isStruct_ = value; }
 
@@ -686,11 +808,13 @@ ImportStmt::ImportStmt(SourceRange range,
                        std::vector<std::string> modulePath,
                        std::string alias,
                        std::vector<std::string> names,
-                       bool star)
+                       bool star,
+                       std::vector<std::string> nameAliases)
     : Stmt(NodeKind::ImportStmt, range),
       modulePath_(std::move(modulePath)),
       alias_(std::move(alias)),
       names_(std::move(names)),
+      nameAliases_(std::move(nameAliases)),
       star_(star) {}
 
 const std::vector<std::string>& ImportStmt::modulePath() const { return modulePath_; }
@@ -698,6 +822,18 @@ const std::vector<std::string>& ImportStmt::modulePath() const { return modulePa
 const std::string& ImportStmt::alias() const { return alias_; }
 
 const std::vector<std::string>& ImportStmt::names() const { return names_; }
+
+const std::vector<std::string>& ImportStmt::nameAliases() const { return nameAliases_; }
+
+std::string ImportStmt::boundName(std::size_t index) const {
+  if (index < nameAliases_.size() && !nameAliases_[index].empty()) {
+    return nameAliases_[index];
+  }
+  if (index < names_.size()) {
+    return names_[index];
+  }
+  return {};
+}
 
 bool ImportStmt::star() const { return star_; }
 
@@ -727,6 +863,19 @@ void Module::insertFront(std::vector<std::unique_ptr<Stmt>> extra) {
                std::make_move_iterator(statements_.end()));
   statements_ = std::move(extra);
 }
+
+void Module::setExportList(ModuleExportMode mode, std::vector<std::string> names) {
+  exportMode_ = mode;
+  exportNames_ = std::move(names);
+}
+
+ModuleExportMode Module::exportMode() const { return exportMode_; }
+
+const std::vector<std::string>& Module::exportNames() const { return exportNames_; }
+
+void Module::addExportAlias(RecordField field) { exportAliases_.push_back(std::move(field)); }
+
+const std::vector<RecordField>& Module::exportAliases() const { return exportAliases_; }
 
 SpliceExpr::SpliceExpr(SourceRange range, std::string name, bool repeat, bool commaSeparated)
     : Expr(NodeKind::SpliceExpr, range),

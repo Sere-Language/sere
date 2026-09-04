@@ -14,9 +14,9 @@
 #include "sere/lsp/ImportCompletion.h"
 #include "sere/lsp/MemberCompletion.h"
 #include "sere/lsp/SemanticTokens.h"
-#include "sere/types/Type.h"
 #include "sere/sema/TypeChecker.h"
 #include "sere/source/SourceManager.h"
+#include "sere/types/Type.h"
 
 #include <llvm/Support/Error.h>
 #include <llvm/Support/JSON.h>
@@ -259,8 +259,7 @@ void writeNullResult(const llvm::json::Value* id) {
 [[nodiscard]] std::string formatMethod(const RecordMethod& method) {
   std::string text = method.name + "(";
   const Type* fn = method.type;
-  const std::size_t start =
-      !method.paramNames.empty() && method.paramNames[0] == "self" ? 1 : 0;
+  const std::size_t start = !method.paramNames.empty() && method.paramNames[0] == "self" ? 1 : 0;
   if (fn != nullptr) {
     for (std::size_t index = start; index < fn->paramTypes().size(); ++index) {
       if (index > start) {
@@ -286,10 +285,10 @@ void writeNullResult(const llvm::json::Value* id) {
   } else if (type.isStruct()) {
     kind = "struct";
   }
-  std::string text = kind + " " + type.name() + ":\n";
+  std::string text = kind + " " + type.display() + ":\n";
   for (const RecordField& field : type.fields()) {
-    text += "    " + field.name + ": " + (field.type == nullptr ? "?" : field.type->display()) +
-            "\n";
+    text +=
+        "    " + field.name + ": " + (field.type == nullptr ? "?" : field.type->display()) + "\n";
   }
   for (const RecordMethod& method : type.methods()) {
     text += "    def " + formatMethod(method) + "\n";
@@ -393,6 +392,26 @@ void writeNullResult(const llvm::json::Value* id) {
     const auto& alias = static_cast<const TypeAlias&>(node);
     return "type " + alias.name() + " = " + alias.type().name();
   }
+  if (node.kind() == NodeKind::TypeExpr) {
+    const auto& typeExpr = static_cast<const TypeExpr&>(node);
+    if (typeExpr.resolvedType() != nullptr && typeExpr.resolvedType()->isRecord()) {
+      return typeExpr.name() + "\n" + formatClass(*typeExpr.resolvedType()->canonical());
+    }
+    if (typeExpr.resolvedType() != nullptr && typeExpr.resolvedType()->isTypeObject() &&
+        typeExpr.resolvedType()->typeObjectInstance() != nullptr) {
+      return typeExpr.name() + "\n" +
+             formatClass(*typeExpr.resolvedType()->typeObjectInstance()->canonical());
+    }
+    if (typeExpr.resolvedType() != nullptr) {
+      return typeExpr.name() + ": " + typeExpr.resolvedType()->display();
+    }
+    return typeExpr.name();
+  }
+  if (node.resolvedType() != nullptr && node.resolvedType()->isTypeObject() &&
+      node.resolvedType()->typeObjectInstance() != nullptr &&
+      node.resolvedType()->typeObjectInstance()->isRecord()) {
+    return formatClass(*node.resolvedType()->typeObjectInstance()->canonical());
+  }
   if (node.resolvedType() != nullptr && node.resolvedType()->kind() == TypeKind::Record) {
     return formatClass(*node.resolvedType());
   }
@@ -405,8 +424,8 @@ void writeNullResult(const llvm::json::Value* id) {
   return {};
 }
 
-[[nodiscard]] const SemanticSymbol* findNamedSymbol(TypeChecker* checker, const std::string& name,
-                                                    std::string_view kind = {}) {
+[[nodiscard]] const SemanticSymbol*
+findNamedSymbol(TypeChecker* checker, const std::string& name, std::string_view kind = {}) {
   if (checker == nullptr || name.empty()) {
     return nullptr;
   }
@@ -426,7 +445,8 @@ void writeNullResult(const llvm::json::Value* id) {
   return match;
 }
 
-void appendMacroUseRefs(const std::vector<MacroUse>& uses, const std::string& name,
+void appendMacroUseRefs(const std::vector<MacroUse>& uses,
+                        const std::string& name,
                         std::vector<SourceRange>& refs) {
   for (const MacroUse& use : uses) {
     if (use.name == name) {
@@ -440,10 +460,13 @@ void appendMacroUseRefs(const std::vector<MacroUse>& uses, const std::string& na
   std::size_t start = end;
   while (start > 0) {
     const unsigned char ch = static_cast<unsigned char>(text[start - 1]);
-    if (!(std::isalnum(ch) != 0 || ch == '_')) {
+    if (!(std::isalnum(ch) != 0 || ch == '_' || ch == '.')) {
       break;
     }
     --start;
+  }
+  while (start < end && text[start] == '.') {
+    ++start;
   }
   return std::string(text.substr(start, end - start));
 }
@@ -494,7 +517,9 @@ struct CallSite {
     --nameAt;
   }
   site.callee = identifierPrefix(text, static_cast<std::uint32_t>(nameAt));
-  if (nameAt >= site.callee.size() && nameAt - site.callee.size() > 0) {
+  if (site.callee.find('.') != std::string::npos) {
+    site.method = false;
+  } else if (nameAt >= site.callee.size() && nameAt - site.callee.size() > 0) {
     site.method = text[nameAt - site.callee.size() - 1] == '.';
   }
   site.active = commas;
@@ -504,7 +529,8 @@ struct CallSite {
 [[nodiscard]] llvm::json::Object makeSignature(const std::string& name,
                                                const std::vector<std::string>& params,
                                                const std::vector<std::string>& types,
-                                               const std::string& returnType, bool macro) {
+                                               const std::string& returnType,
+                                               bool macro) {
   std::string label = name;
   label += macro ? "!(" : "(";
   llvm::json::Array parameters;
@@ -529,7 +555,8 @@ struct CallSite {
 }
 
 [[nodiscard]] const SemanticSymbol* findCallable(const TypeChecker& checker,
-                                                 const std::string& name, bool method,
+                                                 const std::string& name,
+                                                 bool method,
                                                  const std::string& container) {
   const SemanticSymbol* fallback = nullptr;
   for (const SemanticSymbol& symbol : checker.symbols()) {
@@ -542,11 +569,17 @@ struct CallSite {
     if (!callable) {
       continue;
     }
-    if (!container.empty() && symbol.container == container) {
-      return &symbol;
+    if (!container.empty()) {
+      if (symbol.container == container) {
+        return &symbol;
+      }
+      continue;
     }
     if (method && symbol.kind == "method") {
-      return &symbol;
+      if (fallback == nullptr) {
+        fallback = &symbol;
+      }
+      continue;
     }
     if (!method && symbol.kind != "method") {
       return &symbol;
@@ -558,8 +591,10 @@ struct CallSite {
   return fallback;
 }
 
-void collectCallableParams(const SemanticSymbol& match, std::vector<std::string>& params,
-                           std::vector<std::string>& types, std::string& returnType) {
+void collectCallableParams(const SemanticSymbol& match,
+                           std::vector<std::string>& params,
+                           std::vector<std::string>& types,
+                           std::string& returnType) {
   params = match.paramNames;
   types = match.paramTypes;
   returnType = match.returnType;
@@ -598,6 +633,16 @@ void addCompletion(llvm::json::Array& items,
   if (!prefix.empty() && !startsWithIgnoreCase(label, prefix) &&
       (insertText.empty() || !startsWithIgnoreCase(insertText, prefix))) {
     return;
+  }
+  for (const llvm::json::Value& value : items) {
+    const llvm::json::Object* object = value.getAsObject();
+    if (object == nullptr) {
+      continue;
+    }
+    const std::optional<llvm::StringRef> existing = object->getString("label");
+    if (existing.has_value() && *existing == label) {
+      return;
+    }
   }
   llvm::json::Object item{{"label", label}, {"kind", kind}};
   if (!detail.empty()) {
@@ -642,32 +687,86 @@ void addImportCompletionItems(llvm::json::Array& items,
                               const std::vector<ImportCompletionItem>& candidates,
                               const std::string& prefix) {
   for (const ImportCompletionItem& candidate : candidates) {
-    addCompletion(items, candidate.label, completionKind(candidate.kind), candidate.detail, prefix,
-                  candidate.insertText, candidate.sortText, false);
+    addCompletion(items,
+                  candidate.label,
+                  completionKind(candidate.kind),
+                  candidate.detail,
+                  prefix,
+                  candidate.insertText,
+                  candidate.sortText,
+                  false);
   }
 }
 
 void addKeywordCompletions(llvm::json::Array& items, const std::string& prefix) {
-  const char* keywords[] = {"def",    "class",  "struct", "type",   "return", "if",     "elif",
-                            "else",   "while",  "pass",   "and",    "or",     "not",
-                            "True",   "False",  "None",   "extern", "break",  "continue",
-                            "import", "from",   "as",     "static", "abstract", "override",
-                            "enum",   "for",    "in",     "is",     "assert", "try", "except",
-                            "finally", "raise", "match", "case", "lambda", "with", "defer",
-                            "del", "const", "macro", "quote", "__name__", "__file__", "__package__",
+  const char* keywords[] = {"def",
+                            "class",
+                            "struct",
+                            "type",
+                            "return",
+                            "if",
+                            "elif",
+                            "else",
+                            "while",
+                            "pass",
+                            "and",
+                            "or",
+                            "not",
+                            "True",
+                            "False",
+                            "None",
+                            "extern",
+                            "break",
+                            "continue",
+                            "import",
+                            "from",
+                            "as",
+                            "static",
+                            "abstract",
+                            "override",
+                            "enum",
+                            "for",
+                            "in",
+                            "is",
+                            "assert",
+                            "try",
+                            "except",
+                            "finally",
+                            "raise",
+                            "match",
+                            "case",
+                            "lambda",
+                            "with",
+                            "defer",
+                            "del",
+                            "const",
+                            "macro",
+                            "quote",
+                            "__name__",
+                            "__file__",
+                            "__package__",
                             "__doc__",
-                            "__debug__", "__sere_version__", "__windows__", "__linux__",
-                            "__macos__", "__unix__", "__x86_64__", "__arm64__",
-                            "__platform__", "__arch__"};
+                            "__debug__",
+                            "__sere_version__",
+                            "__windows__",
+                            "__linux__",
+                            "__macos__",
+                            "__unix__",
+                            "__x86_64__",
+                            "__arm64__",
+                            "__platform__",
+                            "__arch__"};
   for (const char* keyword : keywords) {
-    addCompletion(items, keyword, kCompletionKeyword, "keyword", prefix, {}, "1" + std::string(keyword));
+    addCompletion(
+        items, keyword, kCompletionKeyword, "keyword", prefix, {}, "1" + std::string(keyword));
   }
 }
 
 void addTypeCompletions(llvm::json::Array& items, const std::string& prefix) {
-  const char* types[] = {"void", "None", "Any", "bool", "i8",     "i16",   "i32",  "i64", "u8",     "u16",
-                         "u32",  "u64",  "f32",    "f64",   "str",  "regex", "byte", "Unique", "Shared",
-                         "Ptr",  "list", "array", "dict", "enum"};
+  const char* types[] = {"void",  "None",  "Any",  "bool",     "i8",       "i16",  "i32",
+                         "i64",   "u8",    "u16",  "u32",      "u64",      "f32",  "f64",
+                         "str",   "regex", "byte", "Unique",   "Shared",   "Ptr",  "list",
+                         "array", "dict",  "enum", "Callable", "Function", "Class"};
   for (const char* typeName : types) {
     std::string insert;
     if (std::string_view(typeName) == "Unique" || std::string_view(typeName) == "Shared" ||
@@ -676,6 +775,11 @@ void addTypeCompletions(llvm::json::Array& items, const std::string& prefix) {
       insert = std::string(typeName) + "[${1:T}]";
     } else if (std::string_view(typeName) == "dict") {
       insert = "dict[${1:K}, ${2:V}]";
+    } else if (std::string_view(typeName) == "Callable" ||
+               std::string_view(typeName) == "Function") {
+      insert = std::string(typeName) + "[[${1:T}], ${2:R}]";
+    } else if (std::string_view(typeName) == "Class") {
+      insert = "Class[${1:T}]";
     }
     addCompletion(items, typeName, kCompletionType, "type", prefix, insert);
   }
@@ -876,9 +980,9 @@ void LanguageSession::publishDiagnostics(const std::string& uri,
         {"severity", lspSeverity(diagnostic.severity)},
         {"source", "sere"},
         {"code", std::string(diagnosticCodeName(diagnostic.code))},
-        {"message", diagnostic.help.empty()
-                        ? diagnostic.message
-                        : diagnostic.message + "\n= help: " + diagnostic.help},
+        {"message",
+         diagnostic.help.empty() ? diagnostic.message
+                                 : diagnostic.message + "\n= help: " + diagnostic.help},
     });
   }
   writeMessage(llvm::json::Object{
@@ -888,7 +992,8 @@ void LanguageSession::publishDiagnostics(const std::string& uri,
   });
 }
 
-[[nodiscard]] bool pathIsUnder(const std::filesystem::path& file, const std::filesystem::path& root) {
+[[nodiscard]] bool pathIsUnder(const std::filesystem::path& file,
+                               const std::filesystem::path& root) {
   if (root.empty()) {
     return false;
   }
@@ -918,7 +1023,7 @@ void LanguageSession::applyOverlays(Frontend& frontend) const {
   std::unordered_map<std::string, std::string> overlay;
   for (const auto& [uri, text] : documents_) {
     const std::filesystem::path file = uriToPath(uri);
-    if (isLibraryFile(file)) {
+    if (file.extension() == ".sere") {
       overlay[Frontend::overlayKey(file)] = text;
     }
   }
@@ -944,10 +1049,19 @@ bool LanguageSession::isLibraryFile(const std::filesystem::path& file) const {
   if (file.filename() == "prelude.sere") {
     return true;
   }
-  return pathIsUnder(file, stdlibDir_) || pathIsUnder(file, workspaceRoot_ / "stdlib");
+  if (pathIsUnder(file, stdlibDir_) || pathIsUnder(file, workspaceRoot_ / "stdlib") ||
+      pathIsUnder(file, workspaceRoot_ / "libs")) {
+    return true;
+  }
+  const LanguageContext context = resolveLanguageContext(file);
+  if (context.project.has_value() && pathIsUnder(file, context.project->libs)) {
+    return true;
+  }
+  return false;
 }
 
-std::optional<std::string> LanguageSession::overlayTextFor(const std::filesystem::path& file) const {
+std::optional<std::string>
+LanguageSession::overlayTextFor(const std::filesystem::path& file) const {
   const std::string key = Frontend::overlayKey(file);
   for (const auto& [uri, text] : documents_) {
     if (Frontend::overlayKey(uriToPath(uri)) == key) {
@@ -983,15 +1097,16 @@ void LanguageSession::setConfiguredStdlib(const std::filesystem::path& dir) {
 }
 
 void LanguageSession::applyLanguageContext(const std::filesystem::path& start) {
-  if (stdlibHasPrelude(configuredStdlib_)) {
-    stdlibDir_ = configuredStdlib_;
-    return;
-  }
   const std::filesystem::path probe =
-      !start.empty() ? start : (!workspaceRoot_.empty() ? workspaceRoot_ : std::filesystem::current_path());
+      !start.empty() ? start
+                     : (!workspaceRoot_.empty() ? workspaceRoot_ : std::filesystem::current_path());
   const LanguageContext context = resolveLanguageContext(probe);
   if (context.project.has_value() && workspaceRoot_.empty()) {
     workspaceRoot_ = context.project->root;
+  }
+  if (stdlibHasPrelude(configuredStdlib_)) {
+    stdlibDir_ = configuredStdlib_;
+    return;
   }
   const std::filesystem::path workspaceStdlib = workspaceRoot_ / "stdlib";
   if (stdlibHasPrelude(workspaceStdlib)) {
@@ -1076,11 +1191,13 @@ void LanguageSession::fillImportCompletions(llvm::json::Array& items,
   const std::filesystem::path moduleFile =
       resolveImportFile(dirs, splitImportPath(query.modulePath), file, nullptr);
   addImportCompletionItems(
-      items, importExportCompletions(moduleFile, query.prefix, overlayTextFor(moduleFile)),
+      items,
+      importExportCompletions(moduleFile, query.prefix, overlayTextFor(moduleFile)),
       query.prefix);
 }
 
-void LanguageSession::handleInitialize(const llvm::json::Value* id, const llvm::json::Object* params) {
+void LanguageSession::handleInitialize(const llvm::json::Value* id,
+                                       const llvm::json::Object* params) {
   if (params != nullptr) {
     captureWorkspaceRoot(*params);
   }
@@ -1117,12 +1234,11 @@ void LanguageSession::handleInitialize(const llvm::json::Value* id, const llvm::
       {"foldingRangeProvider", true},
       {"selectionRangeProvider", true},
       {"semanticTokensProvider",
-       llvm::json::Object{
-           {"legend",
-            llvm::json::Object{{"tokenTypes", std::move(tokenTypes)},
-                               {"tokenModifiers", std::move(tokenModifiers)}}},
-           {"full", true},
-           {"range", true}}},
+       llvm::json::Object{{"legend",
+                           llvm::json::Object{{"tokenTypes", std::move(tokenTypes)},
+                                              {"tokenModifiers", std::move(tokenModifiers)}}},
+                          {"full", true},
+                          {"range", true}}},
       {"callHierarchyProvider", true},
       {"signatureHelpProvider",
        llvm::json::Object{{"triggerCharacters", llvm::json::Array{"(", ",", "!"}},
@@ -1135,15 +1251,17 @@ void LanguageSession::handleInitialize(const llvm::json::Value* id, const llvm::
                           {"resolveProvider", false}}},
       {"workspace",
        llvm::json::Object{
-           {"workspaceFolders", llvm::json::Object{{"supported", true}, {"changeNotifications", true}}},
+           {"workspaceFolders",
+            llvm::json::Object{{"supported", true}, {"changeNotifications", true}}},
            {"didChangeWatchedFiles", llvm::json::Object{{"dynamicRegistration", false}}},
        }},
   };
-  writeResult(id, llvm::json::Object{
-                      {"capabilities", std::move(capabilities)},
-                      {"serverInfo", llvm::json::Object{{"name", "sere"},
-                                                        {"version", SERE_VERSION_STRING}}},
-                  });
+  writeResult(
+      id,
+      llvm::json::Object{
+          {"capabilities", std::move(capabilities)},
+          {"serverInfo", llvm::json::Object{{"name", "sere"}, {"version", SERE_VERSION_STRING}}},
+      });
 }
 
 void LanguageSession::handleDidOpen(const llvm::json::Object& params) {
@@ -1157,7 +1275,7 @@ void LanguageSession::handleDidOpen(const llvm::json::Object& params) {
     return;
   }
   documents_[uri->str()] = text->str();
-  if (isLibraryFile(uriToPath(uri->str()))) {
+  if (documents_.size() > 1 || isLibraryFile(uriToPath(uri->str()))) {
     refreshOpenDocuments();
   } else {
     analyzeDocument(uri->str());
@@ -1182,9 +1300,12 @@ void LanguageSession::handleDidChange(const llvm::json::Object& params) {
     }
   }
   const bool skipAnalyze = params.getBoolean("skipAnalyze").value_or(false);
-  if (isLibraryFile(uriToPath(uri->str()))) {
+  if (skipAnalyze) {
+    return;
+  }
+  if (documents_.size() > 1 || isLibraryFile(uriToPath(uri->str()))) {
     refreshOpenDocuments();
-  } else if (!skipAnalyze) {
+  } else {
     analyzeDocument(uri->str());
   }
 }
@@ -1270,9 +1391,8 @@ LanguageSession::documentOffset(const llvm::json::Object& params) const {
     return std::nullopt;
   }
   SourceManager source(uriToPath(uri->str()), found->second);
-  const std::uint32_t offset =
-      source.offsetAt(static_cast<std::uint32_t>(*line + 1),
-                      static_cast<std::uint32_t>(*character + 1));
+  const std::uint32_t offset = source.offsetAt(static_cast<std::uint32_t>(*line + 1),
+                                               static_cast<std::uint32_t>(*character + 1));
   return std::make_pair(uri->str(), offset);
 }
 
@@ -1294,7 +1414,7 @@ void LanguageSession::handleHover(const llvm::json::Value* id, const llvm::json:
   if (namedUse != nullptr) {
     const SemanticSymbol* symbol = findNamedSymbol(frontend->checker(), namedUse->name, "macro");
     contents = symbol != nullptr && !symbol->typeDisplay.empty() ? symbol->typeDisplay
-                                                                  : "macro " + namedUse->name;
+                                                                 : "macro " + namedUse->name;
     hoverRange = namedUse->nameRange;
   } else if (node != nullptr) {
     contents = hoverText(*node);
@@ -1313,7 +1433,7 @@ void LanguageSession::handleHover(const llvm::json::Value* id, const llvm::json:
     if (use != nullptr) {
       const SemanticSymbol* symbol = findNamedSymbol(frontend->checker(), use->name, "macro");
       contents = symbol != nullptr && !symbol->typeDisplay.empty() ? symbol->typeDisplay
-                                                                    : "macro " + use->name;
+                                                                   : "macro " + use->name;
       hoverRange = use->nameRange;
     }
   }
@@ -1322,8 +1442,8 @@ void LanguageSession::handleHover(const llvm::json::Value* id, const llvm::json:
     return;
   }
   llvm::json::Object result{
-      {"contents", llvm::json::Object{{"kind", "markdown"},
-                                      {"value", "```sere\n" + contents + "\n```"}}},
+      {"contents",
+       llvm::json::Object{{"kind", "markdown"}, {"value", "```sere\n" + contents + "\n```"}}},
   };
   if (hoverRange.start.line != 0) {
     result["range"] = lspRange(hoverRange);
@@ -1350,8 +1470,7 @@ void LanguageSession::handleCompletion(const llvm::json::Value* id,
   std::string prefix = identifierPrefix(text, located->second);
   if (const std::optional<llvm::StringRef> line = params.getString("sereLine")) {
     const std::int64_t character = params.getInteger("sereCharacter").value_or(-1);
-    const std::size_t cursor =
-        character < 0 ? line->size() : static_cast<std::size_t>(character);
+    const std::size_t cursor = character < 0 ? line->size() : static_cast<std::size_t>(character);
     const MemberAccessQuery fromEditor = detectMemberAccessLine(line->str(), cursor);
     if (fromEditor.active) {
       access = fromEditor;
@@ -1364,8 +1483,14 @@ void LanguageSession::handleCompletion(const llvm::json::Value* id,
   if (access.active) {
     const Type* record = resolveMemberType(frontend, access);
     for (const MemberCompletionItem& item : collectMemberCompletions(record)) {
-      addCompletion(items, item.label, item.kind, item.detail, access.prefix, {}, item.sortText,
-                    false);
+      addCompletion(items,
+                    item.label,
+                    item.kind,
+                    item.detail,
+                    access.prefix,
+                    item.insertText,
+                    item.sortText,
+                    true);
     }
     writeResult(id, std::move(items));
     return;
@@ -1381,7 +1506,11 @@ void LanguageSession::handleCompletion(const llvm::json::Value* id,
   addKeywordCompletions(items, prefix);
   addTypeCompletions(items, prefix);
   if (frontend != nullptr && frontend->checker() != nullptr) {
-    for (const SemanticSymbol& symbol : frontend->checker()->symbols()) {
+    for (const SemanticSymbol* candidate : frontend->checker()->visibleSymbolsAt(located->second)) {
+      if (candidate == nullptr) {
+        continue;
+      }
+      const SemanticSymbol& symbol = *candidate;
       if (symbol.kind == "field" || symbol.kind == "method" || symbol.kind == "enumMember") {
         continue;
       }
@@ -1393,10 +1522,9 @@ void LanguageSession::handleCompletion(const llvm::json::Value* id,
                        : symbol.kind == "type"   ? kCompletionType
                        : symbol.kind == "macro"  ? kCompletionMacro
                                                  : kCompletionVariable;
-      const std::string detail =
-          symbol.kind == "macro"
-              ? (symbol.typeDisplay.empty() ? "macro" : symbol.typeDisplay)
-              : symbol.typeDisplay;
+      const std::string detail = symbol.kind == "macro"
+                                     ? (symbol.typeDisplay.empty() ? "macro" : symbol.typeDisplay)
+                                     : symbol.typeDisplay;
       if (symbol.kind == "macro" && !symbol.snippet.empty()) {
         addCompletion(items, symbol.name, kind, detail, prefix, symbol.snippet);
       } else {
@@ -1445,6 +1573,11 @@ void LanguageSession::handleDefinition(const llvm::json::Value* id,
   } else if (name.empty() && node != nullptr && node->kind() == NodeKind::TypeExpr) {
     name = static_cast<const TypeExpr*>(node)->name();
   }
+  if (name.find('.') != std::string::npos) {
+    const std::size_t dot = name.rfind('.');
+    container = name.substr(0, dot);
+    name = name.substr(dot + 1);
+  }
   if (name.empty()) {
     const MacroUse* use = findMacroUseAt(frontend->macroUses(), located->second);
     if (use != nullptr) {
@@ -1473,10 +1606,11 @@ void LanguageSession::handleDefinition(const llvm::json::Value* id,
     writeNullResult(id);
     return;
   }
-  writeResult(id, llvm::json::Array{llvm::json::Object{
-                     {"uri", located->first},
-                     {"range", lspRange(match->range)},
-                 }});
+  writeResult(id,
+              llvm::json::Array{llvm::json::Object{
+                  {"uri", located->first},
+                  {"range", lspRange(match->range)},
+              }});
 }
 
 void LanguageSession::handleDocumentSymbol(const llvm::json::Value* id,
@@ -1623,17 +1757,69 @@ void LanguageSession::handleSignatureHelp(const llvm::json::Value* id,
       returnType = call->resolvedType()->display();
     }
   } else if (frontend->checker() != nullptr) {
-    const SemanticSymbol* match =
-        findCallable(*frontend->checker(), site.callee, site.method, {});
-    if (match != nullptr &&
-        (match->kind == "class" || match->kind == "struct" || match->kind == "enum")) {
-      const SemanticSymbol* init =
-          findCallable(*frontend->checker(), "__init__", true, match->name);
-      match = init != nullptr ? init : match;
+    const auto unwrapRecord = [](const Type* type) -> const Type* {
+      if (type == nullptr) {
+        return nullptr;
+      }
+      type = type->canonical();
+      if (type->isTypeObject() && type->typeObjectInstance() != nullptr) {
+        type = type->typeObjectInstance()->canonical();
+      }
+      return type->isRecord() ? type : nullptr;
+    };
+    const Type* record = nullptr;
+    if (!site.method) {
+      if (site.callee.find('.') != std::string::npos) {
+        std::vector<std::string> parts;
+        std::string piece;
+        for (const char ch : site.callee) {
+          if (ch == '.') {
+            if (!piece.empty()) {
+              parts.push_back(piece);
+              piece.clear();
+            }
+          } else {
+            piece.push_back(ch);
+          }
+        }
+        if (!piece.empty()) {
+          parts.push_back(piece);
+        }
+        record = unwrapRecord(frontend->checker()->typeOfPath(parts));
+      } else {
+        record = unwrapRecord(frontend->checker()->typeOfName(site.callee));
+      }
     }
-    if (match != nullptr) {
-      macro = match->kind == "macro";
-      collectCallableParams(*match, names, types, returnType);
+    if (record != nullptr) {
+      const int initIndex = record->methodIndex("__init__");
+      if (initIndex >= 0) {
+        const RecordMethod& init = record->methods()[static_cast<std::size_t>(initIndex)];
+        names = init.paramNames;
+        if (!names.empty() && names[0] == "self") {
+          names.erase(names.begin());
+        }
+        if (init.type != nullptr) {
+          for (std::size_t index = 1; index < init.type->paramTypes().size(); ++index) {
+            types.push_back(init.type->paramTypes()[index] == nullptr
+                                ? "?"
+                                : init.type->paramTypes()[index]->display());
+          }
+        }
+      }
+    }
+    if (names.empty()) {
+      const SemanticSymbol* match =
+          findCallable(*frontend->checker(), site.callee, site.method, {});
+      if (match != nullptr &&
+          (match->kind == "class" || match->kind == "struct" || match->kind == "enum")) {
+        const SemanticSymbol* init =
+            findCallable(*frontend->checker(), "__init__", true, match->name);
+        match = init != nullptr ? init : match;
+      }
+      if (match != nullptr) {
+        macro = match->kind == "macro";
+        collectCallableParams(*match, names, types, returnType);
+      }
     }
   }
   if (names.empty() && types.empty() && returnType.empty()) {
@@ -1653,12 +1839,13 @@ void LanguageSession::handleSignatureHelp(const llvm::json::Value* id,
   if (!names.empty() && active >= names.size()) {
     active = names.size() - 1;
   }
-  writeResult(id, llvm::json::Object{
-                      {"signatures", llvm::json::Array{makeSignature(site.callee, names, types,
-                                                                     returnType, macro)}},
-                      {"activeSignature", 0},
-                      {"activeParameter", static_cast<int64_t>(active)},
-                  });
+  writeResult(id,
+              llvm::json::Object{
+                  {"signatures",
+                   llvm::json::Array{makeSignature(site.callee, names, types, returnType, macro)}},
+                  {"activeSignature", 0},
+                  {"activeParameter", static_cast<int64_t>(active)},
+              });
 }
 
 void LanguageSession::handleInlayHint(const llvm::json::Value* id,
@@ -1683,8 +1870,7 @@ void LanguageSession::handleInlayHint(const llvm::json::Value* id,
   collectCalls(*frontend->module(), calls);
   for (const CallExpr* call : calls) {
     const std::vector<std::string>& names = call->paramNames();
-    for (std::size_t index = 0; index < call->arguments().size() && index < names.size();
-         ++index) {
+    for (std::size_t index = 0; index < call->arguments().size() && index < names.size(); ++index) {
       if (names[index].empty()) {
         continue;
       }
@@ -1789,8 +1975,8 @@ void LanguageSession::handleCodeLens(const llvm::json::Value* id,
          llvm::json::Object{
              {"title", std::move(title)},
              {"command", "editor.action.showReferences"},
-             {"arguments", llvm::json::Array{uri->str(), lspPosition(range.start),
-                                             std::move(locations)}},
+             {"arguments",
+              llvm::json::Array{uri->str(), lspPosition(range.start), std::move(locations)}},
          }},
     });
   };
@@ -1895,9 +2081,10 @@ void LanguageSession::handleRename(const llvm::json::Value* id, const llvm::json
       });
     }
   }
-  writeResult(id, llvm::json::Object{
-                      {"changes", llvm::json::Object{{located->first, std::move(edits)}}},
-                  });
+  writeResult(id,
+              llvm::json::Object{
+                  {"changes", llvm::json::Object{{located->first, std::move(edits)}}},
+              });
 }
 
 void LanguageSession::handleDocumentHighlight(const llvm::json::Value* id,
@@ -2073,8 +2260,9 @@ void LanguageSession::handleFormatting(const llvm::json::Value* id,
     formatted.push_back('\n');
     const SourceRange whole{{1, 1, 0}, {1, 1, static_cast<std::uint32_t>(found->second.size())}};
     edits.push_back(llvm::json::Object{
-        {"range", llvm::json::Object{{"start", llvm::json::Object{{"line", 0}, {"character", 0}}},
-                                     {"end", lspPosition(whole.end)}}},
+        {"range",
+         llvm::json::Object{{"start", llvm::json::Object{{"line", 0}, {"character", 0}}},
+                            {"end", lspPosition(whole.end)}}},
         {"newText", formatted},
     });
   }
@@ -2146,10 +2334,10 @@ void LanguageSession::handleCodeAction(const llvm::json::Value* id,
          llvm::json::Object{
              {uri->str(),
               llvm::json::Array{llvm::json::Object{
-                  {"range", llvm::json::Object{{"start", llvm::json::Object{{"line", diagLine},
-                                                                          {"character", column}}},
-                                              {"end", llvm::json::Object{{"line", diagLine},
-                                                                        {"character", column}}}}},
+                  {"range",
+                   llvm::json::Object{
+                       {"start", llvm::json::Object{{"line", diagLine}, {"character", column}}},
+                       {"end", llvm::json::Object{{"line", diagLine}, {"character", column}}}}},
                   {"newText", ignore},
               }}}}}};
     std::string title = "Ignore " + code + " on this line";
@@ -2162,7 +2350,7 @@ void LanguageSession::handleCodeAction(const llvm::json::Value* id,
   writeResult(id, std::move(actions));
 }
 
-}  // namespace
+} // namespace
 
 int runLanguageServer() {
   setStdioBinary();
@@ -2185,4 +2373,4 @@ int runLanguageServer() {
   return 0;
 }
 
-}  // namespace sere
+} // namespace sere

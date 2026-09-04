@@ -43,6 +43,8 @@ if(WIN32)
     winhttp
     ws2_32
   )
+else()
+  target_link_libraries(sere_runtime PUBLIC m ${CMAKE_DL_LIBS} pthread)
 endif()
 
 find_package(Qt6 QUIET COMPONENTS Widgets)

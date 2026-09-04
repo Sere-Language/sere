@@ -22,6 +22,31 @@ int fail(const char* message) {
 }  // namespace
 
 int main() {
+  {
+    sere::TypeContext types;
+    const sere::Type* united = types.unionType({types.i8Type(), types.i32Type()});
+    if (united == nullptr || !united->isUnion() || united->args().size() != 2) {
+      return fail("unionType(i8, i32) should intern a 2-member union");
+    }
+  }
+  {
+    const std::string unionAlias =
+        "type Int = i8 | i32\n"
+        "def main() -> i32:\n"
+        "    return 0\n";
+    sere::DiagnosticEngine diagnostics;
+    sere::SourceManager source("sema_union_alias.sere", unionAlias);
+    sere::Lexer lexer(source, diagnostics);
+    sere::Parser parser(diagnostics, lexer.tokenizeAll());
+    std::unique_ptr<sere::Module> module = parser.parseModule();
+    sere::TypeContext types;
+    sere::TypeChecker checker(types, diagnostics);
+    if (module == nullptr || !checker.check(*module)) {
+      diagnostics.printAll(source);
+      return fail("union type alias should typecheck");
+    }
+  }
+
   const std::string text =
       "type Count = i32\n"
       "def main(argv: list[str]) -> i32:\n"
@@ -403,6 +428,31 @@ int main() {
     return fail("Any and i32 | None = None should typecheck");
   }
 
+  const std::string noneTypes =
+      "def no_result() -> None:\n"
+      "    return None\n"
+      "def accept_optional(value: i32 | None) -> i32 | None:\n"
+      "    return value\n"
+      "class Item:\n"
+      "    def __init__(self) -> None:\n"
+      "        pass\n"
+      "def main() -> None:\n"
+      "    no_result()\n"
+      "    accept_optional(42)\n"
+      "    accept_optional(None)\n"
+      "    Item()\n";
+  sere::DiagnosticEngine noneDiagnostics;
+  sere::SourceManager noneSource("sema_none_types.sere", noneTypes);
+  sere::Lexer noneLexer(noneSource, noneDiagnostics);
+  sere::Parser noneParser(noneDiagnostics, noneLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> noneModule = noneParser.parseModule();
+  sere::TypeContext noneTypeContext;
+  sere::TypeChecker noneChecker(noneTypeContext, noneDiagnostics);
+  if (noneModule == nullptr || !noneChecker.check(*noneModule)) {
+    noneDiagnostics.printAll(noneSource);
+    return fail("None returns and T | None parameters should typecheck");
+  }
+
 #if defined(_WIN32)
   const std::string platformFold =
       "def main() -> i32:\n"
@@ -489,6 +539,115 @@ int main() {
   if (charModule == nullptr || !charChecker.check(*charModule)) {
     charDiagnostics.printAll(charSource);
     return fail("single-quoted one-char literals should type as i8/byte");
+  }
+
+  const std::string callables =
+      "def add(a: i32, b: i32) -> i32:\n"
+      "    return a + b\n"
+      "def apply(cb: Callable[[i32, i32], i32], x: i32, y: i32) -> i32:\n"
+      "    return cb(x, y)\n"
+      "def twice(cb: Callable[i32], n: i32) -> i32:\n"
+      "    return cb(n) + cb(n)\n"
+      "def prefix(cb: Callable[[i32, ...], i32], n: i32) -> i32:\n"
+      "    return cb(n, 0)\n"
+      "def call_fn(cb: Function[[i32, i32], i32], x: i32, y: i32) -> i32:\n"
+      "    return cb(x, y)\n"
+      "class Point:\n"
+      "    x: i32\n"
+      "    y: i32\n"
+      "    def __init__(self, x: i32, y: i32) -> void:\n"
+      "        self.x = x\n"
+      "        self.y = y\n"
+      "def make(cls: Class[Point], x: i32, y: i32) -> Point:\n"
+      "    return cls(x, y)\n"
+      "def construct(cb: Callable[[i32, i32], Point], x: i32, y: i32) -> Point:\n"
+      "    return cb(x, y)\n"
+      "def any_cls(cls: Class) -> void:\n"
+      "    pass\n"
+      "def main() -> i32:\n"
+      "    n = apply(add, 1, 2)\n"
+      "    inc = lambda (x: i32) -> i32: x + 1\n"
+      "    m = twice(inc, 3)\n"
+      "    p = prefix(add, 4)\n"
+      "    q = call_fn(add, 5, 6)\n"
+      "    point = make(Point, 7, 8)\n"
+      "    built = construct(Point, 1, 2)\n"
+      "    any_cls(Point)\n"
+      "    return n + m + p + q\n";
+  sere::DiagnosticEngine callableDiagnostics;
+  sere::SourceManager callableSource("sema_callable.sere", callables);
+  sere::Lexer callableLexer(callableSource, callableDiagnostics);
+  sere::Parser callableParser(callableDiagnostics, callableLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> callableModule = callableParser.parseModule();
+  sere::TypeContext callableTypes;
+  sere::TypeChecker callableChecker(callableTypes, callableDiagnostics);
+  if (callableModule == nullptr || !callableChecker.check(*callableModule)) {
+    callableDiagnostics.printAll(callableSource);
+    return fail("Callable / Function / Class values should typecheck");
+  }
+
+  const std::string boundMethod =
+      "class Adder:\n"
+      "    base: i32\n"
+      "    def __init__(self, base: i32) -> void:\n"
+      "        self.base = base\n"
+      "    def add_base(self, n: i32) -> i32:\n"
+      "        return self.base + n\n"
+      "    def apply_to(self, cb: Callable[[i32], i32], n: i32) -> i32:\n"
+      "        return cb(n)\n"
+      "    def run(self, n: i32) -> i32:\n"
+      "        return self.apply_to(self.add_base, n)\n"
+      "def main() -> i32:\n"
+      "    adder = Adder(10)\n"
+      "    stored: Callable[[i32], i32] = adder.add_base\n"
+      "    return adder.run(5) + stored(2)\n";
+  sere::DiagnosticEngine boundDiagnostics;
+  sere::SourceManager boundSource("sema_bound_method.sere", boundMethod);
+  sere::Lexer boundLexer(boundSource, boundDiagnostics);
+  sere::Parser boundParser(boundDiagnostics, boundLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> boundModule = boundParser.parseModule();
+  sere::TypeContext boundTypes;
+  sere::TypeChecker boundChecker(boundTypes, boundDiagnostics);
+  if (boundModule == nullptr || !boundChecker.check(*boundModule)) {
+    boundDiagnostics.printAll(boundSource);
+    return fail("bound instance methods should be passable as Callable");
+  }
+
+  const std::string badReturn =
+      "def text() -> str:\n"
+      "    return \"no\"\n"
+      "def take(cb: Callable[i32]) -> i32:\n"
+      "    return cb()\n"
+      "def main() -> i32:\n"
+      "    return take(text)\n";
+  sere::DiagnosticEngine badReturnDiagnostics;
+  sere::SourceManager badReturnSource("sema_callable_ret.sere", badReturn);
+  sere::Lexer badReturnLexer(badReturnSource, badReturnDiagnostics);
+  sere::Parser badReturnParser(badReturnDiagnostics, badReturnLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> badReturnModule = badReturnParser.parseModule();
+  sere::TypeContext badReturnTypes;
+  sere::TypeChecker badReturnChecker(badReturnTypes, badReturnDiagnostics);
+  if (badReturnModule != nullptr && badReturnChecker.check(*badReturnModule)) {
+    return fail("Callable[i32] must reject a function that returns str");
+  }
+
+  const std::string badClass =
+      "class Point:\n"
+      "    x: i32\n"
+      "def take(cb: Function) -> void:\n"
+      "    pass\n"
+      "def main() -> i32:\n"
+      "    take(Point)\n"
+      "    return 0\n";
+  sere::DiagnosticEngine badClassDiagnostics;
+  sere::SourceManager badClassSource("sema_callable_class.sere", badClass);
+  sere::Lexer badClassLexer(badClassSource, badClassDiagnostics);
+  sere::Parser badClassParser(badClassDiagnostics, badClassLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> badClassModule = badClassParser.parseModule();
+  sere::TypeContext badClassTypes;
+  sere::TypeChecker badClassChecker(badClassTypes, badClassDiagnostics);
+  if (badClassModule != nullptr && badClassChecker.check(*badClassModule)) {
+    return fail("Function must reject a class");
   }
   return 0;
 }

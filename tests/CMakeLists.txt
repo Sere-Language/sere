@@ -97,6 +97,13 @@ add_test(NAME sere.example.types
 set_tests_properties(sere.example.types PROPERTIES
   ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
 
+add_test(NAME sere.example.callable
+  COMMAND "$<TARGET_FILE:sere>" --emit-llvm
+          "${CMAKE_SOURCE_DIR}/examples/callable.sere"
+          -o "${CMAKE_BINARY_DIR}/callable.ll")
+set_tests_properties(sere.example.callable PROPERTIES
+  ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
+
 add_test(NAME sere.example.collections
   COMMAND "$<TARGET_FILE:sere>" --emit-llvm
           "${CMAKE_SOURCE_DIR}/examples/collections.sere"
@@ -286,6 +293,11 @@ add_executable(sere_test_import_private import_private.cpp)
 target_link_libraries(sere_test_import_private PRIVATE sere_driver)
 sere_apply_warnings(sere_test_import_private)
 add_test(NAME sere.test.import_private COMMAND sere_test_import_private)
+
+add_executable(sere_test_sema_shadow_types sema_shadow_types.cpp)
+target_link_libraries(sere_test_sema_shadow_types PRIVATE sere_driver)
+sere_apply_warnings(sere_test_sema_shadow_types)
+add_test(NAME sere.test.sema_shadow_types COMMAND sere_test_sema_shadow_types)
 
 add_executable(sere_test_library_pack library_pack.cpp)
 target_link_libraries(sere_test_library_pack PRIVATE sere_driver)

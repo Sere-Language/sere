@@ -48,7 +48,8 @@ namespace {
          name == "i64" || name == "u8" || name == "u16" || name == "u32" || name == "u64" ||
          name == "f32" || name == "f64" || name == "str" || name == "regex" || name == "byte" ||
          name == "never" || name == "Unique" || name == "Shared" || name == "Ptr" ||
-         name == "list" || name == "array" || name == "dict";
+         name == "list" || name == "array" || name == "dict" || name == "Callable" ||
+         name == "Function" || name == "Class";
 }
 
 [[nodiscard]] bool isCompilerIntrinsic(std::string_view name) {

@@ -208,5 +208,135 @@ int main() {
   if (propertyBadChecker.check(*propertyBadModule) || !propertyBad.hasErrors()) {
     return fail("assigning through a private setter from outside the class should fail");
   }
+
+  const std::string abstractHook =
+      "class Application:\n"
+      "    def __init__(self) -> void:\n"
+      "        pass\n"
+      "    @abstract\n"
+      "    def on_update(self, dt: f64) -> void:\n"
+      "        panic(\"override me\")\n"
+      "class Main(Application):\n"
+      "    def __init__(self) -> void:\n"
+      "        super().__init__()\n"
+      "def main() -> i32:\n"
+      "    app: Main = Main()\n"
+      "    return 0\n";
+  sere::DiagnosticEngine hookDiagnostics;
+  sere::SourceManager hookSource("sema_abstract_hook.sere", abstractHook);
+  sere::Lexer hookLexer(hookSource, hookDiagnostics);
+  sere::Parser hookParser(hookDiagnostics, hookLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> hookModule = hookParser.parseModule();
+  if (hookModule == nullptr || hookDiagnostics.hasErrors()) {
+    hookDiagnostics.printAll(hookSource);
+    return fail("abstract method with a body should parse");
+  }
+  sere::TypeContext hookTypes;
+  sere::TypeChecker hookChecker(hookTypes, hookDiagnostics);
+  if (!hookChecker.check(*hookModule)) {
+    hookDiagnostics.printAll(hookSource);
+    return fail("subclass may be constructed when abstract methods have a default body");
+  }
+
+  const std::string abstractPass =
+      "class Animal:\n"
+      "    @abstract\n"
+      "    def speak(self) -> i32:\n"
+      "        pass\n"
+      "class Mute(Animal):\n"
+      "    def __init__(self) -> void:\n"
+      "        pass\n"
+      "def main() -> i32:\n"
+      "    m: Mute = Mute()\n"
+      "    return 0\n";
+  sere::DiagnosticEngine passDiagnostics;
+  sere::SourceManager passSource("sema_abstract_pass.sere", abstractPass);
+  sere::Lexer passLexer(passSource, passDiagnostics);
+  sere::Parser passParser(passDiagnostics, passLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> passModule = passParser.parseModule();
+  sere::TypeContext passTypes;
+  sere::TypeChecker passChecker(passTypes, passDiagnostics);
+  if (passModule != nullptr && passChecker.check(*passModule)) {
+    return fail("subclass of pass-only @abstract must stay abstract");
+  }
+
+  const std::string typeObject =
+      "class BaseApplication:\n"
+      "    def __init__(self) -> void:\n"
+      "        pass\n"
+      "class BaseWindow:\n"
+      "    def __init__(self) -> void:\n"
+      "        pass\n"
+      "class s2d:\n"
+      "    @public version: str = \"0.1.0\"\n"
+      "    @public static Application: type[BaseApplication] = BaseApplication\n"
+      "    @public static Window: type[BaseWindow] = BaseWindow\n"
+      "def main() -> i32:\n"
+      "    app: BaseApplication = s2d.Application()\n"
+      "    win: BaseWindow = s2d.Window()\n"
+      "    return 0\n";
+  sere::DiagnosticEngine typeObjectDiagnostics;
+  sere::SourceManager typeObjectSource("sema_type_object.sere", typeObject);
+  sere::Lexer typeObjectLexer(typeObjectSource, typeObjectDiagnostics);
+  sere::Parser typeObjectParser(typeObjectDiagnostics, typeObjectLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> typeObjectModule = typeObjectParser.parseModule();
+  if (typeObjectModule == nullptr || typeObjectDiagnostics.hasErrors()) {
+    typeObjectDiagnostics.printAll(typeObjectSource);
+    return fail("type[T] static class fields should parse");
+  }
+  sere::TypeContext typeObjectTypes;
+  sere::TypeChecker typeObjectChecker(typeObjectTypes, typeObjectDiagnostics);
+  if (!typeObjectChecker.check(*typeObjectModule)) {
+    typeObjectDiagnostics.printAll(typeObjectSource);
+    return fail("type[T] static class fields should typecheck");
+  }
+
+  const std::string decorated =
+      "def identity(fn: Callable) -> Callable:\n"
+      "    return fn\n"
+      "def factory(with_params: bool) -> Callable:\n"
+      "    return identity\n"
+      "class Hook:\n"
+      "    def wrap(self, fn: Callable) -> Callable:\n"
+      "        return fn\n"
+      "@identity\n"
+      "def add(a: i32, b: i32) -> i32:\n"
+      "    return a + b\n"
+      "@factory(with_params=True)\n"
+      "def mul(a: i32, b: i32) -> i32:\n"
+      "    return a * b\n"
+      "@Hook.wrap\n"
+      "def sub(a: i32, b: i32) -> i32:\n"
+      "    return a - b\n"
+      "class Box:\n"
+      "    value: i32\n"
+      "    def __init__(self, value: i32) -> void:\n"
+      "        self.value = value\n"
+      "    @identity\n"
+      "    def get(self) -> i32:\n"
+      "        return self.value\n"
+      "class Point:\n"
+      "    x: i32\n"
+      "    def __init__(self, x: i32) -> void:\n"
+      "        self.x = x\n"
+      "def main() -> i32:\n"
+      "    p: Point = Point(1)\n"
+      "    b: Box = Box(2)\n"
+      "    return add(1, 2) + mul(2, 3) + sub(5, 1) + b.get() + p.x\n";
+  sere::DiagnosticEngine decoDiagnostics;
+  sere::SourceManager decoSource("sema_deco.sere", decorated);
+  sere::Lexer decoLexer(decoSource, decoDiagnostics);
+  sere::Parser decoParser(decoDiagnostics, decoLexer.tokenizeAll());
+  std::unique_ptr<sere::Module> decoModule = decoParser.parseModule();
+  if (decoModule == nullptr || decoDiagnostics.hasErrors()) {
+    decoDiagnostics.printAll(decoSource);
+    return fail("custom decorators should parse");
+  }
+  sere::TypeContext decoTypes;
+  sere::TypeChecker decoChecker(decoTypes, decoDiagnostics);
+  if (!decoChecker.check(*decoModule)) {
+    decoDiagnostics.printAll(decoSource);
+    return fail("custom decorators should typecheck");
+  }
   return 0;
 }
