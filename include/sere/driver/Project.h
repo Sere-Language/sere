@@ -21,6 +21,8 @@ enum class ProjectKind {
 struct ProjectManifest {
   std::string name = "sere-project";
   std::string version = "0.1.0";
+  /// Compiler/stdlib pin (`sere = "..."` in sere.toml), not the app version.
+  std::string sereVersion;
   ProjectKind kind = ProjectKind::App;
   std::filesystem::path root;
   std::filesystem::path src;

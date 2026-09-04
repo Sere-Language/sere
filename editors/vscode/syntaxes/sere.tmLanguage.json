@@ -157,7 +157,7 @@
     },
     "type": {
       "name": "storage.type.sere",
-      "match": "\\b(void|bool|i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|str|regex|byte|never|Int|Float|Unique|Shared|Ptr|list|array|dict)\\b"
+      "match": "\\b(void|None|bool|i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|str|regex|byte|never|Int|Float|Unique|Shared|Ptr|list|array|dict|Callable|Function|Class)\\b"
     },
     "exception": {
       "name": "support.type.exception.sere",

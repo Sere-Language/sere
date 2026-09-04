@@ -1,0 +1,13 @@
+def mydecorator(func: Function[[i32, i32], i32]) -> Function[[i32, i32], i32]:
+    def wrapper(left: i32, right: i32) -> i32:
+        return func(left, right)
+    return wrapper
+
+@mydecorator
+def combine(left: i32, right: i32 = 2) -> i32:
+    return left * 10 + right
+
+def main() -> i32:
+    positional: i32 = combine(4, 3)
+    keyword: i32 = combine(right=5, left=6)
+    return positional + keyword

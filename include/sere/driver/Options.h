@@ -23,6 +23,7 @@ enum class ProjectCommand {
   Shell,
   BuildInstaller,
   RefreshBin,
+  Update,
 };
 
 struct CompilerOptions {

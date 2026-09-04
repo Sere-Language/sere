@@ -85,5 +85,8 @@ add_library(sere_driver
 )
 target_link_libraries(sere_driver PUBLIC sere_sema sere_codegen)
 sere_configure_llvm_target(sere_driver)
+if(UNIX AND NOT APPLE)
+  target_link_libraries(sere_driver PUBLIC pthread ${CMAKE_DL_LIBS} m)
+endif()
 sere_apply_warnings(sere_driver)
 add_dependencies(sere_driver sere_runtime)

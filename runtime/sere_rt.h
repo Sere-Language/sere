@@ -70,7 +70,17 @@ int64_t sere_list_len(void* list);
 void* sere_list_new(int64_t stride);
 void* sere_array_new(int64_t stride, int64_t length);
 void sere_list_push(void* list, const void* item);
+void sere_list_insert(void* list, int64_t index, const void* item);
 void sere_list_remove(void* list, int64_t index);
+void sere_list_pop(void* list, void* out_item);
+void sere_list_pop_at(void* list, int64_t index, void* out_item);
+int32_t sere_list_remove_value(void* list, const void* item);
+int64_t sere_list_index_of(void* list, const void* item);
+int64_t sere_list_count(void* list, const void* item);
+void sere_list_clear(void* list);
+void* sere_list_copy(void* list);
+void sere_list_reverse(void* list);
+void sere_list_extend(void* list, void* other);
 void* sere_list_item(void* list, int64_t index);
 void* sere_list_slice(void* list, int64_t start, int64_t end, int32_t has_start, int32_t has_end);
 void* sere_list_from_argv(int argc, char** argv);
@@ -79,6 +89,12 @@ void sere_dict_set(void* dict, const void* key, const void* value);
 int32_t sere_dict_get(void* dict, const void* key, void* out_value);
 int32_t sere_dict_del(void* dict, const void* key);
 int64_t sere_dict_len(void* dict);
+int32_t sere_dict_has(void* dict, const void* key);
+void sere_dict_clear(void* dict);
+void* sere_dict_copy(void* dict);
+void* sere_dict_keys(void* dict);
+void* sere_dict_values(void* dict);
+int32_t sere_dict_pop(void* dict, const void* key, void* out_value);
 
 void sere_str_index(const char* data, int64_t len, int64_t index, const char** out_data,
                     int64_t* out_len);
@@ -300,6 +316,18 @@ void sere_string_replace(const char* data, int64_t len, const char* old_data, in
                          const char* new_data, int64_t new_len, const char** out_data,
                          int64_t* out_len);
 void* sere_string_split(const char* data, int64_t len, const char* sep, int64_t sep_len);
+void sere_string_join(const char* sep, int64_t sep_len, void* parts, const char** out_data,
+                      int64_t* out_len);
+int64_t sere_string_rfind(const char* data, int64_t len, const char* needle, int64_t needle_len);
+int64_t sere_string_count(const char* data, int64_t len, const char* needle, int64_t needle_len);
+void sere_string_capitalize(const char* data, int64_t len, const char** out_data, int64_t* out_len);
+void sere_string_title(const char* data, int64_t len, const char** out_data, int64_t* out_len);
+void sere_string_lstrip(const char* data, int64_t len, const char** out_data, int64_t* out_len);
+void sere_string_rstrip(const char* data, int64_t len, const char** out_data, int64_t* out_len);
+int32_t sere_string_is_empty(const char* data, int64_t len);
+int32_t sere_string_is_digit(const char* data, int64_t len);
+int32_t sere_string_is_alpha(const char* data, int64_t len);
+int32_t sere_string_is_space(const char* data, int64_t len);
 
 int32_t sere_win_available(void);
 int32_t sere_win_message_box(const char* text, int64_t text_len, const char* title,

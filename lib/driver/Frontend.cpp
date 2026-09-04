@@ -125,6 +125,17 @@ void collectImportStmts(const Module& module, std::vector<const ImportStmt*>& ou
   return false;
 }
 
+[[nodiscard]] const Type* exportedClassType(const Type* type) {
+  if (type == nullptr) {
+    return nullptr;
+  }
+  if (type->isTypeObject() && type->typeObjectInstance() != nullptr) {
+    type = type->typeObjectInstance();
+  }
+  type = type->canonical();
+  return type != nullptr && type->isRecord() ? type : nullptr;
+}
+
 void bindModuleExports(TypeChecker& checker,
                        TypeContext& types,
                        Module& module,
@@ -181,50 +192,92 @@ void bindModuleExports(TypeChecker& checker,
       exports.push_back(field);
     }
   }
-  const Type* moduleType = types.defineModule(moduleName, std::move(exports));
-  if (!statement.isFrom()) {
-    Symbol symbol;
-    symbol.kind = SymbolKind::Module;
-    symbol.type = moduleType;
-    checker.importSymbol(statement.alias().empty() ? moduleName : statement.alias(), symbol,
-                         statement.range().start);
-    return;
+  auto addExport = [&](RecordField field) {
+    for (RecordField& existing : exports) {
+      if (existing.name == field.name) {
+        existing = std::move(field);
+        return;
+      }
+    }
+    exports.push_back(std::move(field));
+  };
+  for (const std::unique_ptr<Stmt>& item : module.statements()) {
+    if (item->kind() != NodeKind::ImportStmt) {
+      continue;
+    }
+    const auto& imported = static_cast<const ImportStmt&>(*item);
+    if (!imported.isFrom() || imported.star()) {
+      continue;
+    }
+    const Type* source = types.moduleType(joinPath(imported.modulePath()));
+    if (source == nullptr && !imported.modulePath().empty()) {
+      source = types.moduleType(imported.modulePath().back());
+    }
+    if (source == nullptr) {
+      continue;
+    }
+    for (std::size_t index = 0; index < imported.names().size(); ++index) {
+      const RecordField* field = source->findField(imported.names()[index]);
+      if (field == nullptr || !field->isPublic) {
+        continue;
+      }
+      RecordField copy = *field;
+      copy.name = imported.boundName(index);
+      copy.isPublic = true;
+      addExport(std::move(copy));
+    }
   }
-  if (!statement.star()) {
-    for (const std::string& name : statement.names()) {
-      const RecordField* found = nullptr;
-      for (const RecordField& field : moduleType->fields()) {
+  for (const RecordField& alias : module.exportAliases()) {
+    bool exists = false;
+    for (RecordField& field : exports) {
+      if (field.name == alias.name) {
+        exists = true;
+        field = alias;
+        field.isPublic = true;
+        break;
+      }
+    }
+    if (!exists) {
+      exports.push_back(alias);
+    }
+  }
+  if (module.exportMode() != ModuleExportMode::Default) {
+    std::vector<RecordField> filtered;
+    const bool replace = module.exportMode() == ModuleExportMode::Replace;
+    if (!replace) {
+      filtered = exports;
+    }
+    for (const std::string& name : module.exportNames()) {
+      RecordField* found = nullptr;
+      for (RecordField& field : exports) {
         if (field.name == name) {
           found = &field;
           break;
         }
       }
-      if (found != nullptr && found->isPublic) {
+      if (found == nullptr) {
         continue;
       }
-      if (found != nullptr || isPrivateNamed(module, name)) {
-        diagnostics.error(statement.range(), "'" + name + "' is private and is not exported");
+      found->isPublic = true;
+      if (replace) {
+        filtered.push_back(*found);
       } else {
-        diagnostics.error(statement.range(),
-                          "cannot import name '" + name + "' from '" + moduleName + "'");
+        for (RecordField& field : filtered) {
+          if (field.name == name) {
+            field.isPublic = true;
+            break;
+          }
+        }
       }
     }
+    exports = std::move(filtered);
   }
-  for (const RecordField& field : moduleType->fields()) {
-    const bool wanted = statement.star();
-    bool named = false;
-    for (const std::string& name : statement.names()) {
-      named = named || name == field.name;
-    }
-    if (!wanted && !named) {
-      continue;
-    }
-    if (!field.isPublic) {
-      continue;
-    }
+  const Type* moduleType = types.defineModule(moduleName, std::move(exports));
+  auto importField = [&](const RecordField& field, const std::string& bound) {
     Symbol symbol;
-    symbol.type = field.type;
-    symbol.kind = field.type != nullptr && field.type->isRecord() ? SymbolKind::Class
+    const Type* classType = exportedClassType(field.type);
+    symbol.type = classType != nullptr ? classType : field.type;
+    symbol.kind = classType != nullptr ? SymbolKind::Class
                   : field.type != nullptr && field.type->kind() == TypeKind::Function
                       ? SymbolKind::Function
                   : field.type != nullptr && field.type->kind() == TypeKind::Alias
@@ -252,7 +305,48 @@ void bindModuleExports(TypeChecker& checker,
         }
       }
     }
-    checker.importSymbol(field.name, symbol, statement.range().start);
+    checker.importSymbol(bound, symbol, statement.range().start);
+  };
+  if (!statement.isFrom()) {
+    // `import gl` binds the module. `gl.Window` must resolve like `from gl import Window`.
+    const std::string bound = statement.alias().empty() ? moduleName : statement.alias();
+    Symbol symbol;
+    symbol.kind = SymbolKind::Module;
+    symbol.type = moduleType;
+    checker.importSymbol(bound, symbol, statement.range().start);
+    for (const RecordField& field : moduleType->fields()) {
+      if (!field.isPublic || field.name.empty()) {
+        continue;
+      }
+      const std::string qualified = bound + "." + field.name;
+      if (checker.typeOfName(qualified) != nullptr) {
+        continue;
+      }
+      importField(field, qualified);
+    }
+    return;
+  }
+  if (statement.star()) {
+    for (const RecordField& field : moduleType->fields()) {
+      if (field.isPublic) {
+        importField(field, field.name);
+      }
+    }
+    return;
+  }
+  for (std::size_t index = 0; index < statement.names().size(); ++index) {
+    const std::string& name = statement.names()[index];
+    const RecordField* found = moduleType->findField(name);
+    if (found != nullptr && found->isPublic) {
+      importField(*found, statement.boundName(index));
+      continue;
+    }
+    if (found != nullptr || isPrivateNamed(module, name)) {
+      diagnostics.error(statement.range(), "'" + name + "' is private and is not exported");
+    } else {
+      diagnostics.error(statement.range(),
+                        "cannot import name '" + name + "' from '" + moduleName + "'");
+    }
   }
 }
 
@@ -425,6 +519,9 @@ bool Frontend::loadImports(const std::filesystem::path& origin,
     const std::filesystem::path file =
         resolveImportFile(searchDirs, statement->modulePath(), originPath, &resolveError);
     if (file.empty()) {
+      if (statement->isFrom() && !statement->star() && statement->modulePath().size() == 1) {
+        continue;
+      }
       if (!resolveError.empty()) {
         diagnostics_.error(statement->range(), resolveError);
       } else {

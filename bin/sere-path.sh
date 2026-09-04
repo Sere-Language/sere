@@ -12,6 +12,7 @@ find_sere_bin() {
     "$here/../bin"
     "$here/../venv/bin"
     "$here/../build/windows-clang-cl-relwithdebinfo/bin"
+    "$here/../build/linux-clang-relwithdebinfo/bin"
   )
   local cfg home
   for cfg in "$here/sere.cfg" "$here/../venv/sere.cfg" "$here/../sere.cfg"; do
@@ -65,8 +66,22 @@ fi
 
 strip_bin
 export PATH="$bin:$PATH"
+pkg="$(cd "$bin/.." && pwd)"
+if [[ -d "$pkg/stdlib" ]]; then
+  export SERE_STDLIB="$pkg/stdlib"
+  export SERE_HOME="$pkg"
+fi
+if [[ -x "$pkg/toolchains/llvm-22.1.8/bin/clang" ]]; then
+  export SERE_LLVM_DIR="$pkg/toolchains/llvm-22.1.8"
+fi
 echo "This session PATH starts with:"
 echo "  $bin"
+if [[ -n "${SERE_STDLIB:-}" ]]; then
+  echo "SERE_STDLIB=$SERE_STDLIB"
+fi
+if [[ -n "${SERE_LLVM_DIR:-}" ]]; then
+  echo "SERE_LLVM_DIR=$SERE_LLVM_DIR"
+fi
 if [[ -x "$bin/sere" ]]; then
   echo "sere -> $bin/sere"
 else

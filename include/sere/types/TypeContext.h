@@ -32,7 +32,8 @@ public:
   [[nodiscard]] const Type* functionType(const std::vector<const Type*>& params,
                                          const Type* returnType);
   [[nodiscard]] const Type* defineRecord(const std::string& name,
-                                         std::vector<RecordField> fields);
+                                         std::vector<RecordField> fields,
+                                         const std::string& qualifier = "");
   void setRecordFields(const Type* record, std::vector<RecordField> fields);
   void addRecordMethod(const Type* record, RecordMethod method);
   void setRecordBases(const Type* record, std::vector<const Type*> bases);
@@ -78,7 +79,11 @@ public:
   [[nodiscard]] const Type* uniqueType(const Type* pointee);
   [[nodiscard]] const Type* sharedType(const Type* pointee);
   [[nodiscard]] const Type* ptrType(const Type* pointee);
-  [[nodiscard]] const Type* listType(const Type* element);
+  [[nodiscard]] const Type* typeObject(const Type* instance);
+  [[nodiscard]] const Type* ellipsisType();
+  [[nodiscard]] const Type* paramList(const std::vector<const Type*>& params);
+  [[nodiscard]] const Type* sizeType(std::int64_t value);
+  [[nodiscard]] const Type* listType(const Type* element, std::int64_t size = -1);
   [[nodiscard]] const Type* arrayType(const Type* element);
   [[nodiscard]] const Type* dictType(const Type* key, const Type* value);
   [[nodiscard]] const Type* unionType(std::vector<const Type*> members);

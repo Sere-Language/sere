@@ -1,60 +1,41 @@
-# Packaging and the Windows installer
+# Packaging
 
 ## Zip / copy install (`releases/`)
 
-Shippable trees land in **`releases/`**. `build/` is CMake only. `bin/` is the
-local compiler after a build.
-
 ```powershell
 .\scripts\package-vsix.ps1
-.\releases\stage.ps1                 # releases/pre-0.1.1 + zip + bundled vsix
-.\releases\pre-0.1.1\install.ps1
+.\releases\stage.ps1 -Name pre-0.1.4
 ```
 
-`install.ps1` copies files to `%LOCALAPPDATA%\Programs\Sere`, adds `bin` to
-the user `PATH`, and sets `SERE_STDLIB` / `SERE_LLVM_DIR`. LLVM is reused from
-a previous bootstrap or downloaded; it is not stored in git.
+```bash
+./scripts/bootstrap-llvm.sh
+export SERE_LLVM_DIR="$HOME/.local/share/sere/toolchains/llvm-22.1.8"
+cmake --preset linux-clang-relwithdebinfo
+cmake --build --preset linux-clang-relwithdebinfo --target sere
+ctest --preset linux-clang-relwithdebinfo
+./releases/stage.sh pre-0.1.4
+```
 
-The older [`releases/pre-0.1.0`](../releases/pre-0.1.0/) tree stays as history.
+| Artifact | Path |
+| --- | --- |
+| Windows tree | `releases/pre-0.1.4/windows-x64/` |
+| Linux tree | `releases/pre-0.1.4/linux-x64/` |
+| Windows zip | `releases/Sere-pre-0.1.4-windows-x64.zip` |
+| Linux tar.gz | `releases/Sere-pre-0.1.4-linux-x64.tar.gz` |
 
-Options: `-Prefix`, `-NoPath`, `-Associate`, `-Editor`, `-Msvc`, `-DownloadLlvm`.
+Linux `stage.sh` **bundles a compiler LLVM** into `toolchains/llvm-22.1.8` (`clang`, `ld.lld`, clang resource dir, and LLVM/clang shared libraries). It does **not** copy the full LLVM SDK (static libs and unused tools); that produced a ~12 G tree and archives Cursor cannot upload. After unpack, `. ./bin/sere-path.sh` compiles offline. `install.sh` copies that toolchain into `$HOME/.local/share/sere/toolchains`. `--download-llvm` is only a fallback. The builder still uses `scripts/bootstrap-llvm.sh` and [LLVM-22.1.8-Linux-X64.tar.xz](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8).
 
-## Inno Setup wizard
+Linux stdlib **omits** `windows.sere`. `sere --build-installer` remains Windows-only (Inno Setup).
 
-`sere --build-installer` (alias `sere build-installer`) stages the compiler,
-stdlib, LLVM 22.1.8 toolchain, runtime, C API headers, optional Qt6 DLLs, and
-the editor VSIX, then compiles an Inno Setup installer.
+The Linux compiler is **x86_64 glibc 2.35**. It will not run on the [NanoVM](https://userland.run/docs/) RV64GC RISC-V runner.
+
+## Inno Setup wizard (Windows)
+
+`sere --build-installer` stages the compiler, stdlib, LLVM 22.1.8, runtime, C API headers, optional Qt6 DLLs, and the editor VSIX.
 
 ```powershell
-.\scripts\bootstrap-innosetup.ps1   # once, if ISCC.exe is missing
+.\scripts\bootstrap-innosetup.ps1
 sere --build-installer
-sere --build-installer -o dist\Sere-pre-0.1.1-setup.exe
 ```
 
-The setup exe is written to `dist/Sere-<version>-setup.exe` by default.
-
-## What the installer puts on the machine
-
 Default directory: `%LOCALAPPDATA%\Programs\Sere`.
-
-| Path | Contents |
-| --- | --- |
-| `bin/sere.exe` | Compiler, project CLI, and `sere --lsp` |
-| `bin/sere_rt.lib` | Runtime linked into user programs |
-| `stdlib/` | Standard library |
-| `include/sere/api/` | `sere_mod.h`, `sere_gc.h` |
-| `toolchains/llvm-22.1.8/` | clang, lld, clang resource dir |
-| `editors/sere.vsix` | VS Code / Cursor extension |
-
-Wizard tasks: user/system PATH, LLVM, C++ Build Tools if missing, Start Menu,
-`.sere` association, editor extension (`sere --lsp`), optional Qt6 runtime.
-
-After install, a new terminal should run `sere --version` and compile a
-`.sere` file without this git checkout or `scripts/bootstrap.ps1`.
-
-From a source checkout, `sere refresh-bin` (or **Sere: Refresh ./bin Compiler**)
-replaces `./bin/sere.exe` from the compiler that is currently running. CMake
-install also renames a locked `bin/sere.exe` out of the way.
-
-Building Sere **from source** still uses `scripts/bootstrap.ps1` and
-`scripts/env.ps1`. Those are developer scripts, not end-user steps.

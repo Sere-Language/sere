@@ -2,7 +2,7 @@
   "name": "sere",
   "displayName": "Sere",
   "description": "Language support for Sere: diagnostics, hover, completion, macros, exceptions, and a restartable language server.",
-  "version": "0.2.1",
+  "version": "0.2.7",
   "publisher": "sere",
   "private": true,
   "license": "UNLICENSED",

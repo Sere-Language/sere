@@ -38,12 +38,14 @@ private:
   const Token& advance();
   [[nodiscard]] bool check(TokenKind kind) const;
   bool match(TokenKind kind);
+  bool matchDot();
   bool consume(TokenKind kind, const char* errorMessage);
   void skipNewlines();
   bool finishLine();
   bool finishExprLine(const Expr* expr);
   void synchronize();
   [[nodiscard]] bool looksLikeGenericCall() const;
+  [[nodiscard]] bool looksLikeTypeApplication() const;
 
   std::unique_ptr<TypeExpr> parseTypeAtom();
   std::unique_ptr<TypeExpr> parseTypeExpr();
@@ -84,7 +86,7 @@ private:
   std::unique_ptr<ImportStmt> parseFromImport();
   std::unique_ptr<VarDecl> parseVarDecl(bool isStatic = false);
   void parseDecorators(bool& isPublic, bool& isPrivate);
-  std::vector<std::string> parseDecoratorNames();
+  std::vector<std::unique_ptr<Expr>> parseDecoratorExprs();
   std::vector<std::string> parseNameList();
   std::unique_ptr<ReturnStmt> parseReturn();
   std::unique_ptr<IfStmt> parseIf();

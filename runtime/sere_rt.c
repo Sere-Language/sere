@@ -22,7 +22,7 @@ void sere_mod_init_default(void) {}
 #pragma comment(linker, "/include:sere_mod_init_default")
 #pragma comment(linker, "/alternatename:sere_mod_init=sere_mod_init_default")
 #else
-__attribute__((weak)) void sere_mod_init(void) {}
+void sere_mod_init(void) __attribute__((weak, alias("sere_mod_init_default")));
 #endif
 
 void sere_write(const char* data, int64_t len) {
@@ -892,4 +892,206 @@ void* sere_list_concat(void* left, void* right) {
     }
   }
   return out;
+}
+
+void sere_list_insert(void* list, int64_t index, const void* item) {
+  SereList* typed = (SereList*)list;
+  if (typed == NULL || item == NULL) {
+    return;
+  }
+  if (index < 0) {
+    index = 0;
+  }
+  if (index > typed->len) {
+    index = typed->len;
+  }
+  sere_list_push(typed, item);
+  if (index >= typed->len - 1) {
+    return;
+  }
+  memmove((char*)typed->data + (size_t)((index + 1) * typed->stride),
+          (char*)typed->data + (size_t)(index * typed->stride),
+          (size_t)((typed->len - 1 - index) * typed->stride));
+  memcpy((char*)typed->data + (size_t)(index * typed->stride), item, (size_t)typed->stride);
+}
+
+void sere_list_pop(void* list, void* out_item) {
+  SereList* typed = (SereList*)list;
+  if (typed == NULL || typed->len <= 0) {
+    if (out_item != NULL && typed != NULL) {
+      memset(out_item, 0, (size_t)typed->stride);
+    }
+    return;
+  }
+  typed->len -= 1;
+  if (out_item != NULL) {
+    memcpy(out_item, (char*)typed->data + (size_t)(typed->len * typed->stride),
+           (size_t)typed->stride);
+  }
+}
+
+void sere_list_pop_at(void* list, int64_t index, void* out_item) {
+  SereList* typed = (SereList*)list;
+  if (typed == NULL || index < 0 || index >= typed->len) {
+    if (out_item != NULL && typed != NULL) {
+      memset(out_item, 0, (size_t)typed->stride);
+    }
+    return;
+  }
+  if (out_item != NULL) {
+    memcpy(out_item, (char*)typed->data + (size_t)(index * typed->stride), (size_t)typed->stride);
+  }
+  sere_list_remove(list, index);
+}
+
+int32_t sere_list_remove_value(void* list, const void* item) {
+  SereList* typed = (SereList*)list;
+  if (typed == NULL || item == NULL) {
+    return 0;
+  }
+  for (int64_t index = 0; index < typed->len; ++index) {
+    if (memcmp((char*)typed->data + (size_t)(index * typed->stride), item,
+               (size_t)typed->stride) == 0) {
+      sere_list_remove(list, index);
+      return 1;
+    }
+  }
+  return 0;
+}
+
+int64_t sere_list_index_of(void* list, const void* item) {
+  SereList* typed = (SereList*)list;
+  if (typed == NULL || item == NULL) {
+    return -1;
+  }
+  for (int64_t index = 0; index < typed->len; ++index) {
+    if (memcmp((char*)typed->data + (size_t)(index * typed->stride), item,
+               (size_t)typed->stride) == 0) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+int64_t sere_list_count(void* list, const void* item) {
+  SereList* typed = (SereList*)list;
+  if (typed == NULL || item == NULL) {
+    return 0;
+  }
+  int64_t count = 0;
+  for (int64_t index = 0; index < typed->len; ++index) {
+    if (memcmp((char*)typed->data + (size_t)(index * typed->stride), item,
+               (size_t)typed->stride) == 0) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+void sere_list_clear(void* list) {
+  SereList* typed = (SereList*)list;
+  if (typed != NULL) {
+    typed->len = 0;
+  }
+}
+
+void* sere_list_copy(void* list) {
+  SereList* typed = (SereList*)list;
+  if (typed == NULL) {
+    return sere_list_new(1);
+  }
+  return sere_list_concat(typed, NULL);
+}
+
+void sere_list_reverse(void* list) {
+  SereList* typed = (SereList*)list;
+  if (typed == NULL || typed->data == NULL || typed->len <= 1) {
+    return;
+  }
+  char* tmp = (char*)malloc((size_t)typed->stride);
+  if (tmp == NULL) {
+    return;
+  }
+  for (int64_t i = 0, j = typed->len - 1; i < j; ++i, --j) {
+    char* a = (char*)typed->data + (size_t)(i * typed->stride);
+    char* b = (char*)typed->data + (size_t)(j * typed->stride);
+    memcpy(tmp, a, (size_t)typed->stride);
+    memcpy(a, b, (size_t)typed->stride);
+    memcpy(b, tmp, (size_t)typed->stride);
+  }
+  free(tmp);
+}
+
+void sere_list_extend(void* list, void* other) {
+  SereList* extra = (SereList*)other;
+  if (extra == NULL) {
+    return;
+  }
+  for (int64_t index = 0; index < extra->len; ++index) {
+    sere_list_push(list, (char*)extra->data + (size_t)(index * extra->stride));
+  }
+}
+
+int32_t sere_dict_has(void* dict, const void* key) {
+  return sere_dict_get(dict, key, NULL);
+}
+
+void sere_dict_clear(void* dict) {
+  SereDict* typed = (SereDict*)dict;
+  if (typed == NULL || typed->state == NULL) {
+    return;
+  }
+  memset(typed->state, 0, (size_t)typed->cap);
+  typed->len = 0;
+}
+
+void* sere_dict_copy(void* dict) {
+  SereDict* typed = (SereDict*)dict;
+  if (typed == NULL) {
+    return sere_dict_new(1, 1, 0);
+  }
+  void* out = sere_dict_new(typed->key_stride, typed->val_stride, typed->key_kind);
+  for (int64_t index = 0; index < typed->cap; ++index) {
+    if (typed->state != NULL && typed->state[index] == 1) {
+      sere_dict_set(out, (char*)typed->keys + (size_t)(index * typed->key_stride),
+                    (char*)typed->vals + (size_t)(index * typed->val_stride));
+    }
+  }
+  return out;
+}
+
+void* sere_dict_keys(void* dict) {
+  SereDict* typed = (SereDict*)dict;
+  if (typed == NULL) {
+    return sere_list_new(1);
+  }
+  void* list = sere_list_new(typed->key_stride);
+  for (int64_t index = 0; index < typed->cap; ++index) {
+    if (typed->state != NULL && typed->state[index] == 1) {
+      sere_list_push(list, (char*)typed->keys + (size_t)(index * typed->key_stride));
+    }
+  }
+  return list;
+}
+
+void* sere_dict_values(void* dict) {
+  SereDict* typed = (SereDict*)dict;
+  if (typed == NULL) {
+    return sere_list_new(1);
+  }
+  void* list = sere_list_new(typed->val_stride);
+  for (int64_t index = 0; index < typed->cap; ++index) {
+    if (typed->state != NULL && typed->state[index] == 1) {
+      sere_list_push(list, (char*)typed->vals + (size_t)(index * typed->val_stride));
+    }
+  }
+  return list;
+}
+
+int32_t sere_dict_pop(void* dict, const void* key, void* out_value) {
+  if (!sere_dict_get(dict, key, out_value)) {
+    return 0;
+  }
+  sere_dict_del(dict, key);
+  return 1;
 }

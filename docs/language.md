@@ -153,6 +153,7 @@ Other: `.` `,` `:` `->` `=>` `!` `$` `@` `...` `|` (unions and bitwise or)
 | Type | Meaning |
 | --- | --- |
 | `void` | No value (function returns) |
+| `None` | Python-style spelling of `void`; also the no-value literal |
 | `bool` | `True` / `False` |
 | `i8` `i16` `i32` `i64` | Signed integers |
 | `u8` `u16` `u32` `u64` | Unsigned integers |
@@ -181,8 +182,60 @@ type Float = f32 | f64
 | Type | Meaning |
 | --- | --- |
 | `list[T]` | Runtime list |
+| `list[T, N]` | List of `T` with a fixed length `N` |
 | `array[T]` | Fixed array from `array[T](...)` |
 | `dict[K, V]` | Map |
+
+### Callables
+
+Functions, lambdas, classes, structs, and bound instance methods (`self.method`) can be passed as values. `self` is already applied, so `def handler(self, x: i32)` matches `Callable[[i32], R]`.
+
+| Type | Meaning |
+| --- | --- |
+| `Callable` | Any callable; argument count and return type are unchecked |
+| `Callable[R]` | Any callable that returns `R` |
+| `Callable[[P...], R]` | Callable with those parameter types and return `R` |
+| `Callable[[P..., ...], R]` | Prefix parameters must match; extra arguments are allowed |
+| `Function` / `Function[R]` / `Function[[P...], R]` | Same shapes, but only functions and lambdas (not classes) |
+| `Class` | Any class or struct type object |
+| `Class[T]` | The type object for `T` (same as `type[T]`) |
+
+```sere
+def add(a: i32, b: i32) -> i32:
+    return a + b
+
+def apply(cb: Callable[[i32, i32], i32], x: i32, y: i32) -> i32:
+    return cb(x, y)
+
+def twice(cb: Callable[i32], n: i32) -> i32:
+    return cb(n) + cb(n)
+
+def call_any(cb: Callable) -> void:
+    cb(1, 2)
+
+n = apply(add, 1, 2)
+m = twice(lambda (x: i32) -> i32: x + 1, 3)
+call_any(add)
+
+class Point:
+    x: i32
+    y: i32
+    def __init__(self, x: i32, y: i32) -> void:
+        self.x = x
+        self.y = y
+
+def make(cls: Class[Point], x: i32, y: i32) -> Point:
+    return cls(x, y)
+
+def construct(cb: Callable[[i32, i32], Point], x: i32, y: i32) -> Point:
+    return cb(x, y)
+
+p = make(Point, 1, 2)
+q = construct(Point, 3, 4)
+```
+
+`Callable[[i32, ...], i32]` accepts `def f(a: i32) -> i32` and `def g(a: i32, b: i32) -> i32`.
+A bare `Callable` result is `Any`; annotate `Callable[R]` when the return value is used as a typed result.
 
 ### User types
 
@@ -221,12 +274,41 @@ def bump() -> i32:
 - Module-level `static` and function-level `static` persist
 - Functions and types can be aliased: `donut = print`
 
-Decorators (parsed as `@name` on the next declaration):
+Decorators follow Python: `@name`, `@name(args)`, and `@Class.method` on
+`def`, methods, `class`, and `struct`. Closest decorator runs first
+(`@a` then `@b` on `f` is `f = a(b(f))`). Built-ins stay reserved names
+(`@public`, `@private`, `@abstract`, `@override`, `@frozen`, `@flags`,
+`@static`).
+
+```sere
+def identity(fn: Callable) -> Callable:
+    return fn
+
+def labeled(with_params: bool) -> Callable:
+    return identity
+
+class Hook:
+    def wrap(self, fn: Callable) -> Callable:
+        return fn
+
+@identity
+def add(a: i32, b: i32) -> i32:
+    return a + b
+
+@labeled(with_params=True)
+def mul(a: i32, b: i32) -> i32:
+    return a * b
+
+@Hook.wrap
+def sub(a: i32, b: i32) -> i32:
+    return a - b
+```
 
 | Decorator | On | Effect |
 | --- | --- | --- |
 | `@public` / `@private` | field, `def`, property accessor, `class`, `struct`, `enum`, `type`, `macro`, module binding | `@private` is not exported: `import` / `from` and `module.name` cannot see it (`PermissionError`). Private methods and setters are only usable inside the owning class. |
-| `@abstract` | method | Must be overridden |
+| `@static` | field | Same as `static name: T`: one shared class variable |
+| `@abstract` | method | Empty/`pass` body must be overridden; a real body is a default hook |
 | `@override` | method | Marks an override |
 | `@frozen` | class | Fields are not assignable after init |
 | `@flags` | enum | Parsed and stored; no extra checking yet |
@@ -354,7 +436,6 @@ def identity[T](value: T) -> T:
 - `print(..., sep=" ", end="\n")` — `end=""` suppresses the trailing newline
 - Generic type parameters: `[T]` on `def` or `class`
 - Methods take `self` as the first parameter
-- `super()` is the first base class: `super().__init__(name)`, `super().id()`
 
 Native:
 
@@ -398,7 +479,21 @@ class Animal:
 ```
 
 Construct with `Pet("z")` or `Box[i32](4)`. Multiple bases are allowed
-(`class Dog(Animal, Named)`).
+(`class Dog(Animal, Named)`). `import pets` then `class Cat(pets.Pet)` is the
+same base as `from pets import Pet` then `class Cat(Pet)`.
+
+`static` fields are one shared value for the class (not per instance).
+Read and write them as `MyClass.x` or `self.x`:
+
+```sere
+class Counter:
+    @public static total: i32 = 0
+
+    def __init__(self) -> void:
+        Counter.total = Counter.total + 1
+```
+
+`@static` on the field is the same as the `static` keyword.
 
 ### Properties
 
@@ -428,8 +523,10 @@ class Vec2:
     @public x.set(value: i32) -> void:
         self.x = value
 
+    # equivalent: x.set(self, value: i32) -> void
+
 v.x        # getter
-v.x = 10   # setter
+v.x = 10   # setter; the setter always receives self
 ```
 
 A getter may omit `()` and `-> T` (the field type is used). A setter takes
@@ -506,7 +603,30 @@ import util as u
 from util import double
 from html_lang import html, Html
 from math import sqrt
+from window import Window as BaseWindow
 from string import *
+```
+
+`import gl` binds only the module name. A local `class Window` is a different
+type from `gl.Window`.
+
+`from SomeClass import someMethod` in the same file hoists a class method to
+module scope so it can be exported. `from module import Name as Alias` binds
+the export under `Alias`.
+
+Public top-level names are exported by default. `__exports__` can also list
+names brought in with `from other import Name` (or `as Alias`) so a barrel
+file can re-export them:
+
+```sere
+def version() -> str:
+    return "1"
+
+from Greeter import hello
+from window import Window as BaseWindow
+
+__exports__ += [hello, BaseWindow]   # keep version, also re-export these
+# __exports__ = [hello]              # export only hello
 ```
 
 Search order: directory of the importing file (and `libs/` next to it), the
@@ -745,6 +865,9 @@ Always in scope:
 typeof(small)              # str
 isinstance[i32](small)
 isinstance(small, i32)
+isinstance(window, gl.Window)
+isinstance(xs, list[f32])
+typeof(window) is gl.Window
 dir(Box)                   # list[str]
 dir()
 inspect(scale)             # str

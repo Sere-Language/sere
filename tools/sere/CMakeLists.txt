@@ -46,6 +46,13 @@ set_target_properties(sere PROPERTIES
   OUTPUT_NAME sere
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/staging"
 )
+if(UNIX AND NOT APPLE)
+  set_target_properties(sere PROPERTIES
+    BUILD_RPATH "$ORIGIN;$ORIGIN/../lib;$ENV{SERE_LLVM_DIR}/lib"
+    INSTALL_RPATH "$ORIGIN;$ORIGIN/../lib;$ORIGIN/../toolchains/llvm-22.1.8/lib"
+    BUILD_WITH_INSTALL_RPATH OFF
+  )
+endif()
 
 set(SERE_PROJECT_BIN "${CMAKE_SOURCE_DIR}/bin")
 add_custom_command(TARGET sere POST_BUILD

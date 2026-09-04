@@ -9,7 +9,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <optional>
 #include <string>
@@ -29,6 +31,17 @@ namespace {
 
 [[nodiscard]] NameExpr* asName(Expr& expr) {
   return const_cast<NameExpr*>(asName(static_cast<const Expr&>(expr)));
+}
+
+[[nodiscard]] const Type* unwrapRecordType(const Type* type) {
+  if (type == nullptr) {
+    return nullptr;
+  }
+  if (type->isTypeObject() && type->typeObjectInstance() != nullptr) {
+    type = type->typeObjectInstance();
+  }
+  type = type->canonical();
+  return type != nullptr && type->isRecord() ? type : nullptr;
 }
 
 /// Folds `1`, `+1`, and `-1` (including nested unary signs) into an integer.
@@ -54,6 +67,78 @@ namespace {
     return std::nullopt;
   }
   return -*inner;
+}
+
+[[nodiscard]] std::optional<double> foldFloat(const Expr& expr) {
+  if (expr.kind() == NodeKind::FloatLiteral) {
+    return static_cast<const FloatLiteral&>(expr).value();
+  }
+  if (expr.kind() == NodeKind::IntegerLiteral) {
+    return static_cast<double>(static_cast<const IntegerLiteral&>(expr).value());
+  }
+  if (expr.kind() != NodeKind::UnaryExpr) {
+    return std::nullopt;
+  }
+  const auto& unary = static_cast<const UnaryExpr&>(expr);
+  const std::optional<double> inner = foldFloat(unary.operand());
+  if (!inner.has_value()) {
+    return std::nullopt;
+  }
+  if (unary.op() == UnaryOp::Pos) {
+    return inner;
+  }
+  if (unary.op() != UnaryOp::Neg) {
+    return std::nullopt;
+  }
+  return -*inner;
+}
+
+[[nodiscard]] bool integerLiteralFits(std::int64_t value, const Type* dest) {
+  if (dest == nullptr || !dest->isScalarInteger()) {
+    return true;
+  }
+  const int bits = dest->integerBitWidth();
+  if (dest->isUnsignedInteger()) {
+    if (value < 0) {
+      return false;
+    }
+    if (bits >= 64) {
+      return true;
+    }
+    const std::uint64_t max = (1ull << bits) - 1ull;
+    return static_cast<std::uint64_t>(value) <= max;
+  }
+  if (bits >= 64) {
+    return true;
+  }
+  const std::int64_t min = -(static_cast<std::int64_t>(1) << (bits - 1));
+  const std::int64_t max = (static_cast<std::int64_t>(1) << (bits - 1)) - 1;
+  return value >= min && value <= max;
+}
+
+[[nodiscard]] bool floatLiteralFits(double value, const Type* dest) {
+  if (dest == nullptr || !dest->isNamed("f32")) {
+    return true;
+  }
+  if (!std::isfinite(value)) {
+    return true;
+  }
+  return std::fabs(value) <= static_cast<double>(std::numeric_limits<float>::max());
+}
+
+[[nodiscard]] bool abstractMethodNeedsOverride(const FunctionDef& method) {
+  if (!method.isAbstract()) {
+    return false;
+  }
+  bool sawCode = false;
+  for (const std::unique_ptr<Stmt>& statement : method.body()) {
+    if (statement == nullptr || statement->kind() == NodeKind::PassStmt) {
+      continue;
+    }
+    sawCode = true;
+    break;
+  }
+  return !sawCode;
 }
 
 [[nodiscard]] bool isAssignableTarget(const Expr& expr) {
@@ -89,6 +174,70 @@ namespace {
 
 [[nodiscard]] bool isCallableSymbol(const Symbol& symbol) {
   return symbol.kind == SymbolKind::Function || symbol.kind == SymbolKind::Intrinsic;
+}
+
+struct CallableShape {
+  bool functionsOnly = false;
+  bool hasParams = false;
+  bool variadic = false;
+  std::vector<const Type*> params{};
+  bool hasReturn = false;
+  const Type* returnType = nullptr;
+};
+
+[[nodiscard]] bool fillCallableShape(const Type* type, CallableShape& out) {
+  if (type == nullptr || !type->isCallableConstraint()) {
+    return false;
+  }
+  type = type->canonical();
+  out = CallableShape{};
+  out.functionsOnly = type->isGenericCtor("Function");
+  const std::vector<const Type*>& args = type->args();
+  if (args.empty()) {
+    return true;
+  }
+  if (args[0] != nullptr && args[0]->isParamList()) {
+    out.hasParams = true;
+    for (const Type* param : args[0]->args()) {
+      if (param != nullptr && param->isEllipsis()) {
+        out.variadic = true;
+        continue;
+      }
+      out.params.push_back(param);
+    }
+    if (args.size() >= 2) {
+      out.hasReturn = true;
+      out.returnType = args[1];
+    }
+    return true;
+  }
+  out.hasReturn = true;
+  out.returnType = args[0];
+  return true;
+}
+
+[[nodiscard]] bool constructorParams(const Type* record, std::vector<const Type*>& params) {
+  if (record == nullptr) {
+    return false;
+  }
+  record = record->canonical();
+  const int initIndex = record->methodIndex("__init__");
+  if (initIndex >= 0) {
+    const Type* functionType = record->methods()[static_cast<std::size_t>(initIndex)].type;
+    if (functionType == nullptr || functionType->paramTypes().empty()) {
+      return false;
+    }
+    for (std::size_t index = 1; index < functionType->paramTypes().size(); ++index) {
+      params.push_back(functionType->paramTypes()[index]);
+    }
+    return true;
+  }
+  for (const RecordField& field : record->fields()) {
+    if (!field.isStatic && field.stored) {
+      params.push_back(field.type);
+    }
+  }
+  return true;
 }
 
 [[nodiscard]] std::string loweredCallName(const NameExpr& callee, const Symbol& symbol) {
@@ -250,12 +399,14 @@ TypeChecker::TypeChecker(TypeContext& types, DiagnosticEngine& diagnostics)
   registerBuiltins();
 }
 
-void TypeChecker::pushScope() {
+void TypeChecker::pushScope(SourceRange range) {
   scopes_.emplace_back();
+  scopeRanges_.push_back(range);
 }
 
 void TypeChecker::popScope() {
   scopes_.pop_back();
+  scopeRanges_.pop_back();
 }
 
 bool TypeChecker::declare(const std::string& name,
@@ -277,7 +428,10 @@ bool TypeChecker::declare(const std::string& name,
   collected.name = name;
   collected.location = location;
   collected.range = SourceRange{location, location};
+  collected.scopeRange = scopeRanges_.empty() ? SourceRange{} : scopeRanges_.back();
+  collected.scopeDepth = scopes_.size();
   collected.snippet = symbol.snippet;
+  collected.type = symbol.type;
   collected.typeDisplay = !symbol.typeDisplay.empty()
                               ? symbol.typeDisplay
                               : (symbol.type == nullptr ? "" : symbol.type->display());
@@ -334,6 +488,32 @@ const std::vector<SemanticSymbol>& TypeChecker::symbols() const {
   return symbols_;
 }
 
+std::vector<const SemanticSymbol*> TypeChecker::visibleSymbolsAt(std::uint32_t offset) const {
+  std::unordered_map<std::string, const SemanticSymbol*> visible;
+  for (const SemanticSymbol& symbol : symbols_) {
+    const bool global = symbol.scopeDepth <= 1 || symbol.scopeRange.end.offset == 0;
+    if (!global &&
+        (offset < symbol.scopeRange.start.offset || offset > symbol.scopeRange.end.offset)) {
+      continue;
+    }
+    if (!global && symbol.location.offset > offset) {
+      continue;
+    }
+    const auto found = visible.find(symbol.name);
+    if (found == visible.end() || found->second->scopeDepth < symbol.scopeDepth ||
+        (found->second->scopeDepth == symbol.scopeDepth &&
+         found->second->location.offset <= symbol.location.offset)) {
+      visible[symbol.name] = &symbol;
+    }
+  }
+  std::vector<const SemanticSymbol*> result;
+  result.reserve(visible.size());
+  for (const auto& entry : visible) {
+    result.push_back(entry.second);
+  }
+  return result;
+}
+
 const Type* TypeChecker::typeOfName(std::string_view name) const {
   const std::string key(name);
   for (auto scope = scopes_.rbegin(); scope != scopes_.rend(); ++scope) {
@@ -344,7 +524,14 @@ const Type* TypeChecker::typeOfName(std::string_view name) const {
   }
   const Type* fromSymbols = nullptr;
   for (const SemanticSymbol& symbol : symbols_) {
-    if (symbol.name != key || symbol.typeDisplay.empty()) {
+    if (symbol.name != key) {
+      continue;
+    }
+    if (symbol.type != nullptr) {
+      fromSymbols = symbol.type;
+      continue;
+    }
+    if (symbol.typeDisplay.empty()) {
       continue;
     }
     if (const Type* named = types_->lookupNamed(symbol.typeDisplay)) {
@@ -359,11 +546,11 @@ const Type* TypeChecker::typeOfPath(const std::vector<std::string>& parts) const
     return nullptr;
   }
   const Type* current = typeOfName(parts[0]);
-  if (current == nullptr) {
-    current = types_->lookupNamed(parts[0]);
-  }
   for (std::size_t index = 1; current != nullptr && index < parts.size(); ++index) {
     current = current->canonical();
+    if (current->isTypeObject() && current->typeObjectInstance() != nullptr) {
+      current = current->typeObjectInstance()->canonical();
+    }
     const RecordField* field = current->findField(parts[index]);
     if (field == nullptr || field->type == nullptr) {
       return nullptr;
@@ -392,6 +579,7 @@ void TypeChecker::recordSymbol(const std::string& name,
   SemanticSymbol collected;
   collected.name = name;
   collected.kind = kind;
+  collected.type = type;
   collected.typeDisplay = type == nullptr ? "" : type->display();
   collected.container = std::move(container);
   collected.paramNames = std::move(paramNames);
@@ -403,6 +591,8 @@ void TypeChecker::recordSymbol(const std::string& name,
   }
   collected.location = location;
   collected.range = SourceRange{location, location};
+  collected.scopeRange = scopeRanges_.empty() ? SourceRange{} : scopeRanges_.back();
+  collected.scopeDepth = scopes_.size();
   symbols_.push_back(std::move(collected));
 }
 
@@ -433,8 +623,9 @@ void TypeChecker::reportUnknown(SourceRange range,
   std::string suggestion = suggestName(name);
   if (suggestion.empty() && kind == "type") {
     const std::vector<std::string> primitives = {
-        "void", "None", "Any", "bool", "i8",    "i16",  "i32",    "i64",    "u8",  "u16",  "u32",   "u64", "f32",
-        "f64",  "str",  "regex", "byte", "Unique", "Shared", "Ptr", "list", "array", "dict"};
+        "void", "None",   "Any",    "bool", "i8",   "i16",   "i32", "i64",
+        "u8",   "u16",    "u32",    "u64",  "f32",  "f64",   "str", "regex",
+        "byte", "Unique", "Shared", "Ptr",  "list", "array", "dict"};
     suggestion = bestSuggestion(primitives, name);
   }
   if (!suggestion.empty()) {
@@ -604,6 +795,31 @@ bool TypeChecker::isAssignable(const Type* from, const Type* to) const {
   if (from->isRecord() && to->isRecord() && from->isSubtypeOf(to)) {
     return true;
   }
+  if (from->isTypeObject() && to->isTypeObject()) {
+    const Type* fromInst = from->typeObjectInstance();
+    const Type* toInst = to->typeObjectInstance();
+    if (fromInst != nullptr && toInst != nullptr &&
+        (fromInst->canonical() == toInst->canonical() ||
+         (fromInst->isRecord() && toInst->isRecord() && fromInst->isSubtypeOf(toInst)))) {
+      return true;
+    }
+  }
+  if (from->isList() && to->isList()) {
+    const Type* fromElem = from->elementType();
+    const Type* toElem = to->elementType();
+    if (fromElem != nullptr && toElem != nullptr && isAssignable(fromElem, toElem)) {
+      const std::int64_t wanted = to->listSize();
+      return wanted < 0 || from->listSize() == wanted;
+    }
+  }
+  if (from->isDict() && to->isDict()) {
+    const Type* fromKey = from->dictKeyType();
+    const Type* toKey = to->dictKeyType();
+    const Type* fromValue = from->dictValueType();
+    const Type* toValue = to->dictValueType();
+    return fromKey != nullptr && toKey != nullptr && fromValue != nullptr && toValue != nullptr &&
+           isAssignable(fromKey, toKey) && isAssignable(fromValue, toValue);
+  }
   if ((from->isEnum() && to->isEnum() && from->canonical() == to->canonical())) {
     return true;
   }
@@ -616,7 +832,7 @@ bool TypeChecker::isAssignable(const Type* from, const Type* to) const {
   if (from->isInteger() && to->isFloat()) {
     return true;
   }
-  if (from->isNamed("f32") && to->isNamed("f64")) {
+  if (from->isFloat() && to->isFloat()) {
     return true;
   }
   if (from->isIntEnum() && to->isInteger()) {
@@ -636,6 +852,138 @@ bool TypeChecker::isAssignable(const Type* from, const Type* to) const {
         return true;
       }
     }
+  }
+  if (to->isCallableConstraint() && callableSatisfies(from, to)) {
+    return true;
+  }
+  if (to->isClassConstraint() && to->args().empty() && from->isTypeObject()) {
+    return true;
+  }
+  return false;
+}
+
+bool TypeChecker::ensureLiteralFits(const Expr& expr, const Type* dest) {
+  if (dest == nullptr) {
+    return true;
+  }
+  dest = dest->canonical();
+  if (dest->isNamed("f32")) {
+    const std::optional<double> value = foldFloat(expr);
+    if (value.has_value() && !floatLiteralFits(*value, dest)) {
+      diagnostics_->error(expr.range(), "value does not fit in f32");
+      return false;
+    }
+  }
+  if (dest->isScalarInteger()) {
+    const std::optional<std::int64_t> value = evalEnumInt(expr);
+    if (value.has_value() && !integerLiteralFits(*value, dest)) {
+      diagnostics_->error(expr.range(), "value does not fit in " + quoteType(dest));
+      return false;
+    }
+  }
+  if (expr.kind() == NodeKind::ListLiteral && dest->isSequence()) {
+    const Type* element = dest->elementType();
+    for (const std::unique_ptr<Expr>& item : static_cast<const ListLiteral&>(expr).elements()) {
+      if (item != nullptr && !ensureLiteralFits(*item, element)) {
+        return false;
+      }
+    }
+  }
+  if (expr.kind() == NodeKind::DictLiteral && dest->isDict()) {
+    const auto& literal = static_cast<const DictLiteral&>(expr);
+    for (std::size_t index = 0; index < literal.keys().size(); ++index) {
+      if (literal.keys()[index] != nullptr &&
+          !ensureLiteralFits(*literal.keys()[index], dest->dictKeyType())) {
+        return false;
+      }
+      if (index < literal.values().size() && literal.values()[index] != nullptr &&
+          !ensureLiteralFits(*literal.values()[index], dest->dictValueType())) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool TypeChecker::callableSatisfies(const Type* from, const Type* to) const {
+  CallableShape dest;
+  if (from == nullptr || to == nullptr || !fillCallableShape(to, dest)) {
+    return false;
+  }
+  from = from->canonical();
+  auto paramsMatch = [&](const std::vector<const Type*>& source) -> bool {
+    if (!dest.hasParams) {
+      return true;
+    }
+    if (dest.variadic) {
+      if (source.size() < dest.params.size()) {
+        return false;
+      }
+      for (std::size_t index = 0; index < dest.params.size(); ++index) {
+        if (dest.params[index] == nullptr || source[index] == nullptr ||
+            !isAssignable(dest.params[index], source[index])) {
+          return false;
+        }
+      }
+      return true;
+    }
+    if (source.size() != dest.params.size()) {
+      return false;
+    }
+    for (std::size_t index = 0; index < dest.params.size(); ++index) {
+      if (dest.params[index] == nullptr || source[index] == nullptr ||
+          !isAssignable(dest.params[index], source[index])) {
+        return false;
+      }
+    }
+    return true;
+  };
+  if (from->kind() == TypeKind::Function) {
+    if (dest.hasReturn) {
+      const Type* ret = from->returnType();
+      if (ret == nullptr || dest.returnType == nullptr || !isAssignable(ret, dest.returnType)) {
+        return false;
+      }
+    }
+    return paramsMatch(from->paramTypes());
+  }
+  if (from->isTypeObject()) {
+    if (dest.functionsOnly) {
+      return false;
+    }
+    const Type* record = from->typeObjectInstance();
+    if (record == nullptr || record->isEnum() || record->isAbstract()) {
+      return false;
+    }
+    if (dest.hasReturn && (dest.returnType == nullptr || !isAssignable(record, dest.returnType))) {
+      return false;
+    }
+    std::vector<const Type*> params;
+    if (!constructorParams(record, params)) {
+      return false;
+    }
+    return paramsMatch(params);
+  }
+  if (from->isCallableConstraint()) {
+    if (dest.functionsOnly && !from->isGenericCtor("Function")) {
+      return false;
+    }
+    CallableShape src;
+    if (!fillCallableShape(from, src)) {
+      return false;
+    }
+    if (dest.hasReturn &&
+        (!src.hasReturn || src.returnType == nullptr || dest.returnType == nullptr ||
+         !isAssignable(src.returnType, dest.returnType))) {
+      return false;
+    }
+    if (!dest.hasParams) {
+      return true;
+    }
+    if (!src.hasParams || (src.variadic && !dest.variadic)) {
+      return false;
+    }
+    return paramsMatch(src.params);
   }
   return false;
 }
@@ -727,7 +1075,47 @@ const Type* TypeChecker::resolveNamedType(const std::string& name,
     }
     resolvedArgs.push_back(resolved);
   }
+  auto finishRecord = [&](const Type* record) -> const Type* {
+    if (record == nullptr) {
+      return nullptr;
+    }
+    if (record->isTypeObject() && record->typeObjectInstance() != nullptr) {
+      record = record->typeObjectInstance();
+    }
+    record = record->canonical();
+    if (!record->typeParams().empty()) {
+      if (resolvedArgs.size() != record->typeParams().size()) {
+        diagnostics_->error(range,
+                            "'" + name + "' requires " +
+                                std::to_string(record->typeParams().size()) + " type arguments");
+        return nullptr;
+      }
+      return types_->instantiate(record, resolvedArgs);
+    }
+    if (!resolvedArgs.empty()) {
+      diagnostics_->error(range, "type '" + name + "' is not generic");
+      return nullptr;
+    }
+    return record;
+  };
+  if (Symbol* exact = lookup(name);
+      exact != nullptr && exact->type != nullptr &&
+      (exact->kind == SymbolKind::Class || exact->kind == SymbolKind::Type ||
+       exact->kind == SymbolKind::Module || exact->kind == SymbolKind::Variable)) {
+    if (exact->kind != SymbolKind::Module) {
+      if (const Type* local = finishRecord(exact->type)) {
+        return local;
+      }
+      return nullptr;
+    }
+  }
   if (name.find('.') != std::string::npos) {
+    if (const Type* rec = types_->record(name)) {
+      if (const Type* finished = finishRecord(rec)) {
+        return finished;
+      }
+      return nullptr;
+    }
     const std::vector<std::string> parts = splitQualifiedName(name);
     if (parts.size() < 2 || parts[0].empty()) {
       if (reportMissing) {
@@ -737,7 +1125,13 @@ const Type* TypeChecker::resolveNamedType(const std::string& name,
     }
     const Symbol* symbol = lookup(parts[0]);
     const Type* current = symbol == nullptr ? nullptr : symbol->type;
-    if (current == nullptr || !current->isModule()) {
+    if (current == nullptr) {
+      current = types_->moduleType(parts[0]);
+    }
+    if (current != nullptr && current->isTypeObject() && current->typeObjectInstance() != nullptr) {
+      current = current->typeObjectInstance();
+    }
+    if (current == nullptr || (!current->isModule() && !current->isRecord())) {
       if (reportMissing) {
         reportUnknown(range, "module", parts[0]);
       }
@@ -746,44 +1140,100 @@ const Type* TypeChecker::resolveNamedType(const std::string& name,
     for (std::size_t index = 1; index < parts.size(); ++index) {
       const RecordField* field = current->findField(parts[index]);
       if (field == nullptr || field->type == nullptr) {
-        if (reportMissing) {
-          reportUnknown(range, "type", name);
+        std::string soFar = parts[0];
+        for (std::size_t seen = 1; seen <= index; ++seen) {
+          soFar += ".";
+          soFar += parts[seen];
         }
-        return nullptr;
+        current = types_->record(soFar);
+        if (current == nullptr) {
+          if (reportMissing) {
+            reportUnknown(range, "type", name);
+          }
+          return nullptr;
+        }
+        continue;
       }
       if (!field->isPublic) {
         diagnostics_->error(range, "'" + parts[index] + "' is private and is not exported");
         return nullptr;
       }
       current = field->type;
-      if (index + 1 < parts.size() && !current->isModule()) {
+      if (current != nullptr && current->isTypeObject() &&
+          current->typeObjectInstance() != nullptr) {
+        current = current->typeObjectInstance();
+      }
+      if (index + 1 < parts.size() && current != nullptr && !current->isModule() &&
+          !current->isRecord()) {
         if (reportMissing) {
           reportUnknown(range, "type", name);
         }
         return nullptr;
       }
     }
-    if (!current->typeParams().empty()) {
-      if (resolvedArgs.size() != current->typeParams().size()) {
-        diagnostics_->error(range,
-                            "'" + name + "' requires " +
-                                std::to_string(current->typeParams().size()) + " type arguments");
-        return nullptr;
-      }
-      return types_->instantiate(current, resolvedArgs);
-    }
-    if (!resolvedArgs.empty()) {
-      diagnostics_->error(range, "type '" + name + "' is not generic");
+    return finishRecord(current);
+  }
+  if (name == "type") {
+    if (resolvedArgs.size() != 1) {
+      diagnostics_->error(range, "type requires exactly one type argument");
       return nullptr;
     }
-    return current;
+    return types_->typeObject(resolvedArgs[0]);
   }
-  if (name == "Unique" || name == "Shared" || name == "Ptr" || name == "list" || name == "array") {
+  if (name == "Class") {
+    if (resolvedArgs.empty()) {
+      return types_->generic("Class", {});
+    }
+    if (resolvedArgs.size() != 1) {
+      diagnostics_->error(range, "Class takes zero or one type argument");
+      return nullptr;
+    }
+    return types_->typeObject(resolvedArgs[0]);
+  }
+  if (name == "Callable" || name == "Function") {
+    if (resolvedArgs.size() > 2) {
+      diagnostics_->error(range, name + " takes at most a parameter list and a return type");
+      return nullptr;
+    }
+    if (resolvedArgs.size() == 2 && !resolvedArgs[0]->isParamList()) {
+      diagnostics_->error(range,
+                          name + " parameter list must be written in brackets, like [[i32], str]");
+      return nullptr;
+    }
+    if (resolvedArgs.size() >= 1 && resolvedArgs[0]->isParamList()) {
+      const std::vector<const Type*>& params = resolvedArgs[0]->args();
+      for (std::size_t index = 0; index < params.size(); ++index) {
+        if (params[index] != nullptr && params[index]->isEllipsis() && index + 1 != params.size()) {
+          diagnostics_->error(range, "'...' must be the last parameter");
+          return nullptr;
+        }
+      }
+    }
+    return types_->generic(name, resolvedArgs);
+  }
+  if (name == "Unique" || name == "Shared" || name == "Ptr") {
     if (resolvedArgs.size() != 1) {
       diagnostics_->error(range, name + " requires exactly one type argument");
       return nullptr;
     }
     return types_->generic(name, resolvedArgs);
+  }
+  if (name == "list" || name == "array") {
+    if (resolvedArgs.empty() || resolvedArgs.size() > 2) {
+      diagnostics_->error(range, name + " requires a type argument, optionally a size");
+      return nullptr;
+    }
+    if (resolvedArgs.size() == 2) {
+      if (resolvedArgs[1] == nullptr || !resolvedArgs[1]->isSizeLiteral() ||
+          resolvedArgs[1]->sizeLiteral() < 0) {
+        diagnostics_->error(range, name + " size must be a non-negative integer");
+        return nullptr;
+      }
+      if (name == "list") {
+        return types_->listType(resolvedArgs[0], resolvedArgs[1]->sizeLiteral());
+      }
+    }
+    return types_->generic(name, std::vector<const Type*>{resolvedArgs[0]});
   }
   if (name == "dict") {
     if (resolvedArgs.size() != 2) {
@@ -799,40 +1249,19 @@ const Type* TypeChecker::resolveNamedType(const std::string& name,
     }
     return param;
   }
-  if (const Type* record = types_->record(name)) {
-    if (!record->typeParams().empty()) {
-      if (resolvedArgs.size() != record->typeParams().size()) {
-        diagnostics_->error(range,
-                            "'" + name + "' requires " +
-                                std::to_string(record->typeParams().size()) + " type arguments");
-        return nullptr;
-      }
-      return types_->instantiate(record, resolvedArgs);
-    }
-    if (!resolvedArgs.empty()) {
-      diagnostics_->error(range, "type '" + name + "' is not generic");
-      return nullptr;
-    }
-    return record;
-  }
   if (Symbol* symbol = lookup(name);
       symbol != nullptr && symbol->type != nullptr &&
       (symbol->kind == SymbolKind::Class || symbol->kind == SymbolKind::Type)) {
-    const Type* imported = symbol->type;
-    if (!imported->typeParams().empty()) {
-      if (resolvedArgs.size() != imported->typeParams().size()) {
-        diagnostics_->error(range,
-                            "'" + name + "' requires " +
-                                std::to_string(imported->typeParams().size()) + " type arguments");
-        return nullptr;
-      }
-      return types_->instantiate(imported, resolvedArgs);
+    if (const Type* local = finishRecord(symbol->type)) {
+      return local;
     }
-    if (!resolvedArgs.empty()) {
-      diagnostics_->error(range, "type '" + name + "' is not generic");
-      return nullptr;
+    return nullptr;
+  }
+  if (const Type* localClass = classType(name)) {
+    if (const Type* resolved = finishRecord(localClass)) {
+      return resolved;
     }
-    return imported;
+    return nullptr;
   }
   if (!resolvedArgs.empty()) {
     diagnostics_->error(range, "type '" + name + "' is not generic");
@@ -850,10 +1279,94 @@ const Type* TypeChecker::resolveNamedType(const std::string& name,
   return nullptr;
 }
 
+const Type* TypeChecker::classType(const std::string& name) const {
+  const auto found = classes_.find(name);
+  if (found != classes_.end() && found->second != nullptr &&
+      found->second->resolvedType() != nullptr) {
+    return found->second->resolvedType();
+  }
+  if (const Symbol* symbol = const_cast<TypeChecker*>(this)->lookup(name);
+      symbol != nullptr && symbol->type != nullptr) {
+    if (const Type* record = unwrapRecordType(symbol->type)) {
+      return record;
+    }
+  }
+  if (const Type* qualified = types_->record(name)) {
+    return qualified;
+  }
+  if (const Type* qualified = types_->record(moduleName_ + "." + name)) {
+    return qualified;
+  }
+  return nullptr;
+}
+
+const Type* TypeChecker::resolveTypeFromExpr(Expr& expr, bool reportMissing) {
+  if (expr.kind() == NodeKind::NameExpr) {
+    const auto& name = static_cast<const NameExpr&>(expr);
+    return resolveNamedType(name.name(), {}, expr.range(), reportMissing);
+  }
+  if (expr.kind() == NodeKind::MemberExpr) {
+    std::string spelling;
+    const Expr* current = &expr;
+    while (current != nullptr && current->kind() == NodeKind::MemberExpr) {
+      const auto& member = static_cast<const MemberExpr&>(*current);
+      if (spelling.empty()) {
+        spelling = member.field();
+      } else {
+        spelling = member.field() + "." + spelling;
+      }
+      current = &member.object();
+    }
+    if (current != nullptr && current->kind() == NodeKind::NameExpr) {
+      spelling = static_cast<const NameExpr&>(*current).name() + "." + spelling;
+      return resolveNamedType(spelling, {}, expr.range(), reportMissing);
+    }
+    if (reportMissing) {
+      diagnostics_->error(expr.range(), "expected a type name");
+    }
+    return nullptr;
+  }
+  if (expr.kind() == NodeKind::CallExpr) {
+    auto& call = static_cast<CallExpr&>(expr);
+    if (!call.typeArgs().empty() && call.arguments().empty()) {
+      if (const NameExpr* name = asName(call.callee())) {
+        return resolveNamedType(name->name(), call.typeArgs(), expr.range(), reportMissing);
+      }
+      if (call.callee().kind() == NodeKind::MemberExpr) {
+        return resolveTypeFromExpr(call.callee(), reportMissing);
+      }
+    }
+  }
+  if (reportMissing) {
+    diagnostics_->error(expr.range(), "expected a type name");
+  }
+  return nullptr;
+}
+
 const Type* TypeChecker::resolveTypeExpr(const TypeExpr& expr) {
+  if (!expr.name().empty() && expr.args().empty()) {
+    bool digits = true;
+    std::size_t index = expr.name()[0] == '-' ? 1 : 0;
+    if (index >= expr.name().size()) {
+      digits = false;
+    }
+    for (; digits && index < expr.name().size(); ++index) {
+      if (expr.name()[index] < '0' || expr.name()[index] > '9') {
+        digits = false;
+      }
+    }
+    if (digits) {
+      const Type* size = types_->sizeType(std::strtoll(expr.name().c_str(), nullptr, 10));
+      const_cast<TypeExpr&>(expr).setResolvedType(size);
+      return size;
+    }
+  }
   if (expr.name() == "|") {
     std::vector<const Type*> members;
     for (const std::unique_ptr<TypeExpr>& arg : expr.args()) {
+      if (arg == nullptr) {
+        return nullptr;
+      }
       const Type* member = resolveTypeExpr(*arg);
       if (member == nullptr) {
         return nullptr;
@@ -861,6 +1374,24 @@ const Type* TypeChecker::resolveTypeExpr(const TypeExpr& expr) {
       members.push_back(member);
     }
     const Type* result = types_->unionType(std::move(members));
+    const_cast<TypeExpr&>(expr).setResolvedType(result);
+    return result;
+  }
+  if (expr.name() == "...") {
+    const Type* result = types_->ellipsisType();
+    const_cast<TypeExpr&>(expr).setResolvedType(result);
+    return result;
+  }
+  if (expr.name() == "[]") {
+    std::vector<const Type*> params;
+    for (const std::unique_ptr<TypeExpr>& arg : expr.args()) {
+      const Type* member = resolveTypeExpr(*arg);
+      if (member == nullptr) {
+        return nullptr;
+      }
+      params.push_back(member);
+    }
+    const Type* result = types_->paramList(params);
     const_cast<TypeExpr&>(expr).setResolvedType(result);
     return result;
   }
@@ -930,7 +1461,24 @@ const Type* TypeChecker::checkName(NameExpr& expr) {
     diagnostics_->error(expr.range(), "cannot use '" + expr.name() + "' as a value");
     return nullptr;
   }
+  if (symbol->kind == SymbolKind::Class && symbol->type->isRecord() && !symbol->type->isEnum()) {
+    const Type* meta = types_->typeObject(symbol->type);
+    expr.setResolvedType(meta);
+    return meta;
+  }
   expr.setResolvedType(symbol->type);
+  if (nestedFunction_ != nullptr && symbol->kind == SymbolKind::Variable) {
+    int scopeIndex = -1;
+    for (int index = static_cast<int>(scopes_.size()) - 1; index >= 0; --index) {
+      if (scopes_[static_cast<std::size_t>(index)].contains(expr.name())) {
+        scopeIndex = index;
+        break;
+      }
+    }
+    if (scopeIndex > 0 && static_cast<std::size_t>(scopeIndex) <= nestedOuterScope_) {
+      nestedFunction_->addCapture(expr.name(), symbol->type);
+    }
+  }
   if (lambdaDepth_ > 0 && symbol->kind == SymbolKind::Variable) {
     int scopeIndex = -1;
     for (int index = static_cast<int>(scopes_.size()) - 1; index >= 0; --index) {
@@ -963,6 +1511,15 @@ const Type* TypeChecker::checkMember(MemberExpr& expr) {
     return nullptr;
   }
   objectType = objectType->canonical();
+  const bool typeObject = objectType->isTypeObject();
+  if (typeObject) {
+    const Type* instance = objectType->typeObjectInstance();
+    if (instance == nullptr) {
+      reportUnknownMember(*diagnostics_, expr.range(), objectType, expr.field(), false);
+      return nullptr;
+    }
+    objectType = instance->canonical();
+  }
   if (expr.field().empty()) {
     expr.setResolvedType(objectType);
     return objectType;
@@ -1012,19 +1569,48 @@ const Type* TypeChecker::checkMember(MemberExpr& expr) {
       return nullptr;
     }
     if (!exportField->isPublic) {
-      diagnostics_->error(expr.range(),
-                          "'" + expr.field() + "' is private and is not exported");
+      diagnostics_->error(expr.range(), "'" + expr.field() + "' is private and is not exported");
       return nullptr;
     }
-    expr.setResolvedType(exportField->type);
-    return exportField->type;
+    const Type* exported = exportField->type;
+    if (exported != nullptr && exported->isRecord() && !exported->isEnum()) {
+      exported = types_->typeObject(exported);
+    }
+    expr.setResolvedType(exported);
+    return exported;
   }
   const RecordField* field = objectType->findField(expr.field());
   if (field == nullptr) {
-    if (objectType->methodIndex(expr.field()) >= 0) {
-      diagnostics_->error(expr.range(), "method '" + expr.field() + "' must be called");
-      diagnostics_->help("write '" + expr.field() + "(...)'");
-      return nullptr;
+    const int methodIndex = objectType->methodIndex(expr.field());
+    if (methodIndex >= 0) {
+      const RecordMethod& method = objectType->methods()[static_cast<std::size_t>(methodIndex)];
+      if (!method.isPublic && currentClass_ != objectType->name()) {
+        diagnostics_->error(expr.range(),
+                            "method '" + expr.field() + "' of '" + objectType->name() +
+                                "' is private");
+        return nullptr;
+      }
+      if (method.isAbstract) {
+        diagnostics_->error(expr.range(),
+                            "cannot take a reference to abstract method '" + expr.field() + "'");
+        return nullptr;
+      }
+      const Type* functionType = method.type;
+      if (functionType == nullptr || functionType->paramTypes().empty()) {
+        return nullptr;
+      }
+      std::vector<const Type*> params;
+      for (std::size_t index = 1; index < functionType->paramTypes().size(); ++index) {
+        params.push_back(functionType->paramTypes()[index]);
+      }
+      const Type* bound = types_->functionType(params, functionType->returnType());
+      if (isClassName(expr.object()) || typeObject) {
+        expr.setUnboundMethod(method.llvmName);
+      } else {
+        expr.setBoundMethod(method.llvmName);
+      }
+      expr.setResolvedType(bound);
+      return bound;
     }
     reportUnknownMember(*diagnostics_, expr.range(), objectType, expr.field(), false);
     return nullptr;
@@ -1034,8 +1620,8 @@ const Type* TypeChecker::checkMember(MemberExpr& expr) {
   const bool initBacking =
       currentClass_ == objectType->name() && currentFunctionName_ == "__init__" && field->stored;
   const bool assignThroughSetter = !expr.propertySet().empty() && !ownAccessor && !initBacking;
-  bool useBacking = ownAccessor || initBacking ||
-                    (field->getterLlvm.empty() && !assignThroughSetter);
+  bool useBacking =
+      ownAccessor || initBacking || (field->getterLlvm.empty() && !assignThroughSetter);
   if (useBacking && !field->stored) {
     useBacking = !field->getterLlvm.empty() ? false : useBacking;
   }
@@ -1046,19 +1632,19 @@ const Type* TypeChecker::checkMember(MemberExpr& expr) {
       return nullptr;
     }
     if (!field->isPublic && currentClass_ != objectType->name()) {
-      diagnostics_->error(expr.range(),
-                          "field '" + expr.field() + "' of '" + objectType->name() + "' is private");
+      diagnostics_->error(
+          expr.range(), "field '" + expr.field() + "' of '" + objectType->name() + "' is private");
       return nullptr;
     }
   } else if (!field->getterLlvm.empty()) {
     if (!field->getterPublic && currentClass_ != objectType->name()) {
-      diagnostics_->error(expr.range(),
-                          "getter '" + expr.field() + "' of '" + objectType->name() + "' is private");
+      diagnostics_->error(
+          expr.range(), "getter '" + expr.field() + "' of '" + objectType->name() + "' is private");
       return nullptr;
     }
     expr.setPropertyGet(field->getterLlvm);
   }
-  if (isClassName(expr.object()) && !field->isStatic) {
+  if ((isClassName(expr.object()) || typeObject) && !field->isStatic) {
     diagnostics_->error(expr.range(),
                         "instance field '" + expr.field() + "' cannot be accessed on the class");
     return nullptr;
@@ -1244,6 +1830,15 @@ bool TypeChecker::bindCollectionInit(Expr& init, const Type* dest) {
                             "cannot store " + quoteType(itemType) + " in " + quoteType(dest));
         return false;
       }
+      if (!ensureLiteralFits(*item, dest->elementType())) {
+        return false;
+      }
+    }
+    if (dest->isList() && dest->listSize() >= 0 &&
+        static_cast<std::int64_t>(literal.elements().size()) != dest->listSize()) {
+      diagnostics_->error(
+          init.range(), "list literal must have " + std::to_string(dest->listSize()) + " elements");
+      return false;
     }
     init.setResolvedType(dest);
     return true;
@@ -1260,6 +1855,10 @@ bool TypeChecker::bindCollectionInit(Expr& init, const Type* dest) {
                             "cannot store this entry in " + quoteType(dest));
         return false;
       }
+      if (!ensureLiteralFits(*literal.keys()[index], dest->dictKeyType()) ||
+          !ensureLiteralFits(*literal.values()[index], dest->dictValueType())) {
+        return false;
+      }
     }
     init.setResolvedType(dest);
     return true;
@@ -1267,8 +1866,8 @@ bool TypeChecker::bindCollectionInit(Expr& init, const Type* dest) {
   return false;
 }
 
-const Type* TypeChecker::rewriteDunderBinary(BinaryExpr& expr, const Type* left,
-                                             const Type* right) {
+const Type*
+TypeChecker::rewriteDunderBinary(BinaryExpr& expr, const Type* left, const Type* right) {
   const char* name = nullptr;
   const char* reflected = nullptr;
   switch (expr.op()) {
@@ -1383,6 +1982,9 @@ const Type* TypeChecker::checkBinary(BinaryExpr& expr) {
     return types_->boolType();
   }
   if (op == BinaryOp::Is || op == BinaryOp::IsNot) {
+    if (const Type* typeRhs = resolveTypeFromExpr(expr.right(), false)) {
+      expr.right().setResolvedType(typeRhs);
+    }
     expr.setResolvedType(types_->boolType());
     return types_->boolType();
   }
@@ -1427,8 +2029,8 @@ const Type* TypeChecker::checkBinary(BinaryExpr& expr) {
         (left->isInteger() || left->isFloat()) && (right->isInteger() || right->isFloat());
     const bool strs = left->isNamed("str") && right->isNamed("str");
     const bool enums = left->isEnum() && right->isEnum() && left->canonical() == right->canonical();
-    const bool enumInt = (left->isIntEnum() && right->isInteger()) ||
-                         (right->isIntEnum() && left->isInteger());
+    const bool enumInt =
+        (left->isIntEnum() && right->isInteger()) || (right->isIntEnum() && left->isInteger());
     if (!(same || ints || floats || mixedNum || strs || enums || enumInt)) {
       diagnostics_->error(expr.range(),
                           "cannot compare " + quoteType(left) + " with " + quoteType(right));
@@ -1512,8 +2114,7 @@ const Type* TypeChecker::checkUnary(UnaryExpr& expr) {
     return types_->boolType();
   }
   if (expr.op() == UnaryOp::Invert) {
-    if (!operand->isInteger() && !operand->isIntEnum() &&
-        operand->methodIndex("__invert__") < 0) {
+    if (!operand->isInteger() && !operand->isIntEnum() && operand->methodIndex("__invert__") < 0) {
       diagnostics_->error(expr.range(), "'~' requires an integer");
       return nullptr;
     }
@@ -1696,7 +2297,7 @@ const Type* TypeChecker::checkComprehension(ComprehensionExpr& expr) {
   if (elementType == nullptr) {
     return nullptr;
   }
-  pushScope();
+  pushScope(expr.range());
   Symbol symbol;
   symbol.kind = SymbolKind::Variable;
   symbol.type = elementType;
@@ -1719,7 +2320,7 @@ bool TypeChecker::checkFor(ForStmt& statement, const Type* expectedReturn) {
   if (element == nullptr) {
     return false;
   }
-  pushScope();
+  pushScope(statement.range());
   Symbol symbol;
   symbol.kind = SymbolKind::Variable;
   symbol.type = element;
@@ -1778,8 +2379,8 @@ bool TypeChecker::checkContinue(const ContinueStmt& statement) {
 
 const Type* TypeChecker::checkIntrinsicCall(CallExpr& expr, IntrinsicKind kind) {
   if (kind != IntrinsicKind::Print && !expr.keywordArguments().empty()) {
-    diagnostics_->error(expr.range(), std::string(intrinsicName(kind)) +
-                                        "() does not accept keyword arguments");
+    diagnostics_->error(expr.range(),
+                        std::string(intrinsicName(kind)) + "() does not accept keyword arguments");
     return nullptr;
   }
   std::vector<const Type*> typeArgs;
@@ -1795,14 +2396,7 @@ const Type* TypeChecker::checkIntrinsicCall(CallExpr& expr, IntrinsicKind kind) 
       kind == IntrinsicKind::IsInstance && expr.typeArgs().empty() && expr.arguments().size() == 2;
   for (std::size_t argIndex = 0; argIndex < expr.arguments().size(); ++argIndex) {
     if (isinstanceTwoArg && argIndex == 1) {
-      const NameExpr* typeName = asName(*expr.arguments()[argIndex]);
-      if (typeName == nullptr) {
-        diagnostics_->error(expr.arguments()[argIndex]->range(),
-                            "isinstance() type argument must be a type name");
-        return nullptr;
-      }
-      const Type* target =
-          resolveNamedType(typeName->name(), {}, expr.arguments()[argIndex]->range(), true);
+      const Type* target = resolveTypeFromExpr(*expr.arguments()[argIndex], true);
       if (target == nullptr) {
         return nullptr;
       }
@@ -2007,7 +2601,8 @@ const Type* TypeChecker::checkIntrinsicCall(CallExpr& expr, IntrinsicKind kind) 
   } else if (kind == IntrinsicKind::Parse || kind == IntrinsicKind::TryParse) {
     if (typeArgs.size() != 1 || valueTypes.size() != 1) {
       diagnostics_->error(expr.range(),
-                          std::string(intrinsicName(kind)) + "[T](text) takes one type and one string");
+                          std::string(intrinsicName(kind)) +
+                              "[T](text) takes one type and one string");
       return nullptr;
     }
     if (!valueTypes[0]->isNamed("str")) {
@@ -2021,9 +2616,8 @@ const Type* TypeChecker::checkIntrinsicCall(CallExpr& expr, IntrinsicKind kind) 
       return nullptr;
     }
     expr.setParamNames({"text"});
-    result = kind == IntrinsicKind::TryParse
-                 ? types_->unionType({typeArgs[0], types_->noneType()})
-                 : typeArgs[0];
+    result = kind == IntrinsicKind::TryParse ? types_->unionType({typeArgs[0], types_->noneType()})
+                                             : typeArgs[0];
   }
   expr.setIntrinsic(kind);
   expr.setResolvedType(result);
@@ -2090,7 +2684,7 @@ const Type* TypeChecker::resolveSuperType(SourceRange range) {
     diagnostics_->error(range, "super() is only valid in a method");
     return nullptr;
   }
-  const Type* record = types_->record(currentClass_);
+  const Type* record = classType(currentClass_);
   if (record == nullptr || record->bases().empty()) {
     diagnostics_->error(range, "'" + currentClass_ + "' has no base class");
     diagnostics_->help("call super() from a class that inherits");
@@ -2125,12 +2719,18 @@ const Type* TypeChecker::checkCall(CallExpr& expr) {
       return nullptr;
     }
     calleeType = calleeType->canonical();
-    if (calleeType->kind() != TypeKind::Function) {
-      diagnostics_->error(expr.range(), "callee is not a function");
-      diagnostics_->help("a lambda or function value is required here");
-      return nullptr;
+    if (calleeType->isTypeObject()) {
+      return checkConstructor(expr, calleeType->typeObjectInstance());
     }
-    return checkIndirectCall(expr, calleeType);
+    if (calleeType->kind() == TypeKind::Function) {
+      return checkIndirectCall(expr, calleeType);
+    }
+    if (calleeType->isCallableConstraint()) {
+      return checkCallableCall(expr, calleeType);
+    }
+    diagnostics_->error(expr.range(), "callee is not a function");
+    diagnostics_->help("a lambda, function value, or Callable is required here");
+    return nullptr;
   }
   if (name->name() == "super") {
     return checkSuperCall(expr);
@@ -2148,6 +2748,9 @@ const Type* TypeChecker::checkCall(CallExpr& expr) {
       return nullptr;
     }
     return checkConstructor(expr, record);
+  }
+  if (symbol != nullptr && symbol->type != nullptr && symbol->type->isTypeObject()) {
+    return checkConstructor(expr, symbol->type->typeObjectInstance());
   }
   if (expr.arguments().size() == 1 && (symbol == nullptr || symbol->kind == SymbolKind::Type)) {
     const Type* target = resolveNamedType(name->name(), expr.typeArgs(), expr.range(), false);
@@ -2167,10 +2770,19 @@ const Type* TypeChecker::checkCall(CallExpr& expr) {
     return nullptr;
   }
   if (symbol->kind != SymbolKind::Function) {
+    // Resolve the callee expression as well as its symbol so closure capture
+    // bookkeeping sees calls through an outer local function value.
+    if (checkName(*name) == nullptr) {
+      return nullptr;
+    }
     const Type* calleeType = symbol->type->canonical();
     if (calleeType->kind() == TypeKind::Function) {
       expr.callee().setResolvedType(calleeType);
       return checkIndirectCall(expr, calleeType);
+    }
+    if (calleeType->isCallableConstraint()) {
+      expr.callee().setResolvedType(calleeType);
+      return checkCallableCall(expr, calleeType);
     }
     diagnostics_->error(expr.range(), "'" + name->name() + "' is not a function");
     return nullptr;
@@ -2188,10 +2800,8 @@ const Type* TypeChecker::checkCall(CallExpr& expr) {
       names.push_back(param.name);
     }
     expr.setParamNames(std::move(names));
-    if (!checkFunctionArguments(expr,
-                                symbol->function->params(),
-                                functionType->paramTypes(),
-                                name->name())) {
+    if (!checkFunctionArguments(
+            expr, symbol->function->params(), functionType->paramTypes(), name->name())) {
       return nullptr;
     }
   } else if (!expr.keywordArguments().empty()) {
@@ -2201,10 +2811,11 @@ const Type* TypeChecker::checkCall(CallExpr& expr) {
     std::size_t required = functionType->paramTypes().size();
     if (expr.arguments().size() < required ||
         expr.arguments().size() > functionType->paramTypes().size()) {
-      diagnostics_->error(expr.range(),
-                          "'" + name->name() + "' takes " +
-                              countLabel(functionType->paramTypes().size(), "argument", "arguments") +
-                              ", but " + std::to_string(expr.arguments().size()) + " provided");
+      diagnostics_->error(
+          expr.range(),
+          "'" + name->name() + "' takes " +
+              countLabel(functionType->paramTypes().size(), "argument", "arguments") + ", but " +
+              std::to_string(expr.arguments().size()) + " provided");
       return nullptr;
     }
     for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
@@ -2217,6 +2828,9 @@ const Type* TypeChecker::checkCall(CallExpr& expr) {
                             "argument type mismatch: expected " +
                                 quoteType(functionType->paramTypes()[index]) + ", found " +
                                 quoteType(argType));
+        return nullptr;
+      }
+      if (!ensureLiteralFits(*expr.arguments()[index], functionType->paramTypes()[index])) {
         return nullptr;
       }
     }
@@ -2250,7 +2864,21 @@ const Type* TypeChecker::checkConstructor(CallExpr& expr, const Type* record) {
     return record;
   }
   if (record->isAbstract()) {
-    diagnostics_->error(expr.range(), "cannot construct abstract class '" + record->name() + "'");
+    diagnostics_->error(expr.range(),
+                        "cannot construct abstract class '" + record->display() + "'");
+    std::string missing;
+    for (const RecordMethod& method : record->methods()) {
+      if (!method.isAbstract) {
+        continue;
+      }
+      if (!missing.empty()) {
+        missing += ", ";
+      }
+      missing += method.name;
+    }
+    if (!missing.empty()) {
+      diagnostics_->help("implement abstract method(s): " + missing);
+    }
     return nullptr;
   }
   const int initIndex = record->methodIndex("__init__");
@@ -2262,18 +2890,15 @@ const Type* TypeChecker::checkConstructor(CallExpr& expr, const Type* record) {
     }
     FunctionDef* initDef = findMethodDef(record, "__init__");
     if (initDef != nullptr) {
-      if (!checkFunctionArguments(expr,
-                                  initDef->params(),
-                                  functionType->paramTypes(),
-                                  record->name(),
-                                  1)) {
+      if (!checkFunctionArguments(
+              expr, initDef->params(), functionType->paramTypes(), record->display(), 1)) {
         return nullptr;
       }
     } else if (expr.arguments().size() < init.requiredAfterSelf ||
                expr.arguments().size() + 1 > functionType->paramTypes().size()) {
       diagnostics_->error(
           expr.range(),
-          "'" + record->name() + "' takes " +
+          "'" + record->display() + "' takes " +
               countLabel(functionType->paramTypes().size() - 1, "argument", "arguments") +
               ", but " + std::to_string(expr.arguments().size()) + " provided");
       return nullptr;
@@ -2311,7 +2936,7 @@ const Type* TypeChecker::checkConstructor(CallExpr& expr, const Type* record) {
   }
   if (!expr.arguments().empty() && expr.arguments().size() != instanceFields.size()) {
     diagnostics_->error(expr.range(),
-                        "'" + record->name() + "' takes " +
+                        "'" + record->display() + "' takes " +
                             countLabel(instanceFields.size(), "argument", "arguments") + ", but " +
                             std::to_string(expr.arguments().size()) + " provided");
     return nullptr;
@@ -2338,15 +2963,256 @@ const Type* TypeChecker::checkConstructor(CallExpr& expr, const Type* record) {
   return record;
 }
 
+const Type*
+TypeChecker::checkBuiltinMethod(CallExpr& expr, const Type* objectType, const std::string& name) {
+  auto finish =
+      [&](const Type* result, std::vector<std::string> params, const char* prefix) -> const Type* {
+    expr.setIntrinsic(IntrinsicKind::BuiltinMethod);
+    expr.setLoweredName(std::string(prefix) + name);
+    expr.setParamNames(std::move(params));
+    expr.setResolvedType(result);
+    return result;
+  };
+  auto argCount = [&](std::size_t n, const std::string& msg) -> bool {
+    if (expr.arguments().size() != n) {
+      diagnostics_->error(expr.range(), msg);
+      return false;
+    }
+    return true;
+  };
+  auto unknown = [&]() -> const Type* {
+    diagnostics_->error(expr.range(), "unknown method '" + name + "' on " + quoteType(objectType));
+    return nullptr;
+  };
+  if (objectType->isList()) {
+    const Type* elem = objectType->elementType();
+    if (name == "append" || name == "push") {
+      if (!argCount(1, name + "() takes one argument") ||
+          checkExpr(*expr.arguments()[0]) == nullptr ||
+          !isAssignable(expr.arguments()[0]->resolvedType(), elem) ||
+          !ensureLiteralFits(*expr.arguments()[0], elem)) {
+        return nullptr;
+      }
+      return finish(types_->voidType(), {"value"}, "list.");
+    }
+    if (name == "insert") {
+      if (!argCount(2, "insert() takes index and value")) {
+        return nullptr;
+      }
+      const Type* indexType = checkExpr(*expr.arguments()[0]);
+      const Type* valueType = checkExpr(*expr.arguments()[1]);
+      if (indexType == nullptr || valueType == nullptr || !indexType->isInteger() ||
+          !isAssignable(valueType, elem) || !ensureLiteralFits(*expr.arguments()[1], elem)) {
+        diagnostics_->error(expr.range(), "insert() requires an integer index and a list element");
+        return nullptr;
+      }
+      return finish(types_->voidType(), {"index", "value"}, "list.");
+    }
+    if (name == "pop") {
+      if (expr.arguments().size() > 1) {
+        diagnostics_->error(expr.range(), "pop() takes at most one index");
+        return nullptr;
+      }
+      if (!expr.arguments().empty()) {
+        const Type* indexType = checkExpr(*expr.arguments()[0]);
+        if (indexType == nullptr || !indexType->isInteger()) {
+          diagnostics_->error(expr.range(), "pop() index must be an integer");
+          return nullptr;
+        }
+        return finish(elem, {"index"}, "list.");
+      }
+      return finish(elem, {}, "list.");
+    }
+    if (name == "remove") {
+      if (!argCount(1, "remove() takes one value") || checkExpr(*expr.arguments()[0]) == nullptr ||
+          !isAssignable(expr.arguments()[0]->resolvedType(), elem)) {
+        return nullptr;
+      }
+      return finish(types_->boolType(), {"value"}, "list.");
+    }
+    if (name == "find" || name == "index" || name == "count") {
+      if (!argCount(1, name + "() takes one value") || checkExpr(*expr.arguments()[0]) == nullptr ||
+          !isAssignable(expr.arguments()[0]->resolvedType(), elem)) {
+        return nullptr;
+      }
+      return finish(types_->i64Type(), {"value"}, "list.");
+    }
+    if (name == "contains" || name == "has") {
+      if (!argCount(1, name + "() takes one value") || checkExpr(*expr.arguments()[0]) == nullptr) {
+        return nullptr;
+      }
+      return finish(types_->boolType(), {"value"}, "list.");
+    }
+    if (name == "clear" || name == "reverse") {
+      if (!argCount(0, name + "() takes no arguments")) {
+        return nullptr;
+      }
+      return finish(types_->voidType(), {}, "list.");
+    }
+    if (name == "copy" || name == "clone") {
+      if (!argCount(0, "copy() takes no arguments")) {
+        return nullptr;
+      }
+      return finish(objectType, {}, "list.");
+    }
+    if (name == "extend") {
+      if (!argCount(1, "extend() takes one list") || checkExpr(*expr.arguments()[0]) == nullptr ||
+          !isAssignable(expr.arguments()[0]->resolvedType(), objectType)) {
+        diagnostics_->error(expr.range(), "extend() requires a list of the same element type");
+        return nullptr;
+      }
+      return finish(types_->voidType(), {"items"}, "list.");
+    }
+    return unknown();
+  }
+  if (objectType->isDict()) {
+    const Type* key = objectType->dictKeyType();
+    const Type* value = objectType->dictValueType();
+    if (name == "get" || name == "pop") {
+      if (!argCount(1, name + "() takes one key") || checkExpr(*expr.arguments()[0]) == nullptr ||
+          !isAssignable(expr.arguments()[0]->resolvedType(), key)) {
+        return nullptr;
+      }
+      return finish(value, {"key"}, "dict.");
+    }
+    if (name == "set") {
+      if (!argCount(2, "set() takes a key and a value")) {
+        return nullptr;
+      }
+      if (checkExpr(*expr.arguments()[0]) == nullptr ||
+          checkExpr(*expr.arguments()[1]) == nullptr ||
+          !isAssignable(expr.arguments()[0]->resolvedType(), key) ||
+          !isAssignable(expr.arguments()[1]->resolvedType(), value)) {
+        return nullptr;
+      }
+      return finish(types_->voidType(), {"key", "value"}, "dict.");
+    }
+    if (name == "remove" || name == "delete" || name == "contains" || name == "has") {
+      if (!argCount(1, name + "() takes one key") || checkExpr(*expr.arguments()[0]) == nullptr ||
+          !isAssignable(expr.arguments()[0]->resolvedType(), key)) {
+        return nullptr;
+      }
+      return finish(types_->boolType(), {"key"}, "dict.");
+    }
+    if (name == "keys") {
+      if (!argCount(0, "keys() takes no arguments")) {
+        return nullptr;
+      }
+      return finish(types_->listType(key), {}, "dict.");
+    }
+    if (name == "values") {
+      if (!argCount(0, "values() takes no arguments")) {
+        return nullptr;
+      }
+      return finish(types_->listType(value), {}, "dict.");
+    }
+    if (name == "clear") {
+      if (!argCount(0, "clear() takes no arguments")) {
+        return nullptr;
+      }
+      return finish(types_->voidType(), {}, "dict.");
+    }
+    if (name == "copy" || name == "clone") {
+      if (!argCount(0, "copy() takes no arguments")) {
+        return nullptr;
+      }
+      return finish(objectType, {}, "dict.");
+    }
+    return unknown();
+  }
+  if (objectType->isStrLayout()) {
+    const Type* str = types_->strType();
+    auto strArg = [&](std::size_t index) -> bool {
+      const Type* type = checkExpr(*expr.arguments()[index]);
+      return type != nullptr && isAssignable(type, str);
+    };
+    if (name == "upper" || name == "lower" || name == "strip" || name == "lstrip" ||
+        name == "rstrip" || name == "capitalize" || name == "title") {
+      if (!argCount(0, name + "() takes no arguments")) {
+        return nullptr;
+      }
+      return finish(str, {}, "str.");
+    }
+    if (name == "starts_with" || name == "endswith" || name == "ends_with" ||
+        name == "startswith" || name == "contains" || name == "has") {
+      if (!argCount(1, name + "() takes one string") || !strArg(0)) {
+        return nullptr;
+      }
+      return finish(types_->boolType(), {"text"}, "str.");
+    }
+    if (name == "find" || name == "rfind" || name == "count") {
+      if (!argCount(1, name + "() takes one string") || !strArg(0)) {
+        return nullptr;
+      }
+      return finish(types_->i64Type(), {"text"}, "str.");
+    }
+    if (name == "replace") {
+      if (!argCount(2, "replace() takes old and new strings") || !strArg(0) || !strArg(1)) {
+        return nullptr;
+      }
+      return finish(str, {"old", "new"}, "str.");
+    }
+    if (name == "split") {
+      if (!argCount(1, "split() takes a separator") || !strArg(0)) {
+        return nullptr;
+      }
+      return finish(types_->listType(str), {"sep"}, "str.");
+    }
+    if (name == "join") {
+      if (!argCount(1, "join() takes a list of strings")) {
+        return nullptr;
+      }
+      const Type* parts = checkExpr(*expr.arguments()[0]);
+      if (parts == nullptr || !parts->isList() || !isAssignable(parts->elementType(), str)) {
+        diagnostics_->error(expr.range(), "join() requires list[str]");
+        return nullptr;
+      }
+      return finish(str, {"parts"}, "str.");
+    }
+    if (name == "repeat") {
+      if (!argCount(1, "repeat() takes a count")) {
+        return nullptr;
+      }
+      const Type* count = checkExpr(*expr.arguments()[0]);
+      if (count == nullptr || !count->isInteger()) {
+        diagnostics_->error(expr.range(), "repeat() count must be an integer");
+        return nullptr;
+      }
+      return finish(str, {"count"}, "str.");
+    }
+    if (name == "is_empty" || name == "is_digit" || name == "is_alpha" || name == "is_space") {
+      if (!argCount(0, name + "() takes no arguments")) {
+        return nullptr;
+      }
+      return finish(types_->boolType(), {}, "str.");
+    }
+    return unknown();
+  }
+  return nullptr;
+}
+
 const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
   auto& member = static_cast<MemberExpr&>(expr.callee());
   const Type* objectType = checkExpr(member.object());
+  if (objectType != nullptr) {
+    objectType = objectType->canonical();
+    if (objectType->isTypeObject()) {
+      const Type* instance = objectType->typeObjectInstance();
+      if (instance != nullptr) {
+        objectType = instance->canonical();
+      }
+    }
+  }
   if (objectType != nullptr && objectType->isModule()) {
     const RecordField* exported = objectType->findField(member.field());
     if (exported != nullptr && !exported->isPublic) {
-      diagnostics_->error(expr.range(),
-                          "'" + member.field() + "' is private and is not exported");
+      diagnostics_->error(expr.range(), "'" + member.field() + "' is private and is not exported");
       return nullptr;
+    }
+    if (exported != nullptr && exported->type != nullptr && exported->type->isTypeObject() &&
+        exported->type->typeObjectInstance() != nullptr &&
+        exported->type->typeObjectInstance()->isRecord()) {
+      return checkConstructor(expr, exported->type->typeObjectInstance());
     }
     if (exported != nullptr && exported->type != nullptr && exported->type->isRecord()) {
       return checkConstructor(expr, exported->type);
@@ -2375,20 +3241,9 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
     expr.setResolvedType(functionType->returnType());
     return functionType->returnType();
   }
-  if (objectType != nullptr && objectType->isList() && member.field() == "append") {
-    if (expr.arguments().size() != 1) {
-      diagnostics_->error(expr.range(), "append() takes one argument");
-      return nullptr;
-    }
-    const Type* valueType = checkExpr(*expr.arguments()[0]);
-    if (valueType == nullptr || !isAssignable(valueType, objectType->elementType())) {
-      diagnostics_->error(expr.range(),
-                          "cannot append " + quoteType(valueType) + " to " + quoteType(objectType));
-      return nullptr;
-    }
-    expr.setIntrinsic(IntrinsicKind::Append);
-    expr.setResolvedType(types_->voidType());
-    return types_->voidType();
+  if (objectType != nullptr &&
+      (objectType->isList() || objectType->isDict() || objectType->isStrLayout())) {
+    return checkBuiltinMethod(expr, objectType, member.field());
   }
   if (objectType != nullptr && objectType->isEnum() && isClassName(member.object())) {
     if (member.field() == "variants") {
@@ -2435,19 +3290,77 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
     return nullptr;
   }
   objectType = objectType->canonical();
+  if (const RecordField* field = objectType->findField(member.field());
+      field != nullptr && field->type != nullptr && field->type->isTypeObject()) {
+    member.setResolvedType(field->type);
+    return checkConstructor(expr, field->type->typeObjectInstance());
+  }
   const int index = objectType->methodIndex(member.field());
   if (index < 0) {
+    const RecordField* callableField = objectType->findField(member.field());
+    if (callableField != nullptr && callableField->type != nullptr) {
+      const Type* fn = callableField->type->canonical();
+      if (fn->kind() == TypeKind::Function) {
+        member.setResolvedType(fn);
+        return checkIndirectCall(expr, fn);
+      }
+      if (fn->isCallableConstraint()) {
+        member.setResolvedType(fn);
+        return checkCallableCall(expr, fn);
+      }
+    }
     reportUnknownMember(*diagnostics_, expr.range(), objectType, member.field(), true);
     return nullptr;
   }
   const RecordMethod& method = objectType->methods()[static_cast<std::size_t>(index)];
   if (!method.isPublic && currentClass_ != objectType->name()) {
-    diagnostics_->error(expr.range(),
-                        "method '" + member.field() + "' of '" + objectType->name() +
-                            "' is private");
+    diagnostics_->error(
+        expr.range(), "method '" + member.field() + "' of '" + objectType->name() + "' is private");
     return nullptr;
   }
   const Type* functionType = method.type;
+  const bool superObject =
+      member.object().kind() == NodeKind::CallExpr &&
+      static_cast<const CallExpr&>(member.object()).intrinsic() == IntrinsicKind::Super;
+  const bool classLevel =
+      !superObject && (isClassName(member.object()) ||
+                       (member.object().resolvedType() != nullptr &&
+                        member.object().resolvedType()->canonical()->isTypeObject()));
+  if (classLevel) {
+    expr.setUnboundMethodCall(true);
+    expr.setLoweredName(method.llvmName);
+    std::vector<std::string> names;
+    for (std::size_t nameIndex = 1; nameIndex < method.paramNames.size(); ++nameIndex) {
+      names.push_back(method.paramNames[nameIndex]);
+    }
+    expr.setParamNames(std::move(names));
+    if (functionType == nullptr || functionType->paramTypes().empty()) {
+      return nullptr;
+    }
+    FunctionDef* methodDef = findMethodDef(objectType, member.field());
+    if (methodDef != nullptr) {
+      if (!checkFunctionArguments(
+              expr, methodDef->params(), functionType->paramTypes(), member.field(), 1)) {
+        return nullptr;
+      }
+    } else if (expr.arguments().size() < method.requiredAfterSelf ||
+               expr.arguments().size() + 1 > functionType->paramTypes().size()) {
+      diagnostics_->error(
+          expr.range(),
+          "'" + member.field() + "' takes " +
+              countLabel(functionType->paramTypes().size() - 1, "argument", "arguments") +
+              ", but " + std::to_string(expr.arguments().size()) + " provided");
+      return nullptr;
+    }
+    std::vector<const Type*> withoutSelf;
+    for (std::size_t paramIndex = 1; paramIndex < functionType->paramTypes().size(); ++paramIndex) {
+      withoutSelf.push_back(functionType->paramTypes()[paramIndex]);
+    }
+    member.setUnboundMethod(method.llvmName);
+    member.setResolvedType(types_->functionType(withoutSelf, functionType->returnType()));
+    expr.setResolvedType(functionType->returnType());
+    return functionType->returnType();
+  }
   expr.setMethod(true);
   expr.setLoweredName(method.llvmName);
   std::vector<std::string> names;
@@ -2460,11 +3373,8 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
   }
   FunctionDef* methodDef = findMethodDef(objectType, member.field());
   if (methodDef != nullptr) {
-    if (!checkFunctionArguments(expr,
-                                methodDef->params(),
-                                functionType->paramTypes(),
-                                member.field(),
-                                1)) {
+    if (!checkFunctionArguments(
+            expr, methodDef->params(), functionType->paramTypes(), member.field(), 1)) {
       return nullptr;
     }
   } else if (expr.arguments().size() < method.requiredAfterSelf ||
@@ -2604,8 +3514,11 @@ bool TypeChecker::checkVarDecl(VarDecl& decl) {
         if (!isAssignable(initType, type) &&
             !(decl.init()->kind() == NodeKind::NoneLiteral && type->isPointerLike())) {
           diagnostics_->error(decl.init()->range(),
-                              "cannot initialize '" + decl.name() + "' with " + quoteType(initType) +
-                                  ", expected " + quoteType(type));
+                              "cannot initialize '" + decl.name() + "' with " +
+                                  quoteType(initType) + ", expected " + quoteType(type));
+          return false;
+        }
+        if (!ensureLiteralFits(init, type)) {
           return false;
         }
       }
@@ -2659,9 +3572,9 @@ bool TypeChecker::checkAssign(AssignStmt& statement) {
     }
     if (!valueType->isGenericCtor("tuple") ||
         valueType->args().size() != targets.elements().size()) {
-      diagnostics_->error(statement.range(), "tuple unpack expected " +
-                                                 std::to_string(targets.elements().size()) +
-                                                 " values");
+      diagnostics_->error(statement.range(),
+                          "tuple unpack expected " + std::to_string(targets.elements().size()) +
+                              " values");
       diagnostics_->help("right-hand side must be a tuple of the same length");
       return false;
     }
@@ -2685,8 +3598,8 @@ bool TypeChecker::checkAssign(AssignStmt& statement) {
         name.setResolvedType(existing->type);
         if (elemType != nullptr && existing->type != nullptr &&
             !isAssignable(elemType, existing->type)) {
-          diagnostics_->error(item.range(), "cannot unpack " + quoteType(elemType) + " into '" +
-                                                name.name() + "'");
+          diagnostics_->error(
+              item.range(), "cannot unpack " + quoteType(elemType) + " into '" + name.name() + "'");
           ok = false;
         }
       } else {
@@ -2743,13 +3656,13 @@ bool TypeChecker::checkAssign(AssignStmt& statement) {
                                field->stored;
       if (field != nullptr && !field->setterLlvm.empty() && !ownAccessor && !initBacking) {
         if (!field->setterPublic && currentClass_ != objectType->name()) {
-          diagnostics_->error(statement.range(), "setter '" + member.field() + "' of '" +
-                                                     objectType->name() + "' is private");
+          diagnostics_->error(statement.range(),
+                              "setter '" + member.field() + "' of '" + objectType->name() +
+                                  "' is private");
           return false;
         }
         if (statement.op() != AssignOp::Assign && field->getterLlvm.empty()) {
-          diagnostics_->error(statement.range(),
-                              "property '" + member.field() + "' is write-only");
+          diagnostics_->error(statement.range(), "property '" + member.field() + "' is write-only");
           return false;
         }
         member.setPropertySet(field->setterLlvm);
@@ -2794,7 +3707,7 @@ bool TypeChecker::checkAssign(AssignStmt& statement) {
                         "cannot assign " + quoteType(value) + " to " + quoteType(target));
     return false;
   }
-  return true;
+  return ensureLiteralFits(valueExpr, target);
 }
 
 bool TypeChecker::checkReturn(ReturnStmt& statement, const Type* expectedReturn) {
@@ -2816,7 +3729,8 @@ bool TypeChecker::checkReturn(ReturnStmt& statement, const Type* expectedReturn)
   if (expectedReturn->isVoidLike()) {
     if (!isVoidLike(actual)) {
       diagnostics_->error(statement.value()->range(),
-                          "return type mismatch: expected 'void', found " + quoteType(actual));
+                          "return type mismatch: expected " + quoteType(expectedReturn) +
+                              ", found " + quoteType(actual));
       return false;
     }
     return true;
@@ -2827,7 +3741,7 @@ bool TypeChecker::checkReturn(ReturnStmt& statement, const Type* expectedReturn)
                             quoteType(actual));
     return false;
   }
-  return true;
+  return ensureLiteralFits(*statement.value(), expectedReturn);
 }
 
 bool TypeChecker::checkStatement(Stmt& statement, const Type* expectedReturn) {
@@ -2864,8 +3778,44 @@ bool TypeChecker::checkStatement(Stmt& statement, const Type* expectedReturn) {
     return checkBreak(static_cast<BreakStmt&>(statement));
   case NodeKind::ContinueStmt:
     return checkContinue(static_cast<ContinueStmt&>(statement));
+  case NodeKind::FunctionDef: {
+    auto& function = static_cast<FunctionDef&>(statement);
+    if (function.resolvedType() == nullptr) {
+      std::vector<const Type*> params;
+      for (const ParamDecl& param : function.params()) {
+        const Type* type = resolveParamDeclType(param);
+        if (type == nullptr) {
+          return false;
+        }
+        params.push_back(type);
+      }
+      const Type* result = resolveTypeExpr(function.returnType());
+      if (result == nullptr || !validateParamList(function.params(), function.range())) {
+        return false;
+      }
+      if (function.hasInferredReturn()) {
+        result = types_->anyType();
+      }
+      function.setResolvedType(types_->functionType(params, result));
+      function.setModulePrefix("__sere_nested_" + std::to_string(++nestedFunctionCounter_));
+    }
+    Symbol symbol;
+    symbol.kind = SymbolKind::Function;
+    symbol.type = function.resolvedType();
+    symbol.function = &function;
+    if (!declare(function.name(), symbol, function.range().start)) {
+      return false;
+    }
+    FunctionDef* savedNested = nestedFunction_;
+    const std::size_t savedBoundary = nestedOuterScope_;
+    nestedFunction_ = &function;
+    nestedOuterScope_ = scopes_.empty() ? 0 : scopes_.size() - 1;
+    const bool ok = checkFunctionBody(function);
+    nestedFunction_ = savedNested;
+    nestedOuterScope_ = savedBoundary;
+    return ok;
+  }
   case NodeKind::PassStmt:
-  case NodeKind::FunctionDef:
   case NodeKind::ClassDef:
   case NodeKind::EnumDef:
   case NodeKind::TypeAlias:
@@ -2882,16 +3832,19 @@ bool TypeChecker::checkStatement(Stmt& statement, const Type* expectedReturn) {
 }
 
 bool TypeChecker::checkFunctionBody(FunctionDef& function) {
-  if (function.isExtern() || function.isAbstract()) {
+  if (function.isExtern()) {
     return true;
   }
   if (!validateParamList(function.params(), function.range())) {
     return false;
   }
+  const std::string savedClass = currentClass_;
+  const std::string savedFunction = currentFunctionName_;
+  const std::string savedProperty = currentPropertyName_;
   currentClass_ = function.ownerClass();
   currentFunctionName_ = function.name();
   currentPropertyName_ = function.propertyName();
-  pushScope();
+  pushScope(function.range());
   for (std::size_t index = 0; index < function.params().size(); ++index) {
     const ParamDecl& param = function.params()[index];
     const Type* type = resolveParamType(function, index);
@@ -2900,8 +3853,9 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
     symbol.type = type;
     if (type == nullptr || !declare(param.name, symbol, param.range.start)) {
       popScope();
-      currentClass_.clear();
-      currentPropertyName_.clear();
+      currentClass_ = savedClass;
+      currentFunctionName_ = savedFunction;
+      currentPropertyName_ = savedProperty;
       return false;
     }
     if (param.defaultValue != nullptr) {
@@ -2909,15 +3863,16 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
       if (defaultType == nullptr || !isAssignable(defaultType, type)) {
         diagnostics_->error(param.range, "default value type mismatch for '" + param.name + "'");
         popScope();
-        currentClass_.clear();
-        currentPropertyName_.clear();
+        currentClass_ = savedClass;
+        currentFunctionName_ = savedFunction;
+        currentPropertyName_ = savedProperty;
         return false;
       }
     }
   }
   const Type* returnType = resolveTypeExpr(function.returnType());
   if (function.propertyKind() == PropertyKind::Get && function.hasInferredReturn()) {
-    const Type* record = types_->record(function.ownerClass());
+    const Type* record = classType(function.ownerClass());
     const RecordField* field =
         record == nullptr ? nullptr : record->findField(function.propertyName());
     if (field != nullptr && field->type != nullptr) {
@@ -2932,8 +3887,9 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
     ok = checkStatement(*statement, returnType) && ok;
   }
   popScope();
-  currentClass_.clear();
-  currentPropertyName_.clear();
+  currentClass_ = savedClass;
+  currentFunctionName_ = savedFunction;
+  currentPropertyName_ = savedProperty;
   return ok;
 }
 
@@ -3011,14 +3967,21 @@ FunctionDef* TypeChecker::findMethodDef(const Type* record, std::string_view met
   if (record == nullptr) {
     return nullptr;
   }
-  const auto found = classes_.find(record->name());
-  if (found == classes_.end() || found->second == nullptr) {
-    return nullptr;
-  }
-  for (const std::unique_ptr<FunctionDef>& method : found->second->methods()) {
-    if (method != nullptr && method->name() == methodName) {
-      return method.get();
+  record = record->canonical();
+  for (const auto& entry : classes_) {
+    ClassDef* classDef = entry.second;
+    if (classDef == nullptr || classDef->resolvedType() == nullptr) {
+      continue;
     }
+    if (classDef->resolvedType()->canonical() != record) {
+      continue;
+    }
+    for (const std::unique_ptr<FunctionDef>& method : classDef->methods()) {
+      if (method != nullptr && method->name() == methodName) {
+        return method.get();
+      }
+    }
+    return nullptr;
   }
   return nullptr;
 }
@@ -3033,8 +3996,15 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
     return false;
   }
   std::unordered_map<std::string, std::size_t> keywordIndexes;
+  std::vector<Expr*> kwSplats;
   for (std::size_t index = 0; index < expr.keywordArguments().size(); ++index) {
     const NamedArgument& kw = expr.keywordArguments()[index];
+    if (kw.splat || kw.name.empty()) {
+      if (kw.value != nullptr) {
+        kwSplats.push_back(kw.value.get());
+      }
+      continue;
+    }
     if (keywordIndexes.contains(kw.name)) {
       diagnostics_->error(kw.value->range(), "duplicate keyword argument '" + kw.name + "'");
       return false;
@@ -3064,7 +4034,8 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
     keywordIndexes.erase(found);
     return value;
   };
-  const auto checkArg = [&](Expr& argument, const Type* expected, const std::string& label) -> bool {
+  const auto checkArg =
+      [&](Expr& argument, const Type* expected, const std::string& label) -> bool {
     const Type* argType = checkExpr(argument);
     if (argType == nullptr) {
       return false;
@@ -3075,7 +4046,7 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
                               quoteType(argType));
       return false;
     }
-    return true;
+    return ensureLiteralFits(argument, expected);
   };
 
   std::size_t positionalIndex = 0;
@@ -3102,8 +4073,9 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
       if (params[index].defaultValue != nullptr) {
         continue;
       }
-      diagnostics_->error(expr.range(), "missing argument '" + params[index].name + "' to " +
-                                            std::string(calleeLabel));
+      diagnostics_->error(expr.range(),
+                          "missing argument '" + params[index].name + "' to " +
+                              std::string(calleeLabel));
       return false;
     }
     if (!checkArg(*argument, paramTypes[index], paramLabel(index))) {
@@ -3124,7 +4096,8 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
       useArgument(index, explicitArg);
     } else {
       while (positionalIndex < expr.arguments().size()) {
-        if (!checkArg(*expr.arguments()[positionalIndex], elementType, paramLabel(index) + " element")) {
+        if (!checkArg(
+                *expr.arguments()[positionalIndex], elementType, paramLabel(index) + " element")) {
           return false;
         }
         ++positionalIndex;
@@ -3136,7 +4109,8 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
     return false;
   }
 
-  const std::size_t keywordOnlyStart = varArgIndex.has_value() ? varArgIndex.value() + 1 : preVarArgEnd;
+  const std::size_t keywordOnlyStart =
+      varArgIndex.has_value() ? varArgIndex.value() + 1 : preVarArgEnd;
   const std::size_t keywordOnlyEnd = kwArgIndex.has_value() ? kwArgIndex.value() : params.size();
   for (std::size_t index = keywordOnlyStart; index < keywordOnlyEnd; ++index) {
     if (params[index].kind != ParamKind::Normal) {
@@ -3147,8 +4121,9 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
       if (params[index].defaultValue != nullptr) {
         continue;
       }
-      diagnostics_->error(expr.range(), "missing keyword argument '" + params[index].name +
-                                            "' to " + std::string(calleeLabel));
+      diagnostics_->error(expr.range(),
+                          "missing keyword argument '" + params[index].name + "' to " +
+                              std::string(calleeLabel));
       return false;
     }
     if (!checkArg(*argument, paramTypes[index], paramLabel(index))) {
@@ -3177,6 +4152,33 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
       }
       keywordIndexes.clear();
     }
+    for (Expr* splat : kwSplats) {
+      if (splat == nullptr) {
+        continue;
+      }
+      if (!checkArg(
+              *splat, dictType != nullptr ? dictType : types_->anyType(), paramLabel(index))) {
+        return false;
+      }
+    }
+    kwSplats.clear();
+  }
+
+  for (Expr* splat : kwSplats) {
+    if (splat == nullptr) {
+      continue;
+    }
+    const Type* splatType = checkExpr(*splat);
+    if (splatType == nullptr) {
+      return false;
+    }
+    if (!splatType->isDict() && !splatType->isAny()) {
+      diagnostics_->error(splat->range(), "keyword unpack argument must be a dict");
+      return false;
+    }
+  }
+  if (!kwSplats.empty()) {
+    keywordIndexes.clear();
   }
 
   if (!keywordIndexes.empty()) {
@@ -3204,7 +4206,7 @@ const Type* TypeChecker::resolveParamType(const FunctionDef& function, std::size
       diagnostics_->error(param.range, "first method parameter must be named self");
       return nullptr;
     }
-    return types_->record(function.ownerClass());
+    return classType(function.ownerClass());
   }
   return resolveParamDeclType(param);
 }
@@ -3216,7 +4218,11 @@ bool TypeChecker::collectClassNames(Module& module) {
     }
     auto& classDef = static_cast<ClassDef&>(*statement);
     classes_[classDef.name()] = &classDef;
-    const Type* record = types_->defineRecord(classDef.name(), {});
+    const std::string qualifier = classDef.fromPrelude() ? "prelude" : moduleName_;
+    const Type* existing =
+        classDef.fromPrelude() ? types_->record("prelude." + classDef.name()) : nullptr;
+    const Type* record =
+        existing != nullptr ? existing : types_->defineRecord(classDef.name(), {}, qualifier);
     types_->setRecordTypeParams(record, classDef.typeParams());
     for (const std::string& param : classDef.typeParams()) {
       (void)types_->defineTypeParam(param);
@@ -3269,7 +4275,11 @@ bool TypeChecker::collectEnums(Module& module) {
       fields.push_back(std::move(field));
       ++next;
     }
-    const Type* record = types_->defineRecord(enumDef.name(), {});
+    const std::string qualifier = enumDef.fromPrelude() ? "prelude" : moduleName_;
+    const Type* existing =
+        enumDef.fromPrelude() ? types_->record("prelude." + enumDef.name()) : nullptr;
+    const Type* record =
+        existing != nullptr ? existing : types_->defineRecord(enumDef.name(), {}, qualifier);
     types_->setRecordEnum(record, true);
     types_->setRecordFlags(record, enumDef.isFlags());
     for (RecordField& field : fields) {
@@ -3292,7 +4302,7 @@ bool TypeChecker::collectEnums(Module& module) {
 
 bool TypeChecker::collectAliases(Module& module) {
   for (const std::unique_ptr<Stmt>& statement : module.statements()) {
-    if (statement->kind() != NodeKind::TypeAlias) {
+    if (statement == nullptr || statement->kind() != NodeKind::TypeAlias) {
       continue;
     }
     auto& alias = static_cast<TypeAlias&>(*statement);
@@ -3319,21 +4329,7 @@ bool TypeChecker::flattenClass(ClassDef& classDef) {
   flattened_[classDef.name()] = true;
   std::vector<RecordField> fields;
   std::vector<const Type*> bases;
-  for (const std::string& baseName : classDef.bases()) {
-    if (classDef.isStruct()) {
-      diagnostics_->error(classDef.range(), "structs cannot inherit; use class");
-      return false;
-    }
-    const auto found = classes_.find(baseName);
-    if (found != classes_.end() && !flattenClass(*found->second)) {
-      return false;
-    }
-    const Type* base = types_->record(baseName);
-    if (base == nullptr) {
-      diagnostics_->error(classDef.range(), "unknown base class '" + baseName + "'");
-      return false;
-    }
-    bases.push_back(base);
+  const auto inheritFields = [&](const Type* base) {
     for (const RecordField& field : base->fields()) {
       bool exists = false;
       for (const RecordField& seen : fields) {
@@ -3343,22 +4339,77 @@ bool TypeChecker::flattenClass(ClassDef& classDef) {
         fields.push_back(field);
       }
     }
+  };
+  const auto resolveBase =
+      [&](const std::string& baseName, SourceRange range, TypeExpr* typeExpr) -> const Type* {
+    if (classDef.isStruct()) {
+      diagnostics_->error(classDef.range(), "structs cannot inherit; use class");
+      return nullptr;
+    }
+    const auto found = classes_.find(baseName);
+    if (found != classes_.end() && !flattenClass(*found->second)) {
+      return nullptr;
+    }
+    const Type* base = typeExpr != nullptr ? resolveTypeExpr(*typeExpr) : classType(baseName);
+    if (base == nullptr) {
+      const std::vector<std::unique_ptr<TypeExpr>> noArgs;
+      base = resolveNamedType(baseName, noArgs, range, false);
+    }
+    if (const Type* record = unwrapRecordType(base)) {
+      return record;
+    }
+    if (base == nullptr) {
+      diagnostics_->error(range, "unknown base class '" + baseName + "'");
+    } else {
+      diagnostics_->error(range, "'" + baseName + "' is not a class");
+    }
+    return nullptr;
+  };
+  if (!classDef.baseTypes().empty()) {
+    for (std::unique_ptr<TypeExpr>& baseType : classDef.baseTypes()) {
+      if (baseType == nullptr) {
+        continue;
+      }
+      const Type* base = resolveBase(baseType->name(), baseType->range(), baseType.get());
+      if (base == nullptr) {
+        return false;
+      }
+      bases.push_back(base);
+      inheritFields(base);
+    }
+  } else {
+    for (const std::string& baseName : classDef.bases()) {
+      const Type* base = resolveBase(baseName, classDef.range(), nullptr);
+      if (base == nullptr) {
+        return false;
+      }
+      bases.push_back(base);
+      inheritFields(base);
+    }
   }
   for (const FieldDecl& field : classDef.fields()) {
     const Type* type = resolveTypeExpr(*field.type);
     if (type == nullptr) {
-      return false;
+      continue;
+    }
+    RecordField created{field.name, type, field.isPublic, field.isStatic};
+    if (field.isStatic) {
+      const Type* record = classDef.resolvedType();
+      const std::string owner = record != nullptr && !record->qualifier().empty()
+                                    ? record->qualifier() + "." + record->name()
+                                    : classDef.name();
+      created.llvmName = owner + "." + field.name;
     }
     bool replaced = false;
     for (RecordField& existing : fields) {
       if (existing.name == field.name) {
-        existing = RecordField{field.name, type, field.isPublic, field.isStatic};
+        existing = created;
         replaced = true;
         break;
       }
     }
     if (!replaced) {
-      fields.push_back(RecordField{field.name, type, field.isPublic, field.isStatic});
+      fields.push_back(std::move(created));
     }
     recordSymbol(field.name, "field", type, field.range.start, classDef.name());
   }
@@ -3500,17 +4551,18 @@ bool TypeChecker::collectMethods(Module& module) {
       if (method->propertyKind() == PropertyKind::Set) {
         if (params.size() != 2) {
           diagnostics_->error(method->range(),
-                              "setter '" + method->propertyName() + "' takes one value besides self");
+                              "setter '" + method->propertyName() +
+                                  "' takes one value besides self");
           continue;
         }
-        if (!returnType->isNamed("void")) {
+        if (!returnType->isVoidLike()) {
           diagnostics_->error(method->range(),
                               "setter '" + method->propertyName() + "' must return void");
           continue;
         }
       }
-      if (method->name() == "__init__" && !returnType->isNamed("void")) {
-        diagnostics_->error(method->range(), "__init__ must return void");
+      if (method->name() == "__init__" && !returnType->isVoidLike()) {
+        diagnostics_->error(method->range(), "__init__ must return void or None");
         continue;
       }
       if (method->name() == "__str__") {
@@ -3546,7 +4598,7 @@ bool TypeChecker::collectMethods(Module& module) {
                             "__getitem__ must be def __getitem__(self, index: T) -> U");
         continue;
       }
-      if (method->name() == "__setitem__" && (params.size() != 3 || !returnType->isNamed("void"))) {
+      if (method->name() == "__setitem__" && (params.size() != 3 || !returnType->isVoidLike())) {
         diagnostics_->error(
             method->range(),
             "__setitem__ must be def __setitem__(self, index: K, value: V) -> void");
@@ -3557,8 +4609,13 @@ bool TypeChecker::collectMethods(Module& module) {
       RecordMethod info;
       info.name = method->name();
       info.type = fnType;
-      info.llvmName = classDef.name() + "_" + method->name();
-      info.isAbstract = method->isAbstract();
+      if (moduleName_ != "__main__" && !moduleName_.empty()) {
+        method->setModulePrefix(moduleName_);
+        info.llvmName = moduleName_ + "_" + classDef.name() + "_" + method->name();
+      } else {
+        info.llvmName = classDef.name() + "_" + method->name();
+      }
+      info.isAbstract = abstractMethodNeedsOverride(*method);
       info.isPublic = !method->isPrivate();
       bool sawDefault = false;
       for (std::size_t index = 0; index < method->params().size(); ++index) {
@@ -3590,7 +4647,9 @@ bool TypeChecker::collectMethods(Module& module) {
       if (method->propertyKind() == PropertyKind::None) {
         continue;
       }
-      const std::string llvmName = classDef.name() + "_" + method->name();
+      const std::string llvmName = (moduleName_ != "__main__" && !moduleName_.empty())
+                                       ? moduleName_ + "_" + classDef.name() + "_" + method->name()
+                                       : classDef.name() + "_" + method->name();
       RecordField* found = nullptr;
       for (RecordField& field : fields) {
         if (field.name == method->propertyName()) {
@@ -3701,12 +4760,142 @@ bool TypeChecker::collectMethods(Module& module) {
   return true;
 }
 
+bool TypeChecker::bindLocalClassImports(Module& module) {
+  for (const std::unique_ptr<Stmt>& statement : module.statements()) {
+    if (statement->kind() != NodeKind::ImportStmt) {
+      continue;
+    }
+    const auto& import = static_cast<const ImportStmt&>(*statement);
+    if (!import.isFrom() || import.star() || import.modulePath().size() != 1) {
+      continue;
+    }
+    const std::string className = import.modulePath()[0];
+    if (lookup(className) != nullptr && lookup(className)->kind == SymbolKind::Module) {
+      continue;
+    }
+    ClassDef* classDef = nullptr;
+    const auto found = classes_.find(className);
+    if (found != classes_.end()) {
+      classDef = found->second;
+    }
+    if (classDef == nullptr) {
+      bool imported = false;
+      for (std::size_t index = 0; index < import.names().size(); ++index) {
+        if (lookup(import.boundName(index)) != nullptr) {
+          imported = true;
+          break;
+        }
+      }
+      if (!imported) {
+        diagnostics_->error(import.range(), "cannot find module or class '" + className + "'");
+        return false;
+      }
+      continue;
+    }
+    for (std::size_t index = 0; index < import.names().size(); ++index) {
+      const std::string& name = import.names()[index];
+      const std::string bound = import.boundName(index);
+      FunctionDef* method = nullptr;
+      for (std::unique_ptr<FunctionDef>& item : classDef->methods()) {
+        if (item->name() == name || item->propertyName() == name) {
+          method = item.get();
+          break;
+        }
+      }
+      if (method == nullptr) {
+        diagnostics_->error(import.range(),
+                            "class '" + className + "' has no member '" + name + "'");
+        return false;
+      }
+      Symbol symbol;
+      symbol.kind = SymbolKind::Function;
+      symbol.type = method->resolvedType();
+      symbol.function = method;
+      if (!declare(bound, symbol, import.range().start)) {
+        return false;
+      }
+      RecordField alias;
+      alias.name = bound;
+      alias.type = method->resolvedType();
+      alias.isPublic = true;
+      alias.llvmName = (moduleName_ != "__main__" && !moduleName_.empty())
+                           ? moduleName_ + "_" + classDef->name() + "_" + method->name()
+                           : classDef->name() + "_" + method->name();
+      for (const ParamDecl& param : method->params()) {
+        alias.paramNames.push_back(param.name);
+      }
+      alias.requiredArgs = method->params().size();
+      module.addExportAlias(std::move(alias));
+    }
+  }
+  return true;
+}
+
+bool TypeChecker::collectExports(Module& module) {
+  for (const std::unique_ptr<Stmt>& statement : module.statements()) {
+    if (statement->kind() != NodeKind::AssignStmt) {
+      continue;
+    }
+    auto& assign = static_cast<AssignStmt&>(*statement);
+    const NameExpr* target = asName(assign.target());
+    if (target == nullptr || target->name() != "__exports__") {
+      continue;
+    }
+    if (assign.value().kind() != NodeKind::ListLiteral) {
+      diagnostics_->error(assign.range(), "__exports__ must be a list of names");
+      return false;
+    }
+    std::vector<std::string> names;
+    bool namesOk = true;
+    for (const std::unique_ptr<Expr>& item :
+         static_cast<const ListLiteral&>(assign.value()).elements()) {
+      const NameExpr* name = asName(*item);
+      if (name == nullptr) {
+        diagnostics_->error(item->range(), "__exports__ entries must be names");
+        return false;
+      }
+      names.push_back(name->name());
+      const Symbol* symbol = lookup(name->name());
+      if (symbol == nullptr) {
+        diagnostics_->error(name->range(),
+                            "__exports__ names unknown symbol '" + name->name() + "'");
+        namesOk = false;
+        continue;
+      }
+      RecordField alias;
+      alias.name = name->name();
+      alias.type = symbol->type;
+      alias.isPublic = true;
+      alias.paramNames = symbol->paramNames;
+      if (symbol->function != nullptr) {
+        alias.requiredArgs = symbol->function->params().size();
+      }
+      module.addExportAlias(std::move(alias));
+    }
+    const ModuleExportMode mode =
+        assign.op() == AssignOp::Add ? ModuleExportMode::Append : ModuleExportMode::Replace;
+    if (assign.op() != AssignOp::Assign && assign.op() != AssignOp::Add) {
+      diagnostics_->error(assign.range(), "use __exports__ = [...] or __exports__ += [...]");
+      return false;
+    }
+    module.setExportList(mode, std::move(names));
+    if (!namesOk) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool TypeChecker::checkBodies(Module& module) {
   bool ok = true;
   for (const std::unique_ptr<Stmt>& statement : module.statements()) {
     if (statement->kind() == NodeKind::VarDecl) {
       ok = checkVarDecl(static_cast<VarDecl&>(*statement)) && ok;
     } else if (statement->kind() == NodeKind::AssignStmt) {
+      const NameExpr* target = asName(static_cast<AssignStmt&>(*statement).target());
+      if (target != nullptr && target->name() == "__exports__") {
+        continue;
+      }
       ok = checkAssign(static_cast<AssignStmt&>(*statement)) && ok;
     }
   }
@@ -3800,7 +4989,7 @@ bool TypeChecker::checkTry(TryStmt& statement, const Type* expectedReturn) {
     ok = checkStatement(*item, expectedReturn) && ok;
   }
   for (ExceptHandler& handler : statement.handlers()) {
-    pushScope();
+    pushScope(handler.range);
     if (handler.type != nullptr) {
       const Type* type = resolveTypeExpr(*handler.type);
       if (type != nullptr) {
@@ -3883,7 +5072,7 @@ bool TypeChecker::checkMatch(MatchStmt& statement, const Type* expectedReturn) {
         ok = false;
       }
     }
-    pushScope();
+    pushScope(arm.range);
     if (payloadVariant != nullptr && arm.pattern != nullptr &&
         arm.pattern->kind() == NodeKind::CallExpr) {
       auto& call = static_cast<CallExpr&>(*arm.pattern);
@@ -3967,7 +5156,7 @@ bool TypeChecker::checkWith(WithStmt& statement, const Type* expectedReturn) {
     entered = contextType;
   }
   bool ok = true;
-  pushScope();
+  pushScope(statement.range());
   if (!statement.name().empty()) {
     Symbol symbol;
     symbol.kind = SymbolKind::Variable;
@@ -3997,8 +5186,8 @@ const Type* TypeChecker::checkWalrus(WalrusExpr& expr) {
       return nullptr;
     }
     if (existing->type != nullptr && !isAssignable(value, existing->type)) {
-      diagnostics_->error(expr.range(), "cannot assign " + quoteType(value) + " to '" +
-                                            expr.name() + "'");
+      diagnostics_->error(expr.range(),
+                          "cannot assign " + quoteType(value) + " to '" + expr.name() + "'");
       return nullptr;
     }
   } else {
@@ -4014,7 +5203,7 @@ const Type* TypeChecker::checkWalrus(WalrusExpr& expr) {
 const Type* TypeChecker::checkLambda(LambdaExpr& expr) {
   ++lambdaCounter_;
   expr.setLlvmName("__sere_lambda_" + std::to_string(lambdaCounter_));
-  pushScope();
+  pushScope(expr.range());
   ++lambdaDepth_;
   if (!validateParamList(expr.params(), expr.range())) {
     --lambdaDepth_;
@@ -4048,14 +5237,56 @@ const Type* TypeChecker::checkLambda(LambdaExpr& expr) {
       return nullptr;
     }
     if (!isAssignable(bodyType, returnType)) {
-      diagnostics_->error(expr.body().range(), "lambda body type " + quoteType(bodyType) +
-                                                   " does not match " + quoteType(returnType));
+      diagnostics_->error(expr.body().range(),
+                          "lambda body type " + quoteType(bodyType) + " does not match " +
+                              quoteType(returnType));
       return nullptr;
     }
   }
   const Type* fnType = types_->functionType(params, returnType);
   expr.setResolvedType(fnType);
   return fnType;
+}
+
+const Type* TypeChecker::checkCallableCall(CallExpr& expr, const Type* constraint) {
+  CallableShape shape;
+  if (!fillCallableShape(constraint, shape)) {
+    return nullptr;
+  }
+  if (!expr.keywordArguments().empty()) {
+    diagnostics_->error(expr.range(), "keyword arguments are not supported for indirect calls");
+    return nullptr;
+  }
+  if (shape.hasParams && !shape.variadic && expr.arguments().size() != shape.params.size()) {
+    diagnostics_->error(expr.range(),
+                        "call takes " + std::to_string(shape.params.size()) + " argument(s), but " +
+                            std::to_string(expr.arguments().size()) + " provided");
+    return nullptr;
+  }
+  if (shape.hasParams && shape.variadic && expr.arguments().size() < shape.params.size()) {
+    diagnostics_->error(expr.range(),
+                        "call takes at least " + std::to_string(shape.params.size()) +
+                            " argument(s), but " + std::to_string(expr.arguments().size()) +
+                            " provided");
+    return nullptr;
+  }
+  for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
+    const Type* argType = checkExpr(*expr.arguments()[index]);
+    if (argType == nullptr) {
+      return nullptr;
+    }
+    if (index < shape.params.size() && !isAssignable(argType, shape.params[index])) {
+      diagnostics_->error(expr.arguments()[index]->range(),
+                          "argument type mismatch: expected " + quoteType(shape.params[index]) +
+                              ", found " + quoteType(argType));
+      return nullptr;
+    }
+  }
+  const Type* returnType =
+      shape.hasReturn && shape.returnType != nullptr ? shape.returnType : types_->anyType();
+  expr.callee().setResolvedType(constraint);
+  expr.setResolvedType(returnType);
+  return returnType;
 }
 
 const Type* TypeChecker::checkIndirectCall(CallExpr& expr, const Type* functionType) {
@@ -4068,8 +5299,7 @@ const Type* TypeChecker::checkIndirectCall(CallExpr& expr, const Type* functionT
   }
   if (expr.arguments().size() != functionType->paramTypes().size()) {
     diagnostics_->error(expr.range(),
-                        "call takes " +
-                            std::to_string(functionType->paramTypes().size()) +
+                        "call takes " + std::to_string(functionType->paramTypes().size()) +
                             " argument(s), but " + std::to_string(expr.arguments().size()) +
                             " provided");
     return nullptr;
@@ -4092,15 +5322,228 @@ const Type* TypeChecker::checkIndirectCall(CallExpr& expr, const Type* functionT
   return functionType->returnType();
 }
 
+bool TypeChecker::applyDecorators(Module& module) {
+  bool ok = true;
+  for (const std::unique_ptr<Stmt>& statement : module.statements()) {
+    if (statement == nullptr) {
+      continue;
+    }
+    if (statement->kind() == NodeKind::FunctionDef) {
+      ok = applyFunctionDecorators(static_cast<FunctionDef&>(*statement)) && ok;
+    } else if (statement->kind() == NodeKind::ClassDef) {
+      auto& classDef = static_cast<ClassDef&>(*statement);
+      for (std::unique_ptr<FunctionDef>& method : classDef.methods()) {
+        if (method != nullptr) {
+          ok = applyFunctionDecorators(*method) && ok;
+        }
+      }
+      ok = applyClassDecorators(classDef) && ok;
+    } else if (statement->kind() == NodeKind::EnumDef) {
+      for (std::unique_ptr<FunctionDef>& method : static_cast<EnumDef&>(*statement).methods()) {
+        if (method != nullptr) {
+          ok = applyFunctionDecorators(*method) && ok;
+        }
+      }
+    }
+  }
+  return ok;
+}
+
+bool TypeChecker::applyFunctionDecorators(FunctionDef& function) {
+  if (!hasRuntimeDecorators(function.decoratorExprs())) {
+    return true;
+  }
+  const Type* current = function.resolvedType();
+  if (current == nullptr) {
+    diagnostics_->error(function.range(), "cannot decorate an untyped function");
+    return false;
+  }
+  const Type* wrapped = applyDecoratorChain(function.decoratorExprs(), current, function.range());
+  if (wrapped == nullptr) {
+    return false;
+  }
+  function.setDecoratedType(wrapped);
+  if (wrapped->kind() != TypeKind::Function && !wrapped->isCallableConstraint()) {
+    if (!function.isMethod()) {
+      if (Symbol* symbol = lookup(function.name())) {
+        symbol->type = wrapped;
+      }
+    }
+    return true;
+  }
+  if (wrapped->kind() == TypeKind::Function && !function.isMethod()) {
+    if (Symbol* symbol = lookup(function.name())) {
+      symbol->type = wrapped;
+    }
+    return true;
+  }
+  if (!function.isMethod()) {
+    return true;
+  }
+  if (wrapped->kind() != TypeKind::Function) {
+    return true;
+  }
+  const Type* record = classType(function.ownerClass());
+  if (record == nullptr) {
+    return true;
+  }
+  const int index = record->methodIndex(function.name());
+  if (index < 0) {
+    return true;
+  }
+  RecordMethod info = record->methods()[static_cast<std::size_t>(index)];
+  info.type = wrapped;
+  types_->replaceRecordMethod(record, std::move(info));
+  return true;
+}
+
+bool TypeChecker::applyClassDecorators(ClassDef& classDef) {
+  if (!hasRuntimeDecorators(classDef.decoratorExprs())) {
+    return true;
+  }
+  const Type* record = classDef.resolvedType();
+  if (record == nullptr) {
+    diagnostics_->error(classDef.range(), "cannot decorate an untyped type");
+    return false;
+  }
+  const Type* target = types_->typeObject(record);
+  const Type* wrapped = applyDecoratorChain(classDef.decoratorExprs(), target, classDef.range());
+  if (wrapped == nullptr) {
+    return false;
+  }
+  if (wrapped->isAny()) {
+    return true;
+  }
+  classDef.setDecoratedType(wrapped);
+  Symbol* symbol = lookup(classDef.name());
+  if (symbol == nullptr) {
+    return true;
+  }
+  if (wrapped->isTypeObject()) {
+    if (wrapped->typeObjectInstance() != nullptr) {
+      symbol->type = wrapped->typeObjectInstance();
+    }
+    return true;
+  }
+  if (wrapped->kind() == TypeKind::Function || wrapped->isCallableConstraint()) {
+    symbol->kind = SymbolKind::Function;
+    symbol->type = wrapped;
+    symbol->function = nullptr;
+  } else {
+    symbol->type = wrapped;
+  }
+  return true;
+}
+
+const Type* TypeChecker::applyDecoratorChain(std::vector<std::unique_ptr<Expr>>& exprs,
+                                             const Type* target,
+                                             SourceRange range) {
+  const Type* current = target;
+  (void)range;
+  for (int index = static_cast<int>(exprs.size()) - 1; index >= 0; --index) {
+    if (exprs[static_cast<std::size_t>(index)] == nullptr) {
+      continue;
+    }
+    Expr& expr = *exprs[static_cast<std::size_t>(index)];
+    if (isReservedDecoratorExpr(expr)) {
+      continue;
+    }
+    const Type* wrapper = checkExpr(expr);
+    if (wrapper == nullptr) {
+      return nullptr;
+    }
+    current = callDecorator(wrapper, current, expr.range());
+    if (current == nullptr) {
+      return nullptr;
+    }
+  }
+  return current;
+}
+
+const Type* TypeChecker::callDecorator(const Type* wrapper, const Type* target, SourceRange range) {
+  if (wrapper == nullptr || target == nullptr) {
+    diagnostics_->error(range, "decorator is not callable");
+    return nullptr;
+  }
+  wrapper = wrapper->canonical();
+  if (wrapper->isAny()) {
+    return types_->anyType();
+  }
+  if (wrapper->kind() == TypeKind::Function) {
+    if (wrapper->paramTypes().empty()) {
+      diagnostics_->error(range, "decorator must accept the decorated object");
+      diagnostics_->help("def decorator(obj): return obj");
+      return nullptr;
+    }
+    if (!isAssignable(target, wrapper->paramTypes()[0]) && !wrapper->paramTypes()[0]->isAny()) {
+      diagnostics_->error(range,
+                          "decorator argument type mismatch: expected " +
+                              quoteType(wrapper->paramTypes()[0]) + ", found " + quoteType(target));
+      return nullptr;
+    }
+    return wrapper->returnType() == nullptr ? types_->anyType() : wrapper->returnType();
+  }
+  if (wrapper->isCallableConstraint()) {
+    CallableShape shape;
+    if (!fillCallableShape(wrapper, shape)) {
+      return nullptr;
+    }
+    if (shape.hasParams && !shape.params.empty() && !shape.params[0]->isAny() &&
+        !isAssignable(target, shape.params[0])) {
+      diagnostics_->error(range,
+                          "decorator argument type mismatch: expected " +
+                              quoteType(shape.params[0]) + ", found " + quoteType(target));
+      return nullptr;
+    }
+    return shape.hasReturn && shape.returnType != nullptr ? shape.returnType : types_->anyType();
+  }
+  diagnostics_->error(range, "decorator is not callable");
+  diagnostics_->help("@name or @name(...) must evaluate to a callable");
+  return nullptr;
+}
+
 bool TypeChecker::check(Module& module) {
   std::vector<std::unique_ptr<Stmt>>& statements = module.statements();
-  statements.erase(std::remove_if(statements.begin(), statements.end(),
-                                  [](const std::unique_ptr<Stmt>& item) { return item == nullptr; }),
-                   statements.end());
+  statements.erase(
+      std::remove_if(statements.begin(),
+                     statements.end(),
+                     [](const std::unique_ptr<Stmt>& item) { return item == nullptr; }),
+      statements.end());
   injectModuleGlobals();
-  return collectClassNames(module) && collectEnums(module) && collectAliases(module) &&
-         collectClassFields(module) && collectFunctions(module) && collectMacros(module) &&
-         collectMethods(module) && checkBodies(module) && !diagnostics_->hasErrors();
+  if (!collectClassNames(module)) {
+    return false;
+  }
+  if (!collectEnums(module)) {
+    return false;
+  }
+  if (!collectAliases(module)) {
+    return false;
+  }
+  if (!collectClassFields(module)) {
+    return false;
+  }
+  if (!collectFunctions(module)) {
+    return false;
+  }
+  if (!collectMacros(module)) {
+    return false;
+  }
+  if (!collectMethods(module)) {
+    return false;
+  }
+  if (!bindLocalClassImports(module)) {
+    return false;
+  }
+  if (!collectExports(module)) {
+    return false;
+  }
+  if (!applyDecorators(module)) {
+    return false;
+  }
+  if (!checkBodies(module)) {
+    return false;
+  }
+  return !diagnostics_->hasErrors();
 }
 
 } // namespace sere

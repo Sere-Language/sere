@@ -1,0 +1,55 @@
+def add(a: i32, b: i32) -> i32:
+    return a + b
+
+def apply(cb: Callable[[i32, i32], i32], x: i32, y: i32) -> i32:
+    return cb(x, y)
+
+def twice(cb: Callable[i32], n: i32) -> i32:
+    return cb(n) + cb(n)
+
+def prefix(cb: Callable[[i32, ...], i32], n: i32) -> i32:
+    return cb(n, 0)
+
+def call_fn(cb: Function[[i32, i32], i32], x: i32, y: i32) -> i32:
+    return cb(x, y)
+
+class Point:
+    @public
+    x: i32
+    @public
+    y: i32
+    def __init__(self, x: i32, y: i32) -> void:
+        self.x = x
+        self.y = y
+
+def make(cls: Class[Point], x: i32, y: i32) -> Point:
+    return cls(x, y)
+
+def construct(cb: Callable[[i32, i32], Point], x: i32, y: i32) -> Point:
+    return cb(x, y)
+
+class Adder:
+    @public
+    base: i32
+    def __init__(self, base: i32) -> void:
+        self.base = base
+    def add_base(self, n: i32) -> i32:
+        return self.base + n
+    def apply_to(self, cb: Callable[[i32], i32], n: i32) -> i32:
+        return cb(n)
+    def run(self, n: i32) -> i32:
+        return self.apply_to(self.add_base, n)
+
+def main() -> i32:
+    n = apply(add, 1, 2)
+    inc = lambda (x: i32) -> i32: x + 1
+    m = twice(inc, 3)
+    p = prefix(add, 4)
+    q = call_fn(add, 5, 6)
+    point = make(Point, 7, 8)
+    built = construct(Point, 1, 2)
+    adder = Adder(10)
+    bound = adder.run(5)
+    stored: Callable[[i32], i32] = adder.add_base
+    via_field = stored(2)
+    return n + m + p + q + point.x + point.y + built.x + built.y + bound + via_field

@@ -73,6 +73,10 @@ void applyTomlKey(ProjectManifest& manifest, std::string_view key, std::string_v
     manifest.version = std::string(value);
     return;
   }
+  if (key == "sere") {
+    manifest.sereVersion = std::string(value);
+    return;
+  }
   if (key == "kind") {
     if (value == "lib" || value == "library") {
       manifest.kind = ProjectKind::Lib;

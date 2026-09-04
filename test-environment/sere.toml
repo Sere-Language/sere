@@ -1,9 +1,0 @@
-kind = "app"
-name = "test-environment"
-src = "src"
-entry = "src/main.sere"
-libs = "libs"
-stdlib = "venv/stdlib"
-output = "bin/test-environment.exe"
-opt = "O0"
-native = false

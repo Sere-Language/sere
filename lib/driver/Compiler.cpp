@@ -72,7 +72,14 @@ void dumpTokens(const std::vector<Token>& tokens) {
   if (options.emitAsm) {
     return output.replace_extension(".s");
   }
+#ifdef _WIN32
   return output.replace_extension(".exe");
+#else
+  if (output.extension() == ".sere") {
+    output.replace_extension();
+  }
+  return output;
+#endif
 }
 
 [[nodiscard]] bool
@@ -132,7 +139,7 @@ void copyBesideOutput(const std::filesystem::path& from, const std::filesystem::
                                const std::filesystem::path& outputPath) {
   const std::optional<std::string> clang = findClang();
   if (!clang.has_value()) {
-    llvm::errs() << "error: clang not found; re-run the Sere installer or scripts/bootstrap.ps1\n";
+    llvm::errs() << "error: clang not found; set SERE_LLVM_DIR or re-run the Sere installer\n";
     return 1;
   }
   prependLlvmToolsToPath();
@@ -157,11 +164,15 @@ void copyBesideOutput(const std::filesystem::path& from, const std::filesystem::
   const std::optional<std::string> clang = findClang();
   const std::optional<std::filesystem::path> runtime = findRuntimeLibrary();
   if (!clang.has_value()) {
-    llvm::errs() << "error: clang not found; re-run the Sere installer or scripts/bootstrap.ps1\n";
+    llvm::errs() << "error: clang not found; set SERE_LLVM_DIR or re-run the Sere installer\n";
     return 1;
   }
   if (!runtime.has_value()) {
+#ifdef _WIN32
     llvm::errs() << "error: sere_rt.lib not found next to the compiler\n";
+#else
+    llvm::errs() << "error: sere_rt.a (or libsere_rt.a) not found next to the compiler\n";
+#endif
     return 1;
   }
   prependLlvmToolsToPath();
@@ -186,7 +197,7 @@ void copyBesideOutput(const std::filesystem::path& from, const std::filesystem::
   if (importsModule(importedModules, "qt6")) {
     const std::optional<std::filesystem::path> qt6 = findNativeLibrary("sere_qt6");
     if (!qt6.has_value()) {
-      llvm::errs() << "error: sere_qt6.lib not found next to the compiler; rebuild sere\n";
+      llvm::errs() << "error: sere_qt6 library not found next to the compiler; rebuild sere\n";
       return 1;
     }
     owned.push_back(qt6->string());
@@ -226,9 +237,19 @@ void copyBesideOutput(const std::filesystem::path& from, const std::filesystem::
       break;
     }
   }
+#else
+  for (const char* flag : {"-lm", "-ldl", "-lpthread"}) {
+    owned.push_back(flag);
+  }
+  if (importsModule(importedModules, "gl")) {
+    owned.push_back("-lGL");
+  }
 #endif
   owned.push_back(runtimeLib);
   owned.push_back("-fuse-ld=lld");
+#ifndef _WIN32
+  owned.push_back("-Wl,--as-needed");
+#endif
   owned.push_back("-o");
   owned.push_back(output);
   llvm::SmallVector<llvm::StringRef, 24> arguments;
@@ -470,6 +491,14 @@ int Compiler::run(const CompilerOptions& options) {
     const int code = refreshCompilerBin({}, refreshError);
     if (code != 0 && !refreshError.empty()) {
       llvm::errs() << "error: " << refreshError << '\n';
+    }
+    return code;
+  }
+  if (options.projectCommand == ProjectCommand::Update) {
+    std::string updateError;
+    const int code = updateSereEnvironment({}, updateError);
+    if (code != 0 && !updateError.empty()) {
+      llvm::errs() << "error: " << updateError << '\n';
     }
     return code;
   }

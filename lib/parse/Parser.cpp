@@ -25,6 +25,11 @@ void markPrivateFromDecorators(Node& node, const std::vector<std::string>& decor
   }
 }
 
+void attachFunctionDecorators(FunctionDef& function, std::vector<std::unique_ptr<Expr>> exprs) {
+  function.setDecorators(decoratorExprNames(exprs));
+  function.setDecoratorExprs(std::move(exprs));
+}
+
 [[nodiscard]] bool isLineEnd(TokenKind kind) {
   return kind == TokenKind::Newline || kind == TokenKind::Dedent ||
          kind == TokenKind::EndOfFile;
@@ -179,6 +184,18 @@ bool Parser::match(TokenKind kind) {
   return true;
 }
 
+bool Parser::matchDot() {
+  if (match(TokenKind::Dot)) {
+    return true;
+  }
+  if (check(TokenKind::Newline) && peekNth(1).kind() == TokenKind::Dot) {
+    advance();
+    advance();
+    return true;
+  }
+  return false;
+}
+
 bool Parser::consume(TokenKind kind, const char* errorMessage) {
   if (match(kind)) {
     return true;
@@ -194,10 +211,14 @@ void Parser::synchronize() {
       return;
     }
     if (check(TokenKind::Dedent) || check(TokenKind::KeywordDef) ||
-        check(TokenKind::KeywordClass) || check(TokenKind::KeywordType) ||
-        check(TokenKind::KeywordIf) || check(TokenKind::KeywordElif) ||
-        check(TokenKind::KeywordElse) || check(TokenKind::KeywordWhile) ||
-        check(TokenKind::KeywordReturn) || check(TokenKind::EndOfFile)) {
+        check(TokenKind::KeywordClass) || check(TokenKind::KeywordIf) ||
+        check(TokenKind::KeywordElif) || check(TokenKind::KeywordElse) ||
+        check(TokenKind::KeywordWhile) || check(TokenKind::KeywordReturn) ||
+        check(TokenKind::EndOfFile)) {
+      return;
+    }
+    // `type Name = ...` starts a statement; `type[...]` is a type constructor.
+    if (check(TokenKind::KeywordType) && peekNth(1).kind() == TokenKind::Identifier) {
       return;
     }
     advance();
@@ -281,6 +302,38 @@ std::unique_ptr<TypeExpr> Parser::parseTypeAtom() {
     return std::make_unique<TypeExpr>(previous().range(), "None",
                                       std::vector<std::unique_ptr<TypeExpr>>{});
   }
+  if (check(TokenKind::Integer)) {
+    const Token& number = advance();
+    return std::make_unique<TypeExpr>(number.range(), std::string(number.spelling()),
+                                      std::vector<std::unique_ptr<TypeExpr>>{});
+  }
+  if (match(TokenKind::KeywordType)) {
+    const Token& name = previous();
+    const SourceLocation start = name.range().start;
+    SourceLocation end = name.range().end;
+    std::vector<std::unique_ptr<TypeExpr>> args;
+    if (match(TokenKind::LBracket)) {
+      args = parseTypeArgList();
+      if (!consume(TokenKind::RBracket, "expected ']' after type arguments")) {
+        return nullptr;
+      }
+      end = previous().range().end;
+    }
+    return std::make_unique<TypeExpr>(SourceRange{start, end}, "type", std::move(args));
+  }
+  if (match(TokenKind::DotDotDot)) {
+    return std::make_unique<TypeExpr>(previous().range(), "...",
+                                      std::vector<std::unique_ptr<TypeExpr>>{});
+  }
+  if (match(TokenKind::LBracket)) {
+    const SourceLocation start = previous().range().start;
+    std::vector<std::unique_ptr<TypeExpr>> args = parseTypeArgList();
+    if (!consume(TokenKind::RBracket, "expected ']' after type list")) {
+      return nullptr;
+    }
+    return std::make_unique<TypeExpr>(SourceRange{start, previous().range().end}, "[]",
+                                      std::move(args));
+  }
   if (!check(TokenKind::Identifier)) {
     diagnostics_->error(peek().range(), "expected type name, found " + describeToken(peek()));
     return nullptr;
@@ -289,7 +342,8 @@ std::unique_ptr<TypeExpr> Parser::parseTypeAtom() {
   std::string spelling(name.spelling());
   const SourceLocation start = name.range().start;
   SourceLocation end = name.range().end;
-  while (match(TokenKind::Dot)) {
+  while (matchDot()) {
+    skipNewlines();
     if (!check(TokenKind::Identifier)) {
       end = previous().range().end;
       break;
@@ -330,19 +384,26 @@ std::unique_ptr<TypeExpr> Parser::parseTypeExpr() {
 
 std::vector<std::unique_ptr<TypeExpr>> Parser::parseTypeArgList() {
   std::vector<std::unique_ptr<TypeExpr>> args;
+  skipNewlines();
   if (check(TokenKind::RBracket)) {
     return args;
   }
   while (true) {
+    skipNewlines();
+    if (check(TokenKind::RBracket)) {
+      break;
+    }
     std::unique_ptr<TypeExpr> arg = parseTypeExpr();
     if (arg == nullptr) {
       return {};
     }
     args.push_back(std::move(arg));
+    skipNewlines();
     if (!match(TokenKind::Comma)) {
       break;
     }
   }
+  skipNewlines();
   return args;
 }
 
@@ -485,6 +546,32 @@ bool Parser::looksLikeGenericCall() const {
   return depth == 0 && index < tokens_.size() && tokens_[index].kind() == TokenKind::LParen;
 }
 
+bool Parser::looksLikeTypeApplication() const {
+  std::size_t index = current_;
+  int depth = 1;
+  bool colonAtTop = false;
+  while (index < tokens_.size() && depth > 0) {
+    const TokenKind kind = tokens_[index].kind();
+    if (kind == TokenKind::EndOfFile) {
+      return false;
+    }
+    if (kind == TokenKind::LBracket) {
+      ++depth;
+    } else if (kind == TokenKind::RBracket) {
+      --depth;
+    } else if (kind == TokenKind::Colon && depth == 1) {
+      colonAtTop = true;
+    }
+    ++index;
+  }
+  if (depth != 0 || colonAtTop || current_ >= tokens_.size()) {
+    return false;
+  }
+  const TokenKind first = tokens_[current_].kind();
+  return first == TokenKind::Identifier || first == TokenKind::Integer ||
+         first == TokenKind::KeywordNone;
+}
+
 std::unique_ptr<Expr> Parser::parseComprehension(std::unique_ptr<Expr> element) {
   if (!consume(TokenKind::KeywordFor, "expected 'for' in comprehension")) {
     return nullptr;
@@ -571,6 +658,7 @@ std::unique_ptr<Expr> Parser::parseListLiteral() {
     return nullptr;
   }
   const BoolScope enableCasts(allowAsCast_, true);
+  skipNewlines();
   std::vector<std::unique_ptr<Expr>> elements;
   if (!check(TokenKind::RBracket)) {
     std::unique_ptr<Expr> element = parseExpr();
@@ -579,20 +667,28 @@ std::unique_ptr<Expr> Parser::parseListLiteral() {
     }
     if (check(TokenKind::KeywordFor)) {
       std::unique_ptr<Expr> comprehension = parseComprehension(std::move(element));
-      if (comprehension == nullptr || !consume(TokenKind::RBracket, "expected ']' after comprehension")) {
+      if (comprehension == nullptr ||
+          !consume(TokenKind::RBracket, "expected ']' after comprehension")) {
         return nullptr;
       }
       return comprehension;
     }
     elements.push_back(std::move(element));
+    skipNewlines();
     while (match(TokenKind::Comma)) {
+      skipNewlines();
+      if (check(TokenKind::RBracket)) {
+        break;
+      }
       std::unique_ptr<Expr> next = parseExpr();
       if (next == nullptr) {
         return nullptr;
       }
       elements.push_back(std::move(next));
+      skipNewlines();
     }
   }
+  skipNewlines();
   if (!consume(TokenKind::RBracket, "expected ']' after list")) {
     return nullptr;
   }
@@ -606,25 +702,33 @@ std::unique_ptr<Expr> Parser::parseDictLiteral() {
     return nullptr;
   }
   const BoolScope enableCasts(allowAsCast_, true);
+  skipNewlines();
   std::vector<std::unique_ptr<Expr>> keys;
   std::vector<std::unique_ptr<Expr>> values;
   if (!check(TokenKind::RBrace)) {
     while (true) {
+      skipNewlines();
+      if (check(TokenKind::RBrace)) {
+        break;
+      }
       std::unique_ptr<Expr> key = parseExpr();
       if (key == nullptr || !consume(TokenKind::Colon, "expected ':' after dict key")) {
         return nullptr;
       }
+      skipNewlines();
       std::unique_ptr<Expr> value = parseExpr();
       if (value == nullptr) {
         return nullptr;
       }
       keys.push_back(std::move(key));
       values.push_back(std::move(value));
+      skipNewlines();
       if (!match(TokenKind::Comma)) {
         break;
       }
     }
   }
+  skipNewlines();
   if (!consume(TokenKind::RBrace, "expected '}' after dict")) {
     return nullptr;
   }
@@ -634,20 +738,35 @@ std::unique_ptr<Expr> Parser::parseDictLiteral() {
 
 ParsedCallArguments Parser::parseCallArguments() {
   ParsedCallArguments parsed;
+  const BoolScope enableCasts(allowAsCast_, true);
+  bool seenKeyword = false;
+  skipNewlines();
   if (check(TokenKind::RParen)) {
     return parsed;
   }
-  const BoolScope enableCasts(allowAsCast_, true);
-  bool seenKeyword = false;
   while (true) {
+    skipNewlines();
+    if (check(TokenKind::RParen)) {
+      break;
+    }
     if (match(TokenKind::DotDotDot)) {
       match(TokenKind::Comma);
+      skipNewlines();
       if (check(TokenKind::RParen)) {
         break;
       }
       continue;
     }
-    if (check(TokenKind::Identifier) && peekNth(1).kind() == TokenKind::Equal) {
+    if (match(TokenKind::StarStar)) {
+      seenKeyword = true;
+      NamedArgument keyword;
+      keyword.splat = true;
+      keyword.value = parseExpr();
+      if (keyword.value == nullptr) {
+        return {};
+      }
+      parsed.keyword.push_back(std::move(keyword));
+    } else if (check(TokenKind::Identifier) && peekNth(1).kind() == TokenKind::Equal) {
       seenKeyword = true;
       NamedArgument keyword;
       keyword.name = advance().spelling();
@@ -674,9 +793,11 @@ ParsedCallArguments Parser::parseCallArguments() {
       }
       parsed.positional.push_back(std::move(arg));
     }
+    skipNewlines();
     if (!match(TokenKind::Comma)) {
       break;
     }
+    skipNewlines();
   }
   return parsed;
 }
@@ -700,6 +821,22 @@ std::unique_ptr<Expr> Parser::parsePostfix() {
                                           std::move(expr), std::move(typeArgs),
                                           std::move(callArgs.positional), std::move(callArgs.keyword));
         continue;
+      }
+      if (expr->kind() == NodeKind::NameExpr) {
+        const std::string& ctor = static_cast<const NameExpr&>(*expr).name();
+        if ((ctor == "list" || ctor == "array" || ctor == "dict" || ctor == "Unique" ||
+             ctor == "Shared" || ctor == "Ptr") &&
+            looksLikeTypeApplication()) {
+          std::vector<std::unique_ptr<TypeExpr>> typeArgs = parseTypeArgList();
+          if (!consume(TokenKind::RBracket, "expected ']' after type arguments")) {
+            return nullptr;
+          }
+          expr = std::make_unique<CallExpr>(
+              SourceRange{expr->range().start, previous().range().end}, std::move(expr),
+              std::move(typeArgs), std::vector<std::unique_ptr<Expr>>{},
+              std::vector<NamedArgument>{});
+          continue;
+        }
       }
       std::unique_ptr<Expr> start;
       std::unique_ptr<Expr> stop;
@@ -1209,23 +1346,30 @@ std::vector<std::unique_ptr<Stmt>> Parser::parseSuite() {
   return body;
 }
 
-std::vector<std::string> Parser::parseDecoratorNames() {
-  std::vector<std::string> names;
+std::vector<std::unique_ptr<Expr>> Parser::parseDecoratorExprs() {
+  std::vector<std::unique_ptr<Expr>> exprs;
   while (match(TokenKind::At)) {
-    const std::string name = parseIdentifier("expected decorator name after '@'");
-    if (name.empty()) {
-      return names;
+    std::unique_ptr<Expr> expr;
+    if (check(TokenKind::KeywordStatic)) {
+      const Token& keyword = advance();
+      expr = std::make_unique<NameExpr>(keyword.range(), "static");
+    } else {
+      expr = parsePostfix();
     }
-    names.push_back(name);
+    if (expr == nullptr) {
+      diagnostics_->error(previous().range(), "expected decorator expression after '@'");
+      break;
+    }
+    exprs.push_back(std::move(expr));
     skipNewlines();
   }
-  return names;
+  return exprs;
 }
 
 void Parser::parseDecorators(bool& isPublic, bool& isPrivate) {
   isPublic = false;
   isPrivate = false;
-  const std::vector<std::string> names = parseDecoratorNames();
+  const std::vector<std::string> names = decoratorExprNames(parseDecoratorExprs());
   for (const std::string& name : names) {
     if (name == "public") {
       isPublic = true;
@@ -1241,7 +1385,8 @@ void Parser::parseDecorators(bool& isPublic, bool& isPrivate) {
 std::vector<std::string> Parser::parseNameList() {
   std::vector<std::string> names;
   names.push_back(parseIdentifier("expected name"));
-  while (match(TokenKind::Dot)) {
+  while (matchDot()) {
+    skipNewlines();
     names.push_back(parseIdentifier("expected name after '.'"));
   }
   return names;
@@ -1613,15 +1758,16 @@ std::unique_ptr<EnumDef> Parser::parseEnum() {
       break;
     }
     if (check(TokenKind::KeywordDef) || check(TokenKind::At)) {
-      const std::vector<std::string> decorators = parseDecoratorNames();
+      std::vector<std::unique_ptr<Expr>> decoratorExprs = parseDecoratorExprs();
+      const std::vector<std::string> decorators = decoratorExprNames(decoratorExprs);
       std::unique_ptr<FunctionDef> method = parseFunction({});
       if (method == nullptr) {
         synchronize();
         continue;
       }
       method->setOwnerClass(name);
-      method->setDecorators(decorators);
-      markPrivateFromDecorators(*method, decorators);
+      attachFunctionDecorators(*method, std::move(decoratorExprs));
+      markPrivateFromDecorators(*method, method->decorators());
       auto enumDef = std::make_unique<EnumDef>(keyword.range(), std::move(name), std::move(variants));
       // Collect remaining methods after this one by finishing the loop via a local vector.
       std::vector<std::unique_ptr<FunctionDef>> methods;
@@ -1631,7 +1777,8 @@ std::unique_ptr<EnumDef> Parser::parseEnum() {
         if (check(TokenKind::Dedent)) {
           break;
         }
-        const std::vector<std::string> more = parseDecoratorNames();
+        std::vector<std::unique_ptr<Expr>> moreExprs = parseDecoratorExprs();
+        const std::vector<std::string> more = decoratorExprNames(moreExprs);
         if (!check(TokenKind::KeywordDef)) {
           diagnostics_->error(peek().range(), "expected method after enum variants");
           synchronize();
@@ -1643,8 +1790,8 @@ std::unique_ptr<EnumDef> Parser::parseEnum() {
           continue;
         }
         next->setOwnerClass(enumDef->name());
-        next->setDecorators(more);
-        markPrivateFromDecorators(*next, more);
+        attachFunctionDecorators(*next, std::move(moreExprs));
+        markPrivateFromDecorators(*next, next->decorators());
         methods.push_back(std::move(next));
       }
       if (!consume(TokenKind::Dedent, "expected dedent after enum body")) {
@@ -1851,11 +1998,20 @@ std::unique_ptr<FunctionDef> Parser::parsePropertyAccessor(std::string name, Sou
     if (!consume(TokenKind::RParen, "expected ')' after setter parameters")) {
       return nullptr;
     }
-    for (ParamDecl& param : extra) {
-      params.push_back(std::move(param));
+    std::size_t start = 0;
+    if (!extra.empty() && extra[0].name == "self") {
+      start = 1;
+    }
+    for (std::size_t index = start; index < extra.size(); ++index) {
+      params.push_back(std::move(extra[index]));
     }
   } else if (match(TokenKind::LParen)) {
+    std::vector<ParamDecl> extra = parseParams();
     if (!consume(TokenKind::RParen, "expected ')' after '.get'")) {
+      return nullptr;
+    }
+    if (!extra.empty() && !(extra.size() == 1 && extra[0].name == "self")) {
+      diagnostics_->error(previous().range(), "getter '" + name + ".get' takes only self");
       return nullptr;
     }
   }
@@ -1894,19 +2050,31 @@ std::unique_ptr<ClassDef> Parser::parseClass() {
   std::string name = parseIdentifier(isStruct ? "expected struct name" : "expected class name");
   std::vector<std::string> typeParams = parseTypeParamList();
   std::vector<std::string> bases;
+  std::vector<std::unique_ptr<TypeExpr>> baseTypes;
   if (match(TokenKind::LParen)) {
     if (isStruct) {
       diagnostics_->error(peek().range(), "structs cannot inherit; use class");
       return nullptr;
     }
+    skipNewlines();
     if (!check(TokenKind::RParen)) {
       while (true) {
-        bases.push_back(parseIdentifier("expected base class name"));
+        skipNewlines();
+        std::unique_ptr<TypeExpr> baseType = parseTypeExpr();
+        if (baseType == nullptr) {
+          return nullptr;
+        }
+        if (!baseType->name().empty()) {
+          bases.push_back(baseType->name());
+        }
+        baseTypes.push_back(std::move(baseType));
+        skipNewlines();
         if (!match(TokenKind::Comma)) {
           break;
         }
       }
     }
+    skipNewlines();
     if (!consume(TokenKind::RParen, "expected ')' after base classes")) {
       return nullptr;
     }
@@ -1925,14 +2093,17 @@ std::unique_ptr<ClassDef> Parser::parseClass() {
     if (check(TokenKind::Dedent)) {
       break;
     }
-    const std::vector<std::string> decorators = parseDecoratorNames();
+    std::vector<std::unique_ptr<Expr>> decoratorExprs = parseDecoratorExprs();
+    const std::vector<std::string> decorators = decoratorExprNames(decoratorExprs);
     bool markedPrivate = false;
     bool markedAbstract = false;
     bool markedOverride = false;
+    bool markedStatic = false;
     for (const std::string& decorator : decorators) {
       markedPrivate = markedPrivate || decorator == "private";
       markedAbstract = markedAbstract || decorator == "abstract";
       markedOverride = markedOverride || decorator == "override";
+      markedStatic = markedStatic || decorator == "static";
     }
     if (check(TokenKind::Dedent)) {
       break;
@@ -1943,6 +2114,11 @@ std::unique_ptr<ClassDef> Parser::parseClass() {
       }
       continue;
     }
+    if (check(TokenKind::KeywordClass) || check(TokenKind::KeywordStruct)) {
+      diagnostics_->error(peek().range(), "nested types must be declared at module scope");
+      synchronize();
+      continue;
+    }
     if (check(TokenKind::KeywordDef)) {
       std::unique_ptr<FunctionDef> method = parseFunction({});
       if (method == nullptr) {
@@ -1950,14 +2126,16 @@ std::unique_ptr<ClassDef> Parser::parseClass() {
         continue;
       }
       method->setOwnerClass(name);
-      method->setDecorators(decorators);
+      attachFunctionDecorators(*method, std::move(decoratorExprs));
       method->setAbstract(markedAbstract);
       method->setOverride(markedOverride);
-      markPrivateFromDecorators(*method, decorators);
+      markPrivateFromDecorators(*method, method->decorators());
       methods.push_back(std::move(method));
       continue;
     }
-    if (check(TokenKind::Identifier) && peekNth(1).kind() == TokenKind::Dot) {
+    if (check(TokenKind::Identifier) && peekNth(1).kind() == TokenKind::Dot &&
+        peekNth(2).kind() == TokenKind::Identifier &&
+        (peekNth(2).spelling() == "get" || peekNth(2).spelling() == "set")) {
       const SourceRange nameRange = peek().range();
       std::string property = parseIdentifier("expected property name");
       std::unique_ptr<FunctionDef> accessor = parsePropertyAccessor(std::move(property), nameRange);
@@ -1966,13 +2144,13 @@ std::unique_ptr<ClassDef> Parser::parseClass() {
         continue;
       }
       accessor->setOwnerClass(name);
-      accessor->setDecorators(decorators);
-      markPrivateFromDecorators(*accessor, decorators);
+      attachFunctionDecorators(*accessor, std::move(decoratorExprs));
+      markPrivateFromDecorators(*accessor, accessor->decorators());
       methods.push_back(std::move(accessor));
       continue;
     }
     FieldDecl field;
-    field.isStatic = match(TokenKind::KeywordStatic);
+    field.isStatic = markedStatic || match(TokenKind::KeywordStatic);
     field.range = peek().range();
     field.name = parseIdentifier("expected field or method");
     if (field.name.empty() || !consume(TokenKind::Colon, "expected ':' after field name")) {
@@ -2003,6 +2181,7 @@ std::unique_ptr<ClassDef> Parser::parseClass() {
   }
   auto def = std::make_unique<ClassDef>(keyword.range(), std::move(name), std::move(fields),
                                         std::move(methods), std::move(bases), std::move(typeParams));
+  def->setBaseTypes(std::move(baseTypes));
   def->setStruct(isStruct);
   return def;
 }
@@ -2029,18 +2208,27 @@ std::unique_ptr<ImportStmt> Parser::parseFromImport() {
   }
   bool star = false;
   std::vector<std::string> names;
+  std::vector<std::string> nameAliases;
   if (match(TokenKind::Star)) {
     star = true;
   } else {
-    names.push_back(parseIdentifier("expected imported name"));
-    while (match(TokenKind::Comma)) {
+    while (true) {
       names.push_back(parseIdentifier("expected imported name"));
+      if (match(TokenKind::KeywordAs)) {
+        nameAliases.push_back(parseIdentifier("expected alias after 'as'"));
+      } else {
+        nameAliases.push_back(names.back());
+      }
+      if (!match(TokenKind::Comma)) {
+        break;
+      }
     }
   }
   if (!finishLine()) {
     return nullptr;
   }
-  return std::make_unique<ImportStmt>(keyword.range(), std::move(path), "", std::move(names), star);
+  return std::make_unique<ImportStmt>(keyword.range(), std::move(path), "", std::move(names), star,
+                                      std::move(nameAliases));
 }
 
 std::unique_ptr<TypeAlias> Parser::parseTypeAlias() {
@@ -2057,7 +2245,8 @@ std::unique_ptr<TypeAlias> Parser::parseTypeAlias() {
 }
 
 std::unique_ptr<Stmt> Parser::parseStatement() {
-  const std::vector<std::string> decorators = parseDecoratorNames();
+  std::vector<std::unique_ptr<Expr>> decoratorExprs = parseDecoratorExprs();
+  const std::vector<std::string> decorators = decoratorExprNames(decoratorExprs);
   if (check(TokenKind::KeywordExtern)) {
     advance();
     if (!consume(TokenKind::String, "expected ABI name string after extern")) {
@@ -2087,9 +2276,9 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
   if (check(TokenKind::KeywordDef)) {
     std::unique_ptr<FunctionDef> function = parseFunction({});
     if (function != nullptr) {
-      function->setDecorators(decorators);
-      markPrivateFromDecorators(*function, decorators);
-      for (const std::string& decorator : decorators) {
+      attachFunctionDecorators(*function, std::move(decoratorExprs));
+      markPrivateFromDecorators(*function, function->decorators());
+      for (const std::string& decorator : function->decorators()) {
         if (decorator == "abstract") {
           function->setAbstract(true);
         }
@@ -2104,8 +2293,9 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
     std::unique_ptr<ClassDef> classDef = parseClass();
     if (classDef != nullptr) {
       classDef->setDecorators(decorators);
+      classDef->setDecoratorExprs(std::move(decoratorExprs));
       markPrivateFromDecorators(*classDef, decorators);
-      for (const std::string& decorator : decorators) {
+      for (const std::string& decorator : classDef->decorators()) {
         if (decorator == "frozen") {
           classDef->setFrozen(true);
         }
@@ -2124,8 +2314,9 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
     std::unique_ptr<EnumDef> enumDef = parseEnum();
     if (enumDef != nullptr) {
       enumDef->setDecorators(decorators);
+      enumDef->setDecoratorExprs(std::move(decoratorExprs));
       markPrivateFromDecorators(*enumDef, decorators);
-      for (const std::string& decorator : decorators) {
+      for (const std::string& decorator : enumDef->decorators()) {
         if (decorator == "flags") {
           enumDef->setFlags(true);
         }

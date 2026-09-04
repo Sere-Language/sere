@@ -86,13 +86,16 @@ function findSere(workspaceFolder, forLsp) {
     projectRoot ? path.join(projectRoot, "venv", "bin", name) : "",
     workspaceFolder ? path.join(workspaceFolder, "bin", name) : "",
   ];
+  const installed = process.env.LOCALAPPDATA
+    ? path.join(process.env.LOCALAPPDATA, "Programs", "Sere", "bin", name)
+    : "";
   const buildBins = [
     workspaceFolder
       ? path.join(workspaceFolder, "build", "windows-clang-cl-relwithdebinfo", "bin", name)
       : "",
     workspaceFolder ? path.join(workspaceFolder, "build", "bin", name) : "",
   ];
-  const order = forLsp ? buildBins.concat(projectBins) : projectBins.concat(buildBins);
+  const order = projectBins.concat(buildBins, [installed]);
   const found = firstExisting(order);
   return found || compilerName();
 }

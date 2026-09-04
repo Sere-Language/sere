@@ -255,6 +255,11 @@ const Node* searchStmt(const Stmt& stmt, std::uint32_t offset) {
   }
   case NodeKind::ClassDef: {
     const auto& classDef = static_cast<const ClassDef&>(stmt);
+    for (const std::unique_ptr<TypeExpr>& baseType : classDef.baseTypes()) {
+      if (baseType != nullptr && rangeContains(baseType->range(), offset)) {
+        return baseType.get();
+      }
+    }
     for (const FieldDecl& field : classDef.fields()) {
       if (field.type != nullptr && rangeContains(field.type->range(), offset)) {
         return field.type.get();

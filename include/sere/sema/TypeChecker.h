@@ -46,12 +46,15 @@ struct SemanticSymbol {
   std::string name;
   std::string kind;
   std::string typeDisplay;
+  const Type* type = nullptr;
   std::string container;
   std::vector<std::string> paramNames{};
   std::vector<std::string> paramTypes{};
   std::string returnType{};
   SourceLocation location{};
   SourceRange range{};
+  SourceRange scopeRange{};
+  std::size_t scopeDepth = 0;
   bool navigable = true;
   std::string snippet{};
 };
@@ -61,20 +64,19 @@ public:
   TypeChecker(TypeContext& types, DiagnosticEngine& diagnostics);
 
   [[nodiscard]] bool check(Module& module);
-  void setModuleInfo(std::string file, std::string name, std::string package, std::string doc,
-                     bool debug);
+  void setModuleInfo(
+      std::string file, std::string name, std::string package, std::string doc, bool debug);
   [[nodiscard]] const std::vector<SemanticSymbol>& symbols() const;
+  [[nodiscard]] std::vector<const SemanticSymbol*> visibleSymbolsAt(std::uint32_t offset) const;
   bool importSymbol(const std::string& name, Symbol symbol, SourceLocation location);
   [[nodiscard]] const Type* typeOfName(std::string_view name) const;
   [[nodiscard]] const Type* typeOfPath(const std::vector<std::string>& parts) const;
 
 private:
-  void pushScope();
+  void pushScope(SourceRange range = {});
   void popScope();
-  [[nodiscard]] bool declare(const std::string& name,
-                             Symbol symbol,
-                             SourceLocation location,
-                             bool navigable = true);
+  [[nodiscard]] bool
+  declare(const std::string& name, Symbol symbol, SourceLocation location, bool navigable = true);
   [[nodiscard]] Symbol* lookup(const std::string& name);
   void registerBuiltins();
   void injectModuleGlobals();
@@ -86,6 +88,16 @@ private:
   bool collectFunctions(Module& module);
   bool collectMacros(Module& module);
   bool collectMethods(Module& module);
+  bool bindLocalClassImports(Module& module);
+  bool collectExports(Module& module);
+  bool applyDecorators(Module& module);
+  bool applyFunctionDecorators(FunctionDef& function);
+  bool applyClassDecorators(ClassDef& classDef);
+  [[nodiscard]] const Type* applyDecoratorChain(std::vector<std::unique_ptr<Expr>>& exprs,
+                                                const Type* target,
+                                                SourceRange range);
+  [[nodiscard]] const Type*
+  callDecorator(const Type* wrapper, const Type* target, SourceRange range);
   void inheritBaseMethods(const Type* record, const Type* base);
   bool checkBodies(Module& module);
   bool checkFunctionBody(FunctionDef& function);
@@ -99,8 +111,9 @@ private:
                                              const std::vector<std::unique_ptr<TypeExpr>>& args,
                                              SourceRange range,
                                              bool reportMissing);
-  [[nodiscard]] const Type* resolveParamType(const FunctionDef& function,
-                                             std::size_t index);
+  [[nodiscard]] const Type* resolveTypeFromExpr(Expr& expr, bool reportMissing);
+  [[nodiscard]] const Type* classType(const std::string& name) const;
+  [[nodiscard]] const Type* resolveParamType(const FunctionDef& function, std::size_t index);
   [[nodiscard]] const Type* resolveParamDeclType(const ParamDecl& param);
   [[nodiscard]] bool validateParamList(const std::vector<ParamDecl>& params, SourceRange range);
   [[nodiscard]] bool checkFunctionArguments(CallExpr& expr,
@@ -116,6 +129,8 @@ private:
   [[nodiscard]] const Type* checkCastValue(Expr& value, const Type* target, SourceRange range);
   [[nodiscard]] const Type* checkConstructor(CallExpr& expr, const Type* record);
   [[nodiscard]] const Type* checkMethodCall(CallExpr& expr);
+  [[nodiscard]] const Type*
+  checkBuiltinMethod(CallExpr& expr, const Type* objectType, const std::string& name);
   [[nodiscard]] const Type* checkMember(MemberExpr& expr);
   [[nodiscard]] const Type* checkIndex(IndexExpr& expr);
   [[nodiscard]] const Type* checkListLiteral(ListLiteral& expr);
@@ -125,8 +140,8 @@ private:
   [[nodiscard]] const Type* iterableElementType(Expr& iterable);
   bool bindCollectionInit(Expr& init, const Type* dest);
   [[nodiscard]] bool isClassName(const Expr& expr);
-  [[nodiscard]] const Type* rewriteDunderBinary(BinaryExpr& expr, const Type* left,
-                                                const Type* right);
+  [[nodiscard]] const Type*
+  rewriteDunderBinary(BinaryExpr& expr, const Type* left, const Type* right);
   [[nodiscard]] const Type* checkBinary(BinaryExpr& expr);
   [[nodiscard]] const Type* checkUnary(UnaryExpr& expr);
   [[nodiscard]] const Type* checkDeref(UnaryExpr& expr, const Type* operand);
@@ -139,6 +154,8 @@ private:
   [[nodiscard]] const Type* checkWalrus(WalrusExpr& expr);
   [[nodiscard]] const Type* checkLambda(LambdaExpr& expr);
   [[nodiscard]] const Type* checkIndirectCall(CallExpr& expr, const Type* functionType);
+  [[nodiscard]] const Type* checkCallableCall(CallExpr& expr, const Type* constraint);
+  [[nodiscard]] bool callableSatisfies(const Type* from, const Type* to) const;
   bool checkWith(WithStmt& statement, const Type* expectedReturn);
   [[nodiscard]] std::optional<bool> constBool(const Expr& expr) const;
   bool checkIf(IfStmt& statement, const Type* expectedReturn);
@@ -153,6 +170,7 @@ private:
   bool checkBreak(const BreakStmt& statement);
   bool checkContinue(const ContinueStmt& statement);
   [[nodiscard]] bool isAssignable(const Type* from, const Type* to) const;
+  [[nodiscard]] bool ensureLiteralFits(const Expr& expr, const Type* dest);
   [[nodiscard]] bool canCast(const Type* from, const Type* to) const;
   [[nodiscard]] bool isPrintable(const Type* type) const;
   [[nodiscard]] bool isVoidLike(const Type* type) const;
@@ -170,6 +188,7 @@ private:
   TypeContext* types_;
   DiagnosticEngine* diagnostics_;
   std::vector<std::unordered_map<std::string, Symbol>> scopes_{};
+  std::vector<SourceRange> scopeRanges_{};
   std::vector<SemanticSymbol> symbols_{};
   int loopDepth_ = 0;
   std::string currentClass_{};
@@ -184,6 +203,9 @@ private:
   std::string currentPropertyName_{};
   int lambdaDepth_ = 0;
   int lambdaCounter_ = 0;
+  int nestedFunctionCounter_ = 0;
+  FunctionDef* nestedFunction_ = nullptr;
+  std::size_t nestedOuterScope_ = 0;
 };
 
-}  // namespace sere
+} // namespace sere

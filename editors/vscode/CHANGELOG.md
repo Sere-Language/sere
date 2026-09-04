@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.2.7
+
+- Scope-aware completion hides locals and parameters from unrelated functions and blocks
+- Type-directed member completion for string, list, and dictionary literals
+- Method completions insert calls with named tab stops, such as `replace(${1:old}, ${2:new})`
+
+## 0.2.6
+
+- Ships with Sere **pre-0.1.4**
+- Python-style custom decorators (`@fn`, `@fn(args)`, `@Class.method`)
+
+## 0.2.5
+
+- Ships with Sere **pre-0.1.3**
+- Language server is the installed `sere.exe`; run `sere --update` to refresh `%LOCALAPPDATA%\\Programs\\Sere`
+
+## 0.2.4
+
+- Ships with Sere **pre1-0.1.2**
+- `gl.Window` stays the GL class when a local `Window` exists (`import gl` does not alias names)
+
+## 0.2.3
+
+- Ships with Sere **pre1-0.1.2**
+- Multiline list/dict/call literals (newlines and trailing commas)
+- `gl.Window` and other dotted imported types resolve as the class, not a smashed hover string
+
+## 0.2.2
+
+- Ships with Sere **pre-0.1.2**
+- Completions for `Callable`, `Function`, and `Class`
+
 ## 0.2.1
 
 - Ships with Sere **pre-0.1.1**
