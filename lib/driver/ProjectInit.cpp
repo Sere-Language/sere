@@ -59,10 +59,15 @@ void copyIfExists(const std::filesystem::path& from, const std::filesystem::path
   }
   if (std::filesystem::is_directory(from)) {
     std::filesystem::create_directories(to, error);
-    std::filesystem::copy(from, to,
-                          std::filesystem::copy_options::recursive |
-                              std::filesystem::copy_options::overwrite_existing,
-                          error);
+    // Copy entries explicitly: the destination is the contents directory.
+    for (const auto& entry : std::filesystem::directory_iterator(from)) {
+      // Ignore legacy duplicated stdlib trees, preserving real module directories.
+      if (from.filename() == "stdlib" && entry.path().filename() == "stdlib" &&
+          std::filesystem::exists(entry.path() / "prelude.sere")) {
+        continue;
+      }
+      copyIfExists(entry.path(), to / entry.path().filename());
+    }
     return;
   }
   std::filesystem::create_directories(to.parent_path(), error);
@@ -85,25 +90,48 @@ void makeExecutable(const std::filesystem::path& path) {
                                std::filesystem::perm_options::add, error);
 }
 
+[[nodiscard]] std::string escapeToml(std::string_view text) {
+  std::string result;
+  for (char ch : text) {
+    switch (ch) {
+    case '\\': result += "\\\\"; break;
+    case '"': result += "\\\""; break;
+    case '\n': result += "\\n"; break;
+    case '\r': result += "\\r"; break;
+    case '\t': result += "\\t"; break;
+    default: result += ch; break;
+    }
+  }
+  return result;
+}
+
 [[nodiscard]] std::string tomlText(const std::string& name) {
   std::string output = name;
 #ifdef _WIN32
   output += ".exe";
 #endif
-  return "kind = \"app\"\n"
+  return "# Sere project configuration. Paths are relative to this file.\n"
+         "[project]\n"
+         "version = \"0.1.0\"\n"
+         "kind = \"app\"\n"
          "name = \"" +
-         name +
+         escapeToml(name) +
          "\"\n"
+         "\n[toolchain]\n"
          "sere = \"" SERE_VERSION_STRING "\"\n"
+         "\n[paths]\n"
          "src = \"src\"\n"
          "entry = \"src/main.sere\"\n"
          "libs = \"libs\"\n"
          "stdlib = \"venv/stdlib\"\n"
+         "\n[build]\n"
          "output = \"bin/" +
-         output +
+         escapeToml(output) +
          "\"\n"
          "opt = \"O0\"\n"
-         "native = false\n";
+         "# Build loose C/C++ files in libs/native when enabled.\n"
+         "native = false\n"
+         "\n# Custom tool settings belong in [tool.<name>] tables.\n";
 }
 
 [[nodiscard]] bool writeActivateScripts(const std::filesystem::path& root) {
@@ -242,8 +270,10 @@ if ($env:SERE_ACTIVE) {
 $Name = Split-Path $Root -Leaf
 $toml = Join-Path $Root 'sere.toml'
 if (Test-Path $toml) {
+  $Section = ''
   foreach ($line in Get-Content $toml) {
-    if ($line -match '^\s*name\s*=\s*"?([^"#]+)"?') { $Name = $Matches[1].Trim() }
+    if ($line -match '^\s*\[([^]]+)\]') { $Section = $Matches[1]; continue }
+    if ($Section -in @('', 'project') -and $line -match '^\s*name\s*=\s*"?([^"#]+)"?') { $Name = $Matches[1].Trim() }
   }
 }
 
@@ -656,6 +686,15 @@ void copyToolchain(const std::filesystem::path& compilerDir, const std::filesyst
   copyIfExists(compilerDir / "sere_rt.a", venvBin / "sere_rt.a");
   copyIfExists(compilerDir / "libsere_rt.a", venvBin / "libsere_rt.a");
   copyNamed(compilerDir, "sere", venvBin);
+  for (const char* file : {"sere_qt6.lib", "sere_icon.res"}) {
+    copyIfExists(compilerDir / file, venvBin / file);
+  }
+  for (const auto& entry : std::filesystem::directory_iterator(compilerDir)) {
+    if (entry.path().extension() == ".dll" || entry.path().extension() == ".so") {
+      copyIfExists(entry.path(), venvBin / entry.path().filename());
+    }
+  }
+  copyIfExists(compilerDir / "platforms", venvBin / "platforms");
   copyIfExists(compilerDir / "sere-path.ps1", root / "bin" / "sere-path.ps1");
   copyIfExists(compilerDir / "sere-path.cmd", root / "bin" / "sere-path.cmd");
   copyIfExists(compilerDir / "sere-path.sh", root / "bin" / "sere-path.sh");
@@ -669,32 +708,39 @@ void copyToolchain(const std::filesystem::path& compilerDir, const std::filesyst
   const std::filesystem::path apiNextToCompiler =
       compilerDir / "include" / "sere" / "api" / "sere_mod.h";
   const std::filesystem::path apiFromSource =
-      std::filesystem::current_path() / "include" / "sere" / "api" / "sere_mod.h";
+      compilerDir.parent_path() / "include" / "sere" / "api" / "sere_mod.h";
   copyIfExists(std::filesystem::exists(apiNextToCompiler) ? apiNextToCompiler : apiFromSource,
                root / "venv" / "include" / "sere" / "api" / "sere_mod.h");
   const std::filesystem::path gcNextToCompiler =
       compilerDir / "include" / "sere" / "api" / "sere_gc.h";
   const std::filesystem::path gcFromSource =
-      std::filesystem::current_path() / "include" / "sere" / "api" / "sere_gc.h";
+      compilerDir.parent_path() / "include" / "sere" / "api" / "sere_gc.h";
   copyIfExists(std::filesystem::exists(gcNextToCompiler) ? gcNextToCompiler : gcFromSource,
                root / "venv" / "include" / "sere" / "api" / "sere_gc.h");
 }
 
 [[nodiscard]] std::string libraryTomlText(const std::string& name) {
-  return "kind = \"lib\"\n"
+  return "# Sere library configuration. Paths are relative to this file.\n"
+         "[project]\n"
+         "kind = \"lib\"\n"
          "name = \"" +
-         name +
+         escapeToml(name) +
          "\"\n"
          "version = \"0.1.0\"\n"
+         "\n[toolchain]\n"
          "sere = \"" SERE_VERSION_STRING "\"\n"
+         "\n[paths]\n"
          "src = \"src\"\n"
          "entry = \"src/lib.sere\"\n"
          "libs = \"libs\"\n"
+         "\n[build]\n"
          "output = \"dist/" +
-         name +
+         escapeToml(name) +
          ".slib\"\n"
          "opt = \"O0\"\n"
-         "native = false\n";
+         "# Build loose C/C++ files in libs/native when enabled.\n"
+         "native = false\n"
+         "\n# Custom tool settings belong in [tool.<name>] tables.\n";
 }
 
 [[nodiscard]] bool writeLibraryScaffold(const std::filesystem::path& root, const std::string& name) {
@@ -962,9 +1008,13 @@ bool patchTomlSereVersion(const std::filesystem::path& tomlPath, const std::stri
   std::ostringstream output;
   std::string line;
   bool replaced = false;
+  std::string section;
   while (std::getline(input, line)) {
     const std::string trimmed = trimCopy(line);
-    if (trimmed.rfind("sere", 0) == 0) {
+    if (!trimmed.empty() && trimmed.front() == '[') {
+      section = trimmed.substr(0, trimmed.find(']') + 1);
+    }
+    if ((section.empty() || section == "[toolchain]") && trimmed.rfind("sere", 0) == 0) {
       const std::size_t eq = trimmed.find('=');
       if (eq != std::string::npos && trimCopy(trimmed.substr(0, eq)) == "sere") {
         output << "sere = \"" << version << "\"\n";
@@ -975,7 +1025,7 @@ bool patchTomlSereVersion(const std::filesystem::path& tomlPath, const std::stri
     output << line << '\n';
   }
   if (!replaced) {
-    output << "sere = \"" << version << "\"\n";
+    return writeKeyedFile(tomlPath, "sere = \"" + version + "\"\n" + output.str());
   }
   return writeKeyedFile(tomlPath, output.str());
 }

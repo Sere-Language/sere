@@ -1249,7 +1249,7 @@ std::unique_ptr<Expr> Parser::parseFString() {
     if (inner[index] == '{') {
       if (!literal.empty()) {
         StringPart part;
-        part.literal = std::move(literal);
+        part.literal = unescapeStringBody(literal);
         parts.push_back(std::move(part));
         literal.clear();
       }
@@ -1293,7 +1293,7 @@ std::unique_ptr<Expr> Parser::parseFString() {
   }
   if (!literal.empty() || parts.empty()) {
     StringPart part;
-    part.literal = std::move(literal);
+    part.literal = unescapeStringBody(literal);
     parts.push_back(std::move(part));
   }
   return std::make_unique<InterpolatedStringExpr>(token.range(), std::move(parts));

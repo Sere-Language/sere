@@ -35,6 +35,7 @@ const char* sere_str_i64_data(int64_t value, int64_t* out_len);
 const char* sere_str_bool_data(int8_t value, int64_t* out_len);
 const char* sere_str_ptr_data(const void* pointer, int64_t* out_len);
 const char* sere_str_f64_data(double value, int64_t* out_len);
+const char* sere_str_repr_data(const char* data, int64_t len, int64_t* out_len);
 const char* sere_str_concat_data(const char* left, int64_t left_len, const char* right,
                                 int64_t right_len, int64_t* out_len);
 void* sere_alloc(uint64_t size);
@@ -557,4 +558,3 @@ void sere_http_close(void* server);
 #ifdef __cplusplus
 }
 #endif
-

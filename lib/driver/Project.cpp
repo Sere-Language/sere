@@ -41,10 +41,26 @@ namespace {
 
 [[nodiscard]] std::string unquote(std::string_view text) {
   const std::string trimmed = trimCopy(text);
-  if (trimmed.size() >= 2 && trimmed.front() == '"' && trimmed.back() == '"') {
+  if (trimmed.size() < 2) return trimmed;
+  if (trimmed.front() == '\'' && trimmed.back() == '\'') {
     return trimmed.substr(1, trimmed.size() - 2);
   }
-  return trimmed;
+  if (trimmed.front() != '"' || trimmed.back() != '"') return trimmed;
+  std::string value;
+  for (std::size_t i = 1; i + 1 < trimmed.size(); ++i) {
+    if (trimmed[i] == '\\' && i + 2 < trimmed.size()) {
+      const char escaped = trimmed[++i];
+      switch (escaped) {
+      case 'n': value += '\n'; break;
+      case 'r': value += '\r'; break;
+      case 't': value += '\t'; break;
+      case 'b': value += '\b'; break;
+      case 'f': value += '\f'; break;
+      default: value += escaped; break;
+      }
+    } else value += trimmed[i];
+  }
+  return value;
 }
 
 [[nodiscard]] std::filesystem::path resolvePath(const std::filesystem::path& root,
@@ -258,6 +274,7 @@ void collectLooseNativeSources(const std::filesystem::path& directory,
                  << '\n';
     return 0;
   }
+  applyHostLinkEnvironment();
   std::vector<std::filesystem::path> objects;
   for (const std::filesystem::path& source : sources) {
 #ifdef _WIN32
@@ -265,7 +282,10 @@ void collectLooseNativeSources(const std::filesystem::path& directory,
 #else
     const std::filesystem::path object = nativeDir / (source.stem().string() + ".o");
 #endif
-    const std::vector<std::string> compile{*clang, "-c", source.string(), "-o", object.string()};
+    std::vector<std::string> compile{*clang, "-c", source.string(), "-o", object.string()};
+#ifdef _WIN32
+    compile.push_back("-fms-runtime-lib=static");
+#endif
     if (runProcess(*clang, compile) != 0) {
       return 1;
     }
@@ -666,9 +686,25 @@ bool loadProjectManifest(const std::filesystem::path& root, ProjectManifest& man
   manifest.output.clear();
 
   std::string line;
+  std::string section;
   while (std::getline(input, line)) {
+    // Strip comments only outside quoted strings.
+    char quote = 0;
+    bool escaped = false;
+    for (std::size_t i = 0; i < line.size(); ++i) {
+      const char ch = line[i];
+      if (escaped) { escaped = false; continue; }
+      if (quote == '"' && ch == '\\') { escaped = true; continue; }
+      if (quote) { if (ch == quote) quote = 0; }
+      else if (ch == '"' || ch == '\'') quote = ch;
+      else if (ch == '#') { line.resize(i); break; }
+    }
     const std::string trimmed = trimCopy(line);
-    if (trimmed.empty() || trimmed.front() == '#' || trimmed.front() == '[') {
+    if (!trimmed.empty() && trimmed.front() == '[') {
+      section = trimmed;
+      continue;
+    }
+    if (trimmed.empty()) {
       continue;
     }
     const std::size_t eq = trimmed.find('=');
@@ -677,7 +713,12 @@ bool loadProjectManifest(const std::filesystem::path& root, ProjectManifest& man
     }
     const std::string key = trimCopy(trimmed.substr(0, eq));
     const std::string value = unquote(trimmed.substr(eq + 1));
-    applyTomlKey(manifest, key, value);
+    const bool known = section.empty() ||
+        (section == "[project]" && (key == "name" || key == "version" || key == "kind")) ||
+        (section == "[toolchain]" && key == "sere") ||
+        (section == "[paths]" && (key == "src" || key == "entry" || key == "libs" || key == "stdlib")) ||
+        (section == "[build]" && (key == "output" || key == "opt" || key == "native"));
+    if (known) applyTomlKey(manifest, key, value);
   }
   manifest.src = resolvePath(root, manifest.src);
   manifest.entry = resolvePath(root, manifest.entry);

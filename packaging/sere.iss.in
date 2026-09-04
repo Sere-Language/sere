@@ -19,7 +19,6 @@ DefaultDirName={localappdata}\Programs\Sere
 DefaultGroupName=Sere
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=@OUTPUT_DIR@
 OutputBaseFilename=@OUTPUT_BASE@
 Compression=lzma2
@@ -39,13 +38,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "adduserpath"; Description: "Add sere to the user PATH"; GroupDescription: "Environment:"; Flags: checkedonce
-Name: "addsystempath"; Description: "Add sere to the system PATH (requires Administrator)"; GroupDescription: "Environment:"; Flags: unchecked
-Name: "llvm"; Description: "Install LLVM {#LlvmVersion} toolchain (required to compile)"; GroupDescription: "Toolchains:"; Flags: checkedonce
-Name: "msvc"; Description: "Install C++ build tools / Windows SDK if missing (required to link)"; GroupDescription: "Toolchains:"; Flags: checkedonce
 Name: "startmenu"; Description: "Create Start Menu shortcuts"; GroupDescription: "Shortcuts:"; Flags: checkedonce
 Name: "associate"; Description: "Associate .sere files with Sere"; GroupDescription: "File types:"; Flags: checkedonce
 #if HasVsix
-Name: "vscodeext"; Description: "Install the Sere editor extension (VS Code / Cursor) with language server"; GroupDescription: "Editor:"; Flags: checkedonce
+Name: "vscodeext"; Description: "Install the Sere editor extension (VS Code / Cursor) with language server"; GroupDescription: "Editor:"; Flags: unchecked
 #endif
 #if HasQt
 Name: "qt6"; Description: "Install Qt6 GUI runtime (needed for import qt6)"; GroupDescription: "Optional libraries:"; Flags: checkedonce
@@ -56,7 +52,7 @@ Source: "@PAYLOAD_DIR@\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion recurs
 Source: "@PAYLOAD_DIR@\stdlib\*"; DestDir: "{app}\stdlib"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "@PAYLOAD_DIR@\include\*"; DestDir: "{app}\include"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "@PAYLOAD_DIR@\packaging\*"; DestDir: "{app}\packaging"; Flags: ignoreversion
-Source: "@PAYLOAD_DIR@\toolchains\*"; DestDir: "{app}\toolchains"; Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: llvm
+Source: "@PAYLOAD_DIR@\toolchains\*"; DestDir: "{app}\toolchains"; Flags: ignoreversion recursesubdirs createallsubdirs
 #if HasVsix
 Source: "@PAYLOAD_DIR@\editors\*"; DestDir: "{app}\editors"; Flags: ignoreversion
 #endif
@@ -64,20 +60,22 @@ Source: "@PAYLOAD_DIR@\editors\*"; DestDir: "{app}\editors"; Flags: ignoreversio
 Source: "@PAYLOAD_DIR@\qt6\*"; DestDir: "{app}\bin"; Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: qt6
 #endif
 
+Source: "@PAYLOAD_DIR@\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "@PAYLOAD_DIR@\README.md"; DestDir: "{app}"; Flags: ignoreversion
+
+Source: "@PAYLOAD_DIR@\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
+
 [Icons]
 Name: "{group}\Sere"; Filename: "{cmd}"; Parameters: "/K ""set PATH={app}\bin;%PATH%&& set SERE_LLVM_DIR={app}\toolchains\llvm-{#LlvmVersion}&& set SERE_STDLIB={app}\stdlib&& echo Sere {#MyAppVersion}&& sere --version"""; WorkingDir: "{app}"; Tasks: startmenu
 Name: "{group}\Uninstall Sere"; Filename: "{uninstallexe}"; Tasks: startmenu
 
 [Registry]
-Root: HKCU; Subkey: "Environment"; ValueType: string; ValueName: "SERE_STDLIB"; ValueData: "{app}\stdlib"; Flags: uninsdeletevalue
-Root: HKCU; Subkey: "Environment"; ValueType: string; ValueName: "SERE_LLVM_DIR"; ValueData: "{app}\toolchains\llvm-{#LlvmVersion}"; Flags: uninsdeletevalue; Tasks: llvm
 Root: HKCU; Subkey: "Software\Classes\.sere"; ValueType: string; ValueName: ""; ValueData: "SereSourceFile"; Flags: uninsdeletevalue; Tasks: associate
 Root: HKCU; Subkey: "Software\Classes\SereSourceFile"; ValueType: string; ValueName: ""; ValueData: "Sere Source File"; Flags: uninsdeletekey; Tasks: associate
 Root: HKCU; Subkey: "Software\Classes\SereSourceFile\DefaultIcon"; ValueType: string; ValueData: "{app}\bin\{#MyAppExeName},0"; Tasks: associate
 Root: HKCU; Subkey: "Software\Classes\SereSourceFile\shell\open\command"; ValueType: string; ValueData: """{app}\bin\{#MyAppExeName}"" ""%1"""; Tasks: associate
 
 [Run]
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\packaging\ensure-msvc.ps1"""; StatusMsg: "Checking C++ build tools..."; Tasks: msvc; Flags: runhidden waituntilterminated
 #if HasVsix
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\packaging\install-vsix.ps1"" -Vsix ""{app}\editors\sere.vsix"" -Compiler ""{app}\bin\{#MyAppExeName}"""; StatusMsg: "Installing editor extension..."; Tasks: vscodeext; Flags: runhidden waituntilterminated
 #endif
@@ -143,8 +141,6 @@ begin
   BinDir := ExpandConstant('{app}\bin');
   if WizardIsTaskSelected('adduserpath') then
     AddToPath(HKEY_CURRENT_USER, 'Environment', BinDir);
-  if WizardIsTaskSelected('addsystempath') then
-    AddToPath(HKEY_LOCAL_MACHINE, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', BinDir);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -155,5 +151,4 @@ begin
     Exit;
   BinDir := ExpandConstant('{app}\bin');
   RemoveFromPath(HKEY_CURRENT_USER, 'Environment', BinDir);
-  RemoveFromPath(HKEY_LOCAL_MACHINE, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', BinDir);
 end;

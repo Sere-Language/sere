@@ -29,6 +29,31 @@ int fail(const char* message) {
 
 int main() {
   {
+    sere::DiagnosticEngine diagnostics;
+    const auto module = parseText(R"sere(f"before\n\t{42}\r\n\\n\"{{ok}}"
+f'only\ntext'
+f"""triple\ntext"""
+)sere", diagnostics);
+    if (module == nullptr || diagnostics.hasErrors() || module->statements().size() != 3) {
+      return fail("f-strings with escapes should parse");
+    }
+    const auto& statement = static_cast<const sere::ExprStmt&>(*module->statements()[0]);
+    const auto& string = static_cast<const sere::InterpolatedStringExpr&>(statement.expression());
+    if (string.parts().size() != 3 || string.parts()[0].literal != "before\n\t" ||
+        string.parts()[1].value == nullptr ||
+        string.parts()[2].literal != "\r\n\\n\"{ok}") {
+      return fail("f-string escapes should decode around interpolation, preserving escaped backslashes");
+    }
+    const std::string expected[] = {"only\ntext", "triple\ntext"};
+    for (std::size_t index = 1; index < 3; ++index) {
+      const auto& stmt = static_cast<const sere::ExprStmt&>(*module->statements()[index]);
+      const auto& value = static_cast<const sere::InterpolatedStringExpr&>(stmt.expression());
+      if (value.parts().size() != 1 || value.parts()[0].literal != expected[index - 1]) {
+        return fail("single and triple quoted f-strings should decode escapes without interpolation");
+      }
+    }
+  }
+  {
     const std::string genericEnum = "enum Result[T]:\n"
                                     "    Ok(T)\n"
                                     "    Err(str)\n";

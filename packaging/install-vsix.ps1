@@ -10,11 +10,10 @@ param(
   [string]$Compiler
 )
 
-$ErrorActionPreference = "Continue"
+$ErrorActionPreference = "Stop"
 
 if (-not (Test-Path $Vsix)) {
-  Write-Host "Sere VSIX not found at $Vsix"
-  exit 0
+  throw "Sere VSIX not found at $Vsix"
 }
 
 function Find-EditorCli {
@@ -23,12 +22,13 @@ function Find-EditorCli {
   if ($cmd) {
     return $cmd.Source
   }
-  $candidates = @(
-    (Join-Path $env:LOCALAPPDATA "Programs\cursor\Cursor.exe"),
-    (Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\bin\code.cmd"),
-    (Join-Path ${env:ProgramFiles} "Microsoft VS Code\bin\code.cmd"),
-    (Join-Path ${env:ProgramFiles} "Cursor\Cursor.exe")
-  )
+  $candidates = if ($Name -eq "cursor") {
+    @("$env:LOCALAPPDATA\Programs\cursor\resources\app\bin\cursor.cmd",
+      "$env:ProgramFiles\Cursor\resources\app\bin\cursor.cmd")
+  } else {
+    @("$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd",
+      "$env:ProgramFiles\Microsoft VS Code\bin\code.cmd")
+  }
   foreach ($path in $candidates) {
     if ($path -and (Test-Path $path)) {
       return $path
@@ -48,6 +48,7 @@ function Install-Into {
   } else {
     & $Cli --install-extension $Vsix --force
   }
+  if ($LASTEXITCODE -ne 0) { throw "$Label extension installation failed (exit $LASTEXITCODE)" }
   return $true
 }
 

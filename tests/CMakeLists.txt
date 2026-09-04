@@ -25,6 +25,26 @@ target_link_libraries(sere_test_sema PRIVATE sere_sema)
 sere_apply_warnings(sere_test_sema)
 add_test(NAME sere.test.sema COMMAND sere_test_sema)
 
+foreach(_any_case IN ITEMS values bad_cast)
+  if(_any_case STREQUAL "values")
+    set(_any_source "${CMAKE_SOURCE_DIR}/examples/any.sere")
+    set(_any_failure OFF)
+  else()
+    set(_any_source "${CMAKE_CURRENT_SOURCE_DIR}/any_bad_cast.sere")
+    set(_any_failure ON)
+  endif()
+  add_test(NAME sere.test.any_${_any_case}
+    COMMAND "${CMAKE_COMMAND}"
+      "-DSERE=${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}"
+      "-DSOURCE=${_any_source}"
+      "-DOUTPUT=${CMAKE_BINARY_DIR}/any_${_any_case}${CMAKE_EXECUTABLE_SUFFIX}"
+      "-DEXPECT_MISMATCH=${_any_failure}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/run_any.cmake")
+  set_tests_properties(sere.test.any_${_any_case} PROPERTIES
+    ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib"
+    TIMEOUT 120)
+endforeach()
+
 add_executable(sere_test_sema_control sema_control.cpp)
 target_link_libraries(sere_test_sema_control PRIVATE sere_sema)
 sere_apply_warnings(sere_test_sema_control)
@@ -275,7 +295,7 @@ set_tests_properties(sere.example.gl_triangle PROPERTIES
 
 foreach(_sere_example IN ITEMS
     pythonish walrus lambda tuples defer with_ctx del_list flags_enum requests wsgi
-    import_exc properties)
+    import_exc properties any)
   add_test(NAME sere.example.${_sere_example}
     COMMAND "$<TARGET_FILE:sere>" --emit-llvm
             "${CMAKE_SOURCE_DIR}/examples/${_sere_example}.sere"

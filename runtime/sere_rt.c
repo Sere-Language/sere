@@ -117,6 +117,35 @@ const char* sere_str_f64_data(double value, int64_t* out_len) {
   return heapCopy(buf, n < 0 ? 0 : (size_t)n, out_len);
 }
 
+const char* sere_str_repr_data(const char* data, int64_t len, int64_t* out_len) {
+  if (data == NULL || len < 0) len = 0;
+  char quote = '\'';
+  if (len > 0 && memchr(data, '\'', (size_t)len) != NULL &&
+      memchr(data, '"', (size_t)len) == NULL) quote = '"';
+  char* out = (char*)malloc((size_t)len * 4 + 3);
+  if (out == NULL) { *out_len = 0; return ""; }
+  size_t n = 0;
+  out[n++] = quote;
+  for (int64_t i = 0; i < len; ++i) {
+    const unsigned char ch = (unsigned char)data[i];
+    if (ch == (unsigned char)quote || ch == '\\') {
+      out[n++] = '\\'; out[n++] = (char)ch;
+    } else if (ch == '\n' || ch == '\r' || ch == '\t') {
+      out[n++] = '\\'; out[n++] = ch == '\n' ? 'n' : ch == '\r' ? 'r' : 't';
+    } else if (ch < 32 || ch == 127) {
+      static const char hex[] = "0123456789abcdef";
+      out[n++] = '\\'; out[n++] = 'x';
+      out[n++] = hex[ch >> 4]; out[n++] = hex[ch & 15];
+    } else {
+      out[n++] = (char)ch;
+    }
+  }
+  out[n++] = quote;
+  out[n] = 0;
+  *out_len = (int64_t)n;
+  return out;
+}
+
 const char* sere_str_concat_data(const char* left, int64_t left_len, const char* right,
                                 int64_t right_len, int64_t* out_len) {
   if (left_len < 0) {
@@ -310,6 +339,7 @@ typedef struct {
   void* keys;
   void* vals;
   uint8_t* state;
+  int64_t* order;
   int64_t len;
   int64_t cap;
   int64_t key_stride;
@@ -360,12 +390,16 @@ static void dictGrow(SereDict* dict) {
   void* oldKeys = dict->keys;
   void* oldVals = dict->vals;
   uint8_t* oldState = dict->state;
+  int64_t* oldOrder = dict->order;
+  const int64_t oldLen = dict->len;
   dict->cap = oldCap == 0 ? 8 : oldCap * 2;
   dict->keys = calloc((size_t)dict->cap, (size_t)dict->key_stride);
   dict->vals = calloc((size_t)dict->cap, (size_t)dict->val_stride);
   dict->state = (uint8_t*)calloc((size_t)dict->cap, 1);
+  dict->order = (int64_t*)calloc((size_t)dict->cap, sizeof(int64_t));
   dict->len = 0;
-  for (int64_t index = 0; index < oldCap; ++index) {
+  for (int64_t position = 0; position < oldLen; ++position) {
+    const int64_t index = oldOrder[position];
     if (oldState != NULL && oldState[index] == 1) {
       sere_dict_set(dict, (char*)oldKeys + (size_t)(index * dict->key_stride),
                     (char*)oldVals + (size_t)(index * dict->val_stride));
@@ -374,6 +408,7 @@ static void dictGrow(SereDict* dict) {
   free(oldKeys);
   free(oldVals);
   free(oldState);
+  free(oldOrder);
 }
 
 void* sere_dict_new(int64_t key_stride, int64_t val_stride, int32_t key_kind) {
@@ -408,6 +443,7 @@ void sere_dict_set(void* dict, const void* key, const void* value) {
       memcpy((char*)typed->vals + (size_t)(dest * typed->val_stride), value,
              (size_t)typed->val_stride);
       typed->state[dest] = 1;
+      typed->order[typed->len] = dest;
       typed->len += 1;
       return;
     }
@@ -474,6 +510,13 @@ int32_t sere_dict_del(void* dict, const void* key) {
     void* keySlot = (char*)typed->keys + (size_t)(index * typed->key_stride);
     if (keysEqual(typed, keySlot, key)) {
       typed->state[index] = 2;
+      for (int64_t position = 0; position < typed->len; ++position) {
+        if (typed->order[position] == index) {
+          memmove(typed->order + position, typed->order + position + 1,
+              (size_t)(typed->len - position - 1) * sizeof(int64_t));
+          break;
+        }
+      }
       typed->len -= 1;
       return 1;
     }
@@ -1051,7 +1094,8 @@ void* sere_dict_copy(void* dict) {
     return sere_dict_new(1, 1, 0);
   }
   void* out = sere_dict_new(typed->key_stride, typed->val_stride, typed->key_kind);
-  for (int64_t index = 0; index < typed->cap; ++index) {
+  for (int64_t position = 0; position < typed->len; ++position) {
+    const int64_t index = typed->order[position];
     if (typed->state != NULL && typed->state[index] == 1) {
       sere_dict_set(out, (char*)typed->keys + (size_t)(index * typed->key_stride),
                     (char*)typed->vals + (size_t)(index * typed->val_stride));
@@ -1066,7 +1110,8 @@ void* sere_dict_keys(void* dict) {
     return sere_list_new(1);
   }
   void* list = sere_list_new(typed->key_stride);
-  for (int64_t index = 0; index < typed->cap; ++index) {
+  for (int64_t position = 0; position < typed->len; ++position) {
+    const int64_t index = typed->order[position];
     if (typed->state != NULL && typed->state[index] == 1) {
       sere_list_push(list, (char*)typed->keys + (size_t)(index * typed->key_stride));
     }
@@ -1080,7 +1125,8 @@ void* sere_dict_values(void* dict) {
     return sere_list_new(1);
   }
   void* list = sere_list_new(typed->val_stride);
-  for (int64_t index = 0; index < typed->cap; ++index) {
+  for (int64_t position = 0; position < typed->len; ++position) {
+    const int64_t index = typed->order[position];
     if (typed->state != NULL && typed->state[index] == 1) {
       sere_list_push(list, (char*)typed->vals + (size_t)(index * typed->val_stride));
     }

@@ -182,6 +182,9 @@ void copyBesideOutput(const std::filesystem::path& from, const std::filesystem::
   const std::string runtimeLib = runtime->string();
   const std::string output = outputPath.string();
   std::vector<std::string> owned{clangPath, ir};
+#ifdef _WIN32
+  owned.push_back("-fms-runtime-lib=static");
+#endif
   for (const std::filesystem::path& lib : extraLibs) {
     owned.push_back(lib.string());
   }
@@ -191,7 +194,7 @@ void copyBesideOutput(const std::filesystem::path& from, const std::filesystem::
       return true;
     }
     llvm::errs() << "error: system library '" << name
-                 << "' not found; install Visual Studio Build Tools (C++ workload)\n";
+                 << "' not found; reinstall the complete Sere package\n";
     return false;
   };
   if (importsModule(importedModules, "qt6")) {
@@ -225,7 +228,7 @@ void copyBesideOutput(const std::filesystem::path& from, const std::filesystem::
     }
   }
 #ifdef _WIN32
-  for (const char* name : {"user32.lib", "gdi32.lib", "opengl32.lib", "shell32.lib", "advapi32.lib"}) {
+  for (const char* name : {"user32.lib", "gdi32.lib", "opengl32.lib", "shell32.lib", "advapi32.lib", "winhttp.lib", "ws2_32.lib"}) {
     if (!addSystemLib(name)) {
       return 1;
     }

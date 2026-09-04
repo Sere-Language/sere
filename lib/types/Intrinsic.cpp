@@ -25,6 +25,8 @@ std::string_view intrinsicName(IntrinsicKind kind) {
     return "print";
   case IntrinsicKind::Str:
     return "str";
+  case IntrinsicKind::Repr:
+    return "repr";
   case IntrinsicKind::Append:
     return "append";
   case IntrinsicKind::BuiltinMethod:
@@ -90,6 +92,9 @@ IntrinsicKind intrinsicByName(std::string_view name) {
   }
   if (name == "str") {
     return IntrinsicKind::Str;
+  }
+  if (name == "repr") {
+    return IntrinsicKind::Repr;
   }
   if (name == "append") {
     return IntrinsicKind::Append;

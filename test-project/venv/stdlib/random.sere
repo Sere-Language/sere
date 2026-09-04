@@ -1,0 +1,17 @@
+# XorShift64* RNG. Import with: import random
+# Seed once; the default stream is deterministic until seed() is called.
+
+extern "C" "sere_random_seed"
+def seed(value: i64) -> void
+
+extern "C" "sere_random_i32"
+def next_i32() -> i32
+
+extern "C" "sere_random_i64"
+def next_i64() -> i64
+
+extern "C" "sere_random_f64"
+def next_f64() -> f64
+
+extern "C" "sere_random_range"
+def between(low: i32, high: i32) -> i32
