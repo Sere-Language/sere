@@ -5,7 +5,7 @@ kind = "app"
 name = "test-project"
 
 [toolchain]
-sere = "pre-0.1.5"
+sere = "pre-0.1.6"
 
 [paths]
 src = "src"
