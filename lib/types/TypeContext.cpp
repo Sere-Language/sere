@@ -391,7 +391,8 @@ const FunctionInstantiation*
 TypeContext::instantiateFunction(const std::string& name,
                                  const std::vector<std::string>& typeParams,
                                  const Type* genericType,
-                                 const std::vector<const Type*>& args) {
+                                 const std::vector<const Type*>& args,
+                                 bool isMethod) {
   if (genericType == nullptr || typeParams.size() != args.size() || args.empty()) {
     return nullptr;
   }
@@ -411,6 +412,7 @@ TypeContext::instantiateFunction(const std::string& name,
   inst.typeParams = typeParams;
   inst.args = args;
   inst.specializedType = substitute(genericType, subst);
+  inst.isMethod = isMethod;
   functionInstantiations_.push_back(std::move(inst));
   return &functionInstantiations_.back();
 }

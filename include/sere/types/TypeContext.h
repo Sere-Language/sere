@@ -20,6 +20,7 @@ struct FunctionInstantiation {
   std::vector<std::string> typeParams;
   std::vector<const Type*> args;
   const Type* specializedType = nullptr;
+  bool isMethod = false;
 };
 
 class TypeContext {
@@ -60,7 +61,8 @@ public:
       const std::string& name,
       const std::vector<std::string>& typeParams,
       const Type* genericType,
-      const std::vector<const Type*>& args);
+      const std::vector<const Type*>& args,
+      bool isMethod = false);
   [[nodiscard]] const std::vector<std::pair<const Type*, const Type*>>& instantiations() const;
   [[nodiscard]] const std::vector<FunctionInstantiation>& functionInstantiations() const;
 

@@ -850,9 +850,44 @@ bool TypeChecker::isAssignable(const Type* from, const Type* to) const {
     const Type* fromElem = from->elementType();
     const Type* toElem = to->elementType();
     if (fromElem != nullptr && toElem != nullptr &&
-        fromElem->canonical() == toElem->canonical()) {
+        (fromElem->canonical() == toElem->canonical() || toElem->isAny() ||
+         isAssignable(fromElem, toElem))) {
       const std::int64_t wanted = to->listSize();
       return wanted < 0 || from->listSize() == wanted;
+    }
+  }
+  if (from->isPointerLike() && to->isPointerLike()) {
+    const Type* fromPointee = from->pointeeType();
+    const Type* toPointee = to->pointeeType();
+    if (fromPointee != nullptr && toPointee != nullptr &&
+        (fromPointee->canonical() == toPointee->canonical() || toPointee->isAny() ||
+         isAssignable(fromPointee, toPointee))) {
+      return true;
+    }
+  }
+  if (from->isRecord() && to->isRecord()) {
+    std::string_view fromName = from->name();
+    const auto fromBracket = fromName.find('[');
+    if (fromBracket != std::string_view::npos) {
+      fromName = fromName.substr(0, fromBracket);
+    }
+    std::string_view toName = to->name();
+    const auto toBracket = toName.find('[');
+    if (toBracket != std::string_view::npos) {
+      toName = toName.substr(0, toBracket);
+    }
+    if (fromName == toName && !from->args().empty() &&
+        from->args().size() == to->args().size()) {
+      bool allCompatible = true;
+      for (std::size_t i = 0; i < from->args().size(); ++i) {
+        if (!to->args()[i]->isAny() && !isAssignable(from->args()[i], to->args()[i])) {
+          allCompatible = false;
+          break;
+        }
+      }
+      if (allCompatible) {
+        return true;
+      }
     }
   }
   if (from->isDict() && to->isDict()) {
@@ -1134,6 +1169,10 @@ const Type* TypeChecker::resolveNamedType(const std::string& name,
     }
     record = record->canonical();
     if (!record->typeParams().empty()) {
+      if (resolvedArgs.empty()) {
+        std::vector<const Type*> defaultArgs(record->typeParams().size(), types_->anyType());
+        return types_->instantiate(record, defaultArgs);
+      }
       if (resolvedArgs.size() != record->typeParams().size()) {
         diagnostics_->error(range,
                             "'" + name + "' requires " +
@@ -1262,6 +1301,9 @@ const Type* TypeChecker::resolveNamedType(const std::string& name,
     return types_->generic(name, resolvedArgs);
   }
   if (name == "Unique" || name == "Shared" || name == "Ptr") {
+    if (resolvedArgs.empty()) {
+      return types_->generic(name, {types_->anyType()});
+    }
     if (resolvedArgs.size() != 1) {
       diagnostics_->error(range, name + " requires exactly one type argument");
       return nullptr;
@@ -1366,6 +1408,9 @@ const Type* TypeChecker::classType(const std::string& name) const {
 }
 
 const Type* TypeChecker::resolveTypeFromExpr(Expr& expr, bool reportMissing) {
+  if (expr.kind() == NodeKind::NoneLiteral) {
+    return types_->noneType();
+  }
   if (expr.kind() == NodeKind::NameExpr) {
     const auto& name = static_cast<const NameExpr&>(expr);
     return resolveNamedType(name.name(), {}, expr.range(), reportMissing);
@@ -2836,6 +2881,40 @@ const Type* TypeChecker::checkCall(CallExpr& expr) {
   if (symbol != nullptr && symbol->type != nullptr && symbol->type->isTypeObject()) {
     return checkConstructor(expr, symbol->type->typeObjectInstance());
   }
+  if (name->name() == "Shared" || name->name() == "Unique" || name->name() == "Ptr") {
+    const Type* target = resolveNamedType(name->name(), expr.typeArgs(), expr.range(), true);
+    if (target == nullptr) {
+      return nullptr;
+    }
+    if (expr.arguments().size() > 1) {
+      diagnostics_->error(expr.range(), name->name() + "() takes 0 or 1 argument, but " +
+                                            std::to_string(expr.arguments().size()) + " provided");
+      return nullptr;
+    }
+    if (expr.arguments().size() == 1) {
+      const Type* argType = checkExpr(*expr.arguments()[0]);
+      if (argType == nullptr) {
+        return nullptr;
+      }
+      const Type* pointee = target->pointeeType();
+      if (pointee != nullptr && !isAssignable(argType, pointee)) {
+        diagnostics_->error(expr.arguments()[0]->range(),
+                            "cannot initialize " + quoteType(target) + " with " +
+                                quoteType(argType));
+        return nullptr;
+      }
+    }
+    if (name->name() == "Shared") {
+      expr.setIntrinsic(IntrinsicKind::SharedNew);
+    } else if (name->name() == "Unique") {
+      expr.setIntrinsic(IntrinsicKind::UniqueNew);
+    } else {
+      expr.setIntrinsic(IntrinsicKind::Alloc);
+    }
+    expr.callee().setResolvedType(target);
+    expr.setResolvedType(target);
+    return target;
+  }
   if (expr.arguments().size() == 1 && (symbol == nullptr || symbol->kind == SymbolKind::Type)) {
     const Type* target = resolveNamedType(name->name(), expr.typeArgs(), expr.range(), false);
     if (target != nullptr) {
@@ -3484,6 +3563,57 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
     return nullptr;
   }
   const Type* functionType = method.type;
+  std::vector<std::string> methodTypeParams = method.typeParams;
+  FunctionDef* methodDef = findMethodDef(objectType, member.field());
+  if (methodTypeParams.empty() && methodDef != nullptr && !methodDef->typeParams().empty()) {
+    methodTypeParams = methodDef->typeParams();
+  }
+  if (!methodTypeParams.empty()) {
+    std::unordered_map<std::string, const Type*> subst;
+    if (!expr.typeArgs().empty()) {
+      if (expr.typeArgs().size() != methodTypeParams.size()) {
+        diagnostics_->error(expr.range(),
+                            "'" + member.field() + "' requires " +
+                                std::to_string(methodTypeParams.size()) + " type arguments");
+        return nullptr;
+      }
+      for (std::size_t i = 0; i < expr.typeArgs().size(); ++i) {
+        const Type* resolved = resolveTypeExpr(*expr.typeArgs()[i]);
+        if (resolved == nullptr) {
+          return nullptr;
+        }
+        subst[methodTypeParams[i]] = resolved;
+      }
+    } else if (functionType != nullptr) {
+      for (std::size_t argIdx = 0;
+           argIdx < expr.arguments().size() && (argIdx + 1) < functionType->paramTypes().size();
+           ++argIdx) {
+        const Type* argType = checkExpr(*expr.arguments()[argIdx]);
+        if (argType == nullptr) {
+          return nullptr;
+        }
+        (void)inferTypeBindings(functionType->paramTypes()[argIdx + 1], argType, subst);
+      }
+    }
+    std::vector<const Type*> instArgs;
+    for (const std::string& param : methodTypeParams) {
+      const auto found = subst.find(param);
+      if (found == subst.end()) {
+        diagnostics_->error(expr.range(), "cannot infer type argument '" + param + "' for method '" +
+                                              member.field() + "'");
+        return nullptr;
+      }
+      instArgs.push_back(found->second);
+    }
+    const FunctionInstantiation* inst = types_->instantiateFunction(
+        method.llvmName, methodTypeParams, functionType, instArgs, /*isMethod=*/true);
+    if (inst == nullptr || inst->specializedType == nullptr) {
+      diagnostics_->error(expr.range(), "failed to instantiate method '" + member.field() + "'");
+      return nullptr;
+    }
+    expr.setLoweredName(inst->llvmName);
+    functionType = inst->specializedType;
+  }
   const bool superObject =
       member.object().kind() == NodeKind::CallExpr &&
       static_cast<const CallExpr&>(member.object()).intrinsic() == IntrinsicKind::Super;
@@ -3493,7 +3623,9 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
                         member.object().resolvedType()->canonical()->isTypeObject()));
   if (classLevel) {
     expr.setUnboundMethodCall(true);
-    expr.setLoweredName(method.llvmName);
+    if (methodTypeParams.empty()) {
+      expr.setLoweredName(method.llvmName);
+    }
     std::vector<std::string> names;
     for (std::size_t nameIndex = 1; nameIndex < method.paramNames.size(); ++nameIndex) {
       names.push_back(method.paramNames[nameIndex]);
@@ -3502,7 +3634,6 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
     if (functionType == nullptr || functionType->paramTypes().empty()) {
       return nullptr;
     }
-    FunctionDef* methodDef = findMethodDef(objectType, member.field());
     if (methodDef != nullptr) {
       if (!checkFunctionArguments(
               expr, methodDef->params(), functionType->paramTypes(), member.field(), 1)) {
@@ -3521,13 +3652,15 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
     for (std::size_t paramIndex = 1; paramIndex < functionType->paramTypes().size(); ++paramIndex) {
       withoutSelf.push_back(functionType->paramTypes()[paramIndex]);
     }
-    member.setUnboundMethod(method.llvmName);
+    member.setUnboundMethod(expr.loweredName().empty() ? method.llvmName : expr.loweredName());
     member.setResolvedType(types_->functionType(withoutSelf, functionType->returnType()));
     expr.setResolvedType(functionType->returnType());
     return functionType->returnType();
   }
   expr.setMethod(true);
-  expr.setLoweredName(method.llvmName);
+  if (methodTypeParams.empty()) {
+    expr.setLoweredName(method.llvmName);
+  }
   std::vector<std::string> names;
   for (std::size_t index = 1; index < method.paramNames.size(); ++index) {
     names.push_back(method.paramNames[index]);
@@ -3536,7 +3669,6 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
   if (functionType == nullptr || functionType->paramTypes().empty()) {
     return nullptr;
   }
-  FunctionDef* methodDef = findMethodDef(objectType, member.field());
   if (methodDef != nullptr) {
     if (!checkFunctionArguments(
             expr, methodDef->params(), functionType->paramTypes(), member.field(), 1)) {
@@ -4005,6 +4137,9 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
   if (function.isExtern()) {
     return true;
   }
+  for (const std::string& param : function.typeParams()) {
+    (void)types_->defineTypeParam(param);
+  }
   if (!validateParamList(function.params(), function.range())) {
     return false;
   }
@@ -4138,20 +4273,28 @@ FunctionDef* TypeChecker::findMethodDef(const Type* record, std::string_view met
     return nullptr;
   }
   record = record->canonical();
+  std::string baseClassName = record->name();
+  if (const auto bracket = baseClassName.find('['); bracket != std::string::npos) {
+    baseClassName = baseClassName.substr(0, bracket);
+  }
   for (const auto& entry : classes_) {
     ClassDef* classDef = entry.second;
     if (classDef == nullptr || classDef->resolvedType() == nullptr) {
       continue;
     }
-    if (classDef->resolvedType()->canonical() != record) {
-      continue;
-    }
-    for (const std::unique_ptr<FunctionDef>& method : classDef->methods()) {
-      if (method != nullptr && method->name() == methodName) {
-        return method.get();
+    if (classDef->resolvedType()->canonical() == record || classDef->name() == baseClassName ||
+        entry.first == baseClassName) {
+      for (const std::unique_ptr<FunctionDef>& method : classDef->methods()) {
+        if (method != nullptr && method->name() == methodName) {
+          return method.get();
+        }
       }
     }
-    return nullptr;
+  }
+  for (const Type* base : record->bases()) {
+    if (FunctionDef* found = findMethodDef(base, methodName)) {
+      return found;
+    }
   }
   return nullptr;
 }
@@ -4542,12 +4685,8 @@ bool TypeChecker::flattenClass(ClassDef& classDef) {
     if (const Type* record = unwrapRecordType(base)) {
       return record;
     }
-    if (base != nullptr && base->isClass()) return base;
-    if (base == nullptr) {
-      diagnostics_->error(range, "unknown base class '" + baseName + "'");
-    } else {
-      diagnostics_->error(range, "'" + baseName + "' is not a class");
-    }
+    if (base != nullptr) return base;
+    diagnostics_->error(range, "unknown base class '" + baseName + "'");
     return nullptr;
   };
   if (!classDef.baseTypes().empty()) {
@@ -4706,6 +4845,9 @@ bool TypeChecker::collectMethods(Module& module) {
       continue;
     }
     for (std::unique_ptr<FunctionDef>& method : classDef.methods()) {
+      for (const std::string& param : method->typeParams()) {
+        (void)types_->defineTypeParam(param);
+      }
       if (method->params().empty() || method->params()[0].name != "self") {
         diagnostics_->error(method->range(), "methods must take self as the first parameter");
         continue;
@@ -4802,6 +4944,7 @@ bool TypeChecker::collectMethods(Module& module) {
       }
       info.isAbstract = abstractMethodNeedsOverride(*method);
       info.isPublic = !method->isPrivate();
+      info.typeParams = method->typeParams();
       bool sawDefault = false;
       for (std::size_t index = 0; index < method->params().size(); ++index) {
         const ParamDecl& param = method->params()[index];
@@ -5115,7 +5258,11 @@ bool TypeChecker::checkBodies(Module& module) {
     if (statement->kind() == NodeKind::FunctionDef) {
       ok = checkFunctionBody(static_cast<FunctionDef&>(*statement)) && ok;
     } else if (statement->kind() == NodeKind::ClassDef) {
-      for (std::unique_ptr<FunctionDef>& method : static_cast<ClassDef&>(*statement).methods()) {
+      auto& classDef = static_cast<ClassDef&>(*statement);
+      for (const std::string& param : classDef.typeParams()) {
+        (void)types_->defineTypeParam(param);
+      }
+      for (std::unique_ptr<FunctionDef>& method : classDef.methods()) {
         ok = checkFunctionBody(*method) && ok;
       }
     } else if (statement->kind() == NodeKind::EnumDef) {
@@ -5228,9 +5375,20 @@ bool TypeChecker::checkMatch(MatchStmt& statement, const Type* expectedReturn) {
         if (call.callee().kind() == NodeKind::MemberExpr) {
           auto& member = static_cast<MemberExpr&>(call.callee());
           const Type* enumType = checkExpr(member.object());
+          if (enumType != nullptr) {
+            enumType = enumType->canonical();
+            if (enumType->isTypeObject() && enumType->typeObjectInstance() != nullptr) {
+              enumType = enumType->typeObjectInstance()->canonical();
+            }
+          }
           if (enumType != nullptr && enumType->isEnum()) {
             covered[member.field()] = true;
-            payloadVariant = enumType->findField(member.field());
+            if (subject != nullptr && subject->isEnum() &&
+                (subject == enumType || subject->name().starts_with(enumType->name()))) {
+              payloadVariant = subject->findField(member.field());
+            } else {
+              payloadVariant = enumType->findField(member.field());
+            }
             member.setResolvedType(enumType);
             call.setResolvedType(enumType);
             arm.pattern->setResolvedType(enumType);
@@ -5241,12 +5399,27 @@ bool TypeChecker::checkMatch(MatchStmt& statement, const Type* expectedReturn) {
           ok = checkExpr(*arm.pattern) != nullptr && ok;
         }
       } else {
-        const Type* patternType = checkExpr(*arm.pattern);
-        if (patternType == nullptr) {
-          ok = false;
-        } else if (subject->isEnum() && arm.pattern->kind() == NodeKind::MemberExpr) {
-          const auto& member = static_cast<MemberExpr&>(*arm.pattern);
-          covered[member.field()] = true;
+        if (subject->isEnum() && arm.pattern->kind() == NodeKind::MemberExpr) {
+          auto& member = static_cast<MemberExpr&>(*arm.pattern);
+          const Type* objType = checkExpr(member.object());
+          if (objType != nullptr) {
+            objType = objType->canonical();
+            if (objType->isTypeObject() && objType->typeObjectInstance() != nullptr) {
+              objType = objType->typeObjectInstance()->canonical();
+            }
+          }
+          if (objType != nullptr && objType->isEnum()) {
+            covered[member.field()] = true;
+            member.setResolvedType(objType);
+            arm.pattern->setResolvedType(objType);
+          } else {
+            ok = false;
+          }
+        } else {
+          const Type* patternType = checkExpr(*arm.pattern);
+          if (patternType == nullptr) {
+            ok = false;
+          }
         }
       }
     }

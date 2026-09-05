@@ -43,6 +43,7 @@ struct RecordMethod {
   const class Type* type = nullptr;
   std::string llvmName;
   std::vector<std::string> paramNames{};
+  std::vector<std::string> typeParams{};
   std::size_t requiredAfterSelf = 0;
   bool isAbstract = false;
   bool isPublic = true;

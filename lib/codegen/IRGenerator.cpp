@@ -2869,6 +2869,25 @@ llvm::Value* IRGenerator::emitConstruct(llvm::IRBuilder<>& builder, const CallEx
     return nullptr;
   }
   record = record->canonical();
+  if (record->isPointerLike()) {
+    if (expr.arguments().empty()) {
+      return emitDefault(record);
+    }
+    const Type* pointee = record->pointeeType();
+    llvm::Value* argVal = emitExpr(builder, *expr.arguments()[0]);
+    if (expr.arguments()[0]->resolvedType() != nullptr &&
+        expr.arguments()[0]->resolvedType()->isPointerLike()) {
+      return argVal;
+    }
+    llvm::Function* sharedNew =
+        runtimeDecl("sere_shared_new", builder.getPtrTy(), {builder.getInt64Ty()});
+    llvm::Function* allocFn = runtimeDecl("sere_alloc", builder.getPtrTy(), {builder.getInt64Ty()});
+    llvm::Value* size = builder.getInt64(valueSize(pointee));
+    llvm::Value* memory =
+        builder.CreateCall(record->isGenericCtor("Shared") ? sharedNew : allocFn, {size});
+    builder.CreateStore(argVal, memory);
+    return memory;
+  }
   if (!record->isRecord() || record->valueType() != record) {
     const Type* payloadType = record->valueType();
     llvm::Value* payload = nullptr;
@@ -3027,6 +3046,9 @@ llvm::Value* IRGenerator::emitMethodCall(llvm::IRBuilder<>& builder, const CallE
   if (defFound != functionDefs_.end() && defFound->second != nullptr) {
     methodDef = defFound->second;
     methodType = methodDef->resolvedType();
+  }
+  if (methodType == nullptr) {
+    methodType = expr.callee().resolvedType();
   }
   if (methodDef != nullptr) {
     appendBoundCallArgs(builder, expr, *methodDef, methodType, args, 1);
@@ -4725,7 +4747,7 @@ void IRGenerator::declareFunctions(const Module& ast) {
       const auto& enumDef = static_cast<const EnumDef&>(*statement);
       for (const std::unique_ptr<FunctionDef>& method : enumDef.methods()) {
         functionDefs_[llvmNameFor(*method)] = method.get();
-        if (!shouldEmit(*method)) {
+        if (!method->typeParams().empty() || !shouldEmit(*method)) {
           continue;
         }
         llvm::Function* fn = llvm::Function::Create(llvmFunctionType(*method),
@@ -4745,7 +4767,7 @@ void IRGenerator::declareFunctions(const Module& ast) {
     }
     for (const std::unique_ptr<FunctionDef>& method : classDef.methods()) {
       functionDefs_[llvmNameFor(*method)] = method.get();
-      if (!shouldEmit(*method)) {
+      if (!method->typeParams().empty() || !shouldEmit(*method)) {
         continue;
       }
       llvm::Function* fn = llvm::Function::Create(llvmFunctionType(*method),
@@ -4826,8 +4848,13 @@ void IRGenerator::declareInstantiations() {
       continue;
     }
     std::vector<llvm::Type*> params;
-    for (const Type* param : inst.specializedType->paramTypes()) {
-      params.push_back(lower(param));
+    for (std::size_t index = 0; index < inst.specializedType->paramTypes().size(); ++index) {
+      const Type* param = inst.specializedType->paramTypes()[index];
+      if (inst.isMethod && index == 0) {
+        params.push_back(llvm::PointerType::getUnqual(*context_));
+      } else {
+        params.push_back(lower(param));
+      }
     }
     llvm::FunctionType* type =
         llvm::FunctionType::get(lower(inst.specializedType->returnType()), params, false);
@@ -4875,7 +4902,27 @@ bool IRGenerator::emitInstantiations(const std::vector<const Module*>& modules) 
         if (statement->kind() == NodeKind::FunctionDef &&
             static_cast<const FunctionDef&>(*statement).name() == inst.sourceName) {
           source = static_cast<const FunctionDef*>(statement.get());
+          break;
         }
+        if (statement->kind() == NodeKind::ClassDef) {
+          const auto& classDef = static_cast<const ClassDef&>(*statement);
+          for (const std::unique_ptr<FunctionDef>& method : classDef.methods()) {
+            const std::string unqualified = classDef.name() + "_" + method->name();
+            const std::string qualified =
+                (method->modulePrefix().empty() ? "" : method->modulePrefix() + "_") + unqualified;
+            if (method->name() == inst.sourceName || unqualified == inst.sourceName ||
+                qualified == inst.sourceName) {
+              source = method.get();
+              break;
+            }
+          }
+          if (source != nullptr) {
+            break;
+          }
+        }
+      }
+      if (source != nullptr) {
+        break;
       }
     }
     if (source == nullptr || !emitFunction(*source, inst.llvmName)) {
@@ -5079,7 +5126,7 @@ std::unique_ptr<llvm::Module> IRGenerator::emit(const Module& ast,
           continue;
         }
         for (const std::unique_ptr<FunctionDef>& method : classDef.methods()) {
-          if (!shouldEmit(*method)) {
+          if (!method->typeParams().empty() || !shouldEmit(*method)) {
             continue;
           }
           if (!emitFunction(*method)) {
@@ -5089,7 +5136,7 @@ std::unique_ptr<llvm::Module> IRGenerator::emit(const Module& ast,
       } else if (statement->kind() == NodeKind::EnumDef) {
         const auto& enumDef = static_cast<const EnumDef&>(*statement);
         for (const std::unique_ptr<FunctionDef>& method : enumDef.methods()) {
-          if (!shouldEmit(*method)) {
+          if (!method->typeParams().empty() || !shouldEmit(*method)) {
             continue;
           }
           if (!emitFunction(*method)) {

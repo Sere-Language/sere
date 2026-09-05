@@ -11,7 +11,7 @@ def collect(values: list[Any]) -> list[Any]:
     return values
 
 def empty() -> list[str]:
-    return []
+    return list[str]()
 
 def plus_one(value: i32) -> i32:
     return value + 1
@@ -51,10 +51,10 @@ def main() -> i32:
     inferred = [1, "two", Box(3)]
     inferred_text: str = inferred[1]
     assert inferred_text == "two"
-    mapping = {"number": 1, "text": "hello"}
-    mapped_text: str = mapping["text"]
+    mapping: dict[str, Any] = {"number": 1, "text": "hello"}
+    mapped_text: str = mapping["text"] as str
     assert mapped_text == "hello"
-    nested: list[list[i32]] = [[], [1, 2]]
+    nested: list[list[i32]] = [list[i32](), [1, 2]]
     assert len(nested[0]) == 0
     pair: tuple[i32, str] = identity((1, "pair"))
     left, right = pair
