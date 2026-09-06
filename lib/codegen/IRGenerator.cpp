@@ -3307,6 +3307,28 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
       expr.left().resolvedType() == nullptr ? nullptr : expr.left().resolvedType()->canonical();
   const Type* rightType =
       expr.right().resolvedType() == nullptr ? nullptr : expr.right().resolvedType()->canonical();
+  // Comparing a pointer-like value to None is a null check. None's type is
+  // void-like, so emitCoerce below would drop the None operand to nullptr and
+  // the generic compare path would dereference it. Handle identity/equality
+  // against None here so the test is both real and null-safe.
+  const bool leftIsNone = leftType != nullptr && leftType->isVoidLike();
+  const bool rightIsNone = rightType != nullptr && rightType->isVoidLike();
+  const bool noneCompare =
+      (leftIsNone != rightIsNone) &&
+      (expr.op() == BinaryOp::Is || expr.op() == BinaryOp::IsNot ||
+       expr.op() == BinaryOp::Eq || expr.op() == BinaryOp::Ne);
+  if (noneCompare) {
+    llvm::Value* operand = leftIsNone ? right : left;
+    const Type* operandType = leftIsNone ? rightType : leftType;
+    if (operand != nullptr && operandType != nullptr &&
+        (operandType->isPointerLike() || operandType->isAny() ||
+         operand->getType()->isPointerTy() || operand->getType()->isIntegerTy())) {
+      llvm::Value* isNull = builder.CreateIsNull(operand);
+      const bool positive =
+          expr.op() == BinaryOp::Is || expr.op() == BinaryOp::Eq;
+      return positive ? isNull : builder.CreateNot(isNull);
+    }
+  }
   if (leftType != nullptr) {
     left = emitCoerce(builder, left, leftType, leftType->valueType());
     leftType = leftType->valueType();
@@ -3314,6 +3336,11 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
   if (rightType != nullptr) {
     right = emitCoerce(builder, right, rightType, rightType->valueType());
     rightType = rightType->valueType();
+  }
+  if (left == nullptr || right == nullptr) {
+    // A None operand was coerced away; only compare operations can survive
+    // this, and they cannot dereference a missing operand.
+    return builder.getInt1(false);
   }
   if (expr.op() == BinaryOp::Add && leftType != nullptr && leftType->isNamed("str") &&
       rightType != nullptr && rightType->isNamed("str")) {
