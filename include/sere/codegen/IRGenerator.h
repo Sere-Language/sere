@@ -42,7 +42,7 @@ private:
   llvm::Type* lower(const Type* type);
   llvm::Value* emitAnyTypeMatch(llvm::IRBuilder<>& builder, llvm::Value* value,
                               const Type* target);
-  std::uint64_t valueSize(const Type* type) const;
+  std::uint64_t valueSize(const Type* type);
   llvm::Function* runtimeDecl(const char* name,
                               llvm::Type* returnType,
                               const std::vector<llvm::Type*>& params);

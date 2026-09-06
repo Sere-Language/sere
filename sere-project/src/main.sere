@@ -1,6 +1,6 @@
 import matrix
 
+
 def main() -> i32:
-    m4 = matrix.Mat4()
-    print("hi")
+
     return 0

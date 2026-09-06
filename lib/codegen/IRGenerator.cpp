@@ -24,6 +24,7 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Type.h>
 #include <llvm/IR/Verifier.h>
+#include <llvm/IR/DataLayout.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/TargetParser/Host.h>
 #include <llvm/TargetParser/Triple.h>
@@ -303,54 +304,24 @@ llvm::Type* IRGenerator::lower(const Type* type) {
   return llvmType;
 }
 
-std::uint64_t IRGenerator::valueSize(const Type* type) const {
-  if (type == nullptr) {
-    return 0;
-  }
-  type = type->canonical();
-  if (type->isNamed("bool") || type->isNamed("i8") || type->isNamed("u8")) {
-    return 1;
-  }
-  if (type->isNamed("i16") || type->isNamed("u16")) {
-    return 2;
-  }
-  if (type->isNamed("i32") || type->isNamed("u32") || type->isNamed("f32") || type->isTypeObject() ||
-      (type->isEnum() && !type->hasEnumPayload())) {
-    return 4;
-  }
-  if (type->isEnum() && type->hasEnumPayload()) {
-    return 16;
-  }
-  if (type->isNamed("i64") || type->isNamed("u64") || type->isNamed("f64") ||
-      type->isPointerLike() || type->isSequence() || type->isDict()) {
-    return 8;
-  }
-  if (type->isCallableConstraint() || type->kind() == TypeKind::Function) {
-    return 8;
-  }
-  if (type->isAny()) {
-    return 16;
-  }
-  if (type->isStrLayout()) {
-    return 16;
-  }
-  if (type->isUnion() && !type->args().empty()) {
-    std::uint64_t common = valueSize(type->args()[0]);
-    bool same = true;
-    for (const Type* member : type->args()) {
-      if (valueSize(member) != common) {
-        same = false;
-      }
+std::uint64_t IRGenerator::valueSize(const Type* type) {
+    if (type == nullptr) {
+        return 0;
     }
-    return same ? common : 16;
-  }
-  std::uint64_t total = 0;
-  for (const RecordField& field : type->fields()) {
-    if (!field.isStatic && field.stored) {
-      total += valueSize(field.type);
+
+    llvm::Type* llvmType = lower(type);
+
+    if (llvmType == nullptr || llvmType->isVoidTy()) {
+        return 0;
     }
-  }
-  return total == 0 ? 1 : total;
+
+    const llvm::DataLayout& layout = module_->getDataLayout();
+
+    if (!llvmType->isSized()) {
+        return 0;
+    }
+
+    return layout.getTypeAllocSize(llvmType).getFixedValue();
 }
 
 llvm::Function* IRGenerator::runtimeDecl(const char* name,

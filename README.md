@@ -220,6 +220,11 @@ releases/       packaging scripts and versioned release artifacts
 
 ## Documentation
 
+- [Getting started](docs/getting-started.md): create, run, and split an application into modules.
+- [Projects](docs/projects.md): configuration, library distribution, and troubleshooting.
+- [Gradual typing](docs/gradual-typing.md): inference, `Any`, and typed boundaries.
+- [Numeric arrays](docs/arrays.md): operations, statistics, and matrix examples.
+
 - **Language:** [`docs/language.md`](docs/language.md) — types, syntax, macros, stdlib surface, as implemented.
 - **Compiler internals:** [`docs/README.md`](docs/README.md) — pipeline, libraries, how to add a keyword or module.
 - **Patches:** [`CONTRIBUTING.md`](CONTRIBUTING.md)

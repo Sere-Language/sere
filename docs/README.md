@@ -16,6 +16,10 @@ The compiler is `sere` (`tools/sere`). The same binary also speaks LSP
 
 | If you want to… | Open |
 | --- | --- |
+| Create and run your first application | [getting-started.md](getting-started.md) |
+| Configure projects and distribute libraries | [projects.md](projects.md) |
+| Understand `Any` and collection inference | [gradual-typing.md](gradual-typing.md) |
+| Work with numeric lists and matrices | [arrays.md](arrays.md) |
 | Learn or look up the language | **[language.md](language.md)** |
 | See the whole pipeline | [architecture.md](architecture.md) |
 | Add a keyword, type, operator, intrinsic, stdlib module, native lib, GC, or LSP feature | **[extending.md](extending.md)** |

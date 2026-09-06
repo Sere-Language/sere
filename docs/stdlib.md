@@ -14,6 +14,10 @@ directory next to `sere` (or `SERE_STDLIB` in tests).
 
 ## Prelude
 
+For a numeric API reference with complete programs, see [Numeric arrays](arrays.md).
+For syntax shared by collections, see
+[Collections and strings](language.md#collections-and-strings).
+
 `stdlib/prelude.sere` is always loaded and marked `fromPrelude()`. Keep it
 small: names everyone needs, plus macros such as `dbg!`. Memory vocabulary is
 documented in `stdlib/memory.sere` (comments; the types themselves are
