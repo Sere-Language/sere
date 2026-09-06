@@ -1,4 +1,27 @@
 # <img src="https://github.com/Sere-Language/sere/blob/main/icon.png" width=64/> Sere
+<p align="center">
+  <a href="https://github.com/Sere-Language/Sere/releases">
+    <img src="https://img.shields.io/github/v/release/Sere-Language/Sere?include_prereleases&style=flat-square&label=release" alt="GitHub Release">
+  </a>
+
+  <a href="https://github.com/Sere-Language/Sere/stargazers">
+    <img src="https://img.shields.io/github/stars/Sere-Language/Sere?style=flat-square" alt="GitHub Stars">
+  </a>
+
+  <a href="https://github.com/Sere-Language/Sere/network/members">
+    <img src="https://img.shields.io/github/forks/Sere-Language/Sere?style=flat-square" alt="GitHub Forks">
+  </a>
+
+  <a href="https://github.com/Sere-Language/Sere/issues">
+    <img src="https://img.shields.io/github/issues/Sere-Language/Sere?style=flat-square" alt="GitHub Issues">
+  </a>
+
+  <a href="https://github.com/Sere-Language/Sere/commits">
+    <img src="https://img.shields.io/github/last-commit/Sere-Language/Sere?style=flat-square" alt="Last Commit">
+  </a>
+
+  <img src="https://img.shields.io/github/repo-size/Sere-Language/Sere?style=flat-square" alt="Repository Size">
+</p>
 Sere is a compiled **typed Python superset** with an LLVM 22 backend. It is not
 CPython: the CPython standard library, `async`/`yield`, `*args`, and capturing
 lambdas are out of scope. Unsupported constructs diagnose (often
