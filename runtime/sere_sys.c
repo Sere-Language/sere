@@ -16,6 +16,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <chrono>
+#include <ctime>
+#include <cstdio>
 
 #ifdef _WIN32
 #include <direct.h>
@@ -526,7 +529,33 @@ void* sere_os_listdir(const char* path, int64_t path_len) {
 }
 #endif
 
-#ifdef _WIN32
+const char* sere_time_get_timestamp(void) {
+    // Static buffer to hold the formatted timestamp
+    static char buffer[32];
+
+    // Get current time
+    auto now = std::chrono::system_clock::now();
+
+    // Seconds since epoch
+    std::time_t seconds_since_epoch = std::chrono::system_clock::to_time_t(now);
+
+    // Milliseconds since epoch
+    auto milliseconds_since_epoch = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()
+    ).count();
+
+    // Extract milliseconds part (0–999)
+    long ms_part = milliseconds_since_epoch % 1000;
+
+    // Format into buffer: "seconds.milliseconds"
+    // Example: "1783363206.123"
+    std::snprintf(buffer, sizeof(buffer), "%lld.%03ld",
+                  static_cast<long long>(seconds_since_epoch),
+                  ms_part);
+
+    return buffer; // Safe because buffer is static
+}
+
 int64_t sere_time_now_ms(void) {
   FILETIME fileTime;
   GetSystemTimeAsFileTime(&fileTime);
@@ -541,6 +570,7 @@ void sere_time_sleep_ms(int32_t ms) {
     Sleep((DWORD)ms);
   }
 }
+
 #else
 int64_t sere_time_now_ms(void) {
   struct timespec ts;

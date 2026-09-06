@@ -166,6 +166,7 @@ void sere_os_exit(int32_t code);
 
 int64_t sere_time_now_ms(void);
 void sere_time_sleep_ms(int32_t ms);
+const char *sere_time_get_timestamp(void);
 
 void sere_string_upper(const char* data, int64_t len, const char** out_data, int64_t* out_len);
 void sere_string_lower(const char* data, int64_t len, const char** out_data, int64_t* out_len);

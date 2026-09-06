@@ -1,6 +1,45 @@
 # Stderr logging. Import with: import log
 
 import io
+import fs
+import sys
+
+
+
+enum Level:
+    Trace = 0
+    Debug = 10
+    Info = 20
+    Warning = 30
+    Error = 40
+    Critical = 50
+
+    def get_name(self) -> str:
+        match self:
+            case Level.Trace:
+                return "trace"
+            case Level.Debug:
+                return "debug"
+            case Level.Info:
+                return "info"
+            case Level.Warning:
+                return "warn"
+            case Level.Error:
+                return "error"
+            case Level.Critical:
+                return "critical"
+
+class LogRecord:
+    logger_name: str
+    message: str
+    level: Level
+    timestamp: str
+
+    def __init__(self, logger_name: str, message: str, level: Level, timestamp: str) -> None:
+        self.logger_name = logger_name
+        self.message = message
+        self.level = level
+        self.timestamp = timestamp
 
 def write(level: str, text: str) -> void:
     io.eprint("[")
@@ -9,14 +48,28 @@ def write(level: str, text: str) -> void:
     io.eprint(text)
     io.eprint_nl()
 
-def debug(text: str) -> void:
-    write("debug", text)
+class Formatter:
+    def format(self, record: LogRecord) -> str:
+        return f"{record.timestamp} [{record.level.get_name().upper()}] {record.logger_name.capitalize()}: {record.message}"
 
-def info(text: str) -> void:
-    write("info", text)
+class Logger:
+    name: str
+    @private level: Level
 
-def warn(text: str) -> void:
-    write("warn", text)
+    def __init__(self, name: str, level: Level = Level.Info) -> None:
+        self.name = name
+        self.level = level
 
-def error(text: str) -> void:
-    write("error", text)
+    def get_level(self) -> Level:
+        return self.level
+
+    def set_level(self, level: Level) -> None:
+        self.level = level
+
+    def log(self, level: Level, message: str) -> void:
+        if level >= self.level:
+            timestamp = 
+            record = LogRecord(self.name, message, level, timestamp)
+            formatter = Formatter()
+            formatted_message = formatter.format(record)
+            write(level.get_name(), formatted_message)
