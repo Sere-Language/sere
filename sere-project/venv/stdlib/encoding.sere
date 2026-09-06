@@ -1,7 +1,0 @@
-# Text encodings. Import with: import encoding
-
-extern "C" "sere_b64_encode"
-def b64encode(text: str) -> str
-
-extern "C" "sere_b64_decode"
-def b64decode(text: str) -> str

@@ -1,3 +1,0 @@
-def main() -> i32:
-    p: Ptr[i8] = None
-    return 0
