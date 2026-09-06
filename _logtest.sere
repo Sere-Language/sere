@@ -1,0 +1,17 @@
+import log
+import time
+
+def main() -> i32:
+    logger = log.get_logger("app")
+    logger.info("booted")
+    logger.debug("hidden")  # suppressed: default level is Info
+    logger.set_level(log.Level.Debug)
+    logger.debug("now visible")
+    logger.warning("careful")
+    logger.error("boom")
+    logger.critical("fatal")
+    time.sleep_ms(1)
+    stamp: str = time.get_timestamp()
+    now: i64 = time.now_ms()
+    print("stamp", stamp, "now_ms", now)
+    return 0
