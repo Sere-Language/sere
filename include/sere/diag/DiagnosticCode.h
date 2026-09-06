@@ -45,4 +45,4 @@ struct DiagnosticCodeInfo {
 
 [[nodiscard]] DiagnosticCode inferDiagnosticCode(std::string_view message);
 
-}  // namespace sere
+} // namespace sere

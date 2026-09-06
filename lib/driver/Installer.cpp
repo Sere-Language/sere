@@ -3,8 +3,8 @@
 
 #include "sere/driver/Installer.h"
 
-#include "sere/Version.h"
 #include "sere/ToolchainPaths.h"
+#include "sere/Version.h"
 #include "sere/driver/Toolchain.h"
 
 #include <llvm/Support/FileSystem.h>
@@ -34,16 +34,18 @@ int buildInstaller(const CompilerOptions& options) {
     return 1;
   }
   const auto shell = llvm::sys::findProgramByName("powershell.exe");
-  if (!shell) return 1;
-  std::vector<std::string> owned{*shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-      script.string()};
+  if (!shell)
+    return 1;
+  std::vector<std::string> owned{
+      *shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script.string()};
   if (!options.outputPath.empty()) {
     owned.push_back("-InstallerOutput");
     owned.push_back(std::filesystem::absolute(options.outputPath).string());
   }
   std::vector<llvm::StringRef> args;
-  for (const auto& arg : owned) args.push_back(arg);
+  for (const auto& arg : owned)
+    args.push_back(arg);
   return llvm::sys::ExecuteAndWait(*shell, args);
 #endif
 }
-}  // namespace sere
+} // namespace sere

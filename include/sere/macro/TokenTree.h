@@ -29,4 +29,4 @@ struct TokenTree {
 /// Flattens trees back to a token sequence, preserving delimiter tokens.
 [[nodiscard]] std::vector<Token> flattenTokenTrees(const std::vector<TokenTree>& trees);
 
-}  // namespace sere
+} // namespace sere

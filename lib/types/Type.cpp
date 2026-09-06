@@ -7,23 +7,40 @@
 
 namespace sere {
 
-Type::Type(TypeKind kind, std::string name) : kind_(kind), name_(std::move(name)) {}
+Type::Type(TypeKind kind, std::string name) : kind_(kind), name_(std::move(name)) {
+}
 
-TypeKind Type::kind() const { return kind_; }
+TypeKind Type::kind() const {
+  return kind_;
+}
 
-const std::string& Type::name() const { return name_; }
+const std::string& Type::name() const {
+  return name_;
+}
 
-const std::string& Type::qualifier() const { return qualifier_; }
+const std::string& Type::qualifier() const {
+  return qualifier_;
+}
 
-const std::vector<const Type*>& Type::args() const { return canonical()->args_; }
+const std::vector<const Type*>& Type::args() const {
+  return canonical()->args_;
+}
 
-const std::vector<RecordField>& Type::fields() const { return canonical()->fields_; }
+const std::vector<RecordField>& Type::fields() const {
+  return canonical()->fields_;
+}
 
-const std::vector<RecordMethod>& Type::methods() const { return canonical()->methods_; }
+const std::vector<RecordMethod>& Type::methods() const {
+  return canonical()->methods_;
+}
 
-const std::vector<const Type*>& Type::paramTypes() const { return paramTypes_; }
+const std::vector<const Type*>& Type::paramTypes() const {
+  return paramTypes_;
+}
 
-const Type* Type::returnType() const { return returnType_; }
+const Type* Type::returnType() const {
+  return returnType_;
+}
 
 const Type* Type::canonical() const {
   const Type* current = this;
@@ -40,7 +57,9 @@ bool Type::isNamed(std::string_view name) const {
   return type->kind_ == TypeKind::Primitive && type->name_ == name;
 }
 
-bool Type::isStrLayout() const { return isNamed("str") || isNamed("regex"); }
+bool Type::isStrLayout() const {
+  return isNamed("str") || isNamed("regex");
+}
 
 bool Type::isRecord() const {
   const TypeKind kind = canonical()->kind_;
@@ -48,8 +67,8 @@ bool Type::isRecord() const {
 }
 
 bool Type::isClass() const {
-  return !isVoidLike() && !isModule() && !isTypeParam() && !isSizeLiteral() &&
-         !isEllipsis() && !isParamList();
+  return !isVoidLike() && !isModule() && !isTypeParam() && !isSizeLiteral() && !isEllipsis() &&
+         !isParamList();
 }
 
 const Type* Type::valueType() const {
@@ -62,29 +81,53 @@ const Type* Type::valueType() const {
   return type;
 }
 
-bool Type::isTypeParam() const { return canonical()->kind_ == TypeKind::TypeParam; }
+bool Type::isTypeParam() const {
+  return canonical()->kind_ == TypeKind::TypeParam;
+}
 
-bool Type::isModule() const { return canonical()->kind_ == TypeKind::Module; }
+bool Type::isModule() const {
+  return canonical()->kind_ == TypeKind::Module;
+}
 
-bool Type::isAbstract() const { return canonical()->isAbstract_; }
+bool Type::isAbstract() const {
+  return canonical()->isAbstract_;
+}
 
-bool Type::isEnum() const { return canonical()->isEnum_; }
+bool Type::isEnum() const {
+  return canonical()->isEnum_;
+}
 
-bool Type::isIntEnum() const { return isEnum() && !hasEnumPayload(); }
+bool Type::isIntEnum() const {
+  return isEnum() && !hasEnumPayload();
+}
 
-bool Type::isStruct() const { return canonical()->isStruct_; }
+bool Type::isStruct() const {
+  return canonical()->isStruct_;
+}
 
-bool Type::isFrozen() const { return canonical()->isFrozen_; }
+bool Type::isFrozen() const {
+  return canonical()->isFrozen_;
+}
 
-bool Type::isFlags() const { return canonical()->isFlags_; }
+bool Type::isFlags() const {
+  return canonical()->isFlags_;
+}
 
-bool Type::isNever() const { return isNamed("never"); }
+bool Type::isNever() const {
+  return isNamed("never");
+}
 
-bool Type::isAny() const { return isNamed("Any"); }
+bool Type::isAny() const {
+  return isNamed("Any");
+}
 
-bool Type::isVoidLike() const { return isNamed("void") || isNamed("None"); }
+bool Type::isVoidLike() const {
+  return isNamed("void") || isNamed("None");
+}
 
-bool Type::isUnion() const { return canonical()->kind_ == TypeKind::Union; }
+bool Type::isUnion() const {
+  return canonical()->kind_ == TypeKind::Union;
+}
 
 int Type::unionMemberIndex(const Type* member) const {
   if (!isUnion() || member == nullptr) {
@@ -97,17 +140,24 @@ int Type::unionMemberIndex(const Type* member) const {
       continue;
     }
     const Type* current = members[index]->canonical();
-    if (current == member ||
-        (current->isVoidLike() && member->isVoidLike())) {
+    if (current == member || (current->isVoidLike() && member->isVoidLike())) {
       return static_cast<int>(index);
     }
   }
   return -1;
 }
 
-const std::vector<const Type*>& Type::bases() const { return canonical()->bases_; }
+const std::vector<const Type*>& Type::bases() const {
+  return canonical()->bases_;
+}
 
-const std::vector<std::string>& Type::typeParams() const { return canonical()->typeParams_; }
+const std::vector<const Type*>& Type::typeConstraints() const {
+  return canonical()->typeConstraints_;
+}
+
+const std::vector<std::string>& Type::typeParams() const {
+  return canonical()->typeParams_;
+}
 
 bool Type::isSubtypeOf(const Type* other) const {
   if (other == nullptr) {
@@ -204,8 +254,8 @@ bool Type::isInteger() const {
 }
 
 bool Type::isScalarInteger() const {
-  return isNamed("i8") || isNamed("i16") || isNamed("i32") || isNamed("i64") ||
-         isNamed("u8") || isNamed("u16") || isNamed("u32") || isNamed("u64");
+  return isNamed("i8") || isNamed("i16") || isNamed("i32") || isNamed("i64") || isNamed("u8") ||
+         isNamed("u16") || isNamed("u32") || isNamed("u64");
 }
 
 bool Type::hasEnumPayload() const {
@@ -224,7 +274,9 @@ bool Type::isUnsignedInteger() const {
   return isNamed("u8") || isNamed("u16") || isNamed("u32") || isNamed("u64");
 }
 
-bool Type::isFloat() const { return isNamed("f32") || isNamed("f64"); }
+bool Type::isFloat() const {
+  return isNamed("f32") || isNamed("f64");
+}
 
 int Type::integerBitWidth() const {
   if (isNamed("bool")) {
@@ -250,21 +302,33 @@ bool Type::isGenericCtor(std::string_view name) const {
   return type->kind_ == TypeKind::Generic && type->name_ == name;
 }
 
-bool Type::isTypeObject() const { return isGenericCtor("type"); }
+bool Type::isTypeObject() const {
+  return isGenericCtor("type");
+}
 
-const Type* Type::typeObjectInstance() const { return isTypeObject() ? genericArg(0) : nullptr; }
+const Type* Type::typeObjectInstance() const {
+  return isTypeObject() ? genericArg(0) : nullptr;
+}
 
-bool Type::isEllipsis() const { return isNamed("..."); }
+bool Type::isEllipsis() const {
+  return isNamed("...");
+}
 
-bool Type::isParamList() const { return isGenericCtor("[]"); }
+bool Type::isParamList() const {
+  return isGenericCtor("[]");
+}
 
 bool Type::isCallableConstraint() const {
   return isGenericCtor("Callable") || isGenericCtor("Function");
 }
 
-bool Type::isClassConstraint() const { return isGenericCtor("Class"); }
+bool Type::isClassConstraint() const {
+  return isGenericCtor("Class");
+}
 
-bool Type::isFunctionValue() const { return canonical()->kind() == TypeKind::Function; }
+bool Type::isFunctionValue() const {
+  return canonical()->kind() == TypeKind::Function;
+}
 
 const Type* Type::genericArg(std::size_t index) const {
   const Type* type = canonical();
@@ -278,13 +342,21 @@ bool Type::isPointerLike() const {
   return isGenericCtor("Unique") || isGenericCtor("Shared") || isGenericCtor("Ptr");
 }
 
-bool Type::isList() const { return isGenericCtor("list"); }
+bool Type::isList() const {
+  return isGenericCtor("list");
+}
 
-bool Type::isArray() const { return isGenericCtor("array"); }
+bool Type::isArray() const {
+  return isGenericCtor("array");
+}
 
-bool Type::isDict() const { return isGenericCtor("dict"); }
+bool Type::isDict() const {
+  return isGenericCtor("dict");
+}
 
-bool Type::isSequence() const { return isList() || isArray(); }
+bool Type::isSequence() const {
+  return isList() || isArray();
+}
 
 bool Type::isIndexable() const {
   if (isSequence() || isDict() || isNamed("str")) {
@@ -326,9 +398,13 @@ const Type* Type::elementType() const {
   return genericArg(0);
 }
 
-const Type* Type::dictKeyType() const { return isDict() ? genericArg(0) : nullptr; }
+const Type* Type::dictKeyType() const {
+  return isDict() ? genericArg(0) : nullptr;
+}
 
-const Type* Type::dictValueType() const { return isDict() ? genericArg(1) : nullptr; }
+const Type* Type::dictValueType() const {
+  return isDict() ? genericArg(1) : nullptr;
+}
 
 const RecordField* Type::findField(std::string_view fieldName) const {
   const Type* type = canonical();
@@ -420,4 +496,4 @@ std::string Type::display() const {
   return text;
 }
 
-}  // namespace sere
+} // namespace sere

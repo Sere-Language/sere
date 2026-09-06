@@ -30,4 +30,4 @@ private:
   std::vector<std::uint32_t> lineOffsets_;
 };
 
-}  // namespace sere
+} // namespace sere

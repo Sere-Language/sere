@@ -14,7 +14,8 @@
 namespace sere {
 namespace {
 
-[[nodiscard]] bool namesEqual(const std::filesystem::path& left, const std::filesystem::path& right) {
+[[nodiscard]] bool namesEqual(const std::filesystem::path& left,
+                              const std::filesystem::path& right) {
   std::error_code leftError;
   std::error_code rightError;
   const std::filesystem::path a = std::filesystem::weakly_canonical(left, leftError);
@@ -41,8 +42,8 @@ namespace {
 [[nodiscard]] bool directoryHasSereFile(const std::filesystem::path& directory) {
   std::error_code error;
   const std::filesystem::directory_iterator end{};
-  for (std::filesystem::directory_iterator it(directory, error);
-       !error && it != end; it.increment(error)) {
+  for (std::filesystem::directory_iterator it(directory, error); !error && it != end;
+       it.increment(error)) {
     std::error_code inner;
     if (it->is_regular_file(inner) && isSereModuleFile(it->path())) {
       return true;
@@ -57,10 +58,8 @@ namespace {
     return false;
   }
   std::error_code error;
-  const std::string fileText =
-      std::filesystem::weakly_canonical(file, error).generic_string();
-  const std::string rootText =
-      std::filesystem::weakly_canonical(root, error).generic_string();
+  const std::string fileText = std::filesystem::weakly_canonical(file, error).generic_string();
+  const std::string rootText = std::filesystem::weakly_canonical(root, error).generic_string();
   if (error || rootText.empty() || fileText.size() < rootText.size()) {
     return false;
   }
@@ -83,9 +82,7 @@ namespace {
   return std::string(origin) + " module";
 }
 
-void splitTypedPath(std::string_view typed,
-                    std::vector<std::string>& parent,
-                    std::string& last) {
+void splitTypedPath(std::string_view typed, std::vector<std::string>& parent, std::string& last) {
   parent.clear();
   last.clear();
   if (typed.empty()) {
@@ -116,7 +113,7 @@ void splitTypedPath(std::string_view typed,
 }
 
 [[nodiscard]] std::string childImportPath(const std::vector<std::string>& parent,
-                                         const std::string& name) {
+                                          const std::string& name) {
   std::vector<std::string> parts = parent;
   parts.push_back(name);
   return joinImportPath(parts);
@@ -145,7 +142,7 @@ void considerEntry(std::vector<ImportModuleEntry>& out,
   out.push_back(std::move(entry));
 }
 
-}  // namespace
+} // namespace
 
 std::vector<std::string> splitImportPath(std::string_view dotted) {
   std::vector<std::string> parts;
@@ -272,11 +269,11 @@ std::filesystem::path resolveImportFile(const std::vector<std::filesystem::path>
   return {};
 }
 
-std::vector<ImportModuleEntry> listImportModules(
-    const std::vector<std::filesystem::path>& searchDirs,
-    const std::filesystem::path& stdlibDir,
-    std::string_view typedPath,
-    const std::filesystem::path& skipFile) {
+std::vector<ImportModuleEntry>
+listImportModules(const std::vector<std::filesystem::path>& searchDirs,
+                  const std::filesystem::path& stdlibDir,
+                  std::string_view typedPath,
+                  const std::filesystem::path& skipFile) {
   std::vector<std::string> parent;
   std::string last;
   splitTypedPath(typedPath, parent, last);
@@ -292,8 +289,8 @@ std::vector<ImportModuleEntry> listImportModules(
       continue;
     }
     const std::filesystem::directory_iterator end{};
-    for (std::filesystem::directory_iterator it(directory, error);
-         !error && it != end; it.increment(error)) {
+    for (std::filesystem::directory_iterator it(directory, error); !error && it != end;
+         it.increment(error)) {
       const std::filesystem::path path = it->path();
       const std::string name = path.filename().string();
       if (isHiddenName(name)) {
@@ -329,4 +326,4 @@ std::vector<ImportModuleEntry> listImportModules(
   return out;
 }
 
-}  // namespace sere
+} // namespace sere

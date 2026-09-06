@@ -420,6 +420,18 @@ Expr& UnaryExpr::operand() {
   return *operand_;
 }
 
+AwaitExpr::AwaitExpr(SourceRange range, std::unique_ptr<Expr> operand)
+    : Expr(NodeKind::AwaitExpr, range), operand_(std::move(operand)) {
+}
+
+const Expr& AwaitExpr::operand() const {
+  return *operand_;
+}
+
+Expr& AwaitExpr::operand() {
+  return *operand_;
+}
+
 CastExpr::CastExpr(SourceRange range, std::unique_ptr<Expr> value, std::unique_ptr<TypeExpr> target)
     : Expr(NodeKind::CastExpr, range), value_(std::move(value)), target_(std::move(target)) {
 }
@@ -869,6 +881,14 @@ const std::string& EnumDef::name() const {
   return name_;
 }
 
+void EnumDef::setTypeConstraints(std::vector<std::unique_ptr<TypeExpr>> constraints) {
+  typeConstraints_ = std::move(constraints);
+}
+
+const std::vector<std::unique_ptr<TypeExpr>>& EnumDef::typeConstraints() const {
+  return typeConstraints_;
+}
+
 const std::vector<std::string>& EnumDef::typeParams() const {
   return typeParams_;
 }
@@ -1091,6 +1111,14 @@ void FunctionDef::setOverride(bool value) {
   isOverride_ = value;
 }
 
+bool FunctionDef::isAsync() const {
+  return isAsync_;
+}
+
+void FunctionDef::setAsync(bool value) {
+  isAsync_ = value;
+}
+
 void FunctionDef::setDecorators(std::vector<std::string> decorators) {
   decorators_ = std::move(decorators);
 }
@@ -1129,6 +1157,14 @@ const std::string& FunctionDef::modulePrefix() const {
 
 void FunctionDef::setTypeParams(std::vector<std::string> typeParams) {
   typeParams_ = std::move(typeParams);
+}
+
+void FunctionDef::setTypeConstraints(std::vector<std::unique_ptr<TypeExpr>> constraints) {
+  typeConstraints_ = std::move(constraints);
+}
+
+const std::vector<std::unique_ptr<TypeExpr>>& FunctionDef::typeConstraints() const {
+  return typeConstraints_;
 }
 
 const std::vector<std::string>& FunctionDef::typeParams() const {
@@ -1209,6 +1245,14 @@ std::vector<std::unique_ptr<TypeExpr>>& ClassDef::baseTypes() {
 
 void ClassDef::setBaseTypes(std::vector<std::unique_ptr<TypeExpr>> types) {
   baseTypes_ = std::move(types);
+}
+
+void ClassDef::setTypeConstraints(std::vector<std::unique_ptr<TypeExpr>> constraints) {
+  typeConstraints_ = std::move(constraints);
+}
+
+const std::vector<std::unique_ptr<TypeExpr>>& ClassDef::typeConstraints() const {
+  return typeConstraints_;
 }
 
 const std::vector<std::string>& ClassDef::typeParams() const {

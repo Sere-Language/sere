@@ -24,9 +24,10 @@ void applyHostLinkEnvironment();
 [[nodiscard]] std::optional<std::filesystem::path> findSystemLibrary(std::string_view name);
 /// Copy `fromDir`'s compiler, runtime, and stdlib into destBin.
 [[nodiscard]] int copyCompilerBin(const std::filesystem::path& fromDir,
-                                  const std::filesystem::path& destBin, std::string& error);
+                                  const std::filesystem::path& destBin,
+                                  std::string& error);
 
 /// Copy this compiler, runtime, and stdlib into destBin (default: ./bin).
 [[nodiscard]] int refreshCompilerBin(const std::filesystem::path& destBin, std::string& error);
 
-}  // namespace sere
+} // namespace sere

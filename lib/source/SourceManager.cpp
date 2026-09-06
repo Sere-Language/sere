@@ -10,8 +10,7 @@ namespace {
 
 void stripUtf8Bom(std::string& text) {
   if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF &&
-      static_cast<unsigned char>(text[1]) == 0xBB &&
-      static_cast<unsigned char>(text[2]) == 0xBF) {
+      static_cast<unsigned char>(text[1]) == 0xBB && static_cast<unsigned char>(text[2]) == 0xBF) {
     text.erase(0, 3);
   }
 }
@@ -26,7 +25,7 @@ void buildLineOffsets(const std::string& text, std::vector<std::uint32_t>& offse
   }
 }
 
-}  // namespace
+} // namespace
 
 SourceManager::SourceManager(std::string path, std::string text)
     : path_(std::move(path)), text_(std::move(text)) {
@@ -34,11 +33,17 @@ SourceManager::SourceManager(std::string path, std::string text)
   buildLineOffsets(text_, lineOffsets_);
 }
 
-const std::string& SourceManager::path() const { return path_; }
+const std::string& SourceManager::path() const {
+  return path_;
+}
 
-std::string_view SourceManager::text() const { return text_; }
+std::string_view SourceManager::text() const {
+  return text_;
+}
 
-std::size_t SourceManager::size() const { return text_.size(); }
+std::size_t SourceManager::size() const {
+  return text_.size();
+}
 
 char SourceManager::charAt(std::size_t offset) const {
   if (offset >= text_.size()) {
@@ -48,10 +53,8 @@ char SourceManager::charAt(std::size_t offset) const {
 }
 
 SourceLocation SourceManager::location(std::size_t offset) const {
-  const std::uint32_t clamped =
-      static_cast<std::uint32_t>(std::min(offset, text_.size()));
-  const auto lineIt =
-      std::upper_bound(lineOffsets_.begin(), lineOffsets_.end(), clamped);
+  const std::uint32_t clamped = static_cast<std::uint32_t>(std::min(offset, text_.size()));
+  const auto lineIt = std::upper_bound(lineOffsets_.begin(), lineOffsets_.end(), clamped);
   const std::size_t lineIndex =
       static_cast<std::size_t>(std::distance(lineOffsets_.begin(), lineIt)) - 1;
   const std::uint32_t lineStart = lineOffsets_[lineIndex];
@@ -110,4 +113,4 @@ std::string_view SourceManager::lineText(std::uint32_t line) const {
   return std::string_view(text_).substr(start, end - start);
 }
 
-}  // namespace sere
+} // namespace sere

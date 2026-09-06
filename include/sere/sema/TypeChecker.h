@@ -81,6 +81,7 @@ private:
   void registerBuiltins();
   void injectModuleGlobals();
   bool collectClassNames(Module& module);
+  bool collectEnumNames(Module& module);
   bool collectEnums(Module& module);
   bool collectAliases(Module& module);
   bool flattenClass(ClassDef& classDef);
@@ -143,6 +144,9 @@ private:
   [[nodiscard]] const Type*
   rewriteDunderBinary(BinaryExpr& expr, const Type* left, const Type* right);
   [[nodiscard]] const Type* checkBinary(BinaryExpr& expr);
+  [[nodiscard]] const Type* checkAwait(AwaitExpr& expr);
+  [[nodiscard]] const Type* taskType(const Type* inner) const;
+  [[nodiscard]] const Type* unwrapTask(const Type* task) const;
   [[nodiscard]] const Type* checkUnary(UnaryExpr& expr);
   [[nodiscard]] const Type* checkDeref(UnaryExpr& expr, const Type* operand);
   [[nodiscard]] const Type* checkAddrOf(UnaryExpr& expr, const Type* operand);
@@ -183,8 +187,19 @@ private:
                     SourceLocation location,
                     std::string container,
                     std::vector<std::string> paramNames = {});
+  bool resolveTypeConstraints(const std::vector<std::unique_ptr<TypeExpr>>& constraints);
+  bool ensureRecordConstraints(const Type* record);
+  bool checkTypeConstraints(const std::vector<std::string>& names,
+                            const std::vector<const Type*>& constraints,
+                            const std::vector<const Type*>& args,
+                            SourceRange range);
+  [[nodiscard]] bool satisfiesTypeConstraint(const Type* argument, const Type* constraint) const;
   [[nodiscard]] const Type* specializeCall(CallExpr& expr, const Symbol& symbol);
 
+  std::unordered_map<std::string, const Type*> activeTypeConstraints_{};
+  std::unordered_map<const Type*, const std::vector<std::unique_ptr<TypeExpr>>*>
+      recordConstraintExprs_{};
+  std::vector<const Type*> resolvingConstraints_{};
   TypeContext* types_;
   DiagnosticEngine* diagnostics_;
   std::vector<std::unordered_map<std::string, Symbol>> scopes_{};
@@ -200,6 +215,7 @@ private:
   std::string moduleDoc_{};
   bool moduleDebug_ = true;
   std::string currentFunctionName_{};
+  bool currentFunctionIsAsync_ = false;
   std::string currentPropertyName_{};
   int lambdaDepth_ = 0;
   int lambdaCounter_ = 0;

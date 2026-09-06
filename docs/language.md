@@ -130,16 +130,16 @@ requires `__enter__` / `__exit__` on the context type.
 
 ### Operators
 
-Arithmetic: `+ - * / // % **`  
-Bitwise: `& | ^ ~ << >>`  
-Comparison: `== != < <= > >=` `is` `in`  
-Boolean: `and` `or` `not`  
-Assignment: `=` `+=` `-=` `*=` `/=` `//=` `%=` `**=` `&=` `|=` `^=` `<<=` `>>=`  
-Inc/dec: `++n` `n++` `--n` `n--`  
-Pointers: `&x` `*p`  
-Cast: `value as T`  
-Call/index: `f(x)` `xs[i]` `xs[a:b]`  
-Walrus: `name := expr`  
+Arithmetic: `+ - * / // % **`
+Bitwise: `& | ^ ~ << >>`
+Comparison: `== != < <= > >=` `is` `in`
+Boolean: `and` `or` `not`
+Assignment: `=` `+=` `-=` `*=` `/=` `//=` `%=` `**=` `&=` `|=` `^=` `<<=` `>>=`
+Inc/dec: `++n` `n++` `--n` `n--`
+Pointers: `&x` `*p`
+Cast: `value as T`
+Call/index: `f(x)` `xs[i]` `xs[a:b]`
+Walrus: `name := expr`
 Other: `.` `,` `:` `->` `=>` `!` `$` `@` `...` `|` (unions and bitwise or)
 
 `/` is true division. `//` is floor division.
@@ -445,6 +445,55 @@ def add(left: i32, right: i32) -> i32
 ```
 
 The string is the link symbol. The `def` has no body.
+
+### Constrained generic parameters
+
+Add `: Type` or `: Type1 | Type2` after a generic parameter name to restrict its
+allowed types:
+
+```sere
+def identity[T: i32 | f64](value: T) -> T:
+    return value
+
+class Box[T: i32 | str]:
+    value: T
+
+enum Value[T: i32 | str]:
+    Item(T)
+
+def main() -> i32:
+    number: i32 = identity[i32](3)
+    real: f64 = identity(2.5)
+    box = Box[str]("hello")
+    value = Value.Item("text")
+    return 0
+```
+
+The same syntax works on structs and generic methods. Each parameter has its
+own constraint; unrestricted parameters can appear alongside constrained ones:
+`class Pair[K: i32 | str, V]`.
+
+Constraints are checked at compile time for explicit type arguments and for
+arguments inferred from function calls or enum payloads. `identity[str]("no")`
+and `identity("no")` both report `TypeError`. A constrained class or struct still
+requires explicit constructor type arguments, such as `Box[i32](3)`.
+
+Allowed type arguments match exactly after resolving aliases. A constraint of
+`i32 | f64` rejects an inferred `i64` or `Any`; a constraint naming a class does
+not also admit its subclasses. Convert the value first, or choose an allowed
+explicit type argument and use the usual argument-conversion rules.
+Concrete collection types are also valid,
+for example `T: list[i32] | str`. Constraints must name concrete types; `Any`,
+`void`, and other generic parameters are not allowed in the constraint itself.
+Omitting a constraint (`[T]`) retains unrestricted generic behavior.
+
+The `|` in a constraint lists alternative type arguments. It does not change
+`T` into a union-valued variable: each specialization still has one chosen type.
+An annotation on a constrained record must supply its type arguments, too;
+bare `Box` cannot silently select `Any`.
+
+See [generic_constraints.sere](../examples/generic_constraints.sere) for an
+executable example with functions, classes, methods, and enum payloads.
 
 ---
 
@@ -994,7 +1043,7 @@ Sere is a **typed Python superset**, not CPython. These remain out of scope or
 incomplete. They diagnose instead of generating silent wrong code:
 
 - keyword-only parameters (after `*args`), `global` / `nonlocal`
-- Nested `def`, `async` / `await`, `yield`
+- Nested `def`, `yield`
 - Unmodified CPython stdlib (use Sere modules such as `requests` and `wsgi`)
 - Lambda capture of enclosing locals (pass parameters instead)
 - `del name` (only `del xs[i]` / `del d[k]`)

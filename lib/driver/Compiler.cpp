@@ -8,11 +8,11 @@
 #include "sere/codegen/OptPipeline.h"
 #include "sere/diag/DiagnosticEngine.h"
 #include "sere/driver/Frontend.h"
-#include "sere/driver/Prelude.h"
+#include "sere/driver/Installer.h"
 #include "sere/driver/Library.h"
+#include "sere/driver/Prelude.h"
 #include "sere/driver/Project.h"
 #include "sere/driver/ProjectInit.h"
-#include "sere/driver/Installer.h"
 #include "sere/driver/ProjectShell.h"
 #include "sere/driver/Toolchain.h"
 #include "sere/lex/Lexer.h"
@@ -23,8 +23,8 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
-#include <llvm/Support/JSON.h>
 #include <llvm/Support/FileSystem.h>
+#include <llvm/Support/JSON.h>
 #include <llvm/Support/Program.h>
 #include <llvm/Support/raw_ostream.h>
 
@@ -103,8 +103,8 @@ writeIr(const llvm::Module& module, const std::filesystem::path& path, std::stri
   if (!errorCode) {
     return true;
   }
-  std::filesystem::copy_file(tempPath, path, std::filesystem::copy_options::overwrite_existing,
-                             errorCode);
+  std::filesystem::copy_file(
+      tempPath, path, std::filesystem::copy_options::overwrite_existing, errorCode);
   std::filesystem::remove(tempPath);
   if (errorCode) {
     error = "cannot write LLVM IR to '" + path.string() + "': " + errorCode.message();
@@ -131,8 +131,8 @@ void copyBesideOutput(const std::filesystem::path& from, const std::filesystem::
     destDir = ".";
   }
   std::error_code error;
-  std::filesystem::copy_file(from, destDir / from.filename(),
-                             std::filesystem::copy_options::overwrite_existing, error);
+  std::filesystem::copy_file(
+      from, destDir / from.filename(), std::filesystem::copy_options::overwrite_existing, error);
 }
 
 [[nodiscard]] int emitAssembly(const std::filesystem::path& irPath,
@@ -144,8 +144,8 @@ void copyBesideOutput(const std::filesystem::path& from, const std::filesystem::
   }
   prependLlvmToolsToPath();
   const std::string clangPath = *clang;
-  const std::vector<std::string> owned{clangPath, "-S", "-x", "ir", "-O0", irPath.string(), "-o",
-                                       outputPath.string()};
+  const std::vector<std::string> owned{
+      clangPath, "-S", "-x", "ir", "-O0", irPath.string(), "-o", outputPath.string()};
   llvm::SmallVector<llvm::StringRef, 8> arguments;
   for (const std::string& item : owned) {
     arguments.push_back(item);
@@ -223,12 +223,20 @@ void copyBesideOutput(const std::filesystem::path& from, const std::filesystem::
       }
       std::error_code error;
       std::filesystem::create_directories(destDir / "platforms", error);
-      std::filesystem::copy_file(plugin, destDir / "platforms" / "qwindows.dll",
-                                 std::filesystem::copy_options::overwrite_existing, error);
+      std::filesystem::copy_file(plugin,
+                                 destDir / "platforms" / "qwindows.dll",
+                                 std::filesystem::copy_options::overwrite_existing,
+                                 error);
     }
   }
 #ifdef _WIN32
-  for (const char* name : {"user32.lib", "gdi32.lib", "opengl32.lib", "shell32.lib", "advapi32.lib", "winhttp.lib", "ws2_32.lib"}) {
+  for (const char* name : {"user32.lib",
+                           "gdi32.lib",
+                           "opengl32.lib",
+                           "shell32.lib",
+                           "advapi32.lib",
+                           "winhttp.lib",
+                           "ws2_32.lib"}) {
     if (!addSystemLib(name)) {
       return 1;
     }

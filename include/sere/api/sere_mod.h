@@ -55,8 +55,8 @@ Sere_List* Sere_List_FromObject(Sere_Object* object);
 
 void Sere_DefineFunction(const char* name, Sere_CFunction function, int32_t nargs);
 Sere_CFunction Sere_FindFunction(const char* name);
-int32_t Sere_CallFunction(const char* name, Sere_Object* const* args, int32_t nargs,
-                          Sere_Object** result);
+int32_t
+Sere_CallFunction(const char* name, Sere_Object* const* args, int32_t nargs, Sere_Object** result);
 
 void Sere_IncRef(Sere_Object* object);
 void Sere_DecRef(Sere_Object* object);

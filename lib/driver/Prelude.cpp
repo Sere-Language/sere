@@ -67,7 +67,7 @@ namespace {
   return {};
 }
 
-}  // namespace
+} // namespace
 
 std::filesystem::path findStdlibDirectory(const std::filesystem::path& compilerDir) {
   if (const char* fromEnv = std::getenv("SERE_STDLIB");
@@ -90,8 +90,7 @@ std::filesystem::path findStdlibDirectory(const std::filesystem::path& compilerD
   if (stdlibHasPrelude(toolchainHome)) {
     return toolchainHome;
   }
-  const std::filesystem::path projectVenv =
-      std::filesystem::current_path() / "venv" / "stdlib";
+  const std::filesystem::path projectVenv = std::filesystem::current_path() / "venv" / "stdlib";
   if (stdlibHasPrelude(projectVenv)) {
     return projectVenv;
   }
@@ -139,4 +138,4 @@ bool loadPrelude(Module& userModule,
   return true;
 }
 
-}  // namespace sere
+} // namespace sere

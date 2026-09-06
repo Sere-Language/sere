@@ -74,7 +74,8 @@ void copyIfExists(const std::filesystem::path& from, const std::filesystem::path
   std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing, error);
 }
 
-void copyNamed(const std::filesystem::path& directory, std::string_view stem,
+void copyNamed(const std::filesystem::path& directory,
+               std::string_view stem,
                const std::filesystem::path& destDir) {
   const std::string exe = std::string(stem) + ".exe";
   copyIfExists(directory / exe, destDir / exe);
@@ -87,19 +88,32 @@ void makeExecutable(const std::filesystem::path& path) {
                                std::filesystem::perms::owner_exec |
                                    std::filesystem::perms::group_exec |
                                    std::filesystem::perms::others_exec,
-                               std::filesystem::perm_options::add, error);
+                               std::filesystem::perm_options::add,
+                               error);
 }
 
 [[nodiscard]] std::string escapeToml(std::string_view text) {
   std::string result;
   for (char ch : text) {
     switch (ch) {
-    case '\\': result += "\\\\"; break;
-    case '"': result += "\\\""; break;
-    case '\n': result += "\\n"; break;
-    case '\r': result += "\\r"; break;
-    case '\t': result += "\\t"; break;
-    default: result += ch; break;
+    case '\\':
+      result += "\\\\";
+      break;
+    case '"':
+      result += "\\\"";
+      break;
+    case '\n':
+      result += "\\n";
+      break;
+    case '\r':
+      result += "\\r";
+      break;
+    case '\t':
+      result += "\\t";
+      break;
+    default:
+      result += ch;
+      break;
     }
   }
   return result;
@@ -480,20 +494,24 @@ Write-Host "Try:  sere --help"
       "if \"%HERE:~-1%\"==\"\\\" set \"HERE=%HERE:~0,-1%\"\n"
       "set \"SERE_BIN=\"\n"
       "if exist \"%HERE%\\sere.exe\" set \"SERE_BIN=%HERE%\"\n"
-      "if not defined SERE_BIN if exist \"%HERE%\\..\\venv\\bin\\sere.exe\" for %%I in (\"%HERE%\\..\\venv\\bin\") do set \"SERE_BIN=%%~fI\"\n"
-      "if not defined SERE_BIN if exist \"%HERE%\\..\\bin\\sere.exe\" for %%I in (\"%HERE%\\..\\bin\") do set \"SERE_BIN=%%~fI\"\n"
+      "if not defined SERE_BIN if exist \"%HERE%\\..\\venv\\bin\\sere.exe\" for %%I in "
+      "(\"%HERE%\\..\\venv\\bin\") do set \"SERE_BIN=%%~fI\"\n"
+      "if not defined SERE_BIN if exist \"%HERE%\\..\\bin\\sere.exe\" for %%I in "
+      "(\"%HERE%\\..\\bin\") do set \"SERE_BIN=%%~fI\"\n"
       "if not defined SERE_BIN (\n"
       "  echo sere.exe not found. Run this from a Sere project or compiler bin folder.\n"
       "  exit /b 1\n"
       ")\n"
       "if /I \"%~1\"==\"-Remove\" (\n"
-      "  powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%HERE%\\sere-path.ps1\" -Remove %*\n"
+      "  powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%HERE%\\sere-path.ps1\" -Remove "
+      "%*\n"
       "  exit /b %ERRORLEVEL%\n"
       ")\n"
       "set \"PATH=%SERE_BIN%;%PATH%\"\n"
       "echo This session PATH starts with:\n"
       "echo   %SERE_BIN%\n"
-      "if /I \"%~1\"==\"-Persistent\" powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%HERE%\\sere-path.ps1\" -Persistent\n"
+      "if /I \"%~1\"==\"-Persistent\" powershell.exe -NoProfile -ExecutionPolicy Bypass -File "
+      "\"%HERE%\\sere-path.ps1\" -Persistent\n"
       "exit /b 0\n";
   const char* sh = R"SH(#!/usr/bin/env bash
 #   . ./bin/sere-path.sh
@@ -533,31 +551,29 @@ fi
 }
 
 void writeShellRcImpl(const std::filesystem::path& root) {
-  const char* bashRc =
-      "# Nested `sere shell` only. Does not load ~/.bashrc.\n"
-      "# PATH and SERE_* are already set by the parent `sere` process.\n"
-      "PS1=\"(sere:${SERE_PROJECT_NAME}) \\w \\$ \"\n"
-      "deactivate() { echo \"Leaving nested Sere shell.\"; exit; }\n";
-  const char* psRc =
-      "# Nested `sere shell` only. Does not load the user profile.\n"
-      "# PATH and SERE_* are already set by the parent `sere` process.\n"
-      "function global:prompt {\n"
-      "  \"(sere:$env:SERE_PROJECT_NAME) $($executionContext.SessionState.Path.CurrentLocation.ProviderPath)> \"\n"
-      "}\n"
-      "function global:deactivate {\n"
-      "  Write-Host 'Leaving nested Sere shell.'\n"
-      "  exit\n"
-      "}\n";
-  const char* cmdRc =
-      "@echo off\n"
-      "prompt (sere:%SERE_PROJECT_NAME%) $P$G\n"
-      "doskey deactivate=echo Leaving nested Sere shell. $T exit\n";
+  const char* bashRc = "# Nested `sere shell` only. Does not load ~/.bashrc.\n"
+                       "# PATH and SERE_* are already set by the parent `sere` process.\n"
+                       "PS1=\"(sere:${SERE_PROJECT_NAME}) \\w \\$ \"\n"
+                       "deactivate() { echo \"Leaving nested Sere shell.\"; exit; }\n";
+  const char* psRc = "# Nested `sere shell` only. Does not load the user profile.\n"
+                     "# PATH and SERE_* are already set by the parent `sere` process.\n"
+                     "function global:prompt {\n"
+                     "  \"(sere:$env:SERE_PROJECT_NAME) "
+                     "$($executionContext.SessionState.Path.CurrentLocation.ProviderPath)> \"\n"
+                     "}\n"
+                     "function global:deactivate {\n"
+                     "  Write-Host 'Leaving nested Sere shell.'\n"
+                     "  exit\n"
+                     "}\n";
+  const char* cmdRc = "@echo off\n"
+                      "prompt (sere:%SERE_PROJECT_NAME%) $P$G\n"
+                      "doskey deactivate=echo Leaving nested Sere shell. $T exit\n";
   (void)writeText(root / "venv" / "shell.bash", bashRc);
   (void)writeText(root / "venv" / "shell.ps1", psRc);
   (void)writeText(root / "venv" / "shell.cmd", cmdRc);
 }
 
-}  // namespace
+} // namespace
 
 void writeProjectShellRc(const std::filesystem::path& root) {
   writeShellRcImpl(root);
@@ -567,17 +583,16 @@ namespace {
 
 [[nodiscard]] bool writeScaffoldSources(const std::filesystem::path& root,
                                         const std::string& name) {
-  const char* mainSere =
-      "from inspect import label\n"
-      "\n"
-      "type Number = i32 | i64\n"
-      "\n"
-      "def main() -> i32:\n"
-      "    values: list[i32] = [1, 2, 3, 4]\n"
-      "    tail: list[i32] = values[1:]\n"
-      "    print(\"hello from sere\")\n"
-      "    print(label(\"main\"), typeof(tail), len(tail))\n"
-      "    return 0\n";
+  const char* mainSere = "from inspect import label\n"
+                         "\n"
+                         "type Number = i32 | i64\n"
+                         "\n"
+                         "def main() -> i32:\n"
+                         "    values: list[i32] = [1, 2, 3, 4]\n"
+                         "    tail: list[i32] = values[1:]\n"
+                         "    print(\"hello from sere\")\n"
+                         "    print(label(\"main\"), typeof(tail), len(tail))\n"
+                         "    return 0\n";
   const char* nativeCpp =
       "#include \"sere/api/sere_mod.h\"\n"
       "\n"
@@ -596,28 +611,25 @@ namespace {
       "extern \"C\" void sere_mod_init(void) {\n"
       "  Sere_DefineFunction(\"add\", native_add_obj, 2);\n"
       "}\n";
-  const char* nativeCmake =
-      "cmake_minimum_required(VERSION 3.20)\n"
-      "project(sere_native LANGUAGES C CXX)\n"
-      "add_library(sere_native STATIC example.cpp)\n"
-      "target_include_directories(sere_native PUBLIC "
-      "\"${CMAKE_CURRENT_SOURCE_DIR}/../../venv/include\")\n";
-  const char* nativeSere =
-      "extern \"C\" \"native_add\"\n"
-      "def add(left: i32, right: i32) -> i32\n";
-  const char* gitignore =
-      "bin/*\n"
-      "!bin/sere-path.ps1\n"
-      "!bin/sere-path.cmd\n"
-      "!bin/sere-path.sh\n"
-      "venv/lib/\n"
-      "venv/bin/\n"
-      "libs/native/build/\n"
-      "libs/.sere-lib/\n"
-      "dist/\n"
-      "*.exe\n"
-      "*.obj\n"
-      "*.ll\n";
+  const char* nativeCmake = "cmake_minimum_required(VERSION 3.20)\n"
+                            "project(sere_native LANGUAGES C CXX)\n"
+                            "add_library(sere_native STATIC example.cpp)\n"
+                            "target_include_directories(sere_native PUBLIC "
+                            "\"${CMAKE_CURRENT_SOURCE_DIR}/../../venv/include\")\n";
+  const char* nativeSere = "extern \"C\" \"native_add\"\n"
+                           "def add(left: i32, right: i32) -> i32\n";
+  const char* gitignore = "bin/*\n"
+                          "!bin/sere-path.ps1\n"
+                          "!bin/sere-path.cmd\n"
+                          "!bin/sere-path.sh\n"
+                          "venv/lib/\n"
+                          "venv/bin/\n"
+                          "libs/native/build/\n"
+                          "libs/.sere-lib/\n"
+                          "dist/\n"
+                          "*.exe\n"
+                          "*.obj\n"
+                          "*.ll\n";
   const std::string readme =
       std::string("Sere project: ") + name +
       "\n"
@@ -653,9 +665,8 @@ namespace {
          writeText(root / "libs" / "native" / "CMakeLists.txt", nativeCmake) &&
          writeText(root / "libs" / "native.sere", nativeSere) &&
          writeText(root / "sere.toml", tomlText(name)) &&
-         writeText(root / ".gitignore", gitignore) &&
-         writeText(root / "README.txt", readme) && writeActivateScripts(root) &&
-         writePathScripts(root);
+         writeText(root / ".gitignore", gitignore) && writeText(root / "README.txt", readme) &&
+         writeActivateScripts(root) && writePathScripts(root);
 }
 
 [[nodiscard]] std::filesystem::path stdlibBesideCompiler(const std::filesystem::path& compilerDir) {
@@ -743,35 +754,32 @@ void copyToolchain(const std::filesystem::path& compilerDir, const std::filesyst
          "\n# Custom tool settings belong in [tool.<name>] tables.\n";
 }
 
-[[nodiscard]] bool writeLibraryScaffold(const std::filesystem::path& root, const std::string& name) {
-  const std::string libSere =
-      "\"\"\"Drop-in Sere library. Pack with `sere pack`, then copy dist/" + name +
-      ".slib into another project's libs/ folder and `import " + name +
-      "`.\n"
-      "\"\"\"\n"
-      "\n"
-      "def add(left: i32, right: i32) -> i32:\n"
-      "    return left + right\n";
-  const char* nativeCpp =
-      "#include \"sere/api/sere_mod.h\"\n"
-      "\n"
-      "extern \"C\" int32_t native_add(int32_t left, int32_t right) {\n"
-      "  return left + right;\n"
-      "}\n";
-  const char* nativeCmake =
-      "cmake_minimum_required(VERSION 3.20)\n"
-      "project(sere_native LANGUAGES C CXX)\n"
-      "add_library(sere_native STATIC example.cpp)\n";
-  const char* nativeSere =
-      "extern \"C\" \"native_add\"\n"
-      "def add(left: i32, right: i32) -> i32\n";
-  const char* gitignore =
-      "dist/\n"
-      ".sere-lib/\n"
-      "libs/native/build/\n"
-      "*.exe\n"
-      "*.obj\n"
-      "*.ll\n";
+[[nodiscard]] bool writeLibraryScaffold(const std::filesystem::path& root,
+                                        const std::string& name) {
+  const std::string libSere = "\"\"\"Drop-in Sere library. Pack with `sere pack`, then copy dist/" +
+                              name + ".slib into another project's libs/ folder and `import " +
+                              name +
+                              "`.\n"
+                              "\"\"\"\n"
+                              "\n"
+                              "def add(left: i32, right: i32) -> i32:\n"
+                              "    return left + right\n";
+  const char* nativeCpp = "#include \"sere/api/sere_mod.h\"\n"
+                          "\n"
+                          "extern \"C\" int32_t native_add(int32_t left, int32_t right) {\n"
+                          "  return left + right;\n"
+                          "}\n";
+  const char* nativeCmake = "cmake_minimum_required(VERSION 3.20)\n"
+                            "project(sere_native LANGUAGES C CXX)\n"
+                            "add_library(sere_native STATIC example.cpp)\n";
+  const char* nativeSere = "extern \"C\" \"native_add\"\n"
+                           "def add(left: i32, right: i32) -> i32\n";
+  const char* gitignore = "dist/\n"
+                          ".sere-lib/\n"
+                          "libs/native/build/\n"
+                          "*.exe\n"
+                          "*.obj\n"
+                          "*.ll\n";
   const std::string readme =
       std::string("Sere library: ") + name +
       "\n"
@@ -805,7 +813,7 @@ void copyToolchain(const std::filesystem::path& compilerDir, const std::filesyst
          writeText(root / ".gitignore", gitignore) && writeText(root / "README.txt", readme);
 }
 
-}  // namespace
+} // namespace
 
 int initSereLibrary(const std::filesystem::path& name, std::string& error) {
   const std::filesystem::path root = std::filesystem::absolute(name);
@@ -830,7 +838,8 @@ int initSereLibrary(const std::filesystem::path& name, std::string& error) {
   return 0;
 }
 
-int initSereProject(const std::filesystem::path& name, const std::filesystem::path& compilerDir,
+int initSereProject(const std::filesystem::path& name,
+                    const std::filesystem::path& compilerDir,
                     std::string& error) {
   const std::filesystem::path root = std::filesystem::absolute(name);
   const std::string projectName = root.filename().string();
@@ -854,8 +863,8 @@ int initSereProject(const std::filesystem::path& name, const std::filesystem::pa
   writeProjectShellRc(root);
   copyProjectToolchain(compilerDir, root);
   if (!writeText(root / "venv" / "sere.cfg",
-                 "home = " + compilerDir.string() + "\nstdlib = venv/stdlib\nversion = " +
-                     SERE_VERSION_STRING + "\n")) {
+                 "home = " + compilerDir.string() +
+                     "\nstdlib = venv/stdlib\nversion = " + SERE_VERSION_STRING + "\n")) {
     error = "cannot write venv/sere.cfg";
     return 1;
   }
@@ -966,15 +975,14 @@ bool writeKeyedFile(const std::filesystem::path& path, const std::string& text) 
     return {};
   }
   const std::string tempPath = std::string(temp);
-  std::optional<llvm::StringRef> redirects[3] = {std::nullopt, llvm::StringRef(tempPath),
-                                                 std::nullopt};
+  std::optional<llvm::StringRef> redirects[3] = {
+      std::nullopt, llvm::StringRef(tempPath), std::nullopt};
   const std::string exeString = exe.string();
   llvm::SmallVector<llvm::StringRef, 2> args{exeString, "--version"};
   std::string launchError;
   bool failed = false;
-  const int code =
-      llvm::sys::ExecuteAndWait(exeString, args, std::nullopt, redirects, 8, 0, &launchError,
-                                &failed);
+  const int code = llvm::sys::ExecuteAndWait(
+      exeString, args, std::nullopt, redirects, 8, 0, &launchError, &failed);
   const std::string output = readTextFile(tempPath);
   std::error_code removeError;
   std::filesystem::remove(tempPath, removeError);
@@ -1096,9 +1104,8 @@ bool patchTomlSereVersion(const std::filesystem::path& tomlPath, const std::stri
   std::error_code dirError;
   std::filesystem::create_directories(destBin, dirError);
   std::cout << "this compiler:    " << SERE_VERSION_STRING << "  (" << fromDir.string() << ")\n";
-  std::cout << "system install:   "
-            << (destVersion.empty() ? "(missing or unknown)" : destVersion) << "  ("
-            << destBin.string() << ")\n";
+  std::cout << "system install:   " << (destVersion.empty() ? "(missing or unknown)" : destVersion)
+            << "  (" << destBin.string() << ")\n";
   std::cout << "updating " << prefix.string() << "\n";
   if (copyCompilerBin(fromDir, destBin, error) != 0) {
     return 1;
@@ -1113,7 +1120,7 @@ bool patchTomlSereVersion(const std::filesystem::path& tomlPath, const std::stri
   return 0;
 }
 
-}  // namespace
+} // namespace
 
 int updateSereEnvironment(const std::filesystem::path& start, std::string& error) {
   if (updateGlobalInstall(error) != 0) {
@@ -1163,8 +1170,8 @@ int updateSereEnvironment(const std::filesystem::path& start, std::string& error
   (void)copyCompilerBin(sourceDir, *root / "bin", refreshError);
   (void)copyCompilerBin(sourceDir, *root / "venv" / "bin", refreshError);
   if (!writeText(*root / "venv" / "sere.cfg",
-                 "home = " + sourceDir.string() + "\nstdlib = venv/stdlib\nversion = " +
-                     installed + "\n")) {
+                 "home = " + sourceDir.string() + "\nstdlib = venv/stdlib\nversion = " + installed +
+                     "\n")) {
     error = "cannot write venv/sere.cfg";
     return 1;
   }
@@ -1174,4 +1181,4 @@ int updateSereEnvironment(const std::filesystem::path& start, std::string& error
   return 0;
 }
 
-}  // namespace sere
+} // namespace sere

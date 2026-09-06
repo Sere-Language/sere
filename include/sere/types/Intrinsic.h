@@ -40,4 +40,4 @@ enum class IntrinsicKind {
 [[nodiscard]] std::string_view intrinsicName(IntrinsicKind kind);
 [[nodiscard]] IntrinsicKind intrinsicByName(std::string_view name);
 
-}  // namespace sere
+} // namespace sere

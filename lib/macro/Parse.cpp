@@ -21,7 +21,8 @@ namespace {
   return out;
 }
 
-[[nodiscard]] std::vector<Token> shiftTokens(const std::vector<Token>& tokens, SourceLocation base) {
+[[nodiscard]] std::vector<Token> shiftTokens(const std::vector<Token>& tokens,
+                                             SourceLocation base) {
   std::vector<Token> shifted;
   shifted.reserve(tokens.size());
   for (const Token& token : tokens) {
@@ -32,10 +33,10 @@ namespace {
   return shifted;
 }
 
-}  // namespace
+} // namespace
 
-std::unique_ptr<Expr> parseSereExpr(DiagnosticEngine& diagnostics, std::string_view text,
-                                    SourceLocation base) {
+std::unique_ptr<Expr>
+parseSereExpr(DiagnosticEngine& diagnostics, std::string_view text, SourceLocation base) {
   DiagnosticEngine nested;
   SourceManager source("<macro>", std::string(text));
   Lexer lexer(source, nested, true);
@@ -48,9 +49,8 @@ std::unique_ptr<Expr> parseSereExpr(DiagnosticEngine& diagnostics, std::string_v
   return parser.parseTopExpr();
 }
 
-std::vector<std::unique_ptr<Expr>> parseSereExprList(DiagnosticEngine& diagnostics,
-                                                     std::string_view text,
-                                                     SourceLocation base) {
+std::vector<std::unique_ptr<Expr>>
+parseSereExprList(DiagnosticEngine& diagnostics, std::string_view text, SourceLocation base) {
   DiagnosticEngine nested;
   SourceManager source("<macro>", std::string(text));
   Lexer lexer(source, nested, true);
@@ -76,4 +76,4 @@ std::unique_ptr<Expr> parseSereExprFromTokens(DiagnosticEngine& diagnostics,
   return parser.parseTopExpr();
 }
 
-}  // namespace sere
+} // namespace sere

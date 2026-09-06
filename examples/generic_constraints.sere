@@ -1,0 +1,25 @@
+def identity[T: i32 | f64](value: T) -> T:
+    return value
+
+class Box[T: i32 | str]:
+    value: T
+
+class Tools:
+    def identity[T: i32 | str](self, value: T) -> T:
+        return value
+
+enum Value[T: i32 | str]:
+    Item(T)
+
+def main() -> i32:
+    assert identity[i32](3) == 3
+    assert identity(2.5) == 2.5
+    box = Box[str]("hello")
+    assert box.value == "hello"
+    tools = Tools()
+    assert tools.identity(7) == 7
+    value = Value.Item("text")
+    match value:
+        case Value.Item(text):
+            assert text == "text"
+    return 0

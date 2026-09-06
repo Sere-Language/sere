@@ -303,7 +303,7 @@ const Node* searchStmt(const Stmt& stmt, std::uint32_t offset) {
   return rangeContains(stmt.range(), offset) ? &stmt : nullptr;
 }
 
-}  // namespace
+} // namespace
 
 bool rangeContains(SourceRange range, std::uint32_t offset) {
   return offset >= range.start.offset && offset <= range.end.offset;
@@ -519,9 +519,11 @@ void collectStmtCalls(const Stmt& stmt, std::vector<const CallExpr*>& out) {
   }
 }
 
-}  // namespace
+} // namespace
 
-void collectNameRefsFromExpr(const Expr& expr, std::string_view name, std::vector<SourceRange>& out) {
+void collectNameRefsFromExpr(const Expr& expr,
+                             std::string_view name,
+                             std::vector<SourceRange>& out) {
   if (expr.kind() == NodeKind::NameExpr && static_cast<const NameExpr&>(expr).name() == name) {
     out.push_back(expr.range());
   }
@@ -601,7 +603,9 @@ void collectNameRefsFromExpr(const Expr& expr, std::string_view name, std::vecto
   }
 }
 
-void collectNameRefsFromStmt(const Stmt& stmt, std::string_view name, std::vector<SourceRange>& out) {
+void collectNameRefsFromStmt(const Stmt& stmt,
+                             std::string_view name,
+                             std::vector<SourceRange>& out) {
   switch (stmt.kind()) {
   case NodeKind::VarDecl:
     if (static_cast<const VarDecl&>(stmt).name() == name) {
@@ -763,7 +767,9 @@ namespace {
 void collectMacroUsesFromExpr(const Expr& expr, std::vector<MacroUse>& out);
 void collectMacroUsesFromStmt(const Stmt& stmt, std::vector<MacroUse>& out);
 
-void pushMacroUse(const std::string& name, SourceRange range, MacroDelimiter delimiter,
+void pushMacroUse(const std::string& name,
+                  SourceRange range,
+                  MacroDelimiter delimiter,
                   std::vector<MacroUse>& out) {
   MacroUse use;
   use.name = name;
@@ -942,7 +948,8 @@ void collectMacroUsesFromStmt(const Stmt& stmt, std::vector<MacroUse>& out) {
     }
     break;
   case NodeKind::ClassDef:
-    for (const std::unique_ptr<FunctionDef>& method : static_cast<const ClassDef&>(stmt).methods()) {
+    for (const std::unique_ptr<FunctionDef>& method :
+         static_cast<const ClassDef&>(stmt).methods()) {
       collectMacroUsesFromStmt(*method, out);
     }
     break;
@@ -956,7 +963,7 @@ void collectMacroUsesFromStmt(const Stmt& stmt, std::vector<MacroUse>& out) {
   }
 }
 
-}  // namespace
+} // namespace
 
 const MacroUse* findMacroUseAt(const std::vector<MacroUse>& uses, std::uint32_t offset) {
   const MacroUse* best = nullptr;
@@ -1076,4 +1083,4 @@ SourceRange macroNameRange(const MacroDef& def) {
   return identifierRange(afterKeyword, def.name());
 }
 
-}  // namespace sere
+} // namespace sere

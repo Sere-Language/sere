@@ -69,6 +69,36 @@ function findProjectRoot(start) {
   return "";
 }
 
+// Project kind from the nearest sere.toml ([project] kind = "app" | "lib").
+// Defaults to "app" so plain sere files still get a Run lens.
+function projectKind(projectRoot) {
+  if (!projectRoot) {
+    return "app";
+  }
+  try {
+    const text = fs.readFileSync(path.join(projectRoot, "sere.toml"), "utf8");
+    const match = /kind\s*=\s*"([^"]+)"/.exec(text);
+    if (match && match[1] === "lib") {
+      return "lib";
+    }
+  } catch (_error) {
+    // Fall through to "app".
+  }
+  return "app";
+}
+
+// Range of a top-level `def main(...)` declaration in the given document, or
+// null when there isn't one (this drives the Rust-like Run/Build CodeLens).
+function topLevelMainRange(document) {
+  const match = /^def\s+main\b/m.exec(document.getText());
+  if (!match) {
+    return null;
+  }
+  const start = document.positionAt(match.index);
+  const end = document.positionAt(match.index + match[0].length);
+  return new vscode.Range(start, end);
+}
+
 function findSere(workspaceFolder, forLsp) {
   const configured = vscode.workspace.getConfiguration("sere").get("compilerPath");
   let resolved = typeof configured === "string" ? configured : "";
@@ -403,11 +433,19 @@ function compilerEnv(workspaceFolder, compilerPath) {
   return env;
 }
 
-function runSereCommand(session, args, title, forLsp) {
+function runSereCommand(session, args, title, forLsp, projectRoot) {
   const workspaceFolder = session.workspaceFolder();
   const sere = findSere(workspaceFolder, Boolean(forLsp));
-  const cwd = workspaceFolder ? findProjectRoot(workspaceFolder) || workspaceFolder : undefined;
-  const child = spawn(sere, args, { cwd, env: compilerEnv(workspaceFolder, sere) });
+  // Prefer an explicit project root (e.g. from the Run/Build CodeLens on main),
+  // then the project that owns the active editor, then the workspace folder.
+  let cwd = projectRoot;
+  if (!cwd && vscode.window.activeTextEditor) {
+    cwd = findProjectRoot(vscode.window.activeTextEditor.document.uri.fsPath) || "";
+  }
+  if (!cwd && workspaceFolder) {
+    cwd = findProjectRoot(workspaceFolder) || workspaceFolder;
+  }
+  const child = spawn(sere, args, { cwd: cwd || undefined, env: compilerEnv(workspaceFolder, sere) });
   let stderr = "";
   child.stderr.on("data", (chunk) => {
     stderr += chunk.toString();
@@ -840,6 +878,14 @@ function activate(context) {
     vscode.commands.registerCommand("sere.runProject", () =>
       runSereCommand(session, ["run"], "ran project"),
     ),
+    // Scoped variants used by the Run/Build CodeLens on `main`. They receive the
+    // project root that owns the source file so the right sere.toml is built.
+    vscode.commands.registerCommand("sere.runProjectAt", (projectRoot) =>
+      runSereCommand(session, ["run"], "ran project", false, projectRoot),
+    ),
+    vscode.commands.registerCommand("sere.buildProjectAt", (projectRoot) =>
+      runSereCommand(session, ["build"], "built project", false, projectRoot),
+    ),
     vscode.commands.registerCommand("sere.refreshBin", () =>
       runSereCommand(session, ["refresh-bin"], "refreshed ./bin", true),
     ),
@@ -943,7 +989,7 @@ function activate(context) {
           .request("textDocument/codeLens", { textDocument: { uri: document.uri.toString() } })
           .then((result) => {
             const items = Array.isArray(result) ? result : [];
-            return items.map((item) => {
+            const lenses = items.map((item) => {
               const lens = new vscode.CodeLens(fromRange(item.range));
               if (item.command) {
                 const locations = Array.isArray(item.command.arguments)
@@ -961,6 +1007,31 @@ function activate(context) {
               }
               return lens;
             });
+            // Rust-like Run/Build actions on the project's entry function.
+            const mainRange = topLevelMainRange(document);
+            if (mainRange) {
+              const projectRoot = findProjectRoot(document.uri.fsPath);
+              if (projectRoot) {
+                const isLib = projectKind(projectRoot) === "lib";
+                if (!isLib) {
+                  lenses.push(
+                    new vscode.CodeLens(mainRange, {
+                      title: "Run",
+                      command: "sere.runProjectAt",
+                      arguments: [projectRoot],
+                    }),
+                  );
+                }
+                lenses.push(
+                  new vscode.CodeLens(mainRange, {
+                    title: "Build",
+                    command: "sere.buildProjectAt",
+                    arguments: [projectRoot],
+                  }),
+                );
+              }
+            }
+            return lenses;
           });
       },
     }),

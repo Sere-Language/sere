@@ -55,13 +55,15 @@ void appendExtractedLibraryRuntimes(const std::vector<std::filesystem::path>& im
                                     std::vector<std::filesystem::path>& files);
 
 [[nodiscard]] bool writePackedLibrary(const std::filesystem::path& slibPath,
-                                      const PackedLibrary& library, std::string& error);
+                                      const PackedLibrary& library,
+                                      std::string& error);
 
-[[nodiscard]] bool readPackedLibrary(const std::filesystem::path& slibPath, PackedLibrary& library,
+[[nodiscard]] bool readPackedLibrary(const std::filesystem::path& slibPath,
+                                     PackedLibrary& library,
                                      std::string& error);
 
 /// Extracts `slibPath` next to itself under `.sere-lib/<stem>/` when stale.
 [[nodiscard]] std::filesystem::path ensureLibraryExtracted(const std::filesystem::path& slibPath,
                                                            std::string& error);
 
-}  // namespace sere
+} // namespace sere

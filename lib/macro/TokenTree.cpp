@@ -23,7 +23,9 @@ namespace {
   }
 }
 
-void parseSeq(const std::vector<Token>& tokens, std::size_t& index, TokenKind closer,
+void parseSeq(const std::vector<Token>& tokens,
+              std::size_t& index,
+              TokenKind closer,
               std::vector<TokenTree>& out) {
   while (index < tokens.size()) {
     const Token& token = tokens[index];
@@ -64,7 +66,7 @@ void flattenSeq(const std::vector<TokenTree>& trees, std::vector<Token>& out) {
   }
 }
 
-}  // namespace
+} // namespace
 
 std::vector<TokenTree> buildTokenTrees(const std::vector<Token>& tokens) {
   std::vector<TokenTree> trees;
@@ -79,4 +81,4 @@ std::vector<Token> flattenTokenTrees(const std::vector<TokenTree>& trees) {
   return tokens;
 }
 
-}  // namespace sere
+} // namespace sere

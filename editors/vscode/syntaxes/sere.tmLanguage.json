@@ -114,11 +114,11 @@
     },
     "keyword": {
       "name": "keyword.control.sere",
-      "match": "\\b(and|as|assert|break|case|continue|defer|del|elif|else|except|finally|for|from|if|import|in|is|lambda|match|not|or|pass|quote|raise|return|super|try|while|with|syntax|interpolate|wrapper|typed)\\b"
+      "match": "\\b(and|as|assert|await|break|case|continue|defer|del|elif|else|except|finally|for|from|if|import|in|is|lambda|match|not|or|pass|quote|raise|return|super|try|while|with|syntax|interpolate|wrapper|typed)\\b"
     },
     "modifier": {
       "name": "storage.modifier.sere",
-      "match": "\\b(static|const|extern)\\b"
+      "match": "\\b(static|const|extern|async)\\b"
     },
     "constant": {
       "name": "constant.language.sere",
@@ -157,7 +157,7 @@
     },
     "type": {
       "name": "storage.type.sere",
-      "match": "\\b(void|None|bool|i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|str|regex|byte|never|Int|Float|Unique|Shared|Ptr|list|array|dict|Callable|Function|Class)\\b"
+      "match": "\\b(void|None|bool|i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|str|regex|byte|never|Int|Float|Unique|Shared|Ptr|Task|Future|Result|list|array|dict|Callable|Function|Class)\\b"
     },
     "exception": {
       "name": "support.type.exception.sere",

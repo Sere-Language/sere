@@ -15,14 +15,13 @@ namespace sere {
 
 class DiagnosticEngine;
 
-[[nodiscard]] std::unique_ptr<Expr> parseSereExpr(DiagnosticEngine& diagnostics,
-                                                  std::string_view text,
-                                                  SourceLocation base);
+[[nodiscard]] std::unique_ptr<Expr>
+parseSereExpr(DiagnosticEngine& diagnostics, std::string_view text, SourceLocation base);
 
-[[nodiscard]] std::vector<std::unique_ptr<Expr>> parseSereExprList(
-    DiagnosticEngine& diagnostics, std::string_view text, SourceLocation base);
+[[nodiscard]] std::vector<std::unique_ptr<Expr>>
+parseSereExprList(DiagnosticEngine& diagnostics, std::string_view text, SourceLocation base);
 
 [[nodiscard]] std::unique_ptr<Expr> parseSereExprFromTokens(DiagnosticEngine& diagnostics,
                                                             std::vector<Token> tokens);
 
-}  // namespace sere
+} // namespace sere

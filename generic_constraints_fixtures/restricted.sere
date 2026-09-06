@@ -1,0 +1,9 @@
+def identity[T: i32 | f64](value: T) -> T:
+    return value
+class Box[T: i32 | str]:
+    value: T
+class Tools:
+    def identity[T: i32 | str](self, value: T) -> T:
+        return value
+enum Value[T: i32 | str]:
+    Item(T)

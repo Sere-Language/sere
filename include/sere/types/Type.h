@@ -44,6 +44,7 @@ struct RecordMethod {
   std::string llvmName;
   std::vector<std::string> paramNames{};
   std::vector<std::string> typeParams{};
+  std::vector<const Type*> typeConstraints{};
   std::size_t requiredAfterSelf = 0;
   bool isAbstract = false;
   bool isPublic = true;
@@ -114,6 +115,7 @@ public:
   [[nodiscard]] int unionMemberIndex(const Type* member) const;
   [[nodiscard]] const std::vector<const Type*>& bases() const;
   [[nodiscard]] const std::vector<std::string>& typeParams() const;
+  [[nodiscard]] const std::vector<const Type*>& typeConstraints() const;
   [[nodiscard]] bool isSubtypeOf(const Type* other) const;
   [[nodiscard]] bool matchesInstance(const Type* target) const;
   [[nodiscard]] bool isSizeLiteral() const;
@@ -136,6 +138,7 @@ private:
   const Type* underlying_ = nullptr;
   std::vector<const Type*> bases_{};
   std::vector<std::string> typeParams_{};
+  std::vector<const Type*> typeConstraints_{};
   bool isAbstract_ = false;
   bool isEnum_ = false;
   bool isStruct_ = false;
@@ -143,4 +146,4 @@ private:
   bool isFlags_ = false;
 };
 
-}  // namespace sere
+} // namespace sere

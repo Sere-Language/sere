@@ -39,8 +39,8 @@ namespace {
   return inner;
 }
 
-[[nodiscard]] std::vector<Token> wrapDelimiter(const std::vector<Token>& inner,
-                                               MacroDelimiter delimiter, SourceRange range) {
+[[nodiscard]] std::vector<Token>
+wrapDelimiter(const std::vector<Token>& inner, MacroDelimiter delimiter, SourceRange range) {
   TokenKind open = TokenKind::LParen;
   TokenKind close = TokenKind::RParen;
   if (delimiter == MacroDelimiter::BangBrace) {
@@ -57,15 +57,16 @@ namespace {
   return wrapped;
 }
 
-bool consumeExprTokens(const std::vector<Token>& tokens, std::size_t& index,
+bool consumeExprTokens(const std::vector<Token>& tokens,
+                       std::size_t& index,
                        std::vector<Token>& captured) {
   int depth = 0;
   const std::size_t start = index;
   while (index < tokens.size()) {
     const TokenKind kind = tokens[index].kind();
-    if (depth == 0 && (kind == TokenKind::Comma || kind == TokenKind::RParen ||
-                       kind == TokenKind::RBracket || kind == TokenKind::RBrace ||
-                       kind == TokenKind::FatArrow)) {
+    if (depth == 0 &&
+        (kind == TokenKind::Comma || kind == TokenKind::RParen || kind == TokenKind::RBracket ||
+         kind == TokenKind::RBrace || kind == TokenKind::FatArrow)) {
       break;
     }
     if (kind == TokenKind::LParen || kind == TokenKind::LBracket || kind == TokenKind::LBrace) {
@@ -92,8 +93,8 @@ struct PatternAtom {
   bool commaSeparated = false;
 };
 
-std::vector<PatternAtom> compilePattern(const std::vector<Token>& tokens, std::size_t& index,
-                                        TokenKind stop) {
+std::vector<PatternAtom>
+compilePattern(const std::vector<Token>& tokens, std::size_t& index, TokenKind stop) {
   std::vector<PatternAtom> atoms;
   while (index < tokens.size() && tokens[index].kind() != stop &&
          tokens[index].kind() != TokenKind::EndOfFile) {
@@ -112,8 +113,8 @@ std::vector<PatternAtom> compilePattern(const std::vector<Token>& tokens, std::s
           repeat.commaSeparated = true;
           ++index;
         }
-        if (index < tokens.size() && (tokens[index].kind() == TokenKind::Star ||
-                                      tokens[index].kind() == TokenKind::Plus)) {
+        if (index < tokens.size() &&
+            (tokens[index].kind() == TokenKind::Star || tokens[index].kind() == TokenKind::Plus)) {
           ++index;
         }
         atoms.push_back(std::move(repeat));
@@ -145,17 +146,23 @@ std::vector<PatternAtom> compilePattern(const std::vector<Token>& tokens, std::s
   return atoms;
 }
 
-bool matchAtoms(const std::vector<PatternAtom>& atoms, const std::vector<Token>& tokens,
-                std::size_t& index, MacroBindings& env, DiagnosticEngine& diagnostics);
+bool matchAtoms(const std::vector<PatternAtom>& atoms,
+                const std::vector<Token>& tokens,
+                std::size_t& index,
+                MacroBindings& env,
+                DiagnosticEngine& diagnostics);
 
-bool matchMeta(const PatternAtom& meta, const std::vector<Token>& tokens, std::size_t& index,
-               MacroBindings& env, DiagnosticEngine& diagnostics) {
+bool matchMeta(const PatternAtom& meta,
+               const std::vector<Token>& tokens,
+               std::size_t& index,
+               MacroBindings& env,
+               DiagnosticEngine& diagnostics) {
   if (meta.spec == "ident") {
     if (index >= tokens.size() || tokens[index].kind() != TokenKind::Identifier) {
       return false;
     }
-    auto name = std::make_unique<NameExpr>(tokens[index].range(),
-                                           std::string(tokens[index].spelling()));
+    auto name =
+        std::make_unique<NameExpr>(tokens[index].range(), std::string(tokens[index].spelling()));
     env.exprs[meta.metaName].push_back(std::move(name));
     ++index;
     return true;
@@ -176,13 +183,14 @@ bool matchMeta(const PatternAtom& meta, const std::vector<Token>& tokens, std::s
         isF32 = true;
         spelling.pop_back();
       }
-      expr = std::make_unique<FloatLiteral>(token.range(), std::strtod(spelling.c_str(), nullptr), isF32);
+      expr = std::make_unique<FloatLiteral>(
+          token.range(), std::strtod(spelling.c_str(), nullptr), isF32);
     } else if (token.kind() == TokenKind::String || token.kind() == TokenKind::Regex) {
       const DecodedString decoded = decodeStringToken(token.spelling());
       expr = std::make_unique<StringLiteral>(token.range(), decoded.value, decoded.regex);
     } else if (token.kind() == TokenKind::KeywordTrue || token.kind() == TokenKind::KeywordFalse) {
-      expr = std::make_unique<BooleanLiteral>(token.range(),
-                                              token.kind() == TokenKind::KeywordTrue);
+      expr =
+          std::make_unique<BooleanLiteral>(token.range(), token.kind() == TokenKind::KeywordTrue);
     } else {
       return false;
     }
@@ -202,8 +210,11 @@ bool matchMeta(const PatternAtom& meta, const std::vector<Token>& tokens, std::s
   return true;
 }
 
-bool matchAtoms(const std::vector<PatternAtom>& atoms, const std::vector<Token>& tokens,
-                std::size_t& index, MacroBindings& env, DiagnosticEngine& diagnostics) {
+bool matchAtoms(const std::vector<PatternAtom>& atoms,
+                const std::vector<Token>& tokens,
+                std::size_t& index,
+                MacroBindings& env,
+                DiagnosticEngine& diagnostics) {
   for (std::size_t atomIndex = 0; atomIndex < atoms.size(); ++atomIndex) {
     const PatternAtom& atom = atoms[atomIndex];
     if (atom.kind == PatternAtom::Kind::Literal) {
@@ -248,7 +259,8 @@ bool matchAtoms(const std::vector<PatternAtom>& atoms, const std::vector<Token>&
   return true;
 }
 
-[[nodiscard]] std::unique_ptr<Expr> interpolateRaw(const std::string& text, SourceRange range,
+[[nodiscard]] std::unique_ptr<Expr> interpolateRaw(const std::string& text,
+                                                   SourceRange range,
                                                    MacroInterpolate mode,
                                                    DiagnosticEngine& diagnostics) {
   std::vector<StringPart> parts;
@@ -317,8 +329,8 @@ bool matchAtoms(const std::vector<PatternAtom>& atoms, const std::vector<Token>&
         ++index;
       }
       StringPart part;
-      part.value = std::make_unique<NameExpr>(
-          range, std::string(view.substr(start, index - start)));
+      part.value =
+          std::make_unique<NameExpr>(range, std::string(view.substr(start, index - start)));
       parts.push_back(std::move(part));
       continue;
     }
@@ -355,7 +367,7 @@ bool matchAtoms(const std::vector<PatternAtom>& atoms, const std::vector<Token>&
   return parts;
 }
 
-}  // namespace
+} // namespace
 
 bool MacroEnv::add(const MacroDef& def) {
   macros_[def.name()] = &def;
@@ -379,7 +391,8 @@ void MacroEnv::addModule(Module& module) {
 }
 
 MacroExpander::MacroExpander(DiagnosticEngine& diagnostics, MacroEnv& env, std::uint32_t fuel)
-    : diagnostics_(&diagnostics), env_(&env), fuel_(fuel) {}
+    : diagnostics_(&diagnostics), env_(&env), fuel_(fuel) {
+}
 
 bool MacroExpander::expandModule(Module& module) {
   env_->addModule(module);
@@ -411,8 +424,12 @@ bool MacroExpander::expandStmtList(std::vector<std::unique_ptr<Stmt>>& statement
           static_cast<const ExprStmt&>(*item).expression().kind() == NodeKind::MacroInvokeExpr) {
         const auto& invoke =
             static_cast<const MacroInvokeExpr&>(static_cast<const ExprStmt&>(*item).expression());
-        MacroInvokeStmt asStmt(invoke.range(), invoke.name(), invoke.delimiter(), invoke.rawText(),
-                               invoke.rawRange(), invoke.tokens());
+        MacroInvokeStmt asStmt(invoke.range(),
+                               invoke.name(),
+                               invoke.delimiter(),
+                               invoke.rawText(),
+                               invoke.rawRange(),
+                               invoke.tokens());
         std::vector<std::unique_ptr<Stmt>> expanded = expandInvokeStmt(asStmt);
         if (expanded.empty()) {
           out.push_back(std::move(item));
@@ -434,22 +451,23 @@ bool MacroExpander::expandStmtList(std::vector<std::unique_ptr<Stmt>>& statement
         continue;
       }
       if (item->kind() == NodeKind::ExprStmt) {
-        std::unique_ptr<Expr> expr =
-            expandExpr(static_cast<const ExprStmt&>(*item).expression());
+        std::unique_ptr<Expr> expr = expandExpr(static_cast<const ExprStmt&>(*item).expression());
         if (expr != nullptr) {
           item = std::make_unique<ExprStmt>(item->range(), std::move(expr));
         }
       } else if (item->kind() == NodeKind::VarDecl) {
         const auto& decl = static_cast<const VarDecl&>(*item);
-        std::unique_ptr<Expr> init =
-            decl.init() == nullptr ? nullptr : expandExpr(*decl.init());
-        item = std::make_unique<VarDecl>(item->range(), decl.name(),
+        std::unique_ptr<Expr> init = decl.init() == nullptr ? nullptr : expandExpr(*decl.init());
+        item = std::make_unique<VarDecl>(item->range(),
+                                         decl.name(),
                                          decl.hasType() ? cloneTypeExpr(decl.type()) : nullptr,
-                                         std::move(init), decl.isStatic(), decl.isConst());
+                                         std::move(init),
+                                         decl.isStatic(),
+                                         decl.isConst());
       } else if (item->kind() == NodeKind::AssignStmt) {
         const auto& assign = static_cast<const AssignStmt&>(*item);
-        item = std::make_unique<AssignStmt>(item->range(), expandExpr(assign.target()),
-                                            expandExpr(assign.value()), assign.op());
+        item = std::make_unique<AssignStmt>(
+            item->range(), expandExpr(assign.target()), expandExpr(assign.value()), assign.op());
       } else if (item->kind() == NodeKind::ReturnStmt) {
         const Expr* value = static_cast<const ReturnStmt&>(*item).value();
         std::unique_ptr<Expr> expanded = value == nullptr ? nullptr : expandExpr(*value);
@@ -537,8 +555,7 @@ std::unique_ptr<Expr> MacroExpander::expandExpr(const Expr& expr) {
   }
   if (expr.kind() == NodeKind::MacroInvokeExpr) {
     --fuel_;
-    std::unique_ptr<Expr> expanded =
-        expandInvokeExpr(static_cast<const MacroInvokeExpr&>(expr));
+    std::unique_ptr<Expr> expanded = expandInvokeExpr(static_cast<const MacroInvokeExpr&>(expr));
     if (expanded == nullptr) {
       return nullptr;
     }
@@ -577,13 +594,16 @@ std::unique_ptr<Expr> MacroExpander::expandExpr(const Expr& expr) {
       named.value = std::move(expanded);
       keywordArgs.push_back(std::move(named));
     }
-    return std::make_unique<CallExpr>(expr.range(), std::move(callee), std::move(typeArgs),
-                                      std::move(args), std::move(keywordArgs));
+    return std::make_unique<CallExpr>(expr.range(),
+                                      std::move(callee),
+                                      std::move(typeArgs),
+                                      std::move(args),
+                                      std::move(keywordArgs));
   }
   case NodeKind::BinaryExpr: {
     const auto& binary = static_cast<const BinaryExpr&>(expr);
-    return std::make_unique<BinaryExpr>(expr.range(), binary.op(), expandExpr(binary.left()),
-                                        expandExpr(binary.right()));
+    return std::make_unique<BinaryExpr>(
+        expr.range(), binary.op(), expandExpr(binary.left()), expandExpr(binary.right()));
   }
   case NodeKind::UnaryExpr: {
     const auto& unary = static_cast<const UnaryExpr&>(expr);
@@ -602,20 +622,23 @@ std::unique_ptr<Expr> MacroExpander::expandExpr(const Expr& expr) {
   }
   case NodeKind::IndexExpr: {
     const auto& index = static_cast<const IndexExpr&>(expr);
-    std::unique_ptr<Expr> start =
-        index.start() == nullptr ? nullptr : expandExpr(*index.start());
+    std::unique_ptr<Expr> start = index.start() == nullptr ? nullptr : expandExpr(*index.start());
     std::unique_ptr<Expr> stop = index.stop() == nullptr ? nullptr : expandExpr(*index.stop());
-    return std::make_unique<IndexExpr>(expr.range(), expandExpr(index.object()), std::move(start),
-                                       std::move(stop), index.isSlice());
+    return std::make_unique<IndexExpr>(expr.range(),
+                                       expandExpr(index.object()),
+                                       std::move(start),
+                                       std::move(stop),
+                                       index.isSlice());
   }
   case NodeKind::CastExpr: {
     const auto& cast = static_cast<const CastExpr&>(expr);
-    return std::make_unique<CastExpr>(expr.range(), expandExpr(cast.value()),
-                                      cloneTypeExpr(cast.target()));
+    return std::make_unique<CastExpr>(
+        expr.range(), expandExpr(cast.value()), cloneTypeExpr(cast.target()));
   }
   case NodeKind::TernaryExpr: {
     const auto& ternary = static_cast<const TernaryExpr&>(expr);
-    return std::make_unique<TernaryExpr>(expr.range(), expandExpr(ternary.thenValue()),
+    return std::make_unique<TernaryExpr>(expr.range(),
+                                         expandExpr(ternary.thenValue()),
                                          expandExpr(ternary.condition()),
                                          expandExpr(ternary.elseValue()));
   }
@@ -645,8 +668,12 @@ std::vector<std::unique_ptr<Stmt>> MacroExpander::expandInvokeStmt(const MacroIn
   }
   if (def->syntaxMode() == MacroSyntaxMode::Raw || def->syntaxMode() == MacroSyntaxMode::Pipeline ||
       !def->matchArms().empty()) {
-    std::unique_ptr<Expr> expr = expandDef(*def, invoke.rawText(), invoke.rawRange(), invoke.tokens(),
-                                           invoke.range(), invoke.delimiter());
+    std::unique_ptr<Expr> expr = expandDef(*def,
+                                           invoke.rawText(),
+                                           invoke.rawRange(),
+                                           invoke.tokens(),
+                                           invoke.range(),
+                                           invoke.delimiter());
     if (expr == nullptr) {
       return {};
     }
@@ -667,17 +694,23 @@ std::vector<std::unique_ptr<Stmt>> MacroExpander::expandInvokeStmt(const MacroIn
   if (def->typed() && !def->params().empty() && !env.exprs[def->params().front()].empty()) {
     std::vector<std::unique_ptr<Expr>> typeofArgs;
     typeofArgs.push_back(cloneExpr(*env.exprs[def->params().front()].front()));
-    env.exprs["type"].push_back(std::make_unique<CallExpr>(
-        invoke.range(), std::make_unique<NameExpr>(invoke.range(), "typeof"),
-        std::vector<std::unique_ptr<TypeExpr>>{}, std::move(typeofArgs)));
+    env.exprs["type"].push_back(
+        std::make_unique<CallExpr>(invoke.range(),
+                                   std::make_unique<NameExpr>(invoke.range(), "typeof"),
+                                   std::vector<std::unique_ptr<TypeExpr>>{},
+                                   std::move(typeofArgs)));
   }
   std::vector<std::unique_ptr<Stmt>> body =
       substStmts(def->quoteBody(), env, nextMark_++, invoke.range());
   if (body.size() != 1 || body.front()->kind() != NodeKind::ExprStmt) {
     return body;
   }
-  std::unique_ptr<Expr> expr = expandDef(*def, invoke.rawText(), invoke.rawRange(), invoke.tokens(),
-                                         invoke.range(), invoke.delimiter());
+  std::unique_ptr<Expr> expr = expandDef(*def,
+                                         invoke.rawText(),
+                                         invoke.rawRange(),
+                                         invoke.tokens(),
+                                         invoke.range(),
+                                         invoke.delimiter());
   if (expr != nullptr) {
     body.clear();
     body.push_back(std::make_unique<ExprStmt>(invoke.range(), std::move(expr)));
@@ -691,13 +724,20 @@ std::unique_ptr<Expr> MacroExpander::expandInvokeExpr(const MacroInvokeExpr& inv
     diagnostics_->error(invoke.range(), "unknown macro '" + invoke.name() + "'");
     return nullptr;
   }
-  return expandDef(*def, invoke.rawText(), invoke.rawRange(), invoke.tokens(), invoke.range(),
+  return expandDef(*def,
+                   invoke.rawText(),
+                   invoke.rawRange(),
+                   invoke.tokens(),
+                   invoke.range(),
                    invoke.delimiter());
 }
 
-std::unique_ptr<Expr> MacroExpander::expandDef(const MacroDef& def, const std::string& rawText,
-                                               SourceRange rawRange, const std::vector<Token>& tokens,
-                                               SourceRange callSite, MacroDelimiter delimiter) {
+std::unique_ptr<Expr> MacroExpander::expandDef(const MacroDef& def,
+                                               const std::string& rawText,
+                                               SourceRange rawRange,
+                                               const std::vector<Token>& tokens,
+                                               SourceRange callSite,
+                                               MacroDelimiter delimiter) {
   if (def.syntaxMode() == MacroSyntaxMode::Pipeline) {
     return expandPipeline(rawText, callSite);
   }
@@ -727,18 +767,18 @@ std::unique_ptr<Expr> MacroExpander::expandDef(const MacroDef& def, const std::s
   if (def.typed() && !def.params().empty() && !env.exprs[def.params().front()].empty()) {
     std::vector<std::unique_ptr<Expr>> typeofArgs;
     typeofArgs.push_back(cloneExpr(*env.exprs[def.params().front()].front()));
-    auto typeofCall = std::make_unique<CallExpr>(
-        callSite, std::make_unique<NameExpr>(callSite, "typeof"),
-        std::vector<std::unique_ptr<TypeExpr>>{}, std::move(typeofArgs));
+    auto typeofCall = std::make_unique<CallExpr>(callSite,
+                                                 std::make_unique<NameExpr>(callSite, "typeof"),
+                                                 std::vector<std::unique_ptr<TypeExpr>>{},
+                                                 std::move(typeofArgs));
     env.exprs["type"].push_back(std::move(typeofCall));
   }
   return expandQuote(def, std::move(env), callSite);
 }
 
-std::unique_ptr<Expr> MacroExpander::expandQuote(const MacroDef& def, MacroBindings env,
-                                                 SourceRange callSite) {
-  std::vector<std::unique_ptr<Stmt>> body =
-      substStmts(def.quoteBody(), env, nextMark_++, callSite);
+std::unique_ptr<Expr>
+MacroExpander::expandQuote(const MacroDef& def, MacroBindings env, SourceRange callSite) {
+  std::vector<std::unique_ptr<Stmt>> body = substStmts(def.quoteBody(), env, nextMark_++, callSite);
   if (body.size() == 1 && body.front()->kind() == NodeKind::ExprStmt) {
     return cloneExpr(static_cast<const ExprStmt&>(*body.front()).expression());
   }
@@ -747,17 +787,20 @@ std::unique_ptr<Expr> MacroExpander::expandQuote(const MacroDef& def, MacroBindi
     return nullptr;
   }
   if (body.back()->kind() != NodeKind::ExprStmt) {
-    diagnostics_->error(callSite, "macro '" + def.name() + "' produced a statement, not an expression");
+    diagnostics_->error(callSite,
+                        "macro '" + def.name() + "' produced a statement, not an expression");
     return nullptr;
   }
   return cloneExpr(static_cast<const ExprStmt&>(*body.back()).expression());
 }
 
-std::unique_ptr<Expr> MacroExpander::expandMatch(const MacroDef& def, const std::vector<Token>& tokens,
+std::unique_ptr<Expr> MacroExpander::expandMatch(const MacroDef& def,
+                                                 const std::vector<Token>& tokens,
                                                  SourceRange callSite) {
   for (const MacroMatchArm& arm : def.matchArms()) {
     std::size_t patternIndex = 0;
-    std::vector<PatternAtom> atoms = compilePattern(arm.pattern, patternIndex, TokenKind::EndOfFile);
+    std::vector<PatternAtom> atoms =
+        compilePattern(arm.pattern, patternIndex, TokenKind::EndOfFile);
     std::size_t tokenIndex = 0;
     MacroBindings env;
     if (!matchAtoms(atoms, tokens, tokenIndex, env, *diagnostics_)) {
@@ -779,15 +822,16 @@ std::unique_ptr<Expr> MacroExpander::expandMatch(const MacroDef& def, const std:
   return nullptr;
 }
 
-std::unique_ptr<Expr> MacroExpander::expandRaw(const MacroDef& def, const std::string& rawText,
-                                               SourceRange rawRange, SourceRange callSite) {
+std::unique_ptr<Expr> MacroExpander::expandRaw(const MacroDef& def,
+                                               const std::string& rawText,
+                                               SourceRange rawRange,
+                                               SourceRange callSite) {
   (void)rawRange;
   MacroInterpolate mode = def.interpolate();
   if (mode == MacroInterpolate::None) {
     mode = MacroInterpolate::Brace;
   }
-  std::unique_ptr<Expr> interpolated =
-      interpolateRaw(rawText, callSite, mode, *diagnostics_);
+  std::unique_ptr<Expr> interpolated = interpolateRaw(rawText, callSite, mode, *diagnostics_);
   if (interpolated == nullptr) {
     return nullptr;
   }
@@ -818,15 +862,17 @@ std::unique_ptr<Expr> MacroExpander::expandPipeline(const std::string& rawText,
         args.push_back(cloneExpr(*arg));
       }
       args.push_back(std::move(acc));
-      acc = std::make_unique<CallExpr>(callSite, cloneExpr(call.callee()),
-                                       std::vector<std::unique_ptr<TypeExpr>>{}, std::move(args));
+      acc = std::make_unique<CallExpr>(callSite,
+                                       cloneExpr(call.callee()),
+                                       std::vector<std::unique_ptr<TypeExpr>>{},
+                                       std::move(args));
       continue;
     }
     if (stage->kind() == NodeKind::NameExpr) {
       std::vector<std::unique_ptr<Expr>> args;
       args.push_back(std::move(acc));
-      acc = std::make_unique<CallExpr>(callSite, std::move(stage),
-                                       std::vector<std::unique_ptr<TypeExpr>>{}, std::move(args));
+      acc = std::make_unique<CallExpr>(
+          callSite, std::move(stage), std::vector<std::unique_ptr<TypeExpr>>{}, std::move(args));
       continue;
     }
     diagnostics_->error(callSite, "pipeline stage must be a name or call");
@@ -835,8 +881,8 @@ std::unique_ptr<Expr> MacroExpander::expandPipeline(const std::string& rawText,
   return acc;
 }
 
-std::unique_ptr<Expr> MacroExpander::wrapResult(const MacroDef& def, std::unique_ptr<Expr> value,
-                                                SourceRange callSite) {
+std::unique_ptr<Expr>
+MacroExpander::wrapResult(const MacroDef& def, std::unique_ptr<Expr> value, SourceRange callSite) {
   if (def.wrapper().empty()) {
     return value;
   }
@@ -844,7 +890,8 @@ std::unique_ptr<Expr> MacroExpander::wrapResult(const MacroDef& def, std::unique
   args.push_back(std::move(value));
   return std::make_unique<CallExpr>(callSite,
                                     std::make_unique<NameExpr>(callSite, def.wrapper()),
-                                    std::vector<std::unique_ptr<TypeExpr>>{}, std::move(args));
+                                    std::vector<std::unique_ptr<TypeExpr>>{},
+                                    std::move(args));
 }
 
-}  // namespace sere
+} // namespace sere

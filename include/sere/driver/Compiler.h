@@ -14,4 +14,4 @@ public:
 
 [[nodiscard]] int compileInput(const CompilerOptions& options);
 
-}  // namespace sere
+} // namespace sere

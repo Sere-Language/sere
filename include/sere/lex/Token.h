@@ -55,4 +55,4 @@ struct ParsedInteger {
 /// Underscores are allowed between digits.
 [[nodiscard]] ParsedInteger parseIntegerToken(std::string_view spelling);
 
-}  // namespace sere
+} // namespace sere

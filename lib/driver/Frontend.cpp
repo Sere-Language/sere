@@ -165,9 +165,8 @@ void bindModuleExports(TypeChecker& checker,
       exports.push_back(field);
     } else if (item->kind() == NodeKind::ClassDef || item->kind() == NodeKind::EnumDef) {
       RecordField field;
-      field.name = item->kind() == NodeKind::ClassDef
-                       ? static_cast<ClassDef&>(*item).name()
-                       : static_cast<EnumDef&>(*item).name();
+      field.name = item->kind() == NodeKind::ClassDef ? static_cast<ClassDef&>(*item).name()
+                                                      : static_cast<EnumDef&>(*item).name();
       field.type = item->resolvedType();
       field.isPublic = !item->isPrivate();
       exports.push_back(field);
@@ -277,12 +276,11 @@ void bindModuleExports(TypeChecker& checker,
     Symbol symbol;
     const Type* classType = exportedClassType(field.type);
     symbol.type = classType != nullptr ? classType : field.type;
-    symbol.kind = classType != nullptr ? SymbolKind::Class
-                  : field.type != nullptr && field.type->kind() == TypeKind::Function
-                      ? SymbolKind::Function
-                  : field.type != nullptr && field.type->kind() == TypeKind::Alias
-                      ? SymbolKind::Type
-                      : SymbolKind::Variable;
+    symbol.kind =
+        classType != nullptr                                                ? SymbolKind::Class
+        : field.type != nullptr && field.type->kind() == TypeKind::Function ? SymbolKind::Function
+        : field.type != nullptr && field.type->kind() == TypeKind::Alias    ? SymbolKind::Type
+                                                                            : SymbolKind::Variable;
     if (symbol.kind == SymbolKind::Variable) {
       for (std::unique_ptr<Stmt>& item : module.statements()) {
         if (item->kind() == NodeKind::MacroDef &&
@@ -388,7 +386,7 @@ void bindPreludeExports(TypeChecker& checker, Module& prelude) {
   }
 }
 
-}  // namespace
+} // namespace
 
 std::string Frontend::overlayKey(const std::filesystem::path& path) {
   std::error_code error;
@@ -485,8 +483,12 @@ bool Frontend::analyze(const std::string& path,
     if (found == importIndex_.end()) {
       continue;
     }
-    bindModuleExports(*checker_, *types_, *imported_[found->second],
-                      importNames_[found->second], *statement, diagnostics_);
+    bindModuleExports(*checker_,
+                      *types_,
+                      *imported_[found->second],
+                      importNames_[found->second],
+                      *statement,
+                      diagnostics_);
   }
   (void)checker_->check(*ast_);
   return !diagnostics_.hasErrors();
@@ -501,9 +503,9 @@ bool Frontend::loadImports(const std::filesystem::path& origin,
   collectImportStmts(*ast_, pending);
   std::error_code pathError;
   const std::filesystem::path originPath = std::filesystem::absolute(origin, pathError);
-  const std::filesystem::path originDir =
-      std::filesystem::is_regular_file(originPath, pathError) ? originPath.parent_path()
-                                                             : originPath;
+  const std::filesystem::path originDir = std::filesystem::is_regular_file(originPath, pathError)
+                                              ? originPath.parent_path()
+                                              : originPath;
   const LanguageContext context = resolveLanguageContext(originPath);
   std::vector<std::filesystem::path> searchDirs = importSearchDirs(originDir, stdlibDir);
   appendLanguageContextDirs(searchDirs, context);
@@ -584,8 +586,12 @@ bool Frontend::typecheckOneImported(std::size_t index, Module* prelude) {
     if (found == importIndex_.end()) {
       continue;
     }
-    bindModuleExports(checker, *types_, *imported_[found->second], importNames_[found->second],
-                      *statement, diagnostics_);
+    bindModuleExports(checker,
+                      *types_,
+                      *imported_[found->second],
+                      importNames_[found->second],
+                      *statement,
+                      diagnostics_);
   }
   if (!checker.check(*imported_[index])) {
     return false;
@@ -632,27 +638,49 @@ bool Frontend::typecheckImported(Module* prelude) {
   return true;
 }
 
-DiagnosticEngine& Frontend::diagnostics() { return diagnostics_; }
+DiagnosticEngine& Frontend::diagnostics() {
+  return diagnostics_;
+}
 
-const DiagnosticEngine& Frontend::diagnostics() const { return diagnostics_; }
+const DiagnosticEngine& Frontend::diagnostics() const {
+  return diagnostics_;
+}
 
-SourceManager* Frontend::source() { return source_.get(); }
+SourceManager* Frontend::source() {
+  return source_.get();
+}
 
-const SourceManager* Frontend::source() const { return source_.get(); }
+const SourceManager* Frontend::source() const {
+  return source_.get();
+}
 
-Module* Frontend::module() { return ast_.get(); }
+Module* Frontend::module() {
+  return ast_.get();
+}
 
-const Module* Frontend::module() const { return ast_.get(); }
+const Module* Frontend::module() const {
+  return ast_.get();
+}
 
-TypeContext* Frontend::types() { return types_.get(); }
+TypeContext* Frontend::types() {
+  return types_.get();
+}
 
-const TypeContext* Frontend::types() const { return types_.get(); }
+const TypeContext* Frontend::types() const {
+  return types_.get();
+}
 
-TypeChecker* Frontend::checker() { return checker_.get(); }
+TypeChecker* Frontend::checker() {
+  return checker_.get();
+}
 
-const TypeChecker* Frontend::checker() const { return checker_.get(); }
+const TypeChecker* Frontend::checker() const {
+  return checker_.get();
+}
 
-const std::vector<std::unique_ptr<Module>>& Frontend::importedModules() const { return imported_; }
+const std::vector<std::unique_ptr<Module>>& Frontend::importedModules() const {
+  return imported_;
+}
 
 const std::vector<std::filesystem::path>& Frontend::importedModulePaths() const {
   return importPaths_;
@@ -667,6 +695,8 @@ std::vector<std::string> Frontend::importedModuleNames() const {
   return names;
 }
 
-const std::vector<MacroUse>& Frontend::macroUses() const { return macroUses_; }
+const std::vector<MacroUse>& Frontend::macroUses() const {
+  return macroUses_;
+}
 
-}  // namespace sere
+} // namespace sere

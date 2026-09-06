@@ -28,8 +28,7 @@ public:
   TypeContext();
 
   [[nodiscard]] const Type* primitive(std::string_view name) const;
-  [[nodiscard]] const Type* generic(std::string_view ctor,
-                                    const std::vector<const Type*>& args);
+  [[nodiscard]] const Type* generic(std::string_view ctor, const std::vector<const Type*>& args);
   [[nodiscard]] const Type* functionType(const std::vector<const Type*>& params,
                                          const Type* returnType);
   [[nodiscard]] const Type* defineRecord(const std::string& name,
@@ -38,6 +37,7 @@ public:
   void setRecordFields(const Type* record, std::vector<RecordField> fields);
   void addRecordMethod(const Type* record, RecordMethod method);
   void setRecordBases(const Type* record, std::vector<const Type*> bases);
+  void setRecordTypeConstraints(const Type* record, std::vector<const Type*> constraints);
   void setRecordTypeParams(const Type* record, std::vector<std::string> typeParams);
   void setRecordAbstract(const Type* record, bool isAbstract);
   void setRecordEnum(const Type* record, bool isEnum);
@@ -55,14 +55,13 @@ public:
   [[nodiscard]] const Type* lookupNamed(std::string_view name) const;
   [[nodiscard]] const Type* substitute(const Type* type,
                                        const std::unordered_map<std::string, const Type*>& subst);
-  [[nodiscard]] const Type* instantiate(const Type* generic,
-                                        const std::vector<const Type*>& args);
-  [[nodiscard]] const FunctionInstantiation* instantiateFunction(
-      const std::string& name,
-      const std::vector<std::string>& typeParams,
-      const Type* genericType,
-      const std::vector<const Type*>& args,
-      bool isMethod = false);
+  [[nodiscard]] const Type* instantiate(const Type* generic, const std::vector<const Type*>& args);
+  [[nodiscard]] const FunctionInstantiation*
+  instantiateFunction(const std::string& name,
+                      const std::vector<std::string>& typeParams,
+                      const Type* genericType,
+                      const std::vector<const Type*>& args,
+                      bool isMethod = false);
   [[nodiscard]] const std::vector<std::pair<const Type*, const Type*>>& instantiations() const;
   [[nodiscard]] const std::vector<FunctionInstantiation>& functionInstantiations() const;
 
@@ -104,4 +103,4 @@ private:
   std::vector<FunctionInstantiation> functionInstantiations_{};
 };
 
-}  // namespace sere
+} // namespace sere

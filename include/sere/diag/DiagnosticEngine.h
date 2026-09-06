@@ -75,4 +75,4 @@ private:
   bool lastWasSuppressed_ = false;
 };
 
-}  // namespace sere
+} // namespace sere

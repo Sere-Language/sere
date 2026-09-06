@@ -1,7 +1,7 @@
 {
   "name": "sere",
   "displayName": "Sere",
-  "description": "Language support for Sere: diagnostics, hover, completion, macros, exceptions, and a restartable language server.",
+  "description": "Language support for Sere: diagnostics, hover, completion, macros, exceptions, smarter IntelliSense, and a clickable main() Run CodeLens.",
   "version": "0.2.7",
   "publisher": "sere",
   "private": true,
@@ -190,7 +190,7 @@
         "sere.codeLens": {
           "type": "boolean",
           "default": true,
-          "description": "Show reference counts above functions, classes, enums, and macros."
+          "description": "Show reference counts above functions, classes, enums, and macros, and a clickable Run lens on the project entry function."
         }
       }
     },
@@ -213,6 +213,11 @@
       {
         "command": "sere.runProject",
         "title": "Run Project",
+        "category": "Sere"
+      },
+      {
+        "command": "sere.runMain",
+        "title": "Run Main",
         "category": "Sere"
       },
       {
@@ -249,6 +254,9 @@
         },
         {
           "command": "sere.runProject"
+        },
+        {
+          "command": "sere.runMain"
         },
         {
           "command": "sere.refreshBin"

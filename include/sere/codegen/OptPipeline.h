@@ -22,9 +22,7 @@ enum class OptLevel {
 };
 
 [[nodiscard]] bool parseOptLevel(std::string_view text, OptLevel& level, std::string& error);
-[[nodiscard]] bool runOptPipeline(llvm::Module& module,
-                                  OptLevel level,
-                                  std::string_view passes,
-                                  std::string& error);
+[[nodiscard]] bool
+runOptPipeline(llvm::Module& module, OptLevel level, std::string_view passes, std::string& error);
 
-}  // namespace sere
+} // namespace sere

@@ -26,4 +26,4 @@ void copyProjectToolchain(const std::filesystem::path& compilerDir,
 /// Rewrites venv/shell.* so `sere shell` never sources a user profile.
 void writeProjectShellRc(const std::filesystem::path& root);
 
-}  // namespace sere
+} // namespace sere

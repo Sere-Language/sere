@@ -1,0 +1,14 @@
+async def number() -> i32:
+    return 42
+
+def sync_fn() -> i32:
+    # 'await' outside an async function -> should be an error
+    return await number()
+
+async def bad_await() -> i32:
+    # awaiting a non-awaitable value -> should be an error
+    x = await 123
+    return x
+
+def main(argv: list[str]) -> i32:
+    return 0

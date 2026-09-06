@@ -22,6 +22,52 @@
 namespace sere {
 namespace {
 
+// Generic parameter names are scoped to their declaration, including unconstrained
+// parameters that shadow a constrained parameter with the same name.
+class TypeConstraintScope {
+public:
+  TypeConstraintScope(std::unordered_map<std::string, const Type*>& active,
+                      const std::vector<std::string>& names,
+                      const std::vector<const Type*>& constraints)
+      : active_(active), saved_(active) {
+    for (std::size_t i = 0; i < names.size(); ++i) {
+      active_[names[i]] = i < constraints.size() ? constraints[i] : nullptr;
+    }
+  }
+  ~TypeConstraintScope() { active_ = std::move(saved_); }
+
+private:
+  std::unordered_map<std::string, const Type*>& active_;
+  std::unordered_map<std::string, const Type*> saved_;
+};
+
+[[nodiscard]] std::vector<const Type*>
+resolvedConstraints(const std::vector<std::unique_ptr<TypeExpr>>& expressions) {
+  std::vector<const Type*> result;
+  for (const auto& expression : expressions) {
+    result.push_back(expression == nullptr ? nullptr : expression->resolvedType());
+  }
+  return result;
+}
+
+[[nodiscard]] bool isConcreteConstraint(const Type* type) {
+  if (type == nullptr)
+    return false;
+  type = type->canonical();
+  if (type->isTypeParam() || type->isAny() || type->isNamed("void") || type->isSizeLiteral() ||
+      !type->typeParams().empty())
+    return false;
+  for (const Type* arg : type->args()) {
+    if (!isConcreteConstraint(arg))
+      return false;
+  }
+  for (const Type* param : type->paramTypes()) {
+    if (!isConcreteConstraint(param))
+      return false;
+  }
+  return true;
+}
+
 [[nodiscard]] const NameExpr* asName(const Expr& expr) {
   if (expr.kind() != NodeKind::NameExpr) {
     return nullptr;
@@ -346,12 +392,16 @@ struct CallableShape {
   if (left->isUnsignedInteger() != right->isUnsignedInteger()) {
     const Type* signedType = left->isUnsignedInteger() ? right : left;
     const Type* unsignedType = left->isUnsignedInteger() ? left : right;
-    const unsigned needed = std::max(signedType->integerBitWidth(),
-                                     unsignedType->integerBitWidth() + 1);
-    if (needed <= 8) return types.primitive("i8");
-    if (needed <= 16) return types.primitive("i16");
-    if (needed <= 32) return types.i32Type();
-    if (needed <= 64) return types.primitive("i64");
+    const unsigned needed =
+        std::max(signedType->integerBitWidth(), unsignedType->integerBitWidth() + 1);
+    if (needed <= 8)
+      return types.primitive("i8");
+    if (needed <= 16)
+      return types.primitive("i16");
+    if (needed <= 32)
+      return types.i32Type();
+    if (needed <= 64)
+      return types.primitive("i64");
     return types.anyType();
   }
   return left->integerBitWidth() >= right->integerBitWidth() ? left : right;
@@ -755,14 +805,14 @@ void TypeChecker::injectModuleGlobals() {
 
 void TypeChecker::registerBuiltins() {
   const IntrinsicKind kinds[] = {
-      IntrinsicKind::UniqueNew,  IntrinsicKind::SharedNew, IntrinsicKind::Alloc,
-      IntrinsicKind::Free,       IntrinsicKind::Load,      IntrinsicKind::Store,
-      IntrinsicKind::Len,        IntrinsicKind::Print,     IntrinsicKind::Str, IntrinsicKind::Repr,
-      IntrinsicKind::Append,     IntrinsicKind::ListNew,   IntrinsicKind::ArrayNew,
-      IntrinsicKind::DictNew,    IntrinsicKind::Range,     IntrinsicKind::TypeOf,
-      IntrinsicKind::IsInstance, IntrinsicKind::Dir,       IntrinsicKind::Inspect,
-      IntrinsicKind::SizeOf,     IntrinsicKind::AlignOf,   IntrinsicKind::Panic,
-      IntrinsicKind::Parse,      IntrinsicKind::TryParse,
+      IntrinsicKind::UniqueNew, IntrinsicKind::SharedNew,  IntrinsicKind::Alloc,
+      IntrinsicKind::Free,      IntrinsicKind::Load,       IntrinsicKind::Store,
+      IntrinsicKind::Len,       IntrinsicKind::Print,      IntrinsicKind::Str,
+      IntrinsicKind::Repr,      IntrinsicKind::Append,     IntrinsicKind::ListNew,
+      IntrinsicKind::ArrayNew,  IntrinsicKind::DictNew,    IntrinsicKind::Range,
+      IntrinsicKind::TypeOf,    IntrinsicKind::IsInstance, IntrinsicKind::Dir,
+      IntrinsicKind::Inspect,   IntrinsicKind::SizeOf,     IntrinsicKind::AlignOf,
+      IntrinsicKind::Panic,     IntrinsicKind::Parse,      IntrinsicKind::TryParse,
   };
   for (const IntrinsicKind kind : kinds) {
     Symbol symbol;
@@ -841,8 +891,7 @@ bool TypeChecker::isAssignable(const Type* from, const Type* to) const {
     const Type* fromInst = from->typeObjectInstance();
     const Type* toInst = to->typeObjectInstance();
     if (fromInst != nullptr && toInst != nullptr &&
-        (fromInst->canonical() == toInst->canonical() ||
-         fromInst->isSubtypeOf(toInst))) {
+        (fromInst->canonical() == toInst->canonical() || fromInst->isSubtypeOf(toInst))) {
       return true;
     }
   }
@@ -876,8 +925,7 @@ bool TypeChecker::isAssignable(const Type* from, const Type* to) const {
     if (toBracket != std::string_view::npos) {
       toName = toName.substr(0, toBracket);
     }
-    if (fromName == toName && !from->args().empty() &&
-        from->args().size() == to->args().size()) {
+    if (fromName == toName && !from->args().empty() && from->args().size() == to->args().size()) {
       bool allCompatible = true;
       for (std::size_t i = 0; i < from->args().size(); ++i) {
         if (!to->args()[i]->isAny() && !isAssignable(from->args()[i], to->args()[i])) {
@@ -993,8 +1041,8 @@ bool TypeChecker::callableSatisfies(const Type* from, const Type* to) const {
   // Value conversions need boxing/unboxing instructions. A callable constraint
   // cannot change a function's ABI merely by changing its annotation.
   const auto signatureAssignable = [&](const Type* source, const Type* destType) {
-    return source != nullptr && destType != nullptr &&
-           source->isAny() == destType->isAny() && isAssignable(source, destType);
+    return source != nullptr && destType != nullptr && source->isAny() == destType->isAny() &&
+           isAssignable(source, destType);
   };
   auto paramsMatch = [&](const std::vector<const Type*>& source) -> bool {
     if (!dest.hasParams) {
@@ -1026,7 +1074,8 @@ bool TypeChecker::callableSatisfies(const Type* from, const Type* to) const {
   if (from->kind() == TypeKind::Function) {
     if (dest.hasReturn) {
       const Type* ret = from->returnType();
-      if (ret == nullptr || dest.returnType == nullptr || !signatureAssignable(ret, dest.returnType)) {
+      if (ret == nullptr || dest.returnType == nullptr ||
+          !signatureAssignable(ret, dest.returnType)) {
         return false;
       }
     }
@@ -1040,7 +1089,8 @@ bool TypeChecker::callableSatisfies(const Type* from, const Type* to) const {
     if (record == nullptr || record->isEnum() || record->isAbstract()) {
       return false;
     }
-    if (dest.hasReturn && (dest.returnType == nullptr || !signatureAssignable(record, dest.returnType))) {
+    if (dest.hasReturn &&
+        (dest.returnType == nullptr || !signatureAssignable(record, dest.returnType))) {
       return false;
     }
     std::vector<const Type*> params;
@@ -1148,6 +1198,86 @@ bool TypeChecker::declareInferred(NameExpr& name, const Type* type, SourceLocati
   return true;
 }
 
+bool TypeChecker::resolveTypeConstraints(
+    const std::vector<std::unique_ptr<TypeExpr>>& constraints) {
+  for (const auto& constraint : constraints) {
+    if (constraint == nullptr || constraint->resolvedType() != nullptr)
+      continue;
+    const Type* resolved = resolveTypeExpr(*constraint);
+    if (resolved == nullptr)
+      return false;
+    if (!isConcreteConstraint(resolved)) {
+      diagnostics_->error(constraint->range(),
+                          "generic constraint must name concrete types, not " +
+                              quoteType(resolved));
+      return false;
+    }
+    constraint->setResolvedType(resolved);
+  }
+  return true;
+}
+
+bool TypeChecker::ensureRecordConstraints(const Type* record) {
+  record = record->canonical();
+  const auto found = recordConstraintExprs_.find(record);
+  if (found == recordConstraintExprs_.end() ||
+      record->typeConstraints().size() == record->typeParams().size())
+    return true;
+  if (std::find(resolvingConstraints_.begin(), resolvingConstraints_.end(), record) !=
+      resolvingConstraints_.end()) {
+    diagnostics_->error("cyclic generic constraint for '" + record->name() + "'");
+    return false;
+  }
+  resolvingConstraints_.push_back(record);
+  const bool ok = resolveTypeConstraints(*found->second);
+  resolvingConstraints_.pop_back();
+  if (ok)
+    types_->setRecordTypeConstraints(record, resolvedConstraints(*found->second));
+  return ok;
+}
+
+bool TypeChecker::satisfiesTypeConstraint(const Type* argument, const Type* constraint) const {
+  if (constraint == nullptr)
+    return true;
+  if (argument == nullptr)
+    return false;
+  argument = argument->canonical();
+  constraint = constraint->canonical();
+  if (argument->isTypeParam()) {
+    const auto found = activeTypeConstraints_.find(argument->name());
+    if (found == activeTypeConstraints_.end() || found->second == nullptr)
+      return false;
+    const Type* allowed = found->second->canonical();
+    if (allowed->isUnion()) {
+      return std::all_of(allowed->args().begin(), allowed->args().end(), [&](const Type* member) {
+        return satisfiesTypeConstraint(member, constraint);
+      });
+    }
+    return satisfiesTypeConstraint(allowed, constraint);
+  }
+  if (constraint->isUnion()) {
+    return std::any_of(constraint->args().begin(),
+                       constraint->args().end(),
+                       [&](const Type* member) { return argument == member->canonical(); });
+  }
+  return argument == constraint;
+}
+
+bool TypeChecker::checkTypeConstraints(const std::vector<std::string>& names,
+                                       const std::vector<const Type*>& constraints,
+                                       const std::vector<const Type*>& args,
+                                       SourceRange range) {
+  for (std::size_t i = 0; i < constraints.size() && i < args.size(); ++i) {
+    if (!satisfiesTypeConstraint(args[i], constraints[i])) {
+      diagnostics_->error(range,
+                          "type argument " + quoteType(args[i]) + " for '" + names[i] +
+                              "' must be one of " + quoteType(constraints[i]));
+      return false;
+    }
+  }
+  return true;
+}
+
 const Type* TypeChecker::resolveNamedType(const std::string& name,
                                           const std::vector<std::unique_ptr<TypeExpr>>& args,
                                           SourceRange range,
@@ -1169,8 +1299,13 @@ const Type* TypeChecker::resolveNamedType(const std::string& name,
     }
     record = record->canonical();
     if (!record->typeParams().empty()) {
+      if (!ensureRecordConstraints(record))
+        return nullptr;
       if (resolvedArgs.empty()) {
         std::vector<const Type*> defaultArgs(record->typeParams().size(), types_->anyType());
+        if (!checkTypeConstraints(
+                record->typeParams(), record->typeConstraints(), defaultArgs, range))
+          return nullptr;
         return types_->instantiate(record, defaultArgs);
       }
       if (resolvedArgs.size() != record->typeParams().size()) {
@@ -1179,6 +1314,9 @@ const Type* TypeChecker::resolveNamedType(const std::string& name,
                                 std::to_string(record->typeParams().size()) + " type arguments");
         return nullptr;
       }
+      if (!checkTypeConstraints(
+              record->typeParams(), record->typeConstraints(), resolvedArgs, range))
+        return nullptr;
       return types_->instantiate(record, resolvedArgs);
     }
     if (!resolvedArgs.empty()) {
@@ -1310,8 +1448,21 @@ const Type* TypeChecker::resolveNamedType(const std::string& name,
     }
     return types_->generic(name, resolvedArgs);
   }
+  if (name == "Task" || name == "Future") {
+    // The canonical asynchronous-computation type. `Task[T]` (aliased `Future[T]`)
+    // carries one element type; `await` unwraps it to `T`.
+    if (resolvedArgs.empty()) {
+      return types_->generic("Task", {types_->anyType()});
+    }
+    if (resolvedArgs.size() != 1) {
+      diagnostics_->error(range, name + " requires exactly one type argument");
+      return nullptr;
+    }
+    return types_->generic("Task", resolvedArgs);
+  }
   if (name == "list" || name == "array") {
-    if (resolvedArgs.empty()) return types_->generic(name, {types_->anyType()});
+    if (resolvedArgs.empty())
+      return types_->generic(name, {types_->anyType()});
     if (resolvedArgs.empty() || resolvedArgs.size() > 2) {
       diagnostics_->error(range, name + " requires a type argument, optionally a size");
       return nullptr;
@@ -1329,7 +1480,8 @@ const Type* TypeChecker::resolveNamedType(const std::string& name,
     return types_->generic(name, std::vector<const Type*>{resolvedArgs[0]});
   }
   if (name == "dict") {
-    if (resolvedArgs.empty()) return types_->dictType(types_->anyType(), types_->anyType());
+    if (resolvedArgs.empty())
+      return types_->dictType(types_->anyType(), types_->anyType());
     if (resolvedArgs.size() != 2) {
       diagnostics_->error(range, "dict requires key and value type arguments");
       return nullptr;
@@ -1552,9 +1704,12 @@ const Type* TypeChecker::checkName(NameExpr& expr) {
   }
   if (symbol == nullptr || symbol->kind == SymbolKind::Intrinsic) {
     const Type* builtin = types_->primitive(expr.name());
-    if (expr.name() == "list") builtin = types_->listType(types_->anyType());
-    if (expr.name() == "array") builtin = types_->arrayType(types_->anyType());
-    if (expr.name() == "dict") builtin = types_->dictType(types_->anyType(), types_->anyType());
+    if (expr.name() == "list")
+      builtin = types_->listType(types_->anyType());
+    if (expr.name() == "array")
+      builtin = types_->arrayType(types_->anyType());
+    if (expr.name() == "dict")
+      builtin = types_->dictType(types_->anyType(), types_->anyType());
     if (builtin != nullptr && builtin->isClass()) {
       expr.setResolvedType(types_->typeObject(builtin));
       return expr.resolvedType();
@@ -1780,7 +1935,8 @@ const Type* TypeChecker::checkIndex(IndexExpr& expr) {
     return nullptr;
   }
   objectType = objectType->canonical();
-  if (objectType->methodIndex("__getitem__") < 0) objectType = objectType->valueType();
+  if (objectType->methodIndex("__getitem__") < 0)
+    objectType = objectType->valueType();
   if (expr.isSlice()) {
     if (!(objectType->isSequence() || objectType->isNamed("str") ||
           objectType->methodIndex("__getitem__") >= 0)) {
@@ -1940,9 +2096,8 @@ bool TypeChecker::bindCollectionInit(Expr& init, const Type* dest) {
   }
   dest = dest->canonical();
   const auto checkElement = [&](Expr& value, const Type* expected) -> const Type* {
-    if (expected != nullptr &&
-        ((value.kind() == NodeKind::ListLiteral && expected->isSequence()) ||
-         (value.kind() == NodeKind::DictLiteral && expected->isDict()))) {
+    if (expected != nullptr && ((value.kind() == NodeKind::ListLiteral && expected->isSequence()) ||
+                                (value.kind() == NodeKind::DictLiteral && expected->isDict()))) {
       return bindCollectionInit(value, expected) ? expected : nullptr;
     }
     return checkExpr(value);
@@ -2276,6 +2431,41 @@ const Type* TypeChecker::checkUnary(UnaryExpr& expr) {
   return operand;
 }
 
+const Type* TypeChecker::taskType(const Type* inner) const {
+  return types_->generic("Task", {inner});
+}
+
+const Type* TypeChecker::unwrapTask(const Type* task) const {
+  if (task == nullptr) {
+    return nullptr;
+  }
+  const Type* t = task->canonical();
+  if (t != nullptr && t->isGenericCtor("Task") && t->args().size() == 1) {
+    return t->args()[0];
+  }
+  return nullptr;
+}
+
+const Type* TypeChecker::checkAwait(AwaitExpr& expr) {
+  if (!currentFunctionIsAsync_) {
+    diagnostics_->error(expr.range(), "'await' may only be used inside an async function");
+    diagnostics_->help("declare the enclosing function with 'async def' to use 'await'");
+    return nullptr;
+  }
+  const Type* operand = checkExpr(expr.operand());
+  if (operand == nullptr) {
+    return nullptr;
+  }
+  const Type* inner = unwrapTask(operand);
+  if (inner == nullptr) {
+    diagnostics_->error(expr.range(), "cannot await value of type " + quoteType(operand));
+    diagnostics_->help("await expects a Task[T] produced by calling an async function");
+    return nullptr;
+  }
+  expr.setResolvedType(inner);
+  return inner;
+}
+
 const Type* TypeChecker::checkDeref(UnaryExpr& expr, const Type* operand) {
   if (!operand->isPointerLike()) {
     diagnostics_->error(expr.range(),
@@ -2587,7 +2777,8 @@ const Type* TypeChecker::checkIntrinsicCall(CallExpr& expr, IntrinsicKind kind) 
       diagnostics_->error(expr.range(), "len() requires one argument");
       return nullptr;
     }
-    if (!(valueTypes[0]->valueType()->isSequence() || valueTypes[0]->valueType()->isDict() || valueTypes[0]->valueType()->isStrLayout() ||
+    if (!(valueTypes[0]->valueType()->isSequence() || valueTypes[0]->valueType()->isDict() ||
+          valueTypes[0]->valueType()->isStrLayout() ||
           valueTypes[0]->methodIndex("__len__") >= 0)) {
       diagnostics_->error(expr.range(),
                           "len() requires a list, array, dict, str, regex, or __len__");
@@ -2784,8 +2975,9 @@ const Type* TypeChecker::specializeCall(CallExpr& expr, const Symbol& symbol) {
         return nullptr;
       }
       const Type* expected = functionType->paramTypes()[index];
-      if (expected != nullptr && expected->isTypeParam() && !subst.contains(expected->name())) {
-        subst[expected->name()] = argType;
+      if (!inferTypeBindings(expected, argType, subst)) {
+        diagnostics_->error(expr.arguments()[index]->range(), "conflicting generic argument types");
+        return nullptr;
       }
     }
   }
@@ -2798,6 +2990,11 @@ const Type* TypeChecker::specializeCall(CallExpr& expr, const Symbol& symbol) {
     }
     instArgs.push_back(found->second);
   }
+  if (!checkTypeConstraints(symbol.function->typeParams(),
+                            resolvedConstraints(symbol.function->typeConstraints()),
+                            instArgs,
+                            expr.range()))
+    return nullptr;
   const FunctionInstantiation* inst = types_->instantiateFunction(
       symbol.function->name(), symbol.function->typeParams(), functionType, instArgs);
   if (inst == nullptr || inst->specializedType == nullptr) {
@@ -2887,8 +3084,9 @@ const Type* TypeChecker::checkCall(CallExpr& expr) {
       return nullptr;
     }
     if (expr.arguments().size() > 1) {
-      diagnostics_->error(expr.range(), name->name() + "() takes 0 or 1 argument, but " +
-                                            std::to_string(expr.arguments().size()) + " provided");
+      diagnostics_->error(expr.range(),
+                          name->name() + "() takes 0 or 1 argument, but " +
+                              std::to_string(expr.arguments().size()) + " provided");
       return nullptr;
     }
     if (expr.arguments().size() == 1) {
@@ -2926,7 +3124,8 @@ const Type* TypeChecker::checkCall(CallExpr& expr) {
   }
   if (symbol == nullptr || symbol->kind == SymbolKind::Type) {
     const Type* target = resolveNamedType(name->name(), expr.typeArgs(), expr.range(), false);
-    if (target != nullptr && target->isClass()) return checkConstructor(expr, target);
+    if (target != nullptr && target->isClass())
+      return checkConstructor(expr, target);
   }
   if (symbol == nullptr || symbol->type == nullptr) {
     if (symbol != nullptr && symbol->kind != SymbolKind::Function) {
@@ -3006,8 +3205,14 @@ const Type* TypeChecker::checkCall(CallExpr& expr) {
     expr.setLoweredName(loweredCallName(*name, *symbol));
   }
   expr.callee().setResolvedType(functionType);
-  expr.setResolvedType(functionType->returnType());
-  return functionType->returnType();
+  // Calling an async function yields `Task[T]` where `T` is the declared
+  // return type; `await` later unwraps that task back to `T`.
+  const Type* callResult = functionType->returnType();
+  if (symbol->function != nullptr && symbol->function->isAsync()) {
+    callResult = taskType(callResult);
+  }
+  expr.setResolvedType(callResult);
+  return callResult;
 }
 
 const Type* TypeChecker::checkConstructor(CallExpr& expr, const Type* record) {
@@ -3056,11 +3261,12 @@ const Type* TypeChecker::checkConstructor(CallExpr& expr, const Type* record) {
     }
     if (!expr.arguments().empty()) {
       const Type* argument = checkExpr(*expr.arguments()[0]);
-      if (argument == nullptr) return nullptr;
+      if (argument == nullptr)
+        return nullptr;
       if (!payload->isNamed("str") && !isAssignable(argument, payload) &&
           !canCast(argument->valueType(), payload)) {
-        diagnostics_->error(expr.range(), "cannot construct " + quoteType(record) +
-            " from " + quoteType(argument));
+        diagnostics_->error(
+            expr.range(), "cannot construct " + quoteType(record) + " from " + quoteType(argument));
         return nullptr;
       }
     }
@@ -3398,13 +3604,18 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
       diagnostics_->error(expr.range(), "'" + member.field() + "' is private and is not exported");
       return nullptr;
     }
-    if (exported != nullptr && exported->type != nullptr && exported->type->isTypeObject() &&
-        exported->type->typeObjectInstance() != nullptr &&
-        exported->type->typeObjectInstance()->isRecord()) {
-      return checkConstructor(expr, exported->type->typeObjectInstance());
-    }
-    if (exported != nullptr && exported->type != nullptr && exported->type->isRecord()) {
-      return checkConstructor(expr, exported->type);
+    const Type* exportedRecord = exported == nullptr ? nullptr : unwrapRecordType(exported->type);
+    if (exportedRecord != nullptr) {
+      if (!exportedRecord->typeParams().empty()) {
+        const NameExpr* moduleName = asName(member.object());
+        if (moduleName == nullptr || expr.typeArgs().empty()) {
+          diagnostics_->error(expr.range(), "'" + member.field() + "' requires type arguments");
+          return nullptr;
+        }
+        exportedRecord = resolveNamedType(
+            moduleName->name() + "." + member.field(), expr.typeArgs(), expr.range(), true);
+      }
+      return checkConstructor(expr, exportedRecord);
     }
     if (exported == nullptr || exported->type == nullptr ||
         exported->type->kind() != TypeKind::Function) {
@@ -3412,6 +3623,14 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
       return nullptr;
     }
     const Type* functionType = exported->type;
+    if (const NameExpr* moduleName = asName(member.object())) {
+      if (const Symbol* symbol = lookup(moduleName->name() + "." + member.field());
+          symbol != nullptr && symbol->function != nullptr) {
+        functionType = specializeCall(expr, *symbol);
+        if (functionType == nullptr)
+          return nullptr;
+      }
+    }
     if (expr.arguments().size() < exported->requiredArgs ||
         expr.arguments().size() > functionType->paramTypes().size()) {
       diagnostics_->error(expr.range(), "argument count mismatch");
@@ -3424,14 +3643,16 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
         return nullptr;
       }
     }
-    expr.setLoweredName(exported->llvmName.empty() ? member.field() : exported->llvmName);
+    if (expr.loweredName().empty()) {
+      expr.setLoweredName(exported->llvmName.empty() ? member.field() : exported->llvmName);
+    }
     expr.setParamNames(exported->paramNames);
     member.setResolvedType(functionType);
     expr.setResolvedType(functionType->returnType());
     return functionType->returnType();
   }
-  if (objectType != nullptr &&
-      objectType->valueType() != objectType && objectType->methodIndex(member.field()) < 0) {
+  if (objectType != nullptr && objectType->valueType() != objectType &&
+      objectType->methodIndex(member.field()) < 0) {
     return checkBuiltinMethod(expr, objectType->valueType(), member.field());
   }
   if (objectType != nullptr &&
@@ -3501,6 +3722,10 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
             }
             inferred.push_back(found->second);
           }
+          if (!ensureRecordConstraints(objectType) ||
+              !checkTypeConstraints(
+                  objectType->typeParams(), objectType->typeConstraints(), inferred, expr.range()))
+            return nullptr;
           objectType = types_->instantiate(objectType, inferred);
         }
         if (objectType == nullptr) {
@@ -3599,12 +3824,15 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
     for (const std::string& param : methodTypeParams) {
       const auto found = subst.find(param);
       if (found == subst.end()) {
-        diagnostics_->error(expr.range(), "cannot infer type argument '" + param + "' for method '" +
-                                              member.field() + "'");
+        diagnostics_->error(expr.range(),
+                            "cannot infer type argument '" + param + "' for method '" +
+                                member.field() + "'");
         return nullptr;
       }
       instArgs.push_back(found->second);
     }
+    if (!checkTypeConstraints(methodTypeParams, method.typeConstraints, instArgs, expr.range()))
+      return nullptr;
     const FunctionInstantiation* inst = types_->instantiateFunction(
         method.llvmName, methodTypeParams, functionType, instArgs, /*isMethod=*/true);
     if (inst == nullptr || inst->specializedType == nullptr) {
@@ -3740,6 +3968,8 @@ const Type* TypeChecker::checkExpr(Expr& expr) {
     return checkBinary(static_cast<BinaryExpr&>(expr));
   case NodeKind::UnaryExpr:
     return checkUnary(static_cast<UnaryExpr&>(expr));
+  case NodeKind::AwaitExpr:
+    return checkAwait(static_cast<AwaitExpr&>(expr));
   case NodeKind::CastExpr:
     return checkCast(static_cast<CastExpr&>(expr));
   case NodeKind::IndexExpr:
@@ -4134,6 +4364,16 @@ bool TypeChecker::checkStatement(Stmt& statement, const Type* expectedReturn) {
 }
 
 bool TypeChecker::checkFunctionBody(FunctionDef& function) {
+  const Type* owner = function.isMethod() ? classType(function.ownerClass()) : nullptr;
+  TypeConstraintScope classConstraints(
+      activeTypeConstraints_,
+      owner == nullptr ? std::vector<std::string>{} : owner->typeParams(),
+      owner == nullptr ? std::vector<const Type*>{} : owner->typeConstraints());
+  if (!resolveTypeConstraints(function.typeConstraints()))
+    return false;
+  TypeConstraintScope functionConstraints(activeTypeConstraints_,
+                                          function.typeParams(),
+                                          resolvedConstraints(function.typeConstraints()));
   if (function.isExtern()) {
     return true;
   }
@@ -4146,9 +4386,11 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
   const std::string savedClass = currentClass_;
   const std::string savedFunction = currentFunctionName_;
   const std::string savedProperty = currentPropertyName_;
+  const bool savedAsync = currentFunctionIsAsync_;
   currentClass_ = function.ownerClass();
   currentFunctionName_ = function.name();
   currentPropertyName_ = function.propertyName();
+  currentFunctionIsAsync_ = function.isAsync();
   pushScope(function.range());
   for (std::size_t index = 0; index < function.params().size(); ++index) {
     const ParamDecl& param = function.params()[index];
@@ -4161,6 +4403,7 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
       currentClass_ = savedClass;
       currentFunctionName_ = savedFunction;
       currentPropertyName_ = savedProperty;
+      currentFunctionIsAsync_ = savedAsync;
       return false;
     }
     if (param.defaultValue != nullptr) {
@@ -4171,6 +4414,7 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
         currentClass_ = savedClass;
         currentFunctionName_ = savedFunction;
         currentPropertyName_ = savedProperty;
+        currentFunctionIsAsync_ = savedAsync;
         return false;
       }
     }
@@ -4195,6 +4439,8 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
   currentClass_ = savedClass;
   currentFunctionName_ = savedFunction;
   currentPropertyName_ = savedProperty;
+  currentFunctionIsAsync_ = savedAsync;
+  currentFunctionIsAsync_ = savedAsync;
   return ok;
 }
 
@@ -4542,6 +4788,7 @@ bool TypeChecker::collectClassNames(Module& module) {
     const Type* record =
         existing != nullptr ? existing : types_->defineRecord(classDef.name(), {}, qualifier);
     types_->setRecordTypeParams(record, classDef.typeParams());
+    recordConstraintExprs_[record] = &classDef.typeConstraints();
     for (const std::string& param : classDef.typeParams()) {
       (void)types_->defineTypeParam(param);
     }
@@ -4558,11 +4805,10 @@ bool TypeChecker::collectClassNames(Module& module) {
   return true;
 }
 
-bool TypeChecker::collectEnums(Module& module) {
+bool TypeChecker::collectEnumNames(Module& module) {
   for (const std::unique_ptr<Stmt>& statement : module.statements()) {
-    if (statement->kind() != NodeKind::EnumDef) {
+    if (statement->kind() != NodeKind::EnumDef)
       continue;
-    }
     auto& enumDef = static_cast<EnumDef&>(*statement);
     const std::string qualifier = enumDef.fromPrelude() ? "prelude" : moduleName_;
     const Type* existing =
@@ -4570,9 +4816,34 @@ bool TypeChecker::collectEnums(Module& module) {
     const Type* record =
         existing != nullptr ? existing : types_->defineRecord(enumDef.name(), {}, qualifier);
     types_->setRecordTypeParams(record, enumDef.typeParams());
+    recordConstraintExprs_[record] = &enumDef.typeConstraints();
     for (const std::string& param : enumDef.typeParams()) {
       (void)types_->defineTypeParam(param);
     }
+    types_->setRecordEnum(record, true);
+    types_->setRecordFlags(record, enumDef.isFlags());
+    enumDef.setResolvedType(record);
+    Symbol symbol;
+    symbol.kind = SymbolKind::Class;
+    symbol.type = record;
+    if (!declare(enumDef.name(), symbol, enumDef.range().start, !enumDef.fromPrelude())) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool TypeChecker::collectEnums(Module& module) {
+  for (const std::unique_ptr<Stmt>& statement : module.statements()) {
+    if (statement->kind() != NodeKind::EnumDef) {
+      continue;
+    }
+    auto& enumDef = static_cast<EnumDef&>(*statement);
+    const Type* record = enumDef.resolvedType();
+    if (!ensureRecordConstraints(record))
+      return false;
+    TypeConstraintScope constraintScope(
+        activeTypeConstraints_, enumDef.typeParams(), record->typeConstraints());
     types_->setRecordEnum(record, true);
     types_->setRecordFlags(record, enumDef.isFlags());
     std::vector<RecordField> fields;
@@ -4608,13 +4879,6 @@ bool TypeChecker::collectEnums(Module& module) {
       field.type = record;
     }
     types_->setRecordFields(record, std::move(fields));
-    enumDef.setResolvedType(record);
-    Symbol symbol;
-    symbol.kind = SymbolKind::Class;
-    symbol.type = record;
-    if (!declare(enumDef.name(), symbol, enumDef.range().start, !enumDef.fromPrelude())) {
-      return false;
-    }
     for (const EnumVariant& variant : enumDef.variants()) {
       recordSymbol(variant.name, "enumMember", record, variant.range.start, enumDef.name());
     }
@@ -4645,6 +4909,10 @@ bool TypeChecker::collectAliases(Module& module) {
 }
 
 bool TypeChecker::flattenClass(ClassDef& classDef) {
+  if (!ensureRecordConstraints(classDef.resolvedType()))
+    return false;
+  TypeConstraintScope constraintScope(
+      activeTypeConstraints_, classDef.typeParams(), classDef.resolvedType()->typeConstraints());
   if (flattened_[classDef.name()]) {
     return true;
   }
@@ -4654,8 +4922,10 @@ bool TypeChecker::flattenClass(ClassDef& classDef) {
   const auto inheritFields = [&](const Type* base) {
     if (!base->isRecord()) {
       bool exists = false;
-      for (const RecordField& field : fields) exists = exists || field.name == "$value";
-      if (!exists) fields.push_back(RecordField{"$value", base, false, false});
+      for (const RecordField& field : fields)
+        exists = exists || field.name == "$value";
+      if (!exists)
+        fields.push_back(RecordField{"$value", base, false, false});
     }
     for (const RecordField& field : base->fields()) {
       bool exists = false;
@@ -4685,7 +4955,8 @@ bool TypeChecker::flattenClass(ClassDef& classDef) {
     if (const Type* record = unwrapRecordType(base)) {
       return record;
     }
-    if (base != nullptr) return base;
+    if (base != nullptr)
+      return base;
     diagnostics_->error(range, "unknown base class '" + baseName + "'");
     return nullptr;
   };
@@ -4773,6 +5044,11 @@ bool TypeChecker::collectFunctions(Module& module) {
       continue;
     }
     auto& function = static_cast<FunctionDef&>(*statement);
+    if (!resolveTypeConstraints(function.typeConstraints()))
+      return false;
+    TypeConstraintScope constraintScope(activeTypeConstraints_,
+                                        function.typeParams(),
+                                        resolvedConstraints(function.typeConstraints()));
     for (const std::string& param : function.typeParams()) {
       (void)types_->defineTypeParam(param);
     }
@@ -4844,7 +5120,14 @@ bool TypeChecker::collectMethods(Module& module) {
     if (record == nullptr) {
       continue;
     }
+    TypeConstraintScope classConstraints(
+        activeTypeConstraints_, classDef.typeParams(), record->typeConstraints());
     for (std::unique_ptr<FunctionDef>& method : classDef.methods()) {
+      if (!resolveTypeConstraints(method->typeConstraints()))
+        return false;
+      TypeConstraintScope methodConstraints(activeTypeConstraints_,
+                                            method->typeParams(),
+                                            resolvedConstraints(method->typeConstraints()));
       for (const std::string& param : method->typeParams()) {
         (void)types_->defineTypeParam(param);
       }
@@ -4945,6 +5228,7 @@ bool TypeChecker::collectMethods(Module& module) {
       info.isAbstract = abstractMethodNeedsOverride(*method);
       info.isPublic = !method->isPrivate();
       info.typeParams = method->typeParams();
+      info.typeConstraints = resolvedConstraints(method->typeConstraints());
       bool sawDefault = false;
       for (std::size_t index = 0; index < method->params().size(); ++index) {
         const ParamDecl& param = method->params()[index];
@@ -5047,7 +5331,16 @@ bool TypeChecker::collectMethods(Module& module) {
     if (record == nullptr) {
       continue;
     }
+    TypeConstraintScope classConstraints(
+        activeTypeConstraints_, enumDef.typeParams(), record->typeConstraints());
     for (std::unique_ptr<FunctionDef>& method : enumDef.methods()) {
+      if (!resolveTypeConstraints(method->typeConstraints()))
+        return false;
+      TypeConstraintScope methodConstraints(activeTypeConstraints_,
+                                            method->typeParams(),
+                                            resolvedConstraints(method->typeConstraints()));
+      for (const std::string& param : method->typeParams())
+        (void)types_->defineTypeParam(param);
       if (method->params().empty() || method->params()[0].name != "self") {
         diagnostics_->error(method->range(), "methods must take self as the first parameter");
         continue;
@@ -5075,6 +5368,8 @@ bool TypeChecker::collectMethods(Module& module) {
       info.name = method->name();
       info.type = fnType;
       info.llvmName = enumDef.name() + "_" + method->name();
+      info.typeParams = method->typeParams();
+      info.typeConstraints = resolvedConstraints(method->typeConstraints());
       info.isPublic = !method->isPrivate();
       for (std::size_t index = 0; index < method->params().size(); ++index) {
         info.paramNames.push_back(method->params()[index].name);
@@ -5853,7 +6148,15 @@ const Type* TypeChecker::callDecorator(const Type* wrapper, const Type* target, 
                               quoteType(shape.params[0]) + ", found " + quoteType(target));
       return nullptr;
     }
-    return shape.hasReturn && shape.returnType != nullptr ? shape.returnType : types_->anyType();
+    // A decorator whose static signature is unknown (for example a factory such
+    // as `@route("/x")` that returns a bare `Callable`) is treated as returning
+    // the decorated object unchanged. This is the Python-like behaviour: the
+    // decorated name keeps its original signature so existing call sites still
+    // type-check, instead of degrading the symbol to `Any`.
+    if (shape.hasReturn && shape.returnType != nullptr) {
+      return shape.returnType;
+    }
+    return target;
   }
   diagnostics_->error(range, "decorator is not callable");
   diagnostics_->help("@name or @name(...) must evaluate to a callable");
@@ -5871,10 +6174,13 @@ bool TypeChecker::check(Module& module) {
   if (!collectClassNames(module)) {
     return false;
   }
-  if (!collectEnums(module)) {
+  if (!collectEnumNames(module)) {
     return false;
   }
   if (!collectAliases(module)) {
+    return false;
+  }
+  if (!collectEnums(module)) {
     return false;
   }
   if (!collectClassFields(module)) {

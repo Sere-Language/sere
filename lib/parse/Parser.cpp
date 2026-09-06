@@ -7,6 +7,7 @@
 #include "sere/lex/Lexer.h"
 #include "sere/source/SourceManager.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
@@ -417,18 +418,38 @@ std::vector<std::unique_ptr<TypeExpr>> Parser::parseTypeArgList() {
   return args;
 }
 
-std::vector<std::string> Parser::parseTypeParamList() {
+std::vector<std::string>
+Parser::parseTypeParamList(std::vector<std::unique_ptr<TypeExpr>>& constraints) {
   std::vector<std::string> typeParams;
   if (!match(TokenKind::LBracket)) {
     return typeParams;
   }
-  if (!check(TokenKind::RBracket)) {
-    while (true) {
-      typeParams.push_back(parseIdentifier("expected type parameter"));
-      if (!match(TokenKind::Comma)) {
-        break;
+  skipNewlines();
+  while (!check(TokenKind::RBracket) && !isAtEnd()) {
+    const SourceRange range = peek().range();
+    std::string name = parseIdentifier("expected type parameter");
+    if (name.empty()) {
+      return {};
+    }
+    if (std::find(typeParams.begin(), typeParams.end(), name) != typeParams.end()) {
+      diagnostics_->error(range, "duplicate type parameter '" + name + "'");
+      return {};
+    }
+    typeParams.push_back(std::move(name));
+    std::unique_ptr<TypeExpr> constraint;
+    if (match(TokenKind::Colon)) {
+      skipNewlines();
+      constraint = parseTypeExpr();
+      if (constraint == nullptr) {
+        return {};
       }
     }
+    constraints.push_back(std::move(constraint));
+    skipNewlines();
+    if (!match(TokenKind::Comma)) {
+      break;
+    }
+    skipNewlines();
   }
   if (!consume(TokenKind::RBracket, "expected ']' after type parameters")) {
     return {};
@@ -927,6 +948,17 @@ std::unique_ptr<Expr> Parser::parsePostfix() {
 }
 
 std::unique_ptr<Expr> Parser::parseUnary() {
+  // `await` is a unary-prefix operator over a postfix/primary operand so that
+  // `await f()` parses as `(await f)` and `await a + b` parses as `(await a) + b`.
+  if (check(TokenKind::KeywordAwait)) {
+    const SourceLocation start = advance().location();
+    std::unique_ptr<Expr> operand = parsePostfix();
+    if (operand == nullptr) {
+      return nullptr;
+    }
+    return std::make_unique<AwaitExpr>(SourceRange{start, operand->range().end},
+                                       std::move(operand));
+  }
   if (match(TokenKind::KeywordNot) || match(TokenKind::Minus) || match(TokenKind::Plus) ||
       match(TokenKind::Tilde) || match(TokenKind::PlusPlus) || match(TokenKind::MinusMinus) ||
       match(TokenKind::Star) || match(TokenKind::Amp)) {
@@ -1777,7 +1809,8 @@ bool Parser::parseInlineEnumVariants(std::vector<EnumVariant>& variants) {
 std::unique_ptr<EnumDef> Parser::parseEnum() {
   const Token& keyword = advance();
   std::string name = parseIdentifier("expected enum name");
-  std::vector<std::string> typeParams = parseTypeParamList();
+  std::vector<std::unique_ptr<TypeExpr>> typeConstraints;
+  std::vector<std::string> typeParams = parseTypeParamList(typeConstraints);
   if (name.empty()) {
     return nullptr;
   }
@@ -1787,8 +1820,10 @@ std::unique_ptr<EnumDef> Parser::parseEnum() {
         !consume(TokenKind::RBrace, "expected '}' after enum variants") || !finishLine()) {
       return nullptr;
     }
-    return std::make_unique<EnumDef>(
+    auto enumDef = std::make_unique<EnumDef>(
         keyword.range(), std::move(name), std::move(typeParams), std::move(variants));
+    enumDef->setTypeConstraints(std::move(typeConstraints));
+    return enumDef;
   }
   if (!consume(TokenKind::Colon, "expected ':' or '{' after enum name")) {
     return nullptr;
@@ -1797,8 +1832,10 @@ std::unique_ptr<EnumDef> Parser::parseEnum() {
     if (!parseInlineEnumVariants(variants) || !finishLine()) {
       return nullptr;
     }
-    return std::make_unique<EnumDef>(
+    auto enumDef = std::make_unique<EnumDef>(
         keyword.range(), std::move(name), std::move(typeParams), std::move(variants));
+    enumDef->setTypeConstraints(std::move(typeConstraints));
+    return enumDef;
   }
   if (!consume(TokenKind::Newline, "expected newline after enum header") ||
       !consume(TokenKind::Indent, "expected indented enum body")) {
@@ -1822,6 +1859,7 @@ std::unique_ptr<EnumDef> Parser::parseEnum() {
       markPrivateFromDecorators(*method, method->decorators());
       auto enumDef = std::make_unique<EnumDef>(
           keyword.range(), std::move(name), std::move(typeParams), std::move(variants));
+      enumDef->setTypeConstraints(std::move(typeConstraints));
       // Collect remaining methods after this one by finishing the loop via a local vector.
       std::vector<std::unique_ptr<FunctionDef>> methods;
       methods.push_back(std::move(method));
@@ -1886,8 +1924,10 @@ std::unique_ptr<EnumDef> Parser::parseEnum() {
   if (!consume(TokenKind::Dedent, "expected dedent after enum body")) {
     return nullptr;
   }
-  return std::make_unique<EnumDef>(
+  auto enumDef = std::make_unique<EnumDef>(
       keyword.range(), std::move(name), std::move(typeParams), std::move(variants));
+  enumDef->setTypeConstraints(std::move(typeConstraints));
+  return enumDef;
 }
 
 std::unique_ptr<Stmt> Parser::parseAssignOrExpr() {
@@ -1972,7 +2012,8 @@ std::unique_ptr<FunctionDef> Parser::parseFunction(std::string externName) {
   }
   const SourceLocation start = previous().range().start;
   std::string name = parseIdentifier("expected function name");
-  std::vector<std::string> typeParams = parseTypeParamList();
+  std::vector<std::unique_ptr<TypeExpr>> typeConstraints;
+  std::vector<std::string> typeParams = parseTypeParamList(typeConstraints);
   if (name.empty() || !consume(TokenKind::LParen, "expected '(' after function name")) {
     return nullptr;
   }
@@ -2027,6 +2068,7 @@ std::unique_ptr<FunctionDef> Parser::parseFunction(std::string externName) {
                                                 std::move(body),
                                                 std::move(externName));
   function->setTypeParams(std::move(typeParams));
+  function->setTypeConstraints(std::move(typeConstraints));
   function->setInferredReturn(inferredReturn);
   return function;
 }
@@ -2106,7 +2148,8 @@ std::unique_ptr<ClassDef> Parser::parseClass() {
   const Token& keyword = advance();
   const bool isStruct = keyword.kind() == TokenKind::KeywordStruct;
   std::string name = parseIdentifier(isStruct ? "expected struct name" : "expected class name");
-  std::vector<std::string> typeParams = parseTypeParamList();
+  std::vector<std::unique_ptr<TypeExpr>> typeConstraints;
+  std::vector<std::string> typeParams = parseTypeParamList(typeConstraints);
   std::vector<std::string> bases;
   std::vector<std::unique_ptr<TypeExpr>> baseTypes;
   if (match(TokenKind::LParen)) {
@@ -2243,6 +2286,7 @@ std::unique_ptr<ClassDef> Parser::parseClass() {
                                         std::move(methods),
                                         std::move(bases),
                                         std::move(typeParams));
+  def->setTypeConstraints(std::move(typeConstraints));
   def->setBaseTypes(std::move(baseTypes));
   def->setStruct(isStruct);
   return def;
@@ -2335,9 +2379,18 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
     }
     return macro;
   }
-  if (check(TokenKind::KeywordDef)) {
+  if (check(TokenKind::KeywordDef) ||
+      (check(TokenKind::KeywordAsync) && peekNth(1).kind() == TokenKind::KeywordDef)) {
+    bool isAsync = false;
+    if (check(TokenKind::KeywordAsync)) {
+      isAsync = true;
+      advance();
+    }
     std::unique_ptr<FunctionDef> function = parseFunction({});
     if (function != nullptr) {
+      if (isAsync) {
+        function->setAsync(true);
+      }
       attachFunctionDecorators(*function, std::move(decoratorExprs));
       markPrivateFromDecorators(*function, function->decorators());
       for (const std::string& decorator : function->decorators()) {

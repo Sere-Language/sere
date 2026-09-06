@@ -40,8 +40,8 @@ struct LanguageContext {
   std::filesystem::path stdlib;
 };
 
-[[nodiscard]] std::optional<std::filesystem::path> findProjectRoot(
-    const std::filesystem::path& start);
+[[nodiscard]] std::optional<std::filesystem::path>
+findProjectRoot(const std::filesystem::path& start);
 
 [[nodiscard]] bool loadProjectManifest(const std::filesystem::path& root,
                                        ProjectManifest& manifest,
@@ -72,4 +72,4 @@ void prepareImportedLibraryNative(const std::vector<std::filesystem::path>& impo
 [[nodiscard]] int runProject(const CompilerOptions& options);
 [[nodiscard]] int cleanProject(const CompilerOptions& options);
 
-}  // namespace sere
+} // namespace sere

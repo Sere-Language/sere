@@ -21,8 +21,8 @@ struct ImportModuleEntry {
 
 [[nodiscard]] std::string joinImportPath(const std::vector<std::string>& parts);
 
-[[nodiscard]] std::vector<std::filesystem::path> importSearchDirs(
-    const std::filesystem::path& originDir, const std::filesystem::path& stdlibDir);
+[[nodiscard]] std::vector<std::filesystem::path>
+importSearchDirs(const std::filesystem::path& originDir, const std::filesystem::path& stdlibDir);
 
 void appendImportSearchDir(std::vector<std::filesystem::path>& dirs,
                            const std::filesystem::path& directory);
@@ -30,14 +30,16 @@ void appendImportSearchDir(std::vector<std::filesystem::path>& dirs,
 void appendWorkspaceImportDirs(std::vector<std::filesystem::path>& dirs,
                                const std::filesystem::path& workspaceRoot);
 
-[[nodiscard]] std::filesystem::path resolveImportFile(
-    const std::vector<std::filesystem::path>& searchDirs, const std::vector<std::string>& parts,
-    const std::filesystem::path& skipFile = {}, std::string* error = nullptr);
+[[nodiscard]] std::filesystem::path
+resolveImportFile(const std::vector<std::filesystem::path>& searchDirs,
+                  const std::vector<std::string>& parts,
+                  const std::filesystem::path& skipFile = {},
+                  std::string* error = nullptr);
 
-[[nodiscard]] std::vector<ImportModuleEntry> listImportModules(
-    const std::vector<std::filesystem::path>& searchDirs,
-    const std::filesystem::path& stdlibDir,
-    std::string_view typedPath,
-    const std::filesystem::path& skipFile = {});
+[[nodiscard]] std::vector<ImportModuleEntry>
+listImportModules(const std::vector<std::filesystem::path>& searchDirs,
+                  const std::filesystem::path& stdlibDir,
+                  std::string_view typedPath,
+                  const std::filesystem::path& skipFile = {});
 
-}  // namespace sere
+} // namespace sere

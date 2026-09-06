@@ -1,0 +1,16 @@
+async def number() -> i32:
+    return 42
+
+async def names() -> list[str]:
+    return ["one", "two"]
+
+async def combine() -> i32:
+    x = 10
+    a = await number()
+    b = await number()
+    return x + a + b
+
+async def main(argv: list[str]) -> i32:
+    value = await combine()
+    print(value)
+    return 0

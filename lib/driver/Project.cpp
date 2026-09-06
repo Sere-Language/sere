@@ -18,13 +18,13 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <optional>
-#include <string>
-#include <vector>
 #include <iostream>
+#include <optional>
 #include <sstream>
+#include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 namespace sere {
 namespace {
@@ -41,24 +41,39 @@ namespace {
 
 [[nodiscard]] std::string unquote(std::string_view text) {
   const std::string trimmed = trimCopy(text);
-  if (trimmed.size() < 2) return trimmed;
+  if (trimmed.size() < 2)
+    return trimmed;
   if (trimmed.front() == '\'' && trimmed.back() == '\'') {
     return trimmed.substr(1, trimmed.size() - 2);
   }
-  if (trimmed.front() != '"' || trimmed.back() != '"') return trimmed;
+  if (trimmed.front() != '"' || trimmed.back() != '"')
+    return trimmed;
   std::string value;
   for (std::size_t i = 1; i + 1 < trimmed.size(); ++i) {
     if (trimmed[i] == '\\' && i + 2 < trimmed.size()) {
       const char escaped = trimmed[++i];
       switch (escaped) {
-      case 'n': value += '\n'; break;
-      case 'r': value += '\r'; break;
-      case 't': value += '\t'; break;
-      case 'b': value += '\b'; break;
-      case 'f': value += '\f'; break;
-      default: value += escaped; break;
+      case 'n':
+        value += '\n';
+        break;
+      case 'r':
+        value += '\r';
+        break;
+      case 't':
+        value += '\t';
+        break;
+      case 'b':
+        value += '\b';
+        break;
+      case 'f':
+        value += '\f';
+        break;
+      default:
+        value += escaped;
+        break;
       }
-    } else value += trimmed[i];
+    } else
+      value += trimmed[i];
   }
   return value;
 }
@@ -156,10 +171,11 @@ void collectLinkLibraries(const std::filesystem::path& directory,
   collectNativeLinkFiles(directory, libraries);
 }
 
-[[nodiscard]] int configureNative(const std::string& cmake, const std::filesystem::path& nativeDir) {
+[[nodiscard]] int configureNative(const std::string& cmake,
+                                  const std::filesystem::path& nativeDir) {
   const std::filesystem::path buildDir = nativeDir / "build";
-  const std::vector<std::string> configure{cmake, "-S", nativeDir.string(), "-B",
-                                           buildDir.string()};
+  const std::vector<std::string> configure{
+      cmake, "-S", nativeDir.string(), "-B", buildDir.string()};
   return runProcess(cmake, configure);
 }
 
@@ -170,8 +186,8 @@ void collectLinkLibraries(const std::filesystem::path& directory,
   if (code == 0) {
     return 0;
   }
-  const std::vector<std::string> release{cmake, "--build", buildDir.string(), "--config",
-                                         "Release"};
+  const std::vector<std::string> release{
+      cmake, "--build", buildDir.string(), "--config", "Release"};
   return runProcess(cmake, release);
 }
 
@@ -322,7 +338,8 @@ void collectLooseNativeSources(const std::filesystem::path& directory,
 }
 
 [[nodiscard]] std::optional<ProjectManifest> requireManifest(std::string& error) {
-  const std::optional<std::filesystem::path> root = findProjectRoot(std::filesystem::current_path());
+  const std::optional<std::filesystem::path> root =
+      findProjectRoot(std::filesystem::current_path());
   if (!root.has_value()) {
     error = "no sere.toml found; run this command from a Sere project (or sere init <name>)";
     return std::nullopt;
@@ -390,7 +407,8 @@ void copyStdlibTree(const std::filesystem::path& from, const std::filesystem::pa
     return;
   }
   std::filesystem::create_directories(to, error);
-  std::filesystem::copy(from, to,
+  std::filesystem::copy(from,
+                        to,
                         std::filesystem::copy_options::recursive |
                             std::filesystem::copy_options::overwrite_existing,
                         error);
@@ -416,7 +434,8 @@ void copyStdlibTree(const std::filesystem::path& from, const std::filesystem::pa
   return relative.generic_string();
 }
 
-void addPackedFile(PackedLibrary& library, const std::filesystem::path& root,
+void addPackedFile(PackedLibrary& library,
+                   const std::filesystem::path& root,
                    const std::filesystem::path& file) {
   if (!isSafeLibraryPath(relativeGeneric(root, file))) {
     return;
@@ -437,7 +456,8 @@ void addPackedFile(PackedLibrary& library, const std::filesystem::path& root,
   library.files.push_back(std::move(member));
 }
 
-void collectPackedNative(PackedLibrary& library, const std::filesystem::path& root,
+void collectPackedNative(PackedLibrary& library,
+                         const std::filesystem::path& root,
                          const std::filesystem::path& directory) {
   std::vector<std::filesystem::path> files;
   collectNativeLinkFiles(directory, files);
@@ -457,7 +477,8 @@ void collectPackedNative(PackedLibrary& library, const std::filesystem::path& ro
   return false;
 }
 
-void collectPackedNativeSources(PackedLibrary& library, const std::filesystem::path& root,
+void collectPackedNativeSources(PackedLibrary& library,
+                                const std::filesystem::path& root,
                                 const std::filesystem::path& directory) {
   if (libraryHasNativeBinary(library)) {
     return;
@@ -474,8 +495,10 @@ void collectPackedNativeSources(PackedLibrary& library, const std::filesystem::p
   }
 }
 
-void collectReachableSere(PackedLibrary& library, const std::filesystem::path& root,
-                          const std::filesystem::path& stdlib, const std::filesystem::path& entry,
+void collectReachableSere(PackedLibrary& library,
+                          const std::filesystem::path& root,
+                          const std::filesystem::path& stdlib,
+                          const std::filesystem::path& entry,
                           const std::vector<std::filesystem::path>& imported) {
   addPackedFile(library, root, entry);
   for (const std::filesystem::path& file : imported) {
@@ -487,7 +510,8 @@ void collectReachableSere(PackedLibrary& library, const std::filesystem::path& r
   }
 }
 
-void collectModuleNative(PackedLibrary& library, const std::filesystem::path& root,
+void collectModuleNative(PackedLibrary& library,
+                         const std::filesystem::path& root,
                          const std::filesystem::path& moduleFile) {
   const std::filesystem::path parent = moduleFile.parent_path();
   const std::string stem = moduleFile.stem().string();
@@ -585,7 +609,7 @@ struct PackCheck {
   return writeLibraryArchive(library, output);
 }
 
-}  // namespace
+} // namespace
 
 int buildNativeLibs(const std::filesystem::path& nativeDir) {
   std::error_code error;
@@ -638,8 +662,12 @@ void prepareProjectStdlib(const ProjectManifest& manifest) {
     copyIfPresent(from / "sere.exe", dest / "sere.exe");
     copyIfPresent(from / "sere", dest / "sere");
   }
-  for (const char* name :
-       {"sere_rt.lib", "sere_qt6.lib", "sere_qt6.dll", "Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll"}) {
+  for (const char* name : {"sere_rt.lib",
+                           "sere_qt6.lib",
+                           "sere_qt6.dll",
+                           "Qt6Core.dll",
+                           "Qt6Gui.dll",
+                           "Qt6Widgets.dll"}) {
     copyIfPresent(from / name, dest / name);
   }
 }
@@ -667,7 +695,8 @@ std::optional<std::filesystem::path> findProjectRoot(const std::filesystem::path
   return std::nullopt;
 }
 
-bool loadProjectManifest(const std::filesystem::path& root, ProjectManifest& manifest,
+bool loadProjectManifest(const std::filesystem::path& root,
+                         ProjectManifest& manifest,
                          std::string& error) {
   const std::filesystem::path tomlPath = root / "sere.toml";
   std::ifstream input(tomlPath, std::ios::binary);
@@ -693,11 +722,23 @@ bool loadProjectManifest(const std::filesystem::path& root, ProjectManifest& man
     bool escaped = false;
     for (std::size_t i = 0; i < line.size(); ++i) {
       const char ch = line[i];
-      if (escaped) { escaped = false; continue; }
-      if (quote == '"' && ch == '\\') { escaped = true; continue; }
-      if (quote) { if (ch == quote) quote = 0; }
-      else if (ch == '"' || ch == '\'') quote = ch;
-      else if (ch == '#') { line.resize(i); break; }
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (quote == '"' && ch == '\\') {
+        escaped = true;
+        continue;
+      }
+      if (quote) {
+        if (ch == quote)
+          quote = 0;
+      } else if (ch == '"' || ch == '\'')
+        quote = ch;
+      else if (ch == '#') {
+        line.resize(i);
+        break;
+      }
     }
     const std::string trimmed = trimCopy(line);
     if (!trimmed.empty() && trimmed.front() == '[') {
@@ -713,12 +754,15 @@ bool loadProjectManifest(const std::filesystem::path& root, ProjectManifest& man
     }
     const std::string key = trimCopy(trimmed.substr(0, eq));
     const std::string value = unquote(trimmed.substr(eq + 1));
-    const bool known = section.empty() ||
+    const bool known =
+        section.empty() ||
         (section == "[project]" && (key == "name" || key == "version" || key == "kind")) ||
         (section == "[toolchain]" && key == "sere") ||
-        (section == "[paths]" && (key == "src" || key == "entry" || key == "libs" || key == "stdlib")) ||
+        (section == "[paths]" &&
+         (key == "src" || key == "entry" || key == "libs" || key == "stdlib")) ||
         (section == "[build]" && (key == "output" || key == "opt" || key == "native"));
-    if (known) applyTomlKey(manifest, key, value);
+    if (known)
+      applyTomlKey(manifest, key, value);
   }
   manifest.src = resolvePath(root, manifest.src);
   manifest.entry = resolvePath(root, manifest.entry);
@@ -800,9 +844,8 @@ int packLibrary(const CompilerOptions& options) {
     }
   }
   prepareProjectStdlib(*manifest);
-  const std::filesystem::path stdlib = stdlibUsable(manifest->stdlib)
-                                           ? manifest->stdlib
-                                           : findStdlibDirectory(compilerDirectory());
+  const std::filesystem::path stdlib =
+      stdlibUsable(manifest->stdlib) ? manifest->stdlib : findStdlibDirectory(compilerDirectory());
   const PackCheck check = typecheckPackedEntry(manifest->entry, stdlib, options.colorMode);
   if (check.code != 0) {
     return 1;
@@ -843,9 +886,8 @@ int buildProject(const CompilerOptions& options) {
     }
   }
   prepareProjectStdlib(*manifest);
-  const std::filesystem::path stdlib = stdlibUsable(manifest->stdlib)
-                                           ? manifest->stdlib
-                                           : findStdlibDirectory(compilerDirectory());
+  const std::filesystem::path stdlib =
+      stdlibUsable(manifest->stdlib) ? manifest->stdlib : findStdlibDirectory(compilerDirectory());
   if (stdlibUsable(stdlib)) {
     setEnvironmentVariable("SERE_STDLIB", stdlib.string());
   }
@@ -902,4 +944,4 @@ int cleanProject(const CompilerOptions& options) {
   return 0;
 }
 
-}  // namespace sere
+} // namespace sere

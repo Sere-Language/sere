@@ -142,8 +142,8 @@ void printBanner(const ProjectManifest& manifest) {
     return 1;
   }
   const std::filesystem::path rc = manifest.root / "venv" / "shell.ps1";
-  std::vector<std::string> args{*exe, "-NoProfile", "-NoLogo", "-NoExit",
-                                "-ExecutionPolicy", "Bypass"};
+  std::vector<std::string> args{
+      *exe, "-NoProfile", "-NoLogo", "-NoExit", "-ExecutionPolicy", "Bypass"};
   if (std::filesystem::exists(rc)) {
     args.insert(args.end(), {"-File", rc.string()});
   } else {
@@ -185,7 +185,7 @@ void printBanner(const ProjectManifest& manifest) {
   return waitFor(*exe, args);
 }
 
-}  // namespace
+} // namespace
 
 int enterProjectShell(const CompilerOptions& options) {
   if (std::getenv("SERE_ACTIVE") != nullptr) {
@@ -218,4 +218,4 @@ int enterProjectShell(const CompilerOptions& options) {
   return spawnBash(manifest);
 }
 
-}  // namespace sere
+} // namespace sere

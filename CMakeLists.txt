@@ -3,12 +3,12 @@
 
 cmake_minimum_required(VERSION 3.28)
 project(sere
-  VERSION 0.1.6
+  VERSION 0.1.7
   DESCRIPTION "Sere compiled language toolchain (Python-superset frontend, LLVM backend)"
   LANGUAGES C CXX
 )
 
-set(SERE_VERSION_STRING "pre-${PROJECT_VERSION}-stable")
+set(SERE_VERSION_STRING "pre-${PROJECT_VERSION}")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

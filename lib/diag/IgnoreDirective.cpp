@@ -217,7 +217,7 @@ void applyNames(const ParsedIgnore& parsed,
   return false;
 }
 
-}  // namespace
+} // namespace
 
 IgnoreSet parseIgnoreDirectives(std::string_view source,
                                 std::vector<UnknownIgnoreName>& unknownNames) {
@@ -283,4 +283,4 @@ bool diagnosticIsIgnored(const IgnoreSet& ignores, std::uint32_t line, Diagnosti
   return false;
 }
 
-}  // namespace sere
+} // namespace sere

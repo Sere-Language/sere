@@ -25,6 +25,18 @@ target_link_libraries(sere_test_sema PRIVATE sere_sema)
 sere_apply_warnings(sere_test_sema)
 add_test(NAME sere.test.sema COMMAND sere_test_sema)
 
+add_executable(sere_test_generic_constraints generic_constraints.cpp)
+target_link_libraries(sere_test_generic_constraints PRIVATE sere_driver)
+sere_apply_warnings(sere_test_generic_constraints)
+add_test(NAME sere.test.generic_constraints COMMAND sere_test_generic_constraints)
+
+add_test(NAME sere.example.generic_constraints
+  COMMAND "$<TARGET_FILE:sere>" --emit-llvm
+          "${CMAKE_SOURCE_DIR}/examples/generic_constraints.sere"
+          -o "${CMAKE_BINARY_DIR}/generic_constraints.ll")
+set_tests_properties(sere.example.generic_constraints PROPERTIES
+  ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
+
 foreach(_any_case IN ITEMS values bad_cast)
   if(_any_case STREQUAL "values")
     set(_any_source "${CMAKE_SOURCE_DIR}/examples/any.sere")

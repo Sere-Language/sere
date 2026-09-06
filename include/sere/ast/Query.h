@@ -23,8 +23,10 @@ struct MacroUse {
 [[nodiscard]] SourceRange identifierRange(SourceRange start, std::string_view name);
 [[nodiscard]] const Node* findNodeAt(const Node& root, std::uint32_t offset);
 [[nodiscard]] const CallExpr* findCallAt(const Node& root, std::uint32_t offset);
-[[nodiscard]] const MacroUse* findMacroUseAt(const std::vector<MacroUse>& uses, std::uint32_t offset);
-[[nodiscard]] const MacroUse* findMacroNameAt(const std::vector<MacroUse>& uses, std::uint32_t offset);
+[[nodiscard]] const MacroUse* findMacroUseAt(const std::vector<MacroUse>& uses,
+                                             std::uint32_t offset);
+[[nodiscard]] const MacroUse* findMacroNameAt(const std::vector<MacroUse>& uses,
+                                              std::uint32_t offset);
 void collectCalls(const Node& root, std::vector<const CallExpr*>& out);
 void collectNameRefs(const Node& root, std::string_view name, std::vector<SourceRange>& out);
 void collectMacroUses(const Node& root, std::vector<MacroUse>& out);
@@ -32,4 +34,4 @@ void collectMacroUses(const Node& root, std::vector<MacroUse>& out);
 [[nodiscard]] std::string macroSnippet(const MacroDef& def);
 [[nodiscard]] SourceRange macroNameRange(const MacroDef& def);
 
-}  // namespace sere
+} // namespace sere

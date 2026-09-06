@@ -76,6 +76,8 @@ enum class TokenKind {
   KeywordAnd,
   KeywordAs,
   KeywordAssert,
+  KeywordAsync,
+  KeywordAwait,
   KeywordBreak,
   KeywordCase,
   KeywordClass,
@@ -117,4 +119,4 @@ enum class TokenKind {
 [[nodiscard]] std::string_view tokenKindName(TokenKind kind);
 [[nodiscard]] TokenKind keywordKind(std::string_view spelling);
 
-}  // namespace sere
+} // namespace sere

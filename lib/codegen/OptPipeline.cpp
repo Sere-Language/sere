@@ -3,11 +3,24 @@
 
 #include "sere/codegen/OptPipeline.h"
 
+#include <llvm/Analysis/CGSCCPassManager.h>
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Passes/StandardInstrumentations.h>
 #include <llvm/Support/Error.h>
+#include <llvm/Transforms/Coroutines/CoroCleanup.h>
+#include <llvm/Transforms/Coroutines/CoroEarly.h>
+#include <llvm/Transforms/Coroutines/CoroSplit.h>
 
 namespace sere {
+
+// Async functions are lowered with LLVM's coroutine intrinsics. The splitting
+// passes must run at *every* optimization level (including O0, where the rest
+// of the pipeline is skipped) or the coroutine frames are never materialized.
+static void addCoroutinePasses(llvm::ModulePassManager& mpm) {
+  mpm.addPass(llvm::CoroEarlyPass());
+  mpm.addPass(llvm::createModuleToPostOrderCGSCCPassAdaptor(llvm::CoroSplitPass()));
+  mpm.addPass(llvm::CoroCleanupPass());
+}
 
 bool parseOptLevel(std::string_view text, OptLevel& level, std::string& error) {
   if (text == "0" || text == "O0") {
@@ -59,8 +72,9 @@ bool runOptPipeline(llvm::Module& module,
       error = llvm::toString(std::move(failed));
       return false;
     }
+    addCoroutinePasses(pipeline);
   } else if (level == OptLevel::O0) {
-    return true;
+    addCoroutinePasses(pipeline);
   } else {
     llvm::OptimizationLevel llvmLevel = llvm::OptimizationLevel::O1;
     if (level == OptLevel::O2) {
@@ -73,9 +87,10 @@ bool runOptPipeline(llvm::Module& module,
       llvmLevel = llvm::OptimizationLevel::Oz;
     }
     pipeline = builder.buildPerModuleDefaultPipeline(llvmLevel);
+    addCoroutinePasses(pipeline);
   }
   pipeline.run(module, modules);
   return true;
 }
 
-}  // namespace sere
+} // namespace sere

@@ -9,4 +9,4 @@ namespace sere {
 
 [[nodiscard]] int enterProjectShell(const CompilerOptions& options);
 
-}  // namespace sere
+} // namespace sere

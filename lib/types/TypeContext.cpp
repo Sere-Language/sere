@@ -183,6 +183,31 @@ void TypeContext::setRecordFields(const Type* record, std::vector<RecordField> f
   if (Type* writableRecord = writable(record)) {
     writableRecord->fields_ = std::move(fields);
   }
+  // Aliases can instantiate a named record before its fields are collected.
+  // Refresh those instances once the declaration's field types are available.
+  // Substitution can create further instances, so iterate a snapshot.
+  const auto instances = instantiations_;
+  for (const auto& [generic, instance] : instances) {
+    if (generic != record) {
+      continue;
+    }
+    std::unordered_map<std::string, const Type*> subst;
+    for (std::size_t i = 0; i < generic->typeParams().size(); ++i) {
+      subst[generic->typeParams()[i]] = instance->args()[i];
+    }
+    std::vector<RecordField> specialized;
+    for (const RecordField& field : generic->fields()) {
+      RecordField copy = field;
+      copy.type = generic->isEnum() ? instance : substitute(field.type, subst);
+      for (const Type*& payload : copy.payloadTypes) {
+        payload = substitute(payload, subst);
+      }
+      specialized.push_back(std::move(copy));
+    }
+    if (Type* target = writable(instance)) {
+      target->fields_ = std::move(specialized);
+    }
+  }
 }
 
 void TypeContext::addRecordMethod(const Type* record, RecordMethod method) {
@@ -194,6 +219,13 @@ void TypeContext::addRecordMethod(const Type* record, RecordMethod method) {
 void TypeContext::setRecordBases(const Type* record, std::vector<const Type*> bases) {
   if (Type* writableRecord = writable(record)) {
     writableRecord->bases_ = std::move(bases);
+  }
+}
+
+void TypeContext::setRecordTypeConstraints(const Type* record,
+                                           std::vector<const Type*> constraints) {
+  if (Type* writableRecord = writable(record)) {
+    writableRecord->typeConstraints_ = std::move(constraints);
   }
 }
 

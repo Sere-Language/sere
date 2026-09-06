@@ -23,7 +23,8 @@ struct ParsedCallArguments {
 
 class Parser {
 public:
-  Parser(DiagnosticEngine& diagnostics, std::vector<Token> tokens,
+  Parser(DiagnosticEngine& diagnostics,
+         std::vector<Token> tokens,
          const SourceManager* source = nullptr);
 
   [[nodiscard]] std::unique_ptr<Module> parseModule();
@@ -50,7 +51,7 @@ private:
   std::unique_ptr<TypeExpr> parseTypeAtom();
   std::unique_ptr<TypeExpr> parseTypeExpr();
   std::vector<std::unique_ptr<TypeExpr>> parseTypeArgList();
-  std::vector<std::string> parseTypeParamList();
+  std::vector<std::string> parseTypeParamList(std::vector<std::unique_ptr<TypeExpr>>& constraints);
   std::unique_ptr<Expr> parseExpr();
   std::unique_ptr<Expr> parseTupleTail(std::unique_ptr<Expr> first, SourceLocation start);
   std::unique_ptr<Expr> parseLambda();
@@ -112,9 +113,12 @@ private:
   bool captureIndented(std::vector<Token>& tokens, SourceRange& rawRange);
   bool parseIndentMacroPayload(std::vector<Token>& tokens, SourceRange& rawRange);
   [[nodiscard]] std::string joinTokenSpellings(const std::vector<Token>& tokens) const;
-  [[nodiscard]] std::unique_ptr<MacroInvokeExpr> makeMacroInvokeExpr(
-      SourceRange nameRange, std::string name, MacroDelimiter delimiter, std::string raw,
-      SourceRange rawRange, std::vector<Token> tokens);
+  [[nodiscard]] std::unique_ptr<MacroInvokeExpr> makeMacroInvokeExpr(SourceRange nameRange,
+                                                                     std::string name,
+                                                                     MacroDelimiter delimiter,
+                                                                     std::string raw,
+                                                                     SourceRange rawRange,
+                                                                     std::vector<Token> tokens);
   void recoverStatement();
   [[nodiscard]] std::string rawSlice(SourceRange range) const;
   std::vector<std::unique_ptr<Stmt>> parseSuite();
@@ -130,4 +134,4 @@ private:
   bool allowAsCast_ = true;
 };
 
-}  // namespace sere
+} // namespace sere

@@ -25,37 +25,49 @@ namespace {
   return out;
 }
 
-}  // namespace
+} // namespace
 
 const std::vector<DiagnosticCodeInfo>& diagnosticCodeCatalog() {
   static const std::vector<DiagnosticCodeInfo> kCatalog = {
-      {DiagnosticCode::Exception, "Exception",
+      {DiagnosticCode::Exception,
+       "Exception",
        "Base ignore name. `# type[Exception]: ignore` suppresses every diagnostic."},
-      {DiagnosticCode::SyntaxError, "SyntaxError",
+      {DiagnosticCode::SyntaxError,
+       "SyntaxError",
        "Parse errors: unexpected tokens, missing punctuation, invalid syntax."},
-      {DiagnosticCode::IndentationError, "IndentationError",
+      {DiagnosticCode::IndentationError,
+       "IndentationError",
        "Indent levels that do not match a previous indent."},
-      {DiagnosticCode::NameError, "NameError",
+      {DiagnosticCode::NameError,
+       "NameError",
        "Unknown names, types, functions, macros, modules, or exports."},
-      {DiagnosticCode::AttributeError, "AttributeError",
+      {DiagnosticCode::AttributeError,
+       "AttributeError",
        "Unknown fields or methods, or using a method as a field."},
-      {DiagnosticCode::TypeError, "TypeError",
+      {DiagnosticCode::TypeError,
+       "TypeError",
        "Type mismatches, invalid operands, wrong arguments, and invalid casts."},
-      {DiagnosticCode::IndexError, "IndexError",
+      {DiagnosticCode::IndexError,
+       "IndexError",
        "Invalid indexing or slicing of lists, arrays, dicts, or strings."},
-      {DiagnosticCode::ImportError, "ImportError",
+      {DiagnosticCode::ImportError,
+       "ImportError",
        "Missing modules or a prelude that cannot be loaded."},
-      {DiagnosticCode::ValueError, "ValueError",
+      {DiagnosticCode::ValueError,
+       "ValueError",
        "Values the type checker cannot infer or that are not valid in context."},
-      {DiagnosticCode::AssertionError, "AssertionError",
-       "Invalid assert statements."},
-      {DiagnosticCode::PermissionError, "PermissionError",
+      {DiagnosticCode::AssertionError, "AssertionError", "Invalid assert statements."},
+      {DiagnosticCode::PermissionError,
+       "PermissionError",
        "Access to private fields, methods, or module exports from outside their owner."},
-      {DiagnosticCode::RuntimeError, "RuntimeError",
+      {DiagnosticCode::RuntimeError,
+       "RuntimeError",
        "Control-flow errors, codegen failures, and internal compiler stops."},
-      {DiagnosticCode::RecursionError, "RecursionError",
+      {DiagnosticCode::RecursionError,
+       "RecursionError",
        "Macro expansion that exceeded the recursion limit."},
-      {DiagnosticCode::NotImplementedError, "NotImplementedError",
+      {DiagnosticCode::NotImplementedError,
+       "NotImplementedError",
        "Unsupported constructs or macros that were not expanded."},
   };
   return kCatalog;
@@ -104,7 +116,8 @@ DiagnosticCode inferDiagnosticCode(std::string_view message) {
   if (contains(message, "inconsistent indentation")) {
     return DiagnosticCode::IndentationError;
   }
-  if (contains(message, "cannot find module") || contains(message, "cannot load standard library") ||
+  if (contains(message, "cannot find module") ||
+      contains(message, "cannot load standard library") ||
       contains(message, "cannot import name")) {
     return DiagnosticCode::ImportError;
   }
@@ -164,4 +177,4 @@ DiagnosticCode inferDiagnosticCode(std::string_view message) {
   return DiagnosticCode::TypeError;
 }
 
-}  // namespace sere
+} // namespace sere

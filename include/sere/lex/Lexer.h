@@ -44,4 +44,4 @@ private:
   std::vector<Token> pending_{};
 };
 
-}  // namespace sere
+} // namespace sere

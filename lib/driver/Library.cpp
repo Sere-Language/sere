@@ -20,7 +20,8 @@ constexpr std::string_view kMagicV1 = "SERELIB/1";
 constexpr std::string_view kMagicV2 = "SERELIB/2";
 constexpr std::string_view kExtractStamp = ".extracted";
 
-[[nodiscard]] bool namesEqual(const std::filesystem::path& left, const std::filesystem::path& right) {
+[[nodiscard]] bool namesEqual(const std::filesystem::path& left,
+                              const std::filesystem::path& right) {
   std::error_code leftError;
   std::error_code rightError;
   const std::filesystem::path a = std::filesystem::weakly_canonical(left, leftError);
@@ -45,8 +46,7 @@ constexpr std::string_view kExtractStamp = ".extracted";
   return false;
 }
 
-void addUniquePath(std::vector<std::filesystem::path>& files,
-                   const std::filesystem::path& path) {
+void addUniquePath(std::vector<std::filesystem::path>& files, const std::filesystem::path& path) {
   for (const std::filesystem::path& existing : files) {
     if (namesEqual(existing, path)) {
       return;
@@ -92,8 +92,10 @@ void addUniquePath(std::vector<std::filesystem::path>& files,
   return true;
 }
 
-[[nodiscard]] bool parseFileHeader(std::string_view line, std::string& relativePath,
-                                   std::uint64_t& rawSize, std::uint64_t& packedSize) {
+[[nodiscard]] bool parseFileHeader(std::string_view line,
+                                   std::string& relativePath,
+                                   std::uint64_t& rawSize,
+                                   std::uint64_t& packedSize) {
   if (!line.starts_with("FILE ")) {
     return false;
   }
@@ -119,8 +121,8 @@ void addUniquePath(std::vector<std::filesystem::path>& files,
          parseDecimal(lastText, packedSize);
 }
 
-[[nodiscard]] bool parseMetaLine(std::string_view line, PackedLibrary& library,
-                                 std::string& encoding) {
+[[nodiscard]] bool
+parseMetaLine(std::string_view line, PackedLibrary& library, std::string& encoding) {
   const std::size_t eq = line.find('=');
   if (eq == std::string_view::npos) {
     return false;
@@ -158,7 +160,8 @@ void addUniquePath(std::vector<std::filesystem::path>& files,
   llvm::compression::zlib::compress(
       llvm::ArrayRef<std::uint8_t>(reinterpret_cast<const std::uint8_t*>(input.data()),
                                    input.size()),
-      compressed, llvm::compression::zlib::BestSizeCompression);
+      compressed,
+      llvm::compression::zlib::BestSizeCompression);
   if (compressed.empty() || compressed.size() >= input.size()) {
     return false;
   }
@@ -166,8 +169,8 @@ void addUniquePath(std::vector<std::filesystem::path>& files,
   return true;
 }
 
-[[nodiscard]] bool zlibDecompress(const std::string& input, std::size_t rawSize,
-                                  std::string& output) {
+[[nodiscard]] bool
+zlibDecompress(const std::string& input, std::size_t rawSize, std::string& output) {
   if (!zlibAvailable()) {
     return false;
   }
@@ -175,7 +178,8 @@ void addUniquePath(std::vector<std::filesystem::path>& files,
   llvm::Error error = llvm::compression::zlib::decompress(
       llvm::ArrayRef<std::uint8_t>(reinterpret_cast<const std::uint8_t*>(input.data()),
                                    input.size()),
-      raw, rawSize);
+      raw,
+      rawSize);
   if (error) {
     llvm::consumeError(std::move(error));
     return false;
@@ -241,7 +245,7 @@ void collectByPredicate(const std::filesystem::path& directory,
   return !error && stampTime >= slibTime;
 }
 
-}  // namespace
+} // namespace
 
 bool isSafeLibraryPath(std::string_view relativePath) {
   if (relativePath.empty() || relativePath.starts_with('/') || relativePath.starts_with('\\')) {
@@ -264,7 +268,9 @@ bool isSafeLibraryPath(std::string_view relativePath) {
   return part != "..";
 }
 
-bool isSereLibraryFile(const std::filesystem::path& path) { return path.extension() == ".slib"; }
+bool isSereLibraryFile(const std::filesystem::path& path) {
+  return path.extension() == ".slib";
+}
 
 bool isNativeLinkFile(const std::filesystem::path& path) {
   const std::string ext = path.extension().string();
@@ -369,7 +375,8 @@ void appendExtractedLibraryRuntimes(const std::vector<std::filesystem::path>& im
   }
 }
 
-bool writePackedLibrary(const std::filesystem::path& slibPath, const PackedLibrary& library,
+bool writePackedLibrary(const std::filesystem::path& slibPath,
+                        const PackedLibrary& library,
                         std::string& error) {
   if (library.entry.empty() || library.files.empty()) {
     error = "library has no entry file";
@@ -420,7 +427,8 @@ bool writePackedLibrary(const std::filesystem::path& slibPath, const PackedLibra
   return true;
 }
 
-bool readPackedLibrary(const std::filesystem::path& slibPath, PackedLibrary& library,
+bool readPackedLibrary(const std::filesystem::path& slibPath,
+                       PackedLibrary& library,
                        std::string& error) {
   std::ifstream input(slibPath, std::ios::binary);
   if (!input) {
@@ -533,4 +541,4 @@ std::filesystem::path ensureLibraryExtracted(const std::filesystem::path& slibPa
   return std::filesystem::weakly_canonical(dest / library.entry, errorCode);
 }
 
-}  // namespace sere
+} // namespace sere

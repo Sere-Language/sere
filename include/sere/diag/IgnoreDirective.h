@@ -29,8 +29,7 @@ struct IgnoreSet {
 [[nodiscard]] IgnoreSet parseIgnoreDirectives(std::string_view source,
                                               std::vector<UnknownIgnoreName>& unknownNames);
 
-[[nodiscard]] bool diagnosticIsIgnored(const IgnoreSet& ignores,
-                                       std::uint32_t line,
-                                       DiagnosticCode code);
+[[nodiscard]] bool
+diagnosticIsIgnored(const IgnoreSet& ignores, std::uint32_t line, DiagnosticCode code);
 
-}  // namespace sere
+} // namespace sere

@@ -13,6 +13,7 @@
 #include <llvm/IR/Argument.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
+#include <llvm/IR/DataLayout.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/GlobalValue.h>
@@ -24,7 +25,6 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Type.h>
 #include <llvm/IR/Verifier.h>
-#include <llvm/IR/DataLayout.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/TargetParser/Host.h>
 #include <llvm/TargetParser/Triple.h>
@@ -165,8 +165,8 @@ void appendExceptionType(std::string& chain, const Type* type) {
   return "sere.dec.class." + classDef.name();
 }
 
-[[nodiscard]] llvm::Value* matchParamType(llvm::IRBuilder<>& builder, llvm::Value* value,
-                                          llvm::Type* wanted) {
+[[nodiscard]] llvm::Value*
+matchParamType(llvm::IRBuilder<>& builder, llvm::Value* value, llvm::Type* wanted) {
   if (value == nullptr || wanted == nullptr || value->getType() == wanted) {
     return value;
   }
@@ -178,7 +178,8 @@ void appendExceptionType(std::string& chain, const Type* type) {
   return builder.CreateLoad(wanted, tmp);
 }
 
-void matchCallArgs(llvm::IRBuilder<>& builder, llvm::Function* callee,
+void matchCallArgs(llvm::IRBuilder<>& builder,
+                   llvm::Function* callee,
                    std::vector<llvm::Value*>& args) {
   if (callee == nullptr) {
     return;
@@ -235,7 +236,7 @@ llvm::Type* IRGenerator::lower(const Type* type) {
         fields.push_back(lower(field.type));
       }
     }
-      opaque->setBody(fields);
+    opaque->setBody(fields);
     return opaque;
   }
   llvm::Type* llvmType = nullptr;
@@ -245,8 +246,8 @@ llvm::Type* IRGenerator::lower(const Type* type) {
     llvmType = llvm::Type::getVoidTy(*context_);
   } else if (type->isAny()) {
     llvmType = llvm::StructType::get(
-        *context_, {llvm::PointerType::getUnqual(*context_),
-                    llvm::PointerType::getUnqual(*context_)});
+        *context_,
+        {llvm::PointerType::getUnqual(*context_), llvm::PointerType::getUnqual(*context_)});
   } else if (type->isNamed("bool") || type->isNamed("i8") || type->isNamed("u8")) {
     llvmType = llvm::Type::getIntNTy(*context_, type->isNamed("bool") ? 1 : 8);
   } else if (type->isNamed("i16") || type->isNamed("u16")) {
@@ -305,23 +306,23 @@ llvm::Type* IRGenerator::lower(const Type* type) {
 }
 
 std::uint64_t IRGenerator::valueSize(const Type* type) {
-    if (type == nullptr) {
-        return 0;
-    }
+  if (type == nullptr) {
+    return 0;
+  }
 
-    llvm::Type* llvmType = lower(type);
+  llvm::Type* llvmType = lower(type);
 
-    if (llvmType == nullptr || llvmType->isVoidTy()) {
-        return 0;
-    }
+  if (llvmType == nullptr || llvmType->isVoidTy()) {
+    return 0;
+  }
 
-    const llvm::DataLayout& layout = module_->getDataLayout();
+  const llvm::DataLayout& layout = module_->getDataLayout();
 
-    if (!llvmType->isSized()) {
-        return 0;
-    }
+  if (!llvmType->isSized()) {
+    return 0;
+  }
 
-    return layout.getTypeAllocSize(llvmType).getFixedValue();
+  return layout.getTypeAllocSize(llvmType).getFixedValue();
 }
 
 llvm::Function* IRGenerator::runtimeDecl(const char* name,
@@ -484,9 +485,9 @@ void IRGenerator::declareGlobals(const Module& ast) {
           continue;
         }
         const RecordField* info = record == nullptr ? nullptr : record->findField(field.name);
-        const std::string globalName =
-            info != nullptr && !info->llvmName.empty() ? info->llvmName
-                                                       : classStaticName(record, field.name);
+        const std::string globalName = info != nullptr && !info->llvmName.empty()
+                                           ? info->llvmName
+                                           : classStaticName(record, field.name);
         declareGlobal(globalName, field.type->resolvedType());
       }
       if (classDef.decoratedType() != nullptr) {
@@ -582,9 +583,22 @@ void IRGenerator::emitModuleInitFn(const Module& ast, const std::vector<const Mo
       if (wrapperType != nullptr && wrapperType->kind() == TypeKind::Function) {
         llvmFn = llvmFunctionTypeFrom(wrapperType);
       } else if (wrapperType != nullptr) {
-        llvm::Type* ret = wrapperType->returnType() == nullptr || wrapperType->returnType()->isVoidLike()
-                              ? llvm::Type::getVoidTy(*context_)
-                              : lower(wrapperType->returnType());
+        // The decorator value is a non-function callable, typically a bare
+        // `Callable` constraint produced by a factory such as `@route("/x")`.
+        // It is invoked with the decorated object and, Python-like, assumed to
+        // return it, so the result keeps the decorated object's type/ABI rather
+        // than being mis-assumed to return void.
+        const Type* resultType = wrapperType->returnType();
+        llvm::Type* ret = nullptr;
+        if (resultType != nullptr && !resultType->isVoidLike() && !resultType->isAny()) {
+          ret = lower(resultType);
+        }
+        if (ret == nullptr && currentType != nullptr) {
+          ret = lower(currentType);
+        }
+        if (ret == nullptr) {
+          ret = llvm::Type::getVoidTy(*context_);
+        }
         llvmFn = llvm::FunctionType::get(ret, {lower(currentType)}, false);
       }
       if (wrapper == nullptr || llvmFn == nullptr) {
@@ -622,9 +636,9 @@ void IRGenerator::emitModuleInitFn(const Module& ast, const std::vector<const Mo
             continue;
           }
           const RecordField* info = record == nullptr ? nullptr : record->findField(field.name);
-          const std::string globalName =
-              info != nullptr && !info->llvmName.empty() ? info->llvmName
-                                                         : classStaticName(record, field.name);
+          const std::string globalName = info != nullptr && !info->llvmName.empty()
+                                             ? info->llvmName
+                                             : classStaticName(record, field.name);
           llvm::Value* slot = globals_[globalName];
           llvm::Value* init = emitCoerce(builder,
                                          emitExpr(builder, *field.init),
@@ -732,11 +746,11 @@ void IRGenerator::widenIntegerPair(llvm::IRBuilder<>& builder,
     return;
   }
   llvm::Type* wide = left->getType()->getIntegerBitWidth() >= right->getType()->getIntegerBitWidth()
-          ? left->getType()
-          : right->getType();
+                         ? left->getType()
+                         : right->getType();
   if (left->getType() != wide) {
     left = (leftType != nullptr && leftType->isUnsignedInteger()) ? builder.CreateZExt(left, wide)
-               : builder.CreateSExt(left, wide);
+                                                                  : builder.CreateSExt(left, wide);
   }
   if (right->getType() != wide) {
     right = (rightType != nullptr && rightType->isUnsignedInteger())
@@ -870,18 +884,17 @@ valueFromBits(llvm::IRBuilder<>& builder, llvm::Value* bits, const Type* to, llv
 
 } // namespace
 
-llvm::Value* IRGenerator::emitAnyTypeMatch(llvm::IRBuilder<>& builder, llvm::Value* value,
-                                         const Type* target) {
+llvm::Value*
+IRGenerator::emitAnyTypeMatch(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* target) {
   target = target->canonical();
   if (target->isAny()) {
     return builder.getTrue();
   }
   llvm::Value* tag = builder.CreateExtractValue(value, {0});
   // A default-initialized Any represents None.
-  tag = builder.CreateSelect(builder.CreateIsNull(tag),
-                             builder.CreateGlobalString("None"), tag);
-  llvm::Value* wanted = builder.CreateGlobalString(
-      target->isVoidLike() ? "None" : target->display());
+  tag = builder.CreateSelect(builder.CreateIsNull(tag), builder.CreateGlobalString("None"), tag);
+  llvm::Value* wanted =
+      builder.CreateGlobalString(target->isVoidLike() ? "None" : target->display());
   llvm::Function* compare =
       runtimeDecl("strcmp", builder.getInt32Ty(), {builder.getPtrTy(), builder.getPtrTy()});
   return builder.CreateICmpEQ(builder.CreateCall(compare, {tag, wanted}), builder.getInt32(0));
@@ -912,8 +925,8 @@ llvm::Value* IRGenerator::emitCoerce(llvm::IRBuilder<>& builder,
       builder.CreateStore(value, memory);
     }
     llvm::Value* packed = llvm::UndefValue::get(lower(to));
-    packed = builder.CreateInsertValue(packed, builder.CreateGlobalString(
-        from->isVoidLike() ? "None" : from->display()), {0});
+    packed = builder.CreateInsertValue(
+        packed, builder.CreateGlobalString(from->isVoidLike() ? "None" : from->display()), {0});
     return builder.CreateInsertValue(packed, memory, {1});
   }
   if (value == nullptr) {
@@ -926,8 +939,8 @@ llvm::Value* IRGenerator::emitCoerce(llvm::IRBuilder<>& builder,
     return value;
   }
   if (from->valueType() != from && !to->isRecord()) {
-    llvm::Value* payload = builder.CreateExtractValue(value,
-        {llvmFieldIndex(from, from->fieldIndex("$value"))});
+    llvm::Value* payload =
+        builder.CreateExtractValue(value, {llvmFieldIndex(from, from->fieldIndex("$value"))});
     return emitCoerce(builder, payload, from->valueType(), to);
   }
   llvm::Type* fromTy = lower(from);
@@ -941,8 +954,9 @@ llvm::Value* IRGenerator::emitCoerce(llvm::IRBuilder<>& builder,
     llvm::Value* message = emitStrLiteral(builder, "Any type mismatch: expected " + to->display());
     llvm::Function* panic =
         runtimeDecl("sere_panic", builder.getVoidTy(), {builder.getPtrTy(), builder.getInt64Ty()});
-    builder.CreateCall(panic, {builder.CreateExtractValue(message, {0}),
-                               builder.CreateExtractValue(message, {1})});
+    builder.CreateCall(
+        panic,
+        {builder.CreateExtractValue(message, {0}), builder.CreateExtractValue(message, {1})});
     builder.CreateUnreachable();
     builder.SetInsertPoint(success);
     return builder.CreateLoad(toTy, builder.CreateExtractValue(value, {1}));
@@ -1004,9 +1018,9 @@ void IRGenerator::appendDefaultArgs(llvm::IRBuilder<>& builder,
     }
     llvm::Value* value = emitExpr(builder, *function.params()[index].defaultValue);
     const Type* fromType = function.params()[index].defaultValue->resolvedType();
-    const Type* toType =
-        function.params()[index].type == nullptr ? nullptr
-                                                 : function.params()[index].type->resolvedType();
+    const Type* toType = function.params()[index].type == nullptr
+                             ? nullptr
+                             : function.params()[index].type->resolvedType();
     args.push_back(emitCoerce(builder, value, fromType, toType));
   }
 }
@@ -1052,7 +1066,8 @@ void IRGenerator::appendBoundCallArgs(llvm::IRBuilder<>& builder,
     if (value == nullptr) {
       return;
     }
-    const Type* layout = toType != nullptr ? toType : (argument == nullptr ? nullptr : argument->resolvedType());
+    const Type* layout =
+        toType != nullptr ? toType : (argument == nullptr ? nullptr : argument->resolvedType());
     if (function.isExtern() && layout != nullptr && layout->isStrLayout()) {
       args.push_back(builder.CreateExtractValue(value, {0}));
       args.push_back(builder.CreateExtractValue(value, {1}));
@@ -1085,18 +1100,18 @@ void IRGenerator::appendBoundCallArgs(llvm::IRBuilder<>& builder,
     if (argument == nullptr) {
       argument = param.defaultValue.get();
     }
-    const Type* paramType =
-        fnType != nullptr && index < fnType->paramTypes().size() ? fnType->paramTypes()[index]
-                                                                 : nullptr;
+    const Type* paramType = fnType != nullptr && index < fnType->paramTypes().size()
+                                ? fnType->paramTypes()[index]
+                                : nullptr;
     appendArgument(argument, paramType);
   }
 
   if (varArgIndex.has_value()) {
     const std::size_t index = varArgIndex.value();
     const ParamDecl& param = function.params()[index];
-    const Type* listType =
-        fnType != nullptr && index < fnType->paramTypes().size() ? fnType->paramTypes()[index]
-                                                                 : nullptr;
+    const Type* listType = fnType != nullptr && index < fnType->paramTypes().size()
+                               ? fnType->paramTypes()[index]
+                               : nullptr;
     const Type* elementType =
         listType != nullptr && listType->isList() ? listType->elementType() : types_->anyType();
     if (const Expr* explicitArg = takeKeyword(param.name)) {
@@ -1106,8 +1121,7 @@ void IRGenerator::appendBoundCallArgs(llvm::IRBuilder<>& builder,
           runtimeDecl("sere_list_new", builder.getPtrTy(), {builder.getInt64Ty()});
       llvm::Function* pushFn = runtimeDecl(
           "sere_list_push", builder.getVoidTy(), {builder.getPtrTy(), builder.getPtrTy()});
-      llvm::Value* list =
-          builder.CreateCall(newFn, {builder.getInt64(valueSize(elementType))});
+      llvm::Value* list = builder.CreateCall(newFn, {builder.getInt64(valueSize(elementType))});
       while (positionalIndex < expr.arguments().size()) {
         llvm::Value* value = emitArgument(expr.arguments()[positionalIndex++].get(), elementType);
         if (value != nullptr) {
@@ -1131,18 +1145,18 @@ void IRGenerator::appendBoundCallArgs(llvm::IRBuilder<>& builder,
     if (argument == nullptr) {
       argument = param.defaultValue.get();
     }
-    const Type* paramType =
-        fnType != nullptr && index < fnType->paramTypes().size() ? fnType->paramTypes()[index]
-                                                                 : nullptr;
+    const Type* paramType = fnType != nullptr && index < fnType->paramTypes().size()
+                                ? fnType->paramTypes()[index]
+                                : nullptr;
     appendArgument(argument, paramType);
   }
 
   if (kwArgIndex.has_value()) {
     const std::size_t index = kwArgIndex.value();
     const ParamDecl& param = function.params()[index];
-    const Type* dictType =
-        fnType != nullptr && index < fnType->paramTypes().size() ? fnType->paramTypes()[index]
-                                                                 : nullptr;
+    const Type* dictType = fnType != nullptr && index < fnType->paramTypes().size()
+                               ? fnType->paramTypes()[index]
+                               : nullptr;
     const Type* keyType =
         dictType != nullptr && dictType->isDict() ? dictType->dictKeyType() : types_->strType();
     const Type* valueType =
@@ -1150,12 +1164,14 @@ void IRGenerator::appendBoundCallArgs(llvm::IRBuilder<>& builder,
     if (const Expr* explicitArg = takeKeyword(param.name)) {
       args.push_back(emitArgument(explicitArg, dictType));
     } else {
-      llvm::Function* newFn = runtimeDecl("sere_dict_new",
-                                          builder.getPtrTy(),
-                                          {builder.getInt64Ty(), builder.getInt64Ty(), builder.getInt32Ty()});
-      llvm::Function* setFn = runtimeDecl("sere_dict_set",
-                                          builder.getVoidTy(),
-                                          {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()});
+      llvm::Function* newFn =
+          runtimeDecl("sere_dict_new",
+                      builder.getPtrTy(),
+                      {builder.getInt64Ty(), builder.getInt64Ty(), builder.getInt32Ty()});
+      llvm::Function* setFn =
+          runtimeDecl("sere_dict_set",
+                      builder.getVoidTy(),
+                      {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()});
       llvm::Value* dict = builder.CreateCall(newFn,
                                              {builder.getInt64(valueSize(keyType)),
                                               builder.getInt64(valueSize(valueType)),
@@ -1207,8 +1223,7 @@ llvm::Value* IRGenerator::emitAddress(llvm::IRBuilder<>& builder, const Expr& ex
     if (!member.usesBackingField() &&
         (!member.propertyGet().empty() || !member.propertySet().empty())) {
       if (required) {
-        diagnostics_->error(expr.range(),
-                            "property '" + member.field() + "' is not addressable");
+        diagnostics_->error(expr.range(), "property '" + member.field() + "' is not addressable");
       }
       return nullptr;
     }
@@ -1248,8 +1263,9 @@ llvm::Value* IRGenerator::emitAddress(llvm::IRBuilder<>& builder, const Expr& ex
       }
       return nullptr;
     }
-    const Type* objectType = index.object().resolvedType() == nullptr ? nullptr
-        : index.object().resolvedType()->valueType();
+    const Type* objectType = index.object().resolvedType() == nullptr
+                                 ? nullptr
+                                 : index.object().resolvedType()->valueType();
     if (objectType == nullptr || !objectType->isSequence() || !index.hasStart()) {
       if (required) {
         diagnostics_->error(expr.range(), "expression is not assignable");
@@ -1301,7 +1317,7 @@ llvm::Value* IRGenerator::emitIndex(llvm::IRBuilder<>& builder, const IndexExpr&
                         builder.CreateExtractValue(str, {1}),
                         start,
                         stop,
-                            builder.getInt32(expr.hasStart() ? 1 : 0),
+                        builder.getInt32(expr.hasStart() ? 1 : 0),
                         builder.getInt32(expr.hasStop() ? 1 : 0),
                         dataSlot,
                         lenSlot});
@@ -1316,7 +1332,7 @@ llvm::Value* IRGenerator::emitIndex(llvm::IRBuilder<>& builder, const IndexExpr&
                                            builder.getInt64Ty(),
                                            builder.getInt64Ty(),
                                            builder.getInt32Ty(),
-         builder.getInt32Ty()});
+                                           builder.getInt32Ty()});
     llvm::Value* start =
         expr.hasStart() ? emitIndexI64(builder, *expr.start()) : builder.getInt64(0);
     llvm::Value* stop = expr.hasStop() ? emitIndexI64(builder, *expr.stop()) : builder.getInt64(0);
@@ -1324,20 +1340,20 @@ llvm::Value* IRGenerator::emitIndex(llvm::IRBuilder<>& builder, const IndexExpr&
                               {emitBuiltinExpr(builder, expr.object()),
                                start,
                                stop,
-                                        builder.getInt32(expr.hasStart() ? 1 : 0),
-                                        builder.getInt32(expr.hasStop() ? 1 : 0)});
+                               builder.getInt32(expr.hasStart() ? 1 : 0),
+                               builder.getInt32(expr.hasStop() ? 1 : 0)});
   }
   if (objectType != nullptr && objectType->isDict()) {
     llvm::Function* getFn =
         runtimeDecl("sere_dict_get",
                     builder.getInt32Ty(),
-        {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()});
+                    {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()});
     llvm::Value* out = builder.CreateAlloca(lower(expr.resolvedType()), nullptr, "dict.out");
     builder.CreateCall(
         getFn,
         {emitBuiltinExpr(builder, expr.object()),
          emitTempSlot(builder, emitExpr(builder, *expr.start()), expr.start()->resolvedType()),
-                               out});
+         out});
     return builder.CreateLoad(lower(expr.resolvedType()), out);
   }
   if (objectType != nullptr && objectType->isNamed("str") && expr.hasStart()) {
@@ -1348,12 +1364,12 @@ llvm::Value* IRGenerator::emitIndex(llvm::IRBuilder<>& builder, const IndexExpr&
                                       builder.getInt64Ty(),
                                       builder.getInt64Ty(),
                                       builder.getPtrTy(),
-         builder.getPtrTy()});
+                                      builder.getPtrTy()});
     llvm::Value* dataSlot = builder.CreateAlloca(builder.getPtrTy(), nullptr, "si.data");
     llvm::Value* lenSlot = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "si.len");
     builder.CreateCall(fn,
                        {builder.CreateExtractValue(str, {0}),
-                            builder.CreateExtractValue(str, {1}),
+                        builder.CreateExtractValue(str, {1}),
                         emitIndexI64(builder, *expr.start()),
                         dataSlot,
                         lenSlot});
@@ -1387,8 +1403,8 @@ llvm::Value* IRGenerator::emitListLiteral(llvm::IRBuilder<>& builder, const List
       type != nullptr && type->isArray()
           ? builder.CreateCall(arrayFn,
                                {builder.getInt64(valueSize(element)),
-                                                         builder.getInt64(static_cast<std::uint64_t>(count))})
-                          : builder.CreateCall(newFn, {builder.getInt64(valueSize(element))});
+                                builder.getInt64(static_cast<std::uint64_t>(count))})
+          : builder.CreateCall(newFn, {builder.getInt64(valueSize(element))});
   for (std::size_t index = 0; index < expr.elements().size(); ++index) {
     llvm::Value* value = emitCoerce(builder,
                                     emitExpr(builder, *expr.elements()[index]),
@@ -1412,29 +1428,29 @@ llvm::Value* IRGenerator::emitDictLiteral(llvm::IRBuilder<>& builder, const Dict
   llvm::Function* newFn =
       runtimeDecl("sere_dict_new",
                   builder.getPtrTy(),
-      {builder.getInt64Ty(), builder.getInt64Ty(), builder.getInt32Ty()});
+                  {builder.getInt64Ty(), builder.getInt64Ty(), builder.getInt32Ty()});
   llvm::Function* setFn = runtimeDecl("sere_dict_set",
                                       builder.getVoidTy(),
-      {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()});
+                                      {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()});
   llvm::Value* dict = builder.CreateCall(newFn,
                                          {builder.getInt64(valueSize(keyType)),
-                                 builder.getInt64(valueSize(valueType)),
-                                 builder.getInt32(dictKeyKind(keyType))});
+                                          builder.getInt64(valueSize(valueType)),
+                                          builder.getInt32(dictKeyKind(keyType))});
   for (std::size_t index = 0; index < expr.keys().size(); ++index) {
     builder.CreateCall(setFn,
                        {dict,
-                               emitTempSlot(builder,
+                        emitTempSlot(builder,
                                      emitCoerce(builder,
                                                 emitExpr(builder, *expr.keys()[index]),
                                                 expr.keys()[index]->resolvedType(),
                                                 keyType),
-                                            keyType),
-                               emitTempSlot(builder,
+                                     keyType),
+                        emitTempSlot(builder,
                                      emitCoerce(builder,
                                                 emitExpr(builder, *expr.values()[index]),
-                                                       expr.values()[index]->resolvedType(),
-                                                       valueType),
-                                            valueType)});
+                                                expr.values()[index]->resolvedType(),
+                                                valueType),
+                                     valueType)});
   }
   return dict;
 }
@@ -1445,11 +1461,11 @@ llvm::Value* IRGenerator::emitCollectionNew(llvm::IRBuilder<>& builder, const Ca
     llvm::Function* newFn =
         runtimeDecl("sere_dict_new",
                     builder.getPtrTy(),
-        {builder.getInt64Ty(), builder.getInt64Ty(), builder.getInt32Ty()});
+                    {builder.getInt64Ty(), builder.getInt64Ty(), builder.getInt32Ty()});
     return builder.CreateCall(newFn,
                               {builder.getInt64(valueSize(type->dictKeyType())),
-                                      builder.getInt64(valueSize(type->dictValueType())),
-                                      builder.getInt32(dictKeyKind(type->dictKeyType()))});
+                               builder.getInt64(valueSize(type->dictValueType())),
+                               builder.getInt32(dictKeyKind(type->dictKeyType()))});
   }
   if (expr.intrinsic() == IntrinsicKind::ArrayNew) {
     llvm::Function* arrayFn = runtimeDecl(
@@ -1459,7 +1475,7 @@ llvm::Value* IRGenerator::emitCollectionNew(llvm::IRBuilder<>& builder, const Ca
     llvm::Value* array =
         builder.CreateCall(arrayFn,
                            {builder.getInt64(valueSize(type->elementType())),
-                  builder.getInt64(static_cast<std::uint64_t>(expr.arguments().size()))});
+                            builder.getInt64(static_cast<std::uint64_t>(expr.arguments().size()))});
     for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
       llvm::Value* slot =
           builder.CreateCall(itemFn, {array, builder.getInt64(static_cast<std::uint64_t>(index))});
@@ -1481,9 +1497,9 @@ llvm::Value* IRGenerator::emitCollectionNew(llvm::IRBuilder<>& builder, const Ca
                         emitTempSlot(builder,
                                      emitCoerce(builder,
                                                 emitExpr(builder, *argument),
-                                                              argument->resolvedType(),
-                                                              type->elementType()),
-                                                   type->elementType())});
+                                                argument->resolvedType(),
+                                                type->elementType()),
+                                     type->elementType())});
   }
   return list;
 }
@@ -1523,8 +1539,9 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
   }
   const auto& member = static_cast<const MemberExpr&>(expr.callee());
   llvm::Value* object = emitBuiltinExpr(builder, member.object());
-  const Type* objectType =
-      member.object().resolvedType() == nullptr ? nullptr : member.object().resolvedType()->valueType();
+  const Type* objectType = member.object().resolvedType() == nullptr
+                               ? nullptr
+                               : member.object().resolvedType()->valueType();
   const std::string& name = expr.loweredName();
   auto toI64 = [&](llvm::Value* value) -> llvm::Value* {
     if (value->getType() != builder.getInt64Ty()) {
@@ -1545,7 +1562,8 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
     callArgs.push_back(dataSlot);
     callArgs.push_back(lenSlot);
     builder.CreateCall(fn, callArgs);
-    return packStr(builder, builder.CreateLoad(builder.getPtrTy(), dataSlot),
+    return packStr(builder,
+                   builder.CreateLoad(builder.getPtrTy(), dataSlot),
                    builder.CreateLoad(builder.getInt64Ty(), lenSlot));
   };
 
@@ -1555,44 +1573,49 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
   if (objectType != nullptr && objectType->isList()) {
     const Type* elem = objectType->elementType();
     if (name == "list.insert") {
-      llvm::Function* fn = runtimeDecl("sere_list_insert", builder.getVoidTy(),
-                                       {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy()});
-      builder.CreateCall(fn, {object, toI64(emitExpr(builder, *expr.arguments()[0])),
-                              slot(*expr.arguments()[1], elem)});
+      llvm::Function* fn =
+          runtimeDecl("sere_list_insert",
+                      builder.getVoidTy(),
+                      {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy()});
+      builder.CreateCall(fn,
+                         {object,
+                          toI64(emitExpr(builder, *expr.arguments()[0])),
+                          slot(*expr.arguments()[1], elem)});
       return nullptr;
     }
     if (name == "list.pop") {
       llvm::Value* out = builder.CreateAlloca(lower(elem), nullptr, "list.pop");
       if (expr.arguments().empty()) {
-        llvm::Function* fn =
-            runtimeDecl("sere_list_pop", builder.getVoidTy(), {builder.getPtrTy(), builder.getPtrTy()});
+        llvm::Function* fn = runtimeDecl(
+            "sere_list_pop", builder.getVoidTy(), {builder.getPtrTy(), builder.getPtrTy()});
         builder.CreateCall(fn, {object, out});
       } else {
-        llvm::Function* fn = runtimeDecl(
-            "sere_list_pop_at", builder.getVoidTy(),
-            {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy()});
+        llvm::Function* fn =
+            runtimeDecl("sere_list_pop_at",
+                        builder.getVoidTy(),
+                        {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy()});
         builder.CreateCall(fn, {object, toI64(emitExpr(builder, *expr.arguments()[0])), out});
       }
       return builder.CreateLoad(lower(elem), out);
     }
     if (name == "list.remove") {
-      llvm::Function* fn = runtimeDecl("sere_list_remove_value", builder.getInt32Ty(),
-                                       {builder.getPtrTy(), builder.getPtrTy()});
+      llvm::Function* fn = runtimeDecl(
+          "sere_list_remove_value", builder.getInt32Ty(), {builder.getPtrTy(), builder.getPtrTy()});
       return i1(builder.CreateCall(fn, {object, slot(*expr.arguments()[0], elem)}));
     }
     if (name == "list.find" || name == "list.index") {
-      llvm::Function* fn = runtimeDecl("sere_list_index_of", builder.getInt64Ty(),
-                                       {builder.getPtrTy(), builder.getPtrTy()});
+      llvm::Function* fn = runtimeDecl(
+          "sere_list_index_of", builder.getInt64Ty(), {builder.getPtrTy(), builder.getPtrTy()});
       return builder.CreateCall(fn, {object, slot(*expr.arguments()[0], elem)});
     }
     if (name == "list.count") {
-      llvm::Function* fn = runtimeDecl("sere_list_count", builder.getInt64Ty(),
-                                       {builder.getPtrTy(), builder.getPtrTy()});
+      llvm::Function* fn = runtimeDecl(
+          "sere_list_count", builder.getInt64Ty(), {builder.getPtrTy(), builder.getPtrTy()});
       return builder.CreateCall(fn, {object, slot(*expr.arguments()[0], elem)});
     }
     if (name == "list.contains" || name == "list.has") {
-      llvm::Function* fn = runtimeDecl("sere_list_contains", builder.getInt32Ty(),
-                                       {builder.getPtrTy(), builder.getPtrTy()});
+      llvm::Function* fn = runtimeDecl(
+          "sere_list_contains", builder.getInt32Ty(), {builder.getPtrTy(), builder.getPtrTy()});
       return i1(builder.CreateCall(fn, {object, slot(*expr.arguments()[0], elem)}));
     }
     if (name == "list.clear") {
@@ -1601,17 +1624,17 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
       return nullptr;
     }
     if (name == "list.reverse") {
-      builder.CreateCall(runtimeDecl("sere_list_reverse", builder.getVoidTy(), {builder.getPtrTy()}),
-                         {object});
+      builder.CreateCall(
+          runtimeDecl("sere_list_reverse", builder.getVoidTy(), {builder.getPtrTy()}), {object});
       return nullptr;
     }
     if (name == "list.copy" || name == "list.clone") {
-      return builder.CreateCall(runtimeDecl("sere_list_copy", builder.getPtrTy(), {builder.getPtrTy()}),
-                                {object});
+      return builder.CreateCall(
+          runtimeDecl("sere_list_copy", builder.getPtrTy(), {builder.getPtrTy()}), {object});
     }
     if (name == "list.extend") {
-      llvm::Function* fn =
-          runtimeDecl("sere_list_extend", builder.getVoidTy(), {builder.getPtrTy(), builder.getPtrTy()});
+      llvm::Function* fn = runtimeDecl(
+          "sere_list_extend", builder.getVoidTy(), {builder.getPtrTy(), builder.getPtrTy()});
       builder.CreateCall(fn, {object, emitExpr(builder, *expr.arguments()[0])});
       return nullptr;
     }
@@ -1624,30 +1647,34 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
       llvm::Value* out = builder.CreateAlloca(lower(value), nullptr, "dict.out");
       const char* fnName = name == "dict.pop" ? "sere_dict_pop" : "sere_dict_get";
       llvm::Function* fn =
-          runtimeDecl(fnName, builder.getInt32Ty(),
+          runtimeDecl(fnName,
+                      builder.getInt32Ty(),
                       {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()});
       builder.CreateCall(fn, {object, slot(*expr.arguments()[0], key), out});
       return builder.CreateLoad(lower(value), out);
     }
     if (name == "dict.set") {
-      llvm::Function* fn = runtimeDecl("sere_dict_set", builder.getVoidTy(),
-                                       {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()});
-      builder.CreateCall(fn, {object, slot(*expr.arguments()[0], key), slot(*expr.arguments()[1], value)});
+      llvm::Function* fn =
+          runtimeDecl("sere_dict_set",
+                      builder.getVoidTy(),
+                      {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()});
+      builder.CreateCall(
+          fn, {object, slot(*expr.arguments()[0], key), slot(*expr.arguments()[1], value)});
       return nullptr;
     }
     if (name == "dict.remove" || name == "dict.delete") {
-      llvm::Function* fn =
-          runtimeDecl("sere_dict_del", builder.getInt32Ty(), {builder.getPtrTy(), builder.getPtrTy()});
+      llvm::Function* fn = runtimeDecl(
+          "sere_dict_del", builder.getInt32Ty(), {builder.getPtrTy(), builder.getPtrTy()});
       return i1(builder.CreateCall(fn, {object, slot(*expr.arguments()[0], key)}));
     }
     if (name == "dict.contains" || name == "dict.has") {
-      llvm::Function* fn =
-          runtimeDecl("sere_dict_has", builder.getInt32Ty(), {builder.getPtrTy(), builder.getPtrTy()});
+      llvm::Function* fn = runtimeDecl(
+          "sere_dict_has", builder.getInt32Ty(), {builder.getPtrTy(), builder.getPtrTy()});
       return i1(builder.CreateCall(fn, {object, slot(*expr.arguments()[0], key)}));
     }
     if (name == "dict.keys") {
-      return builder.CreateCall(runtimeDecl("sere_dict_keys", builder.getPtrTy(), {builder.getPtrTy()}),
-                                {object});
+      return builder.CreateCall(
+          runtimeDecl("sere_dict_keys", builder.getPtrTy(), {builder.getPtrTy()}), {object});
     }
     if (name == "dict.values") {
       return builder.CreateCall(
@@ -1659,8 +1686,8 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
       return nullptr;
     }
     if (name == "dict.copy" || name == "dict.clone") {
-      return builder.CreateCall(runtimeDecl("sere_dict_copy", builder.getPtrTy(), {builder.getPtrTy()}),
-                                {object});
+      return builder.CreateCall(
+          runtimeDecl("sere_dict_copy", builder.getPtrTy(), {builder.getPtrTy()}), {object});
     }
   }
 
@@ -1668,25 +1695,34 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
   llvm::Value* len = builder.CreateExtractValue(object, {1});
   auto strUnary = [&](const char* fnName) {
     llvm::Function* fn = runtimeDecl(
-        fnName, builder.getVoidTy(),
+        fnName,
+        builder.getVoidTy(),
         {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy(), builder.getPtrTy()});
     return packOutStr(fn, {data, len});
   };
   auto strNeedleI32 = [&](const char* fnName) {
     llvm::Value* needle = emitExpr(builder, *expr.arguments()[0]);
     llvm::Function* fn = runtimeDecl(
-        fnName, builder.getInt32Ty(),
+        fnName,
+        builder.getInt32Ty(),
         {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy(), builder.getInt64Ty()});
-    return i1(builder.CreateCall(fn, {data, len, builder.CreateExtractValue(needle, {0}),
-                                      builder.CreateExtractValue(needle, {1})}));
+    return i1(builder.CreateCall(fn,
+                                 {data,
+                                  len,
+                                  builder.CreateExtractValue(needle, {0}),
+                                  builder.CreateExtractValue(needle, {1})}));
   };
   auto strNeedleI64 = [&](const char* fnName) {
     llvm::Value* needle = emitExpr(builder, *expr.arguments()[0]);
     llvm::Function* fn = runtimeDecl(
-        fnName, builder.getInt64Ty(),
+        fnName,
+        builder.getInt64Ty(),
         {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy(), builder.getInt64Ty()});
-    return builder.CreateCall(fn, {data, len, builder.CreateExtractValue(needle, {0}),
-                                   builder.CreateExtractValue(needle, {1})});
+    return builder.CreateCall(fn,
+                              {data,
+                               len,
+                               builder.CreateExtractValue(needle, {0}),
+                               builder.CreateExtractValue(needle, {1})});
   };
   if (name == "str.upper") {
     return strUnary("sere_string_upper");
@@ -1718,10 +1754,14 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
   if (name == "str.contains" || name == "str.has") {
     llvm::Value* needle = emitExpr(builder, *expr.arguments()[0]);
     llvm::Function* fn = runtimeDecl(
-        "sere_str_contains", builder.getInt32Ty(),
+        "sere_str_contains",
+        builder.getInt32Ty(),
         {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy(), builder.getInt64Ty()});
-    return i1(builder.CreateCall(fn, {data, len, builder.CreateExtractValue(needle, {0}),
-                                      builder.CreateExtractValue(needle, {1})}));
+    return i1(builder.CreateCall(fn,
+                                 {data,
+                                  len,
+                                  builder.CreateExtractValue(needle, {0}),
+                                  builder.CreateExtractValue(needle, {1})}));
   }
   if (name == "str.find") {
     return strNeedleI64("sere_string_find");
@@ -1735,55 +1775,72 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
   if (name == "str.replace") {
     llvm::Value* oldStr = emitExpr(builder, *expr.arguments()[0]);
     llvm::Value* newStr = emitExpr(builder, *expr.arguments()[1]);
-    llvm::Function* fn = runtimeDecl("sere_string_replace", builder.getVoidTy(),
-                                     {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy(),
-                                      builder.getInt64Ty(), builder.getPtrTy(), builder.getInt64Ty(),
-                                      builder.getPtrTy(), builder.getPtrTy()});
-    return packOutStr(fn, {data, len, builder.CreateExtractValue(oldStr, {0}),
-                           builder.CreateExtractValue(oldStr, {1}),
-                           builder.CreateExtractValue(newStr, {0}),
-                           builder.CreateExtractValue(newStr, {1})});
+    llvm::Function* fn = runtimeDecl("sere_string_replace",
+                                     builder.getVoidTy(),
+                                     {builder.getPtrTy(),
+                                      builder.getInt64Ty(),
+                                      builder.getPtrTy(),
+                                      builder.getInt64Ty(),
+                                      builder.getPtrTy(),
+                                      builder.getInt64Ty(),
+                                      builder.getPtrTy(),
+                                      builder.getPtrTy()});
+    return packOutStr(fn,
+                      {data,
+                       len,
+                       builder.CreateExtractValue(oldStr, {0}),
+                       builder.CreateExtractValue(oldStr, {1}),
+                       builder.CreateExtractValue(newStr, {0}),
+                       builder.CreateExtractValue(newStr, {1})});
   }
   if (name == "str.split") {
     llvm::Value* sep = emitExpr(builder, *expr.arguments()[0]);
     llvm::Function* fn = runtimeDecl(
-        "sere_string_split", builder.getPtrTy(),
+        "sere_string_split",
+        builder.getPtrTy(),
         {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy(), builder.getInt64Ty()});
-    return builder.CreateCall(fn, {data, len, builder.CreateExtractValue(sep, {0}),
-                                   builder.CreateExtractValue(sep, {1})});
+    return builder.CreateCall(
+        fn,
+        {data, len, builder.CreateExtractValue(sep, {0}), builder.CreateExtractValue(sep, {1})});
   }
   if (name == "str.join") {
-    llvm::Function* fn = runtimeDecl(
-        "sere_string_join", builder.getVoidTy(),
-        {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy(), builder.getPtrTy(),
-         builder.getPtrTy()});
+    llvm::Function* fn = runtimeDecl("sere_string_join",
+                                     builder.getVoidTy(),
+                                     {builder.getPtrTy(),
+                                      builder.getInt64Ty(),
+                                      builder.getPtrTy(),
+                                      builder.getPtrTy(),
+                                      builder.getPtrTy()});
     return packOutStr(fn, {data, len, emitExpr(builder, *expr.arguments()[0])});
   }
   if (name == "str.repeat") {
-    llvm::Function* fn = runtimeDecl(
-        "sere_string_repeat", builder.getVoidTy(),
-        {builder.getPtrTy(), builder.getInt64Ty(), builder.getInt64Ty(), builder.getPtrTy(),
-         builder.getPtrTy()});
+    llvm::Function* fn = runtimeDecl("sere_string_repeat",
+                                     builder.getVoidTy(),
+                                     {builder.getPtrTy(),
+                                      builder.getInt64Ty(),
+                                      builder.getInt64Ty(),
+                                      builder.getPtrTy(),
+                                      builder.getPtrTy()});
     return packOutStr(fn, {data, len, toI64(emitExpr(builder, *expr.arguments()[0]))});
   }
   if (name == "str.is_empty") {
-    llvm::Function* fn =
-        runtimeDecl("sere_string_is_empty", builder.getInt32Ty(), {builder.getPtrTy(), builder.getInt64Ty()});
+    llvm::Function* fn = runtimeDecl(
+        "sere_string_is_empty", builder.getInt32Ty(), {builder.getPtrTy(), builder.getInt64Ty()});
     return i1(builder.CreateCall(fn, {data, len}));
   }
   if (name == "str.is_digit") {
-    llvm::Function* fn =
-        runtimeDecl("sere_string_is_digit", builder.getInt32Ty(), {builder.getPtrTy(), builder.getInt64Ty()});
+    llvm::Function* fn = runtimeDecl(
+        "sere_string_is_digit", builder.getInt32Ty(), {builder.getPtrTy(), builder.getInt64Ty()});
     return i1(builder.CreateCall(fn, {data, len}));
   }
   if (name == "str.is_alpha") {
-    llvm::Function* fn =
-        runtimeDecl("sere_string_is_alpha", builder.getInt32Ty(), {builder.getPtrTy(), builder.getInt64Ty()});
+    llvm::Function* fn = runtimeDecl(
+        "sere_string_is_alpha", builder.getInt32Ty(), {builder.getPtrTy(), builder.getInt64Ty()});
     return i1(builder.CreateCall(fn, {data, len}));
   }
   if (name == "str.is_space") {
-    llvm::Function* fn =
-        runtimeDecl("sere_string_is_space", builder.getInt32Ty(), {builder.getPtrTy(), builder.getInt64Ty()});
+    llvm::Function* fn = runtimeDecl(
+        "sere_string_is_space", builder.getInt32Ty(), {builder.getPtrTy(), builder.getInt64Ty()});
     return i1(builder.CreateCall(fn, {data, len}));
   }
   diagnostics_->error(expr.range(), "unknown builtin method");
@@ -1795,7 +1852,7 @@ bool IRGenerator::emitDictAssign(llvm::IRBuilder<>& builder,
                                  const Expr& value) {
   llvm::Function* setFn = runtimeDecl("sere_dict_set",
                                       builder.getVoidTy(),
-      {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()});
+                                      {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()});
   const Type* objectType = target.object().resolvedType() == nullptr
                                ? nullptr
                                : target.object().resolvedType()->canonical();
@@ -1805,16 +1862,16 @@ bool IRGenerator::emitDictAssign(llvm::IRBuilder<>& builder,
       objectType != nullptr ? objectType->dictValueType() : value.resolvedType();
   builder.CreateCall(
       setFn,
-                     {emitExpr(builder, target.object()),
-                      emitTempSlot(builder,
+      {emitExpr(builder, target.object()),
+       emitTempSlot(builder,
                     emitCoerce(builder,
                                emitExpr(builder, *target.start()),
                                target.start()->resolvedType(),
                                keyType),
-                                   keyType),
-                      emitTempSlot(builder,
+                    keyType),
+       emitTempSlot(builder,
                     emitCoerce(builder, emitExpr(builder, value), value.resolvedType(), valueType),
-                                   valueType)});
+                    valueType)});
   return true;
 }
 
@@ -1899,16 +1956,16 @@ llvm::Value* IRGenerator::emitIntrinsic(llvm::IRBuilder<>& builder, const CallEx
     return emitToStr(builder, *expr.arguments()[0]);
   }
   if (kind == IntrinsicKind::Repr) {
-    return emitValueRepr(builder, emitExpr(builder, *expr.arguments()[0]),
-        expr.arguments()[0]->resolvedType());
+    return emitValueRepr(
+        builder, emitExpr(builder, *expr.arguments()[0]), expr.arguments()[0]->resolvedType());
   }
   if (kind == IntrinsicKind::TypeOf) {
     const Type* type = expr.arguments()[0]->resolvedType();
     llvm::Value* value = emitExpr(builder, *expr.arguments()[0]);
     if (type != nullptr && type->isAny()) {
       llvm::Value* tag = builder.CreateExtractValue(value, {0});
-      tag = builder.CreateSelect(builder.CreateIsNull(tag),
-                                 builder.CreateGlobalString("None"), tag);
+      tag =
+          builder.CreateSelect(builder.CreateIsNull(tag), builder.CreateGlobalString("None"), tag);
       llvm::Function* length = runtimeDecl("strlen", builder.getInt64Ty(), {builder.getPtrTy()});
       llvm::Value* result = llvm::UndefValue::get(lower(types_->strType()));
       result = builder.CreateInsertValue(result, tag, {0});
@@ -1918,8 +1975,8 @@ llvm::Value* IRGenerator::emitIntrinsic(llvm::IRBuilder<>& builder, const CallEx
   }
   if (kind == IntrinsicKind::IsInstance) {
     const Type* valueType = expr.arguments()[0]->resolvedType() == nullptr
-            ? nullptr
-            : expr.arguments()[0]->resolvedType()->canonical();
+                                ? nullptr
+                                : expr.arguments()[0]->resolvedType()->canonical();
     const Type* target = nullptr;
     if (!expr.typeArgs().empty() && expr.typeArgs()[0]->resolvedType() != nullptr) {
       target = expr.typeArgs()[0]->resolvedType()->canonical();
@@ -2057,8 +2114,8 @@ IRGenerator::emitStrConcat(llvm::IRBuilder<>& builder, llvm::Value* left, llvm::
   llvm::Value* lenSlot = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "cat.len");
   llvm::Value* data = builder.CreateCall(fn,
                                          {builder.CreateExtractValue(left, {0}),
-                                             builder.CreateExtractValue(left, {1}),
-                                             builder.CreateExtractValue(right, {0}),
+                                          builder.CreateExtractValue(left, {1}),
+                                          builder.CreateExtractValue(right, {0}),
                                           builder.CreateExtractValue(right, {1}),
                                           lenSlot});
   llvm::Value* len = builder.CreateLoad(builder.getInt64Ty(), lenSlot);
@@ -2076,7 +2133,8 @@ llvm::Value* IRGenerator::emitRecordStr(llvm::IRBuilder<>& builder, const Expr& 
   }
   const int index = record->methodIndex("__str__");
   if (index < 0) {
-    if (record->valueType()->isStrLayout()) return emitBuiltinExpr(builder, object);
+    if (record->valueType()->isStrLayout())
+      return emitBuiltinExpr(builder, object);
     return emitValueRepr(builder, emitExpr(builder, object), record);
   }
   const RecordMethod& method = record->methods()[static_cast<std::size_t>(index)];
@@ -2146,15 +2204,15 @@ llvm::Value* IRGenerator::emitEnumStr(llvm::IRBuilder<>& builder, const Expr& ex
   return emitEnumSwitchStr(builder, emitEnumTag(builder, value), type, true);
 }
 
-llvm::Value* IRGenerator::emitScalarToStr(llvm::IRBuilder<>& builder, llvm::Value* value,
-                                          const Type* type) {
+llvm::Value*
+IRGenerator::emitScalarToStr(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* type) {
   if (value == nullptr || type == nullptr) {
     return emitStrLiteral(builder, "?");
   }
   type = type->canonical();
   if (type->isNamed("bool")) {
-    return emitStrFromC(builder, "sere_str_bool_data",
-                        builder.CreateZExt(value, builder.getInt8Ty()));
+    return emitStrFromC(
+        builder, "sere_str_bool_data", builder.CreateZExt(value, builder.getInt8Ty()));
   }
   if (type->isNamed("i64") || type->isNamed("u64")) {
     return emitStrFromC(builder, "sere_str_i64_data", value);
@@ -2276,14 +2334,18 @@ llvm::Value* IRGenerator::emitBuiltinExpr(llvm::IRBuilder<>& builder, const Expr
 }
 
 llvm::Value* IRGenerator::emitBuiltinDefault(llvm::IRBuilder<>& builder, const Type* type) {
-  if (type->isStrLayout()) return emitStrLiteral(builder, "");
+  if (type->isStrLayout())
+    return emitStrLiteral(builder, "");
   if (type->isSequence()) {
-    return builder.CreateCall(runtimeDecl("sere_list_new", builder.getPtrTy(),
-        {builder.getInt64Ty()}), {builder.getInt64(valueSize(type->elementType()))});
+    return builder.CreateCall(
+        runtimeDecl("sere_list_new", builder.getPtrTy(), {builder.getInt64Ty()}),
+        {builder.getInt64(valueSize(type->elementType()))});
   }
   if (type->isDict()) {
-    return builder.CreateCall(runtimeDecl("sere_dict_new", builder.getPtrTy(),
-        {builder.getInt64Ty(), builder.getInt64Ty(), builder.getInt32Ty()}),
+    return builder.CreateCall(
+        runtimeDecl("sere_dict_new",
+                    builder.getPtrTy(),
+                    {builder.getInt64Ty(), builder.getInt64Ty(), builder.getInt32Ty()}),
         {builder.getInt64(valueSize(type->dictKeyType())),
          builder.getInt64(valueSize(type->dictValueType())),
          builder.getInt32(dictKeyKind(type->dictKeyType()))});
@@ -2295,22 +2357,28 @@ llvm::Value* IRGenerator::emitListStr(llvm::IRBuilder<>& builder, const Expr& ex
   return emitValueRepr(builder, emitExpr(builder, expr), expr.resolvedType());
 }
 
-llvm::Value* IRGenerator::emitValueRepr(llvm::IRBuilder<>& builder, llvm::Value* value,
-                                      const Type* type) {
-  if (type == nullptr) return emitStrLiteral(builder, "?");
+llvm::Value*
+IRGenerator::emitValueRepr(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* type) {
+  if (type == nullptr)
+    return emitStrLiteral(builder, "?");
   type = type->canonical();
-  if (type->isVoidLike()) return emitStrLiteral(builder, "None");
-  if (value == nullptr) return emitStrLiteral(builder, "?");
+  if (type->isVoidLike())
+    return emitStrLiteral(builder, "None");
+  if (value == nullptr)
+    return emitStrLiteral(builder, "?");
   if (type->isAny()) {
-    return builder.CreateCall(runtimeDecl("__sere_repr_any", lower(types_->strType()),
-        {lower(type)}), {value});
+    return builder.CreateCall(
+        runtimeDecl("__sere_repr_any", lower(types_->strType()), {lower(type)}), {value});
   }
   if (type->isStrLayout()) {
     llvm::Value* length = builder.CreateAlloca(builder.getInt64Ty());
-    llvm::Function* quote = runtimeDecl("sere_str_repr_data", builder.getPtrTy(),
-        {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy()});
-    llvm::Value* data = builder.CreateCall(quote, {builder.CreateExtractValue(value, {0}),
-        builder.CreateExtractValue(value, {1}), length});
+    llvm::Function* quote =
+        runtimeDecl("sere_str_repr_data",
+                    builder.getPtrTy(),
+                    {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy()});
+    llvm::Value* data = builder.CreateCall(
+        quote,
+        {builder.CreateExtractValue(value, {0}), builder.CreateExtractValue(value, {1}), length});
     llvm::Value* str = llvm::UndefValue::get(lower(types_->strType()));
     str = builder.CreateInsertValue(str, data, {0});
     return builder.CreateInsertValue(str, builder.CreateLoad(builder.getInt64Ty(), length), {1});
@@ -2325,7 +2393,9 @@ llvm::Value* IRGenerator::emitValueRepr(llvm::IRBuilder<>& builder, llvm::Value*
   }
   llvm::Function* function = llvm::Function::Create(
       llvm::FunctionType::get(lower(types_->strType()), {lower(type)}, false),
-      llvm::GlobalValue::InternalLinkage, name, module_);
+      llvm::GlobalValue::InternalLinkage,
+      name,
+      module_);
   llvm::IRBuilder<> body(llvm::BasicBlock::Create(*context_, "entry", function));
   llvm::Value* object = function->getArg(0);
   llvm::Value* result = nullptr;
@@ -2336,20 +2406,24 @@ llvm::Value* IRGenerator::emitValueRepr(llvm::IRBuilder<>& builder, llvm::Value*
       body.CreateStore(object, address);
       result = body.CreateCall(functions_.at(type->methods()[repr].llvmName), {address});
     } else if (type->valueType() != type) {
-      result = emitValueRepr(body, body.CreateExtractValue(object,
-          {llvmFieldIndex(type, type->fieldIndex("$value"))}), type->valueType());
+      result = emitValueRepr(
+          body,
+          body.CreateExtractValue(object, {llvmFieldIndex(type, type->fieldIndex("$value"))}),
+          type->valueType());
     } else if (type->isStruct()) {
       result = emitStrLiteral(body, "{");
       bool first = true;
       for (const RecordField& field : type->fields()) {
-        if (field.isStatic || !field.stored) continue;
-        if (!first) result = emitStrConcat(body, result, emitStrLiteral(body, ", "));
+        if (field.isStatic || !field.stored)
+          continue;
+        if (!first)
+          result = emitStrConcat(body, result, emitStrLiteral(body, ", "));
         first = false;
-        result = emitStrConcat(body, result,
-            emitValueRepr(body, emitStrLiteral(body, field.name), types_->strType()));
+        result = emitStrConcat(
+            body, result, emitValueRepr(body, emitStrLiteral(body, field.name), types_->strType()));
         result = emitStrConcat(body, result, emitStrLiteral(body, ": "));
-        llvm::Value* item = body.CreateExtractValue(object,
-            {llvmFieldIndex(type, type->fieldIndex(field.name))});
+        llvm::Value* item =
+            body.CreateExtractValue(object, {llvmFieldIndex(type, type->fieldIndex(field.name))});
         result = emitStrConcat(body, result, emitValueRepr(body, item, field.type));
       }
       result = emitStrConcat(body, result, emitStrLiteral(body, "}"));
@@ -2361,11 +2435,13 @@ llvm::Value* IRGenerator::emitValueRepr(llvm::IRBuilder<>& builder, llvm::Value*
     llvm::Value* keys = object;
     llvm::Value* values = nullptr;
     if (dict) {
-      keys = body.CreateCall(runtimeDecl("sere_dict_keys", body.getPtrTy(), {body.getPtrTy()}), {object});
-      values = body.CreateCall(runtimeDecl("sere_dict_values", body.getPtrTy(), {body.getPtrTy()}), {object});
+      keys = body.CreateCall(runtimeDecl("sere_dict_keys", body.getPtrTy(), {body.getPtrTy()}),
+                             {object});
+      values = body.CreateCall(runtimeDecl("sere_dict_values", body.getPtrTy(), {body.getPtrTy()}),
+                               {object});
     }
-    llvm::Value* length = body.CreateCall(
-        runtimeDecl("sere_list_len", body.getInt64Ty(), {body.getPtrTy()}), {keys});
+    llvm::Value* length =
+        body.CreateCall(runtimeDecl("sere_list_len", body.getInt64Ty(), {body.getPtrTy()}), {keys});
     llvm::Value* slot = body.CreateAlloca(lower(types_->strType()));
     body.CreateStore(emitStrLiteral(body, dict ? "{" : "["), slot);
     llvm::BasicBlock* header = llvm::BasicBlock::Create(*context_, "loop", function);
@@ -2379,11 +2455,14 @@ llvm::Value* IRGenerator::emitValueRepr(llvm::IRBuilder<>& builder, llvm::Value*
     body.CreateCondBr(body.CreateICmpSLT(index, length), itemBlock, end);
     body.SetInsertPoint(itemBlock);
     llvm::Value* separator = body.CreateSelect(body.CreateICmpEQ(index, body.getInt64(0)),
-        emitStrLiteral(body, ""), emitStrLiteral(body, ", "));
-    llvm::Value* text = emitStrConcat(body, body.CreateLoad(lower(types_->strType()), slot), separator);
+                                               emitStrLiteral(body, ""),
+                                               emitStrLiteral(body, ", "));
+    llvm::Value* text =
+        emitStrConcat(body, body.CreateLoad(lower(types_->strType()), slot), separator);
     const auto item = [&](llvm::Value* list, const Type* element) {
-      llvm::Value* address = body.CreateCall(runtimeDecl("sere_list_item", body.getPtrTy(),
-          {body.getPtrTy(), body.getInt64Ty()}), {list, index});
+      llvm::Value* address = body.CreateCall(
+          runtimeDecl("sere_list_item", body.getPtrTy(), {body.getPtrTy(), body.getInt64Ty()}),
+          {list, index});
       return emitValueRepr(body, body.CreateLoad(lower(element), address), element);
     };
     text = emitStrConcat(body, text, item(keys, dict ? type->dictKeyType() : type->elementType()));
@@ -2396,8 +2475,9 @@ llvm::Value* IRGenerator::emitValueRepr(llvm::IRBuilder<>& builder, llvm::Value*
     index->addIncoming(next, body.GetInsertBlock());
     body.CreateBr(header);
     body.SetInsertPoint(end);
-    result = emitStrConcat(body, body.CreateLoad(lower(types_->strType()), slot),
-        emitStrLiteral(body, dict ? "}" : "]"));
+    result = emitStrConcat(body,
+                           body.CreateLoad(lower(types_->strType()), slot),
+                           emitStrLiteral(body, dict ? "}" : "]"));
   }
   body.CreateRet(result);
   return builder.CreateCall(function, {value});
@@ -2405,7 +2485,8 @@ llvm::Value* IRGenerator::emitValueRepr(llvm::IRBuilder<>& builder, llvm::Value*
 
 void IRGenerator::emitAnyRepr() {
   llvm::Function* function = module_->getFunction("__sere_repr_any");
-  if (function == nullptr || !function->empty()) return;
+  if (function == nullptr || !function->empty())
+    return;
   function->setLinkage(llvm::GlobalValue::InternalLinkage);
   llvm::IRBuilder<> builder(llvm::BasicBlock::Create(*context_, "entry", function));
   llvm::Value* value = function->getArg(0);
@@ -2418,7 +2499,8 @@ void IRGenerator::emitAnyRepr() {
   builder.SetInsertPoint(dispatch);
   for (std::size_t index = 0; index < boxedTypes_.size(); ++index) {
     const Type* type = boxedTypes_[index];
-    if (type->isVoidLike()) continue;
+    if (type->isVoidLike())
+      continue;
     llvm::BasicBlock* match = llvm::BasicBlock::Create(*context_, "match", function);
     llvm::BasicBlock* next = llvm::BasicBlock::Create(*context_, "next", function);
     builder.CreateCondBr(emitAnyTypeMatch(builder, value, type), match, next);
@@ -2450,7 +2532,7 @@ llvm::Value* IRGenerator::emitNumericCast(llvm::IRBuilder<>& builder,
   }
   if (to->isFloat()) {
     return from->isUnsignedInteger() || from->isNamed("bool") ? builder.CreateUIToFP(value, dest)
-               : builder.CreateSIToFP(value, dest);
+                                                              : builder.CreateSIToFP(value, dest);
   }
   if (!value->getType()->isIntegerTy() || dest == nullptr || !dest->isIntegerTy()) {
     return value;
@@ -2602,8 +2684,8 @@ llvm::Value* IRGenerator::emitPrint(llvm::IRBuilder<>& builder, const CallExpr& 
     llvm::Value* list = emitExpr(builder, comp.iterable());
     const Type* bindType =
         comp.iterable().resolvedType() != nullptr && comp.iterable().resolvedType()->isSequence()
-                               ? comp.iterable().resolvedType()->elementType()
-                               : types_->i32Type();
+            ? comp.iterable().resolvedType()->elementType()
+            : types_->i32Type();
     llvm::Function* lenFn =
         runtimeDecl("sere_list_len", builder.getInt64Ty(), {builder.getPtrTy()});
     llvm::Function* itemFn = runtimeDecl(
@@ -2645,7 +2727,7 @@ llvm::Value* IRGenerator::emitPrint(llvm::IRBuilder<>& builder, const CallExpr& 
     emitWriteValue(builder, *expr.arguments()[index]);
   }
   if (endExpr == nullptr) {
-  builder.CreateCall(newline, {});
+    builder.CreateCall(newline, {});
   } else {
     writeStrValue(emitExpr(builder, *endExpr));
   }
@@ -2688,8 +2770,7 @@ llvm::Value* IRGenerator::emitCall(llvm::IRBuilder<>& builder, const CallExpr& e
     std::vector<llvm::Value*> unboundArgs;
     unboundArgs.push_back(llvm::ConstantPointerNull::get(builder.getPtrTy()));
     const auto unboundDef = functionDefs_.find(expr.loweredName());
-    const FunctionDef* unboundFn =
-        unboundDef == functionDefs_.end() ? nullptr : unboundDef->second;
+    const FunctionDef* unboundFn = unboundDef == functionDefs_.end() ? nullptr : unboundDef->second;
     const Type* unboundType = unboundFn == nullptr ? nullptr : unboundFn->resolvedType();
     if (unboundFn != nullptr) {
       appendBoundCallArgs(builder, expr, *unboundFn, unboundType, unboundArgs, 1);
@@ -2735,8 +2816,8 @@ llvm::Value* IRGenerator::emitCall(llvm::IRBuilder<>& builder, const CallExpr& e
         (fnType->kind() == TypeKind::Function || fnType->isCallableConstraint())) {
       llvm::Value* fnptr = emitExpr(builder, expr.callee());
       llvm::FunctionType* llvmFn = fnType->kind() == TypeKind::Function
-                                      ? llvmFunctionTypeFrom(fnType)
-                                      : llvmFunctionTypeFromCall(expr);
+                                       ? llvmFunctionTypeFrom(fnType)
+                                       : llvmFunctionTypeFromCall(expr);
       if (fnptr == nullptr || llvmFn == nullptr) {
         return nullptr;
       }
@@ -2759,7 +2840,7 @@ llvm::Value* IRGenerator::emitCall(llvm::IRBuilder<>& builder, const CallExpr& e
   bool isExtern = externFunctions_.contains(calleeName);
   const FunctionDef* functionDef = nullptr;
   const Type* fnType = nullptr;
-    const auto defFound = functionDefs_.find(calleeName);
+  const auto defFound = functionDefs_.find(calleeName);
   if (defFound != functionDefs_.end()) {
     functionDef = defFound->second;
     if (functionDef != nullptr) {
@@ -2770,16 +2851,16 @@ llvm::Value* IRGenerator::emitCall(llvm::IRBuilder<>& builder, const CallExpr& e
   if (functionDef != nullptr) {
     appendBoundCallArgs(builder, expr, *functionDef, fnType, args, 0);
   } else {
-  for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
-    llvm::Value* value = emitExpr(builder, *argument);
-    if (isExtern && argument->resolvedType() != nullptr &&
+    for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
+      llvm::Value* value = emitExpr(builder, *argument);
+      if (isExtern && argument->resolvedType() != nullptr &&
           argument->resolvedType()->isStrLayout()) {
-      args.push_back(builder.CreateExtractValue(value, {0}));
-      args.push_back(builder.CreateExtractValue(value, {1}));
-    } else {
-      args.push_back(value);
+        args.push_back(builder.CreateExtractValue(value, {0}));
+        args.push_back(builder.CreateExtractValue(value, {1}));
+      } else {
+        args.push_back(value);
+      }
     }
-  }
     if (functionDef != nullptr) {
       std::size_t llvmIndex = 0;
       for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
@@ -2803,8 +2884,7 @@ llvm::Value* IRGenerator::emitCall(llvm::IRBuilder<>& builder, const CallExpr& e
       slot = decoratorSlots_[llvmNameFor(*functionDef)];
     }
     if (slot != nullptr) {
-      llvm::Value* packed =
-          builder.CreateLoad(lower(functionDef->decoratedType()), slot);
+      llvm::Value* packed = builder.CreateLoad(lower(functionDef->decoratedType()), slot);
       const Type* callType = functionDef->decoratedType()->kind() == TypeKind::Function
                                  ? functionDef->decoratedType()
                                  : functionDef->resolvedType();
@@ -2867,20 +2947,26 @@ llvm::Value* IRGenerator::emitConstruct(llvm::IRBuilder<>& builder, const CallEx
     } else if (payloadType->isNamed("str")) {
       payload = emitToStr(builder, *expr.arguments()[0]);
     } else {
-      payload = emitCoerce(builder, emitExpr(builder, *expr.arguments()[0]),
-          expr.arguments()[0]->resolvedType(), payloadType);
+      payload = emitCoerce(builder,
+                           emitExpr(builder, *expr.arguments()[0]),
+                           expr.arguments()[0]->resolvedType(),
+                           payloadType);
       if (payloadType->isSequence() || payloadType->isDict()) {
-        payload = builder.CreateCall(runtimeDecl(payloadType->isDict() ? "sere_dict_copy" :
-            "sere_list_copy", builder.getPtrTy(), {builder.getPtrTy()}), {payload});
+        payload = builder.CreateCall(
+            runtimeDecl(payloadType->isDict() ? "sere_dict_copy" : "sere_list_copy",
+                        builder.getPtrTy(),
+                        {builder.getPtrTy()}),
+            {payload});
       }
     }
-    if (!record->isRecord()) return payload;
+    if (!record->isRecord())
+      return payload;
     llvm::Value* aggregate = emitDefault(record);
     if (recordHasTypeId(record)) {
       aggregate = builder.CreateInsertValue(aggregate, builder.getInt32(recordTypeId(record)), {0});
     }
-    return builder.CreateInsertValue(aggregate, payload,
-        {llvmFieldIndex(record, record->fieldIndex("$value"))});
+    return builder.CreateInsertValue(
+        aggregate, payload, {llvmFieldIndex(record, record->fieldIndex("$value"))});
   }
   if (record->isEnum() && expr.callee().kind() == NodeKind::MemberExpr) {
     const auto& member = static_cast<const MemberExpr&>(expr.callee());
@@ -2974,19 +3060,19 @@ llvm::Value* IRGenerator::emitInitConstruct(llvm::IRBuilder<>& builder, const Ca
   if (initDef != nullptr) {
     appendBoundCallArgs(builder, expr, *initDef, initType, args, 1);
   } else {
-  std::size_t paramIndex = 1;
-  for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
-    llvm::Value* value = emitExpr(builder, *argument);
-    if (initType != nullptr && paramIndex < initType->paramTypes().size()) {
-        value =
-            emitCoerce(builder, value, argument->resolvedType(), initType->paramTypes()[paramIndex]);
+    std::size_t paramIndex = 1;
+    for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
+      llvm::Value* value = emitExpr(builder, *argument);
+      if (initType != nullptr && paramIndex < initType->paramTypes().size()) {
+        value = emitCoerce(
+            builder, value, argument->resolvedType(), initType->paramTypes()[paramIndex]);
+      }
+      args.push_back(value);
+      ++paramIndex;
     }
-    args.push_back(value);
-    ++paramIndex;
-  }
     if (initDef != nullptr) {
       appendDefaultArgs(builder, args, *initDef, expr.arguments().size(), 1);
-  }
+    }
   }
   matchCallArgs(builder, found->second, args);
   builder.CreateCall(found->second, args);
@@ -3024,16 +3110,16 @@ llvm::Value* IRGenerator::emitMethodCall(llvm::IRBuilder<>& builder, const CallE
   if (methodDef != nullptr) {
     appendBoundCallArgs(builder, expr, *methodDef, methodType, args, 1);
   } else {
-  std::size_t paramIndex = 1;
-  for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
-    llvm::Value* value = emitExpr(builder, *argument);
-    if (methodType != nullptr && paramIndex < methodType->paramTypes().size()) {
+    std::size_t paramIndex = 1;
+    for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
+      llvm::Value* value = emitExpr(builder, *argument);
+      if (methodType != nullptr && paramIndex < methodType->paramTypes().size()) {
         value = emitCoerce(
             builder, value, argument->resolvedType(), methodType->paramTypes()[paramIndex]);
+      }
+      args.push_back(value);
+      ++paramIndex;
     }
-    args.push_back(value);
-    ++paramIndex;
-  }
     if (methodDef != nullptr) {
       appendDefaultArgs(builder, args, *methodDef, expr.arguments().size(), 1);
     }
@@ -3047,11 +3133,12 @@ llvm::Value* IRGenerator::emitMethodCall(llvm::IRBuilder<>& builder, const CallE
     }
   }
   llvm::Function* callee = found->second;
-  const Type* staticType =
-      member.object().resolvedType() == nullptr ? nullptr : member.object().resolvedType()->canonical();
-  const bool superCall = member.object().kind() == NodeKind::CallExpr &&
-                         static_cast<const CallExpr&>(member.object()).intrinsic() ==
-                             IntrinsicKind::Super;
+  const Type* staticType = member.object().resolvedType() == nullptr
+                               ? nullptr
+                               : member.object().resolvedType()->canonical();
+  const bool superCall =
+      member.object().kind() == NodeKind::CallExpr &&
+      static_cast<const CallExpr&>(member.object()).intrinsic() == IntrinsicKind::Super;
   struct VirtTarget {
     std::uint32_t typeId = 0;
     llvm::Function* fn = nullptr;
@@ -3118,11 +3205,11 @@ llvm::Value* IRGenerator::emitMethodCall(llvm::IRBuilder<>& builder, const CallE
   if (callee->getReturnType()->isVoidTy()) {
     return nullptr;
   }
-  llvm::PHINode* phi =
-      builder.CreatePHI(callee->getReturnType(), static_cast<unsigned>(incoming.size()), "virt.phi");
+  llvm::PHINode* phi = builder.CreatePHI(
+      callee->getReturnType(), static_cast<unsigned>(incoming.size()), "virt.phi");
   for (const auto& edge : incoming) {
-    llvm::Value* value = edge.first != nullptr ? edge.first
-                                               : llvm::UndefValue::get(callee->getReturnType());
+    llvm::Value* value =
+        edge.first != nullptr ? edge.first : llvm::UndefValue::get(callee->getReturnType());
     phi->addIncoming(value, edge.second);
   }
   return phi;
@@ -3166,8 +3253,8 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
         !typeofCall->arguments().empty()) {
       const Type* valueType = typeofCall->arguments()[0]->resolvedType();
       const Type* target = expr.right().resolvedType();
-      const bool match = valueType != nullptr && target != nullptr &&
-                         valueType->matchesInstance(target);
+      const bool match =
+          valueType != nullptr && target != nullptr && valueType->matchesInstance(target);
       return builder.getInt1(expr.op() == BinaryOp::Is ? match : !match);
     }
   }
@@ -3222,7 +3309,7 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
                                       builder.getInt64Ty(),
                                       builder.getInt64Ty(),
                                       builder.getPtrTy(),
-         builder.getPtrTy()});
+                                      builder.getPtrTy()});
     llvm::Value* dataSlot = builder.CreateAlloca(builder.getPtrTy(), nullptr, "rep.data");
     llvm::Value* lenSlot = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "rep.len");
     builder.CreateCall(fn,
@@ -3358,10 +3445,10 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
           {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy(), builder.getInt64Ty()});
       contained = builder.CreateICmpNE(builder.CreateCall(fn,
                                                           {builder.CreateExtractValue(right, {0}),
-                                  builder.CreateExtractValue(right, {1}),
-                                  builder.CreateExtractValue(left, {0}),
-                                  builder.CreateExtractValue(left, {1})}),
-          builder.getInt32(0));
+                                                           builder.CreateExtractValue(right, {1}),
+                                                           builder.CreateExtractValue(left, {0}),
+                                                           builder.CreateExtractValue(left, {1})}),
+                                       builder.getInt32(0));
     } else if (rightType != nullptr && rightType->isSequence()) {
       llvm::Function* fn = runtimeDecl(
           "sere_list_contains", builder.getInt32Ty(), {builder.getPtrTy(), builder.getPtrTy()});
@@ -3387,7 +3474,7 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
       llvm::Function* getFn =
           runtimeDecl("sere_dict_get",
                       builder.getInt32Ty(),
-          {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()});
+                      {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()});
       llvm::Value* out = builder.CreateAlloca(lower(rightType->dictValueType()), nullptr, "in.out");
       contained = builder.CreateICmpNE(
           builder.CreateCall(getFn, {right, emitTempSlot(builder, left, leftType), out}),
@@ -3423,7 +3510,7 @@ llvm::Value* IRGenerator::emitUnary(llvm::IRBuilder<>& builder, const UnaryExpr&
     const bool isFloat = current->getType()->isFloatingPointTy();
     llvm::Value* one =
         isFloat ? static_cast<llvm::Value*>(llvm::ConstantFP::get(current->getType(), 1.0))
-                               : static_cast<llvm::Value*>(llvm::ConstantInt::get(current->getType(), 1));
+                : static_cast<llvm::Value*>(llvm::ConstantInt::get(current->getType(), 1));
     const bool isDec = expr.op() == UnaryOp::PreDec || expr.op() == UnaryOp::PostDec;
     llvm::Value* next =
         isDec ? (isFloat ? builder.CreateFSub(current, one) : builder.CreateSub(current, one))
@@ -3580,9 +3667,9 @@ llvm::Value* IRGenerator::emitRange(llvm::IRBuilder<>& builder, const CallExpr& 
   return list;
 }
 
-llvm::Value* IRGenerator::emitParse(llvm::IRBuilder<>& builder, const CallExpr& expr, bool optional) {
-  const Type* requested =
-      expr.typeArgs().empty() ? nullptr : expr.typeArgs()[0]->resolvedType();
+llvm::Value*
+IRGenerator::emitParse(llvm::IRBuilder<>& builder, const CallExpr& expr, bool optional) {
+  const Type* requested = expr.typeArgs().empty() ? nullptr : expr.typeArgs()[0]->resolvedType();
   if (requested == nullptr || expr.arguments().empty()) {
     return nullptr;
   }
@@ -3606,16 +3693,17 @@ llvm::Value* IRGenerator::emitParse(llvm::IRBuilder<>& builder, const CallExpr& 
     raw = text;
     rawType = types_->strType();
   } else if (parsedType->isVoidLike()) {
-    llvm::Function* fn =
-        runtimeDecl("sere_parse_none", builder.getInt32Ty(), {builder.getPtrTy(), builder.getInt64Ty()});
+    llvm::Function* fn = runtimeDecl(
+        "sere_parse_none", builder.getInt32Ty(), {builder.getPtrTy(), builder.getInt64Ty()});
     ok = builder.CreateICmpNE(builder.CreateCall(fn, {data, len}), builder.getInt32(0));
     raw = emitDefault(types_->noneType());
     rawType = types_->noneType();
   } else if (parsedType->isNamed("bool")) {
     llvm::Value* slot = builder.CreateAlloca(builder.getInt32Ty(), nullptr, "parse.bool");
-    llvm::Function* fn = runtimeDecl(
-        "sere_parse_bool", builder.getInt32Ty(),
-        {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy()});
+    llvm::Function* fn =
+        runtimeDecl("sere_parse_bool",
+                    builder.getInt32Ty(),
+                    {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy()});
     ok = builder.CreateICmpNE(builder.CreateCall(fn, {data, len, slot}), builder.getInt32(0));
     raw = builder.CreateTrunc(builder.CreateLoad(builder.getInt32Ty(), slot), builder.getInt1Ty());
     rawType = types_->boolType();
@@ -3625,10 +3713,12 @@ llvm::Value* IRGenerator::emitParse(llvm::IRBuilder<>& builder, const CallExpr& 
     rawType = parsedType->isNamed("f32") ? types_->f32Type() : types_->f64Type();
     llvm::Value* slot = builder.CreateAlloca(builder.getDoubleTy(), nullptr, "parse.f");
     llvm::Function* fn = runtimeDecl(
-        "sere_parse_float", builder.getInt32Ty(),
+        "sere_parse_float",
+        builder.getInt32Ty(),
         {builder.getPtrTy(), builder.getInt64Ty(), builder.getInt32Ty(), builder.getPtrTy()});
     ok = builder.CreateICmpNE(
-        builder.CreateCall(fn, {data, len, builder.getInt32(rawType->isNamed("f32") ? 1 : 0), slot}),
+        builder.CreateCall(fn,
+                           {data, len, builder.getInt32(rawType->isNamed("f32") ? 1 : 0), slot}),
         builder.getInt32(0));
     raw = builder.CreateLoad(builder.getDoubleTy(), slot);
     if (rawType->isNamed("f32")) {
@@ -3640,13 +3730,21 @@ llvm::Value* IRGenerator::emitParse(llvm::IRBuilder<>& builder, const CallExpr& 
       rawType = types_->i64Type();
     }
     llvm::Value* slot = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "parse.i");
-    llvm::Function* fn = runtimeDecl("sere_parse_int", builder.getInt32Ty(),
-                                    {builder.getPtrTy(), builder.getInt64Ty(), builder.getInt32Ty(),
-                                     builder.getInt32Ty(), builder.getPtrTy()});
+    llvm::Function* fn = runtimeDecl("sere_parse_int",
+                                     builder.getInt32Ty(),
+                                     {builder.getPtrTy(),
+                                      builder.getInt64Ty(),
+                                      builder.getInt32Ty(),
+                                      builder.getInt32Ty(),
+                                      builder.getPtrTy()});
     const int bits = rawType->integerBitWidth() <= 0 ? 64 : rawType->integerBitWidth();
     ok = builder.CreateICmpNE(
-        builder.CreateCall(fn, {data, len, builder.getInt32(bits),
-                                builder.getInt32(rawType->isUnsignedInteger() ? 0 : 1), slot}),
+        builder.CreateCall(fn,
+                           {data,
+                            len,
+                            builder.getInt32(bits),
+                            builder.getInt32(rawType->isUnsignedInteger() ? 0 : 1),
+                            slot}),
         builder.getInt32(0));
     raw = builder.CreateLoad(builder.getInt64Ty(), slot);
     if (rawType != types_->i64Type() && rawType != types_->primitive("u64")) {
@@ -3672,8 +3770,8 @@ llvm::Value* IRGenerator::emitParse(llvm::IRBuilder<>& builder, const CallExpr& 
   llvm::Value* message = emitStrLiteral(builder, "cannot parse string");
   llvm::Function* panic =
       runtimeDecl("sere_panic", builder.getVoidTy(), {builder.getPtrTy(), builder.getInt64Ty()});
-  builder.CreateCall(panic, {builder.CreateExtractValue(message, {0}),
-                             builder.CreateExtractValue(message, {1})});
+  builder.CreateCall(
+      panic, {builder.CreateExtractValue(message, {0}), builder.CreateExtractValue(message, {1})});
   builder.CreateUnreachable();
   builder.SetInsertPoint(okBlock);
   return emitCoerce(builder, raw, rawType, expr.resolvedType());
@@ -3746,15 +3844,15 @@ bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
                                            builder.getInt64Ty(),
                                            builder.getInt64Ty(),
                                            builder.getPtrTy(),
-         builder.getPtrTy()});
+                                           builder.getPtrTy()});
     llvm::Value* dataSlot = builder.CreateAlloca(builder.getPtrTy(), nullptr, "ch.data");
     llvm::Value* lenSlot = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "ch.len");
     builder.CreateCall(indexFn,
                        {builder.CreateExtractValue(str, {0}), length, current, dataSlot, lenSlot});
     builder.CreateStore(packStr(builder,
                                 builder.CreateLoad(builder.getPtrTy(), dataSlot),
-                builder.CreateLoad(builder.getInt64Ty(), lenSlot)),
-        item);
+                                builder.CreateLoad(builder.getInt64Ty(), lenSlot)),
+                        item);
     loops_.emplace_back(header, exit);
     if (!emitBlock(builder, statement.body(), returnType)) {
       loops_.pop_back();
@@ -3810,8 +3908,8 @@ llvm::Value* IRGenerator::emitComprehension(llvm::IRBuilder<>& builder,
   llvm::Value* source = emitExpr(builder, expr.iterable());
   const Type* bindType =
       expr.iterable().resolvedType() != nullptr && expr.iterable().resolvedType()->isSequence()
-                             ? expr.iterable().resolvedType()->elementType()
-                             : types_->i32Type();
+          ? expr.iterable().resolvedType()->elementType()
+          : types_->i32Type();
   const Type* valueType =
       expr.element().resolvedType() == nullptr ? bindType : expr.element().resolvedType();
   llvm::Function* newFn = runtimeDecl("sere_list_new", builder.getPtrTy(), {builder.getInt64Ty()});
@@ -3857,18 +3955,20 @@ bool IRGenerator::emitAssert(llvm::IRBuilder<>& builder, const AssertStmt& state
   llvm::BasicBlock* ok = llvm::BasicBlock::Create(*context_, "assert.ok", function);
   builder.CreateCondBr(cond, ok, fail);
   builder.SetInsertPoint(fail);
-  llvm::Value* message = statement.message() == nullptr ? emitStrLiteral(builder, "assertion failed")
-                                                        : emitToStr(builder, *statement.message());
-  llvm::Function* raiseFn = runtimeDecl(
-      "sere_raise", builder.getVoidTy(),
-      {builder.getPtrTy(), builder.getPtrTy(), builder.getInt64Ty()});
+  llvm::Value* message = statement.message() == nullptr
+                             ? emitStrLiteral(builder, "assertion failed")
+                             : emitToStr(builder, *statement.message());
+  llvm::Function* raiseFn =
+      runtimeDecl("sere_raise",
+                  builder.getVoidTy(),
+                  {builder.getPtrTy(), builder.getPtrTy(), builder.getInt64Ty()});
   builder.CreateCall(raiseFn,
                      {builder.CreateGlobalString("AssertionError;Exception", "", 0, module_),
                       builder.CreateExtractValue(message, {0}),
                       builder.CreateExtractValue(message, {1})});
   emitErrorCheck(builder);
   if (builder.GetInsertBlock()->getTerminator() == nullptr) {
-  builder.CreateUnreachable();
+    builder.CreateUnreachable();
   }
   builder.SetInsertPoint(ok);
   return true;
@@ -3922,8 +4022,7 @@ llvm::Value* IRGenerator::emitExpr(llvm::IRBuilder<>& builder, const Expr& expr)
       }
       return builder.getInt32(recordTypeId(type->typeObjectInstance()));
     }
-    if (type != nullptr &&
-        (type->kind() == TypeKind::Function || type->isCallableConstraint())) {
+    if (type != nullptr && (type->kind() == TypeKind::Function || type->isCallableConstraint())) {
       if (llvm::Value* address = emitAddress(builder, expr, false)) {
         return builder.CreateLoad(lower(type), address);
       }
@@ -3953,7 +4052,7 @@ llvm::Value* IRGenerator::emitExpr(llvm::IRBuilder<>& builder, const Expr& expr)
     }
     const Type* objectType = member.object().resolvedType() == nullptr
                                  ? nullptr
-                                                  : member.object().resolvedType()->canonical();
+                                 : member.object().resolvedType()->canonical();
     if (objectType != nullptr && objectType->isEnum() && member.field() == "name") {
       return emitEnumName(builder, member.object());
     }
@@ -3973,8 +4072,7 @@ llvm::Value* IRGenerator::emitExpr(llvm::IRBuilder<>& builder, const Expr& expr)
                             "no LLVM function for method '" + member.boundMethodLlvm() + "'");
         return nullptr;
       }
-      llvm::Value* fakeSelf =
-          builder.CreateIntToPtr(builder.getInt64(1), builder.getPtrTy());
+      llvm::Value* fakeSelf = builder.CreateIntToPtr(builder.getInt64(1), builder.getPtrTy());
       return packCallable(builder, found->second, fakeSelf);
     }
     if (member.isBoundMethod()) {
@@ -4069,7 +4167,7 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
                                                             decl.init()->resolvedType(),
                                                             decl.resolvedType());
     if (init != nullptr && !init->getType()->isVoidTy()) {
-    builder.CreateStore(init, slot);
+      builder.CreateStore(init, slot);
     }
     rememberLocal(decl.name(), slot, decl.resolvedType());
     return true;
@@ -4081,7 +4179,9 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
     }
     if (assign.target().kind() == NodeKind::TupleExpr) {
       llvm::Value* packed = emitExpr(builder, assign.value());
-      return emitUnpack(builder, static_cast<const TupleExpr&>(assign.target()), packed,
+      return emitUnpack(builder,
+                        static_cast<const TupleExpr&>(assign.target()),
+                        packed,
                         assign.value().resolvedType());
     }
     if (assign.target().kind() == NodeKind::IndexExpr) {
@@ -4215,7 +4315,7 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
     if (assign.op() != AssignOp::Assign && from != nullptr && to != nullptr) {
       if (from->isFloat() || to->isFloat()) {
         from = (from->isNamed("f64") || to->isNamed("f64")) ? types_->f64Type()
-                                                               : (from->isFloat() ? from : to);
+                                                            : (from->isFloat() ? from : to);
       } else if (from->isInteger() && to->isInteger()) {
         from = to->integerBitWidth() >= from->integerBitWidth() ? to : from;
       }
@@ -4244,7 +4344,7 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
       return true;
     }
     if (value != nullptr && !value->getType()->isVoidTy()) {
-    builder.CreateStore(value, address);
+      builder.CreateStore(value, address);
     }
     return true;
   }
@@ -4300,7 +4400,7 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
   }
   if (statement.kind() == NodeKind::DelStmt) {
     return emitDel(builder, static_cast<const DelStmt&>(statement));
-    }
+  }
   if (statement.kind() == NodeKind::DeferStmt) {
     defers_.push_back(&static_cast<const DeferStmt&>(statement));
     return true;
@@ -4312,8 +4412,8 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
     const auto& function = static_cast<const FunctionDef&>(statement);
     const auto found = functions_.find(llvmNameFor(function));
     if (found == functions_.end()) {
-      diagnostics_->error(function.range(), "internal: missing nested function '" +
-                                                function.name() + "'");
+      diagnostics_->error(function.range(),
+                          "internal: missing nested function '" + function.name() + "'");
       return false;
     }
     llvm::Value* environment = nullptr;
@@ -4327,20 +4427,20 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
       llvm::StructType* environmentType = llvm::StructType::get(*context_, fields);
       llvm::Function* allocate =
           runtimeDecl("sere_alloc", builder.getPtrTy(), {builder.getInt64Ty()});
-      environment = builder.CreateCall(allocate, {builder.getInt64(bytes == 0 ? 1 : bytes)},
-                                       function.name() + ".env");
+      environment = builder.CreateCall(
+          allocate, {builder.getInt64(bytes == 0 ? 1 : bytes)}, function.name() + ".env");
       for (std::size_t index = 0; index < function.captures().size(); ++index) {
         const FunctionDef::Capture& capture = function.captures()[index];
         const auto local = locals_.find(capture.name);
         if (local == locals_.end()) {
-          diagnostics_->error(function.range(), "internal: missing captured local '" +
-                                                    capture.name + "'");
+          diagnostics_->error(function.range(),
+                              "internal: missing captured local '" + capture.name + "'");
           return false;
         }
         llvm::Value* value = builder.CreateLoad(lower(capture.type), local->second);
-        builder.CreateStore(value,
-                            builder.CreateStructGEP(environmentType, environment,
-                                                    static_cast<unsigned>(index)));
+        builder.CreateStore(
+            value,
+            builder.CreateStructGEP(environmentType, environment, static_cast<unsigned>(index)));
       }
     }
     llvm::Value* packed = packCallable(builder, found->second, environment);
@@ -4350,10 +4450,9 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
     rememberLocal(function.name(), slot, function.resolvedType());
     return true;
   }
-  return statement.kind() == NodeKind::PassStmt ||
-         statement.kind() == NodeKind::ClassDef || statement.kind() == NodeKind::EnumDef ||
-         statement.kind() == NodeKind::TypeAlias || statement.kind() == NodeKind::ImportStmt ||
-         statement.kind() == NodeKind::MacroDef;
+  return statement.kind() == NodeKind::PassStmt || statement.kind() == NodeKind::ClassDef ||
+         statement.kind() == NodeKind::EnumDef || statement.kind() == NodeKind::TypeAlias ||
+         statement.kind() == NodeKind::ImportStmt || statement.kind() == NodeKind::MacroDef;
 }
 
 namespace {
@@ -4454,7 +4553,7 @@ void collectExprUses(const Expr& expr,
     }
     return;
   }
-    if (expr.kind() == NodeKind::InterpolatedStringExpr) {
+  if (expr.kind() == NodeKind::InterpolatedStringExpr) {
     for (const StringPart& part : static_cast<const InterpolatedStringExpr&>(expr).parts()) {
       if (part.value != nullptr) {
         collectExprUses(*part.value, names, printed);
@@ -4485,8 +4584,7 @@ void collectExprUses(const Expr& expr,
   if (expr.kind() == NodeKind::NameExpr) {
     const auto& name = static_cast<const NameExpr&>(expr);
     const Type* type = name.resolvedType();
-    if (type != nullptr &&
-        (type->kind() == TypeKind::Function || type->isCallableConstraint())) {
+    if (type != nullptr && (type->kind() == TypeKind::Function || type->isCallableConstraint())) {
       names.push_back(name.name());
     }
   }
@@ -4697,10 +4795,11 @@ void IRGenerator::declareFunctions(const Module& ast) {
         continue;
       }
       const std::string llvmName = llvmNameFor(function);
-      llvm::Function* fn = functions_.contains(llvmName) ? functions_[llvmName] : module_->getFunction(llvmName);
+      llvm::Function* fn =
+          functions_.contains(llvmName) ? functions_[llvmName] : module_->getFunction(llvmName);
       if (fn == nullptr) {
-        fn = llvm::Function::Create(llvmFunctionType(function), llvm::Function::ExternalLinkage,
-                                    llvmName, module_);
+        fn = llvm::Function::Create(
+            llvmFunctionType(function), llvm::Function::ExternalLinkage, llvmName, module_);
       }
       functions_[llvmName] = fn;
       functions_[function.name()] = fn;
@@ -4759,8 +4858,8 @@ void IRGenerator::declareNestedFunctions(const FunctionDef& function) {
     const std::string name = llvmNameFor(nested);
     functionDefs_[name] = &nested;
     if (module_->getFunction(name) == nullptr) {
-      functions_[name] = llvm::Function::Create(llvmFunctionType(nested),
-                                                llvm::Function::InternalLinkage, name, module_);
+      functions_[name] = llvm::Function::Create(
+          llvmFunctionType(nested), llvm::Function::InternalLinkage, name, module_);
     } else {
       functions_[name] = module_->getFunction(name);
     }
@@ -4984,8 +5083,8 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
     for (std::size_t captureIndex = 0; captureIndex < function.captures().size(); ++captureIndex) {
       const FunctionDef::Capture& capture = function.captures()[captureIndex];
       rememberLocal(capture.name,
-                    builder.CreateStructGEP(environmentType, &environment,
-                                            static_cast<unsigned>(captureIndex)),
+                    builder.CreateStructGEP(
+                        environmentType, &environment, static_cast<unsigned>(captureIndex)),
                     capture.type);
     }
   }
@@ -5246,7 +5345,7 @@ llvm::Value* IRGenerator::emitTuple(llvm::IRBuilder<>& builder, const TupleExpr&
 }
 
 llvm::Value* IRGenerator::emitNamesList(llvm::IRBuilder<>& builder,
-                                       const std::vector<std::string>& names) {
+                                        const std::vector<std::string>& names) {
   llvm::Function* newFn = runtimeDecl("sere_list_new", builder.getPtrTy(), {builder.getInt64Ty()});
   llvm::Function* pushFn =
       runtimeDecl("sere_list_push", builder.getVoidTy(), {builder.getPtrTy(), builder.getPtrTy()});
@@ -5258,9 +5357,11 @@ llvm::Value* IRGenerator::emitNamesList(llvm::IRBuilder<>& builder,
   return list;
 }
 
-llvm::Value* IRGenerator::emitDunderOnSelf(llvm::IRBuilder<>& builder, const Type* record,
-                                           llvm::Value* self, std::string_view name,
-                                        const std::vector<llvm::Value*>& extra) {
+llvm::Value* IRGenerator::emitDunderOnSelf(llvm::IRBuilder<>& builder,
+                                           const Type* record,
+                                           llvm::Value* self,
+                                           std::string_view name,
+                                           const std::vector<llvm::Value*>& extra) {
   if (record == nullptr || self == nullptr) {
     return nullptr;
   }
@@ -5285,9 +5386,9 @@ llvm::Value* IRGenerator::emitDunderOnSelf(llvm::IRBuilder<>& builder, const Typ
 }
 
 llvm::Value* IRGenerator::emitDunderCall(llvm::IRBuilder<>& builder,
-                                        const Expr& object,
-                                        std::string_view name,
-                                        const std::vector<llvm::Value*>& extra) {
+                                         const Expr& object,
+                                         std::string_view name,
+                                         const std::vector<llvm::Value*>& extra) {
   const Type* record =
       object.resolvedType() == nullptr ? nullptr : object.resolvedType()->canonical();
   if (record == nullptr) {
@@ -5305,8 +5406,8 @@ llvm::Value* IRGenerator::emitDunderCall(llvm::IRBuilder<>& builder,
   return emitDunderOnSelf(builder, record, thisPtr, name, extra);
 }
 
-llvm::Value* IRGenerator::emitObjectPointer(llvm::IRBuilder<>& builder, const Expr& object,
-                                            const Type* record) {
+llvm::Value*
+IRGenerator::emitObjectPointer(llvm::IRBuilder<>& builder, const Expr& object, const Type* record) {
   if (record == nullptr) {
     return nullptr;
   }
@@ -5375,7 +5476,8 @@ bool IRGenerator::emitRaise(llvm::IRBuilder<>& builder, const RaiseStmt& stateme
   llvm::Value* message = nullptr;
   if (statement.value() != nullptr) {
     const Expr& value = *statement.value();
-    const Type* type = value.resolvedType() == nullptr ? nullptr : value.resolvedType()->canonical();
+    const Type* type =
+        value.resolvedType() == nullptr ? nullptr : value.resolvedType()->canonical();
     if (const NameExpr* name = asName(value)) {
       appendExceptionName(chain, name->name());
       appendExceptionType(chain, type);
@@ -5407,13 +5509,14 @@ bool IRGenerator::emitRaise(llvm::IRBuilder<>& builder, const RaiseStmt& stateme
   if (message == nullptr) {
     message = emitStrLiteral(builder, "");
   }
-  llvm::Function* raiseFn = runtimeDecl(
-      "sere_raise", builder.getVoidTy(),
-      {builder.getPtrTy(), builder.getPtrTy(), builder.getInt64Ty()});
+  llvm::Function* raiseFn =
+      runtimeDecl("sere_raise",
+                  builder.getVoidTy(),
+                  {builder.getPtrTy(), builder.getPtrTy(), builder.getInt64Ty()});
   builder.CreateCall(raiseFn,
                      {builder.CreateGlobalString(chain, "", 0, module_),
-                               builder.CreateExtractValue(message, {0}),
-                               builder.CreateExtractValue(message, {1})});
+                      builder.CreateExtractValue(message, {0}),
+                      builder.CreateExtractValue(message, {1})});
   emitErrorCheck(builder);
   return true;
 }
@@ -5434,8 +5537,7 @@ bool IRGenerator::emitTry(llvm::IRBuilder<>& builder,
   }
   llvm::Function* hasFn = runtimeDecl("sere_has_error", builder.getInt32Ty(), {});
   llvm::Function* clearFn = runtimeDecl("sere_clear_error", builder.getVoidTy(), {});
-  llvm::Function* isaFn =
-      runtimeDecl("sere_error_isa", builder.getInt32Ty(), {builder.getPtrTy()});
+  llvm::Function* isaFn = runtimeDecl("sere_error_isa", builder.getInt32Ty(), {builder.getPtrTy()});
   llvm::Function* msgFn =
       runtimeDecl("sere_error_message", builder.getPtrTy(), {builder.getPtrTy()});
   if (builder.GetInsertBlock()->getTerminator() == nullptr) {
@@ -5466,16 +5568,16 @@ bool IRGenerator::emitTry(llvm::IRBuilder<>& builder,
       builder.CreateBr(taken);
     } else {
       llvm::Value* matched = builder.CreateICmpNE(
-          builder.CreateCall(isaFn, {builder.CreateGlobalString(handler.type->name(), "", 0, module_)}),
+          builder.CreateCall(isaFn,
+                             {builder.CreateGlobalString(handler.type->name(), "", 0, module_)}),
           builder.getInt32(0));
       builder.CreateCondBr(matched, taken, next);
     }
     builder.SetInsertPoint(taken);
     if (!handler.name.empty()) {
-      const Type* caught =
-          handler.type != nullptr && handler.type->resolvedType() != nullptr
-              ? handler.type->resolvedType()
-              : types_->record("Exception");
+      const Type* caught = handler.type != nullptr && handler.type->resolvedType() != nullptr
+                               ? handler.type->resolvedType()
+                               : types_->record("Exception");
       if (caught != nullptr && caught->isRecord()) {
         llvm::Value* slot = createLocalSlot(builder, handler.name, caught);
         llvm::Value* object = emitDefault(caught);
@@ -5493,10 +5595,10 @@ bool IRGenerator::emitTry(llvm::IRBuilder<>& builder,
         builder.CreateStore(object, slot);
       }
     }
-  builder.CreateCall(clearFn);
+    builder.CreateCall(clearFn);
     if (!emitBlock(builder, handler.body, returnType)) {
-    return false;
-  }
+      return false;
+    }
     if (builder.GetInsertBlock()->getTerminator() == nullptr) {
       builder.CreateBr(after);
     }
@@ -5550,7 +5652,7 @@ bool IRGenerator::emitMatch(llvm::IRBuilder<>& builder,
           want = builder.CreateIntCast(want, subject->getType(), false);
         }
         matched = subject->getType() == want->getType() ? builder.CreateICmpEQ(subject, want)
-                      : builder.getInt1(false);
+                                                        : builder.getInt1(false);
       } else {
         llvm::Value* pat = emitExpr(builder, *pattern);
         if (pat == nullptr) {
@@ -5568,7 +5670,7 @@ bool IRGenerator::emitMatch(llvm::IRBuilder<>& builder,
         }
         if (matched->getType()->isIntegerTy(1) && subject->getType() == pat->getType() &&
             subject->getType()->isIntegerTy()) {
-        matched = builder.CreateICmpEQ(subject, pat);
+          matched = builder.CreateICmpEQ(subject, pat);
         }
       }
     }
@@ -5673,9 +5775,8 @@ llvm::FunctionType* IRGenerator::llvmFunctionTypeFromCall(const CallExpr& expr) 
   std::vector<llvm::Type*> params;
   const Type* constraint = expr.callee().resolvedType();
   const Type* paramList = nullptr;
-  if (constraint != nullptr && constraint->isCallableConstraint() &&
-      !constraint->args().empty() && constraint->args()[0] != nullptr &&
-      constraint->args()[0]->isParamList()) {
+  if (constraint != nullptr && constraint->isCallableConstraint() && !constraint->args().empty() &&
+      constraint->args()[0] != nullptr && constraint->args()[0]->isParamList()) {
     paramList = constraint->args()[0];
   }
   if (paramList != nullptr) {
@@ -5888,7 +5989,8 @@ void IRGenerator::collectLambdas(const Stmt& stmt, std::vector<const LambdaExpr*
     }
     break;
   case NodeKind::ClassDef:
-    for (const std::unique_ptr<FunctionDef>& method : static_cast<const ClassDef&>(stmt).methods()) {
+    for (const std::unique_ptr<FunctionDef>& method :
+         static_cast<const ClassDef&>(stmt).methods()) {
       collectLambdas(*method, out);
     }
     break;
@@ -5975,31 +6077,29 @@ llvm::Value* IRGenerator::emitLambda(llvm::IRBuilder<>& builder, const LambdaExp
 }
 
 llvm::Type* IRGenerator::callableFatType() {
-  return llvm::StructType::get(*context_,
-                               {llvm::PointerType::getUnqual(*context_),
-                                llvm::PointerType::getUnqual(*context_)});
+  return llvm::StructType::get(
+      *context_,
+      {llvm::PointerType::getUnqual(*context_), llvm::PointerType::getUnqual(*context_)});
 }
 
-llvm::Value* IRGenerator::packCallable(llvm::IRBuilder<>& builder, llvm::Value* fn,
-                                       llvm::Value* env) {
+llvm::Value*
+IRGenerator::packCallable(llvm::IRBuilder<>& builder, llvm::Value* fn, llvm::Value* env) {
   llvm::Type* fat = callableFatType();
   // Callable values can escape their defining frame (decorators and nested
   // functions both rely on this), so the pair must not live in a stack alloca.
-  llvm::Function* allocate =
-      runtimeDecl("sere_alloc", builder.getPtrTy(), {builder.getInt64Ty()});
+  llvm::Function* allocate = runtimeDecl("sere_alloc", builder.getPtrTy(), {builder.getInt64Ty()});
   llvm::Value* slot = builder.CreateCall(allocate, {builder.getInt64(16)}, "cb.pack");
-  llvm::Value* fnPtr = fn == nullptr
-                           ? llvm::ConstantPointerNull::get(builder.getPtrTy())
-                           : builder.CreateBitCast(fn, builder.getPtrTy());
-  llvm::Value* envPtr = env == nullptr
-                            ? llvm::ConstantPointerNull::get(builder.getPtrTy())
-                            : builder.CreateBitCast(env, builder.getPtrTy());
+  llvm::Value* fnPtr = fn == nullptr ? llvm::ConstantPointerNull::get(builder.getPtrTy())
+                                     : builder.CreateBitCast(fn, builder.getPtrTy());
+  llvm::Value* envPtr = env == nullptr ? llvm::ConstantPointerNull::get(builder.getPtrTy())
+                                       : builder.CreateBitCast(env, builder.getPtrTy());
   builder.CreateStore(fnPtr, builder.CreateStructGEP(fat, slot, 0));
   builder.CreateStore(envPtr, builder.CreateStructGEP(fat, slot, 1));
   return slot;
 }
 
-llvm::Value* IRGenerator::emitIndirectCallable(llvm::IRBuilder<>& builder, llvm::Value* callable,
+llvm::Value* IRGenerator::emitIndirectCallable(llvm::IRBuilder<>& builder,
+                                               llvm::Value* callable,
                                                llvm::FunctionType* freeType,
                                                const std::vector<llvm::Value*>& args) {
   if (callable == nullptr || freeType == nullptr) {
@@ -6066,7 +6166,9 @@ llvm::Value* IRGenerator::emitIndirectCallable(llvm::IRBuilder<>& builder, llvm:
   return phi;
 }
 
-bool IRGenerator::emitUnpack(llvm::IRBuilder<>& builder, const TupleExpr& targets, llvm::Value* value,
+bool IRGenerator::emitUnpack(llvm::IRBuilder<>& builder,
+                             const TupleExpr& targets,
+                             llvm::Value* value,
                              const Type* valueType) {
   if (value == nullptr || valueType == nullptr) {
     return false;
@@ -6105,15 +6207,15 @@ bool IRGenerator::emitDel(llvm::IRBuilder<>& builder, const DelStmt& statement) 
   }
   if (objectType->isList()) {
     llvm::Value* at = emitIndexI64(builder, *index.start());
-    llvm::Function* fn =
-        runtimeDecl("sere_list_remove", builder.getVoidTy(), {builder.getPtrTy(), builder.getInt64Ty()});
+    llvm::Function* fn = runtimeDecl(
+        "sere_list_remove", builder.getVoidTy(), {builder.getPtrTy(), builder.getInt64Ty()});
     builder.CreateCall(fn, {object, at});
     return true;
   }
   if (objectType->isDict()) {
     llvm::Value* key = emitExpr(builder, *index.start());
-    llvm::Function* fn =
-        runtimeDecl("sere_dict_del", builder.getInt32Ty(), {builder.getPtrTy(), builder.getPtrTy()});
+    llvm::Function* fn = runtimeDecl(
+        "sere_dict_del", builder.getInt32Ty(), {builder.getPtrTy(), builder.getPtrTy()});
     builder.CreateCall(fn, {object, emitTempSlot(builder, key, objectType->dictKeyType())});
     return true;
   }
@@ -6132,7 +6234,8 @@ bool IRGenerator::emitWithExit(llvm::IRBuilder<>& builder, const WithFrame& fram
   return true;
 }
 
-bool IRGenerator::emitWith(llvm::IRBuilder<>& builder, const WithStmt& statement,
+bool IRGenerator::emitWith(llvm::IRBuilder<>& builder,
+                           const WithStmt& statement,
                            const Type* returnType) {
   const Type* record = statement.context().resolvedType() == nullptr
                            ? nullptr

@@ -20,6 +20,8 @@ constexpr KeywordEntry kKeywords[] = {
     {"and", TokenKind::KeywordAnd},
     {"as", TokenKind::KeywordAs},
     {"assert", TokenKind::KeywordAssert},
+    {"async", TokenKind::KeywordAsync},
+    {"await", TokenKind::KeywordAwait},
     {"break", TokenKind::KeywordBreak},
     {"case", TokenKind::KeywordCase},
     {"class", TokenKind::KeywordClass},
@@ -57,18 +59,27 @@ constexpr KeywordEntry kKeywords[] = {
     {"with", TokenKind::KeywordWith},
 };
 
-}  // namespace
+} // namespace
 
 Token::Token(TokenKind kind, SourceRange range, std::string spelling)
-    : kind_(kind), range_(range), spelling_(std::move(spelling)) {}
+    : kind_(kind), range_(range), spelling_(std::move(spelling)) {
+}
 
-TokenKind Token::kind() const { return kind_; }
+TokenKind Token::kind() const {
+  return kind_;
+}
 
-SourceRange Token::range() const { return range_; }
+SourceRange Token::range() const {
+  return range_;
+}
 
-SourceLocation Token::location() const { return range_.start; }
+SourceLocation Token::location() const {
+  return range_.start;
+}
 
-std::string_view Token::spelling() const { return spelling_; }
+std::string_view Token::spelling() const {
+  return spelling_;
+}
 
 TokenKind keywordKind(std::string_view spelling) {
   for (const KeywordEntry& entry : kKeywords) {
@@ -221,6 +232,10 @@ std::string_view tokenKindName(TokenKind kind) {
     return "KeywordAs";
   case TokenKind::KeywordAssert:
     return "KeywordAssert";
+  case TokenKind::KeywordAsync:
+    return "KeywordAsync";
+  case TokenKind::KeywordAwait:
+    return "KeywordAwait";
   case TokenKind::KeywordBreak:
     return "KeywordBreak";
   case TokenKind::KeywordCase:
@@ -414,7 +429,7 @@ namespace {
   return 10;
 }
 
-}  // namespace
+} // namespace
 
 ParsedInteger parseIntegerToken(std::string_view spelling) {
   ParsedInteger parsed;
@@ -462,4 +477,4 @@ ParsedInteger parseIntegerToken(std::string_view spelling) {
   return parsed;
 }
 
-}  // namespace sere
+} // namespace sere

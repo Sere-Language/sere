@@ -1,0 +1,12 @@
+def route(path: str) -> Callable:
+    print("register:", path)
+    def decorator(fn: Callable) -> Callable:
+        return fn
+    return decorator
+
+@route("/x")
+def handle(a: i32) -> i32:
+    return a + 1
+
+def main() -> i32:
+    return handle(4)

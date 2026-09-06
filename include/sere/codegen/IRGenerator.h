@@ -23,7 +23,7 @@ class LLVMContext;
 class Module;
 class Type;
 class Value;
-}  // namespace llvm
+} // namespace llvm
 
 namespace sere {
 
@@ -33,19 +33,17 @@ class IRGenerator {
 public:
   IRGenerator(llvm::LLVMContext& context, DiagnosticEngine& diagnostics, TypeContext& types);
 
-  [[nodiscard]] std::unique_ptr<llvm::Module> emit(
-      const Module& ast,
-      const std::string& moduleName,
-      const std::vector<const Module*>* imported = nullptr);
+  [[nodiscard]] std::unique_ptr<llvm::Module>
+  emit(const Module& ast,
+       const std::string& moduleName,
+       const std::vector<const Module*>* imported = nullptr);
 
 private:
   llvm::Type* lower(const Type* type);
-  llvm::Value* emitAnyTypeMatch(llvm::IRBuilder<>& builder, llvm::Value* value,
-                              const Type* target);
+  llvm::Value* emitAnyTypeMatch(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* target);
   std::uint64_t valueSize(const Type* type);
-  llvm::Function* runtimeDecl(const char* name,
-                              llvm::Type* returnType,
-                              const std::vector<llvm::Type*>& params);
+  llvm::Function*
+  runtimeDecl(const char* name, llvm::Type* returnType, const std::vector<llvm::Type*>& params);
   llvm::FunctionType* llvmFunctionType(const FunctionDef& function);
   std::unordered_map<std::string, llvm::Function*> functions_{};
   std::unordered_map<std::string, const FunctionDef*> functionDefs_{};
@@ -58,7 +56,8 @@ private:
   void declareFunctions(const Module& ast);
   void declareGlobals(const Module& ast);
   llvm::Value* declareGlobal(const std::string& name, const Type* type);
-  void rememberStaticDecl(const std::string& name, const FunctionDef& function, const VarDecl& decl);
+  void
+  rememberStaticDecl(const std::string& name, const FunctionDef& function, const VarDecl& decl);
   void emitModuleInitFn(const Module& ast, const std::vector<const Module*>* imported = nullptr);
   llvm::Value* emitIndex(llvm::IRBuilder<>& builder, const IndexExpr& expr);
   llvm::Value* emitListLiteral(llvm::IRBuilder<>& builder, const ListLiteral& expr);
@@ -77,9 +76,7 @@ private:
   void declareInstantiations();
   bool emitInstantiations(const std::vector<const Module*>& modules);
   bool emitCMainWrapper(llvm::Function* userMain);
-  bool emitStatement(llvm::IRBuilder<>& builder,
-                     const Stmt& statement,
-                     const Type* returnType);
+  bool emitStatement(llvm::IRBuilder<>& builder, const Stmt& statement, const Type* returnType);
   llvm::Value* emitExpr(llvm::IRBuilder<>& builder, const Expr& expr);
   llvm::Value* emitCall(llvm::IRBuilder<>& builder, const CallExpr& expr);
   llvm::Value* emitConstruct(llvm::IRBuilder<>& builder, const CallExpr& expr);
@@ -93,10 +90,8 @@ private:
                              const Type* from,
                              const Type* to,
                              SourceRange range);
-  llvm::Value* emitNumericCast(llvm::IRBuilder<>& builder,
-                               llvm::Value* value,
-                               const Type* from,
-                               const Type* to);
+  llvm::Value*
+  emitNumericCast(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* from, const Type* to);
   llvm::Value* emitStrLiteral(llvm::IRBuilder<>& builder, std::string_view text);
   llvm::Value* emitStrFromC(llvm::IRBuilder<>& builder, const char* fnName, llvm::Value* value);
   llvm::Value* emitStrConcat(llvm::IRBuilder<>& builder, llvm::Value* left, llvm::Value* right);
@@ -127,20 +122,21 @@ private:
                  const std::vector<std::unique_ptr<Stmt>>& body,
                  const Type* returnType);
   llvm::Value* emitDefault(const Type* type);
-  llvm::Value* emitCoerce(llvm::IRBuilder<>& builder,
-                          llvm::Value* value,
-                          const Type* from,
-                          const Type* to);
+  llvm::Value*
+  emitCoerce(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* from, const Type* to);
   void emitReturn(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* returnType);
-  llvm::Value* emitStrCompare(llvm::IRBuilder<>& builder, BinaryOp op, llvm::Value* left,
-                              llvm::Value* right);
-  void widenIntegerPair(llvm::IRBuilder<>& builder, llvm::Value*& left, llvm::Value*& right,
-                        const Type* leftType, const Type* rightType);
-  llvm::Value* createLocalSlot(llvm::IRBuilder<>& builder, const std::string& name,
-                               const Type* type);
+  llvm::Value*
+  emitStrCompare(llvm::IRBuilder<>& builder, BinaryOp op, llvm::Value* left, llvm::Value* right);
+  void widenIntegerPair(llvm::IRBuilder<>& builder,
+                        llvm::Value*& left,
+                        llvm::Value*& right,
+                        const Type* leftType,
+                        const Type* rightType);
+  llvm::Value*
+  createLocalSlot(llvm::IRBuilder<>& builder, const std::string& name, const Type* type);
   [[nodiscard]] static unsigned enumTagFromField(const RecordField* field);
-  llvm::Value* emitEnumSwitchStr(llvm::IRBuilder<>& builder, llvm::Value* tag, const Type* type,
-                                 bool qualified);
+  llvm::Value*
+  emitEnumSwitchStr(llvm::IRBuilder<>& builder, llvm::Value* tag, const Type* type, bool qualified);
   llvm::Value* emitComprehension(llvm::IRBuilder<>& builder, const ComprehensionExpr& expr);
   llvm::Value* emitTernary(llvm::IRBuilder<>& builder, const TernaryExpr& expr);
   llvm::Value* emitTuple(llvm::IRBuilder<>& builder, const TupleExpr& expr);
@@ -168,10 +164,15 @@ private:
   };
   bool emitWith(llvm::IRBuilder<>& builder, const WithStmt& statement, const Type* returnType);
   bool emitWithExit(llvm::IRBuilder<>& builder, const WithFrame& frame);
-  llvm::Value* emitDunderOnSelf(llvm::IRBuilder<>& builder, const Type* record, llvm::Value* self,
-                                std::string_view name, const std::vector<llvm::Value*>& extra);
+  llvm::Value* emitDunderOnSelf(llvm::IRBuilder<>& builder,
+                                const Type* record,
+                                llvm::Value* self,
+                                std::string_view name,
+                                const std::vector<llvm::Value*>& extra);
   void emitDeferred(llvm::IRBuilder<>& builder, const Type* returnType);
-  bool emitUnpack(llvm::IRBuilder<>& builder, const TupleExpr& targets, llvm::Value* value,
+  bool emitUnpack(llvm::IRBuilder<>& builder,
+                  const TupleExpr& targets,
+                  llvm::Value* value,
                   const Type* valueType);
   llvm::Value* packStr(llvm::IRBuilder<>& builder, llvm::Value* data, llvm::Value* len);
   llvm::Value* emitEnumTag(llvm::IRBuilder<>& builder, llvm::Value* value);
@@ -182,7 +183,8 @@ private:
                               const Expr& object,
                               std::string_view name,
                               const std::vector<llvm::Value*>& extra);
-  llvm::Value* emitObjectPointer(llvm::IRBuilder<>& builder, const Expr& object, const Type* record);
+  llvm::Value*
+  emitObjectPointer(llvm::IRBuilder<>& builder, const Expr& object, const Type* record);
   llvm::Value* emitNamedMethod(llvm::IRBuilder<>& builder,
                                const std::string& llvmName,
                                llvm::Value* self,
@@ -227,4 +229,4 @@ private:
   std::vector<WithFrame> withStack_{};
 };
 
-}  // namespace sere
+} // namespace sere

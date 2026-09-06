@@ -30,6 +30,7 @@ enum class NodeKind {
   MemberExpr,
   BinaryExpr,
   UnaryExpr,
+  AwaitExpr,
   CastExpr,
   IndexExpr,
   ListLiteral,
@@ -369,6 +370,16 @@ public:
 
 private:
   UnaryOp op_;
+  std::unique_ptr<Expr> operand_;
+};
+
+class AwaitExpr final : public Expr {
+public:
+  explicit AwaitExpr(SourceRange range, std::unique_ptr<Expr> operand);
+  [[nodiscard]] const Expr& operand() const;
+  [[nodiscard]] Expr& operand();
+
+private:
   std::unique_ptr<Expr> operand_;
 };
 
@@ -793,6 +804,8 @@ public:
           std::vector<EnumVariant> variants);
   [[nodiscard]] const std::string& name() const;
   [[nodiscard]] const std::vector<std::string>& typeParams() const;
+  void setTypeConstraints(std::vector<std::unique_ptr<TypeExpr>> constraints);
+  [[nodiscard]] const std::vector<std::unique_ptr<TypeExpr>>& typeConstraints() const;
   [[nodiscard]] const std::vector<EnumVariant>& variants() const;
   [[nodiscard]] std::vector<EnumVariant>& variants();
   [[nodiscard]] const std::vector<std::unique_ptr<FunctionDef>>& methods() const;
@@ -808,6 +821,7 @@ public:
 private:
   std::string name_;
   std::vector<std::string> typeParams_{};
+  std::vector<std::unique_ptr<TypeExpr>> typeConstraints_{};
   std::vector<EnumVariant> variants_;
   std::vector<std::unique_ptr<FunctionDef>> methods_{};
   std::vector<std::string> decorators_{};
@@ -850,6 +864,8 @@ public:
   [[nodiscard]] bool isOverride() const;
   void setAbstract(bool value);
   void setOverride(bool value);
+  [[nodiscard]] bool isAsync() const;
+  void setAsync(bool value);
   void setDecorators(std::vector<std::string> decorators);
   [[nodiscard]] const std::vector<std::string>& decorators() const;
   void setDecoratorExprs(std::vector<std::unique_ptr<Expr>> exprs);
@@ -861,6 +877,8 @@ public:
   [[nodiscard]] const std::string& modulePrefix() const;
   void setTypeParams(std::vector<std::string> typeParams);
   [[nodiscard]] const std::vector<std::string>& typeParams() const;
+  void setTypeConstraints(std::vector<std::unique_ptr<TypeExpr>> constraints);
+  [[nodiscard]] const std::vector<std::unique_ptr<TypeExpr>>& typeConstraints() const;
   void setInferredReturn(bool value);
   [[nodiscard]] bool hasInferredReturn() const;
   void setProperty(PropertyKind kind, std::string name);
@@ -881,11 +899,13 @@ private:
   const Type* decoratedType_ = nullptr;
   std::string modulePrefix_{};
   std::vector<std::string> typeParams_{};
+  std::vector<std::unique_ptr<TypeExpr>> typeConstraints_{};
   std::string propertyName_{};
   PropertyKind propertyKind_ = PropertyKind::None;
   bool isAbstract_ = false;
   bool isOverride_ = false;
   bool inferredReturn_ = false;
+  bool isAsync_ = false;
   std::vector<Capture> captures_{};
 };
 
@@ -906,6 +926,8 @@ public:
   [[nodiscard]] std::vector<std::unique_ptr<TypeExpr>>& baseTypes();
   void setBaseTypes(std::vector<std::unique_ptr<TypeExpr>> bases);
   [[nodiscard]] const std::vector<std::string>& typeParams() const;
+  void setTypeConstraints(std::vector<std::unique_ptr<TypeExpr>> constraints);
+  [[nodiscard]] const std::vector<std::unique_ptr<TypeExpr>>& typeConstraints() const;
   void setDecorators(std::vector<std::string> decorators);
   [[nodiscard]] const std::vector<std::string>& decorators() const;
   void setDecoratorExprs(std::vector<std::unique_ptr<Expr>> exprs);
@@ -925,6 +947,7 @@ private:
   std::vector<std::string> bases_{};
   std::vector<std::unique_ptr<TypeExpr>> baseTypes_{};
   std::vector<std::string> typeParams_{};
+  std::vector<std::unique_ptr<TypeExpr>> typeConstraints_{};
   std::vector<std::string> decorators_{};
   std::vector<std::unique_ptr<Expr>> decoratorExprs_{};
   const Type* decoratedType_ = nullptr;

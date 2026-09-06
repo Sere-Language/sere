@@ -49,7 +49,7 @@ struct CompilerOptions {
   std::string passes;
 };
 
-[[nodiscard]] bool parseCommandLine(int argc, char** argv, CompilerOptions& options,
-                                    std::string& error);
+[[nodiscard]] bool
+parseCommandLine(int argc, char** argv, CompilerOptions& options, std::string& error);
 
-}  // namespace sere
+} // namespace sere

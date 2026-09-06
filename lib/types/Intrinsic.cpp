@@ -144,4 +144,4 @@ IntrinsicKind intrinsicByName(std::string_view name) {
   return IntrinsicKind::None;
 }
 
-}  // namespace sere
+} // namespace sere

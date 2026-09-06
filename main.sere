@@ -1,31 +1,8 @@
-class Argument[T]:
-    name: str
-    dest: Shared[T]
-    required: bool
 
-    def __init__(self, name: str, dest: Shared[T], required: bool):
-        self.name = name
-        self.dest = dest
-        self.required = required
-
-    def __str__(self) -> str:
-        return self.name
-
-class ArgumentParser:
-    description: str
-    arguments: list[Argument]
-
-    def __init__(self, description: str):
-        self.description = description
-        self.arguments = list[Argument]()
-
-    def add_argument[T](self, name: str, dest: Shared[T], required: bool):
-        arg = Argument[T](name, dest, required)
-        self.arguments.append(arg)
-        print(len(self.arguments))
-
-def main(argv: list[str]) -> i32:
-    parser = ArgumentParser("Example application")
-    parser.add_argument[str]("example", Shared[str](), True)
-    print("Success!")
+async def getName() -> str:
+    return "Alice"
+    
+async def main() -> i32:
+    name = await getName()
+    print(name)
     return 0

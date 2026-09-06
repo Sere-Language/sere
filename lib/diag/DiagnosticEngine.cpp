@@ -140,8 +140,10 @@ void enableVirtualTerminal() {
   return std::max<std::size_t>(1, (std::min)(count, maxCount));
 }
 
-void appendSnippet(std::ostringstream& out, const Diagnostic& diagnostic,
-                   const SourceManager* source, bool color) {
+void appendSnippet(std::ostringstream& out,
+                   const Diagnostic& diagnostic,
+                   const SourceManager* source,
+                   bool color) {
   if (diagnostic.range.start.line == 0) {
     return;
   }
@@ -151,12 +153,12 @@ void appendSnippet(std::ostringstream& out, const Diagnostic& diagnostic,
     return;
   }
   const std::uint32_t lineNo = diagnostic.range.start.line;
-  const std::uint32_t column = diagnostic.range.start.column == 0 ? 1 : diagnostic.range.start.column;
+  const std::uint32_t column =
+      diagnostic.range.start.column == 0 ? 1 : diagnostic.range.start.column;
   const std::string lineLabel = std::to_string(lineNo);
   const std::string gutter(lineLabel.size(), ' ');
   const std::string bar = paint(color, kBlue, "|");
-  out << " " << paint(color, kBlue, "-->") << " " << file << ':' << lineNo << ':' << column
-      << '\n';
+  out << " " << paint(color, kBlue, "-->") << " " << file << ':' << lineNo << ':' << column << '\n';
   out << " " << gutter << " " << bar << '\n';
   out << " " << paint(color, kBlue, lineLabel) << " " << bar << " " << line << '\n';
   if (line.empty()) {
@@ -168,21 +170,22 @@ void appendSnippet(std::ostringstream& out, const Diagnostic& diagnostic,
       << paint(color, severityColor(diagnostic.severity), std::string(carets, '^')) << '\n';
 }
 
-void appendDiagnostic(std::ostringstream& out, const Diagnostic& diagnostic,
-                      const SourceManager* source, bool color) {
+void appendDiagnostic(std::ostringstream& out,
+                      const Diagnostic& diagnostic,
+                      const SourceManager* source,
+                      bool color) {
   if (color) {
-    out << kBold << severityColor(diagnostic.severity) << severityName(diagnostic.severity)
-        << "[" << diagnosticCodeName(diagnostic.code) << "]" << kReset << kBold << ": " << kReset;
+    out << kBold << severityColor(diagnostic.severity) << severityName(diagnostic.severity) << "["
+        << diagnosticCodeName(diagnostic.code) << "]" << kReset << kBold << ": " << kReset;
   } else {
-    out << severityName(diagnostic.severity) << "[" << diagnosticCodeName(diagnostic.code)
-        << "]: ";
+    out << severityName(diagnostic.severity) << "[" << diagnosticCodeName(diagnostic.code) << "]: ";
   }
   out << diagnostic.message << '\n';
   appendSnippet(out, diagnostic, source, color);
   if (!diagnostic.help.empty()) {
     if (color) {
-      out << " " << paint(color, kGreen, "=") << " " << kBold << kGreen << "help" << kReset
-          << kBold << ": " << kReset;
+      out << " " << paint(color, kGreen, "=") << " " << kBold << kGreen << "help" << kReset << kBold
+          << ": " << kReset;
     } else {
       out << " = help: ";
     }
@@ -190,7 +193,7 @@ void appendDiagnostic(std::ostringstream& out, const Diagnostic& diagnostic,
   }
 }
 
-}  // namespace
+} // namespace
 
 void DiagnosticEngine::setSource(const SourceManager* source) {
   source_ = source;
@@ -198,9 +201,13 @@ void DiagnosticEngine::setSource(const SourceManager* source) {
   ensureIgnores();
 }
 
-const SourceManager* DiagnosticEngine::source() const { return source_; }
+const SourceManager* DiagnosticEngine::source() const {
+  return source_;
+}
 
-void DiagnosticEngine::setColorMode(ColorMode mode) { colorMode_ = mode; }
+void DiagnosticEngine::setColorMode(ColorMode mode) {
+  colorMode_ = mode;
+}
 
 void DiagnosticEngine::snapshot(Diagnostic& diagnostic) const {
   if (source_ == nullptr || diagnostic.range.start.line == 0) {
@@ -324,7 +331,9 @@ bool DiagnosticEngine::hasErrors() const {
   return false;
 }
 
-const std::vector<Diagnostic>& DiagnosticEngine::diagnostics() const { return diagnostics_; }
+const std::vector<Diagnostic>& DiagnosticEngine::diagnostics() const {
+  return diagnostics_;
+}
 
 bool DiagnosticEngine::shouldColor() const {
   if (colorMode_ == ColorMode::Never) {
@@ -391,4 +400,4 @@ void DiagnosticEngine::printAll(const SourceManager& source) const {
   }
 }
 
-}  // namespace sere
+} // namespace sere

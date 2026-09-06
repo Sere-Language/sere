@@ -1,0 +1,13 @@
+def number() -> i32:
+    return 42
+
+def combine() -> i32:
+    x = 10
+    a = number()
+    b = number()
+    return x + a + b
+
+def main(argv: list[str]) -> i32:
+    value = combine()
+    print(value)
+    return 0

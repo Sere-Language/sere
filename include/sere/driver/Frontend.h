@@ -3,8 +3,8 @@
 
 #pragma once
 
-#include "sere/ast/Syntax.h"
 #include "sere/ast/Query.h"
+#include "sere/ast/Syntax.h"
 #include "sere/diag/DiagnosticEngine.h"
 #include "sere/sema/TypeChecker.h"
 #include "sere/source/SourceManager.h"
@@ -23,9 +23,8 @@ class Frontend {
 public:
   [[nodiscard]] static std::string overlayKey(const std::filesystem::path& path);
   void setFileOverlay(std::unordered_map<std::string, std::string> overlay);
-  [[nodiscard]] bool analyze(const std::string& path,
-                             const std::string& text,
-                             const std::filesystem::path& stdlibDir);
+  [[nodiscard]] bool
+  analyze(const std::string& path, const std::string& text, const std::filesystem::path& stdlibDir);
 
   [[nodiscard]] DiagnosticEngine& diagnostics();
   [[nodiscard]] const DiagnosticEngine& diagnostics() const;
@@ -62,4 +61,4 @@ private:
   std::unordered_map<std::string, std::string> overlay_{};
 };
 
-}  // namespace sere
+} // namespace sere

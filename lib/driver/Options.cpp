@@ -23,7 +23,8 @@ void printUsage(std::string& error) {
       "  clean               Remove bin/ and dist/ artifacts\n"
       "  shell               Enter the Sere project shell\n"
       "  refresh-bin         Copy this compiler into ./bin (stdlib and runtime too)\n"
-      "  update              Copy this compiler into %LOCALAPPDATA%\\Programs\\Sere if it differs, then the project venv\n"
+      "  update              Copy this compiler into %LOCALAPPDATA%\\Programs\\Sere if it differs, "
+      "then the project venv\n"
       "  build-installer     Package a Windows installer (compiler, LLVM, stdlib, editor)\n"
       "\n"
       "After init:\n"
@@ -109,7 +110,7 @@ void printUsage(std::string& error) {
   return false;
 }
 
-}  // namespace
+} // namespace
 
 bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::string& error) {
   bool endOfFlags = false;
@@ -235,8 +236,8 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
       } else if (mode == "auto") {
         options.colorMode = ColorMode::Auto;
       } else {
-        error = "invalid --color mode '" + std::string(mode) +
-                "' (expected auto, always, or never)";
+        error =
+            "invalid --color mode '" + std::string(mode) + "' (expected auto, always, or never)";
         return false;
       }
       continue;
@@ -351,4 +352,4 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
   return true;
 }
 
-}  // namespace sere
+} // namespace sere

@@ -16,14 +16,14 @@ class DiagnosticEngine;
 
 [[nodiscard]] std::filesystem::path findStdlibDirectory(const std::filesystem::path& compilerDir);
 
-[[nodiscard]] std::unique_ptr<Module> parsePrelude(
-    DiagnosticEngine& diagnostics,
-    const std::filesystem::path& stdlibDir,
-    const std::optional<std::string>& text = std::nullopt);
+[[nodiscard]] std::unique_ptr<Module>
+parsePrelude(DiagnosticEngine& diagnostics,
+             const std::filesystem::path& stdlibDir,
+             const std::optional<std::string>& text = std::nullopt);
 
 [[nodiscard]] bool loadPrelude(Module& userModule,
                                DiagnosticEngine& diagnostics,
                                const std::filesystem::path& stdlibDir,
                                const std::optional<std::string>& text = std::nullopt);
 
-}  // namespace sere
+} // namespace sere

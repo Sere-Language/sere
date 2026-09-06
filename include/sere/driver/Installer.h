@@ -11,4 +11,4 @@ namespace sere {
 /// Inno Setup installer. Windows only.
 [[nodiscard]] int buildInstaller(const CompilerOptions& options);
 
-}  // namespace sere
+} // namespace sere

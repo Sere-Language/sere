@@ -13,8 +13,8 @@ namespace sere {
 namespace {
 
 [[nodiscard]] bool isAsciiLetter(char character) {
-  return (character >= 'a' && character <= 'z') ||
-         (character >= 'A' && character <= 'Z') || character == '_';
+  return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+         character == '_';
 }
 
 [[nodiscard]] bool isAsciiDigit(char character) {
@@ -69,12 +69,15 @@ constexpr int kBinaryBase = 2;
 constexpr int kOctalBase = 8;
 constexpr int kHexBase = 16;
 
-}  // namespace
+} // namespace
 
 Lexer::Lexer(const SourceManager& source, DiagnosticEngine& diagnostics, bool embedded)
-    : source_(&source), diagnostics_(&diagnostics), atLineStart_(!embedded) {}
+    : source_(&source), diagnostics_(&diagnostics), atLineStart_(!embedded) {
+}
 
-bool Lexer::isAtEnd() const { return offset_ >= source_->size(); }
+bool Lexer::isAtEnd() const {
+  return offset_ >= source_->size();
+}
 
 char Lexer::peek(std::size_t ahead) const {
   return source_->charAt(offset_ + ahead);
@@ -178,8 +181,7 @@ Token Lexer::lexDecimalNumber(std::size_t start) {
   }
   if (peek() == 'e' || peek() == 'E') {
     const char signOrDigit = peek(1);
-    const char firstDigit =
-        (signOrDigit == '+' || signOrDigit == '-') ? peek(2) : signOrDigit;
+    const char firstDigit = (signOrDigit == '+' || signOrDigit == '-') ? peek(2) : signOrDigit;
     if (isAsciiDigit(firstDigit)) {
       isFloat = true;
       advance();
@@ -276,8 +278,7 @@ Token Lexer::lexFromLineStart() {
       diagnostics_->help("indent with spaces only");
       advance();
     }
-    const bool blankLine =
-        peek() == '#' || peek() == '\n' || peek() == '\r' || isAtEnd();
+    const bool blankLine = peek() == '#' || peek() == '\n' || peek() == '\r' || isAtEnd();
     if (blankLine) {
       if (peek() == '#') {
         while (!isAtEnd() && peek() != '\n') {
@@ -554,4 +555,4 @@ std::vector<Token> Lexer::tokenizeAll() {
   return tokens;
 }
 
-}  // namespace sere
+} // namespace sere
