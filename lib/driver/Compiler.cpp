@@ -28,6 +28,8 @@
 #include <llvm/Support/Program.h>
 #include <llvm/Support/raw_ostream.h>
 
+#include <cstdlib>
+
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -284,6 +286,179 @@ void copyBesideOutput(const std::filesystem::path& from, const std::filesystem::
   return "error";
 }
 
+static std::string nodeKindText(NodeKind kind) {
+  switch (kind) {
+    case NodeKind::TypeExpr: return "TypeExpr";
+    case NodeKind::IntegerLiteral: return "IntegerLiteral";
+    case NodeKind::FloatLiteral: return "FloatLiteral";
+    case NodeKind::StringLiteral: return "StringLiteral";
+    case NodeKind::InterpolatedStringExpr: return "InterpolatedStringExpr";
+    case NodeKind::BooleanLiteral: return "BooleanLiteral";
+    case NodeKind::NoneLiteral: return "NoneLiteral";
+    case NodeKind::NameExpr: return "NameExpr";
+    case NodeKind::CallExpr: return "CallExpr";
+    case NodeKind::MemberExpr: return "MemberExpr";
+    case NodeKind::BinaryExpr: return "BinaryExpr";
+    case NodeKind::UnaryExpr: return "UnaryExpr";
+    case NodeKind::AwaitExpr: return "AwaitExpr";
+    case NodeKind::CastExpr: return "CastExpr";
+    case NodeKind::IndexExpr: return "IndexExpr";
+    case NodeKind::ListLiteral: return "ListLiteral";
+    case NodeKind::DictLiteral: return "DictLiteral";
+    case NodeKind::ComprehensionExpr: return "ComprehensionExpr";
+    case NodeKind::TernaryExpr: return "TernaryExpr";
+    case NodeKind::TupleExpr: return "TupleExpr";
+    case NodeKind::WalrusExpr: return "WalrusExpr";
+    case NodeKind::LambdaExpr: return "LambdaExpr";
+    case NodeKind::SpliceExpr: return "SpliceExpr";
+    case NodeKind::MacroInvokeExpr: return "MacroInvokeExpr";
+    case NodeKind::VarDecl: return "VarDecl";
+    case NodeKind::AssignStmt: return "AssignStmt";
+    case NodeKind::ReturnStmt: return "ReturnStmt";
+    case NodeKind::ExprStmt: return "ExprStmt";
+    case NodeKind::PassStmt: return "PassStmt";
+    case NodeKind::BreakStmt: return "BreakStmt";
+    case NodeKind::ContinueStmt: return "ContinueStmt";
+    case NodeKind::IfStmt: return "IfStmt";
+    case NodeKind::WhileStmt: return "WhileStmt";
+    case NodeKind::ForStmt: return "ForStmt";
+    case NodeKind::AssertStmt: return "AssertStmt";
+    case NodeKind::RaiseStmt: return "RaiseStmt";
+    case NodeKind::TryStmt: return "TryStmt";
+    case NodeKind::MatchStmt: return "MatchStmt";
+    case NodeKind::DelStmt: return "DelStmt";
+    case NodeKind::DeferStmt: return "DeferStmt";
+    case NodeKind::WithStmt: return "WithStmt";
+    case NodeKind::FunctionDef: return "FunctionDef";
+    case NodeKind::ClassDef: return "ClassDef";
+    case NodeKind::EnumDef: return "EnumDef";
+    case NodeKind::TypeAlias: return "TypeAlias";
+    case NodeKind::ImportStmt: return "ImportStmt";
+    case NodeKind::MacroDef: return "MacroDef";
+    case NodeKind::MacroInvokeStmt: return "MacroInvokeStmt";
+    case NodeKind::Module: return "Module";
+  }
+  return "Unknown";
+}
+
+static llvm::json::Object jsonSymbolObject(const SemanticSymbol& symbol) {
+  llvm::json::Object obj{
+      {"name", symbol.name},
+      {"kind", symbol.kind},
+      {"type", symbol.type != nullptr ? symbol.type->name() : ""},
+  };
+  if (!symbol.typeDisplay.empty()) {
+    obj["typeDisplay"] = symbol.typeDisplay;
+  }
+  if (!symbol.paramNames.empty()) {
+    obj["paramNames"] = symbol.paramNames;
+  }
+  if (!symbol.paramTypes.empty()) {
+    obj["paramTypes"] = symbol.paramTypes;
+  }
+  if (!symbol.returnType.empty()) {
+    obj["returnType"] = symbol.returnType;
+  }
+  if (!symbol.container.empty()) {
+    obj["container"] = symbol.container;
+  }
+  if (symbol.location.line != 0 || symbol.location.column != 0) {
+    obj["line"] = static_cast<int64_t>(symbol.location.line);
+    obj["column"] = static_cast<int64_t>(symbol.location.column);
+  }
+  return obj;
+}
+
+static llvm::json::Value astJsonValue(const Node& node) {
+  llvm::json::Object obj{
+      {"kind", nodeKindText(node.kind())}};
+  if (node.range().start.line != 0 || node.range().start.column != 0) {
+    obj["range"] = std::to_string(node.range().start.line) + ":" + std::to_string(node.range().start.column);
+  }
+  switch (node.kind()) {
+    case NodeKind::FunctionDef: {
+      const auto& fd = static_cast<const FunctionDef&>(node);
+      obj["name"] = fd.name();
+      obj["isAsync"] = fd.isAsync();
+      obj["isExtern"] = fd.isExtern();
+      if (!fd.modulePrefix().empty()) {
+        obj["modulePrefix"] = fd.modulePrefix();
+      }
+      break;
+    }
+    case NodeKind::ClassDef: {
+      const auto& cd = static_cast<const ClassDef&>(node);
+      obj["name"] = cd.name();
+      break;
+    }
+    case NodeKind::EnumDef: {
+      const auto& ed = static_cast<const EnumDef&>(node);
+      obj["name"] = ed.name();
+      break;
+    }
+    case NodeKind::TypeAlias: {
+      const auto& alias = static_cast<const TypeAlias&>(node);
+      obj["name"] = alias.name();
+      break;
+    }
+    case NodeKind::MacroDef: {
+      const auto& macro = static_cast<const MacroDef&>(node);
+      obj["name"] = macro.name();
+      break;
+    }
+    case NodeKind::VarDecl: {
+      const auto& vd = static_cast<const VarDecl&>(node);
+      obj["name"] = vd.name();
+      break;
+    }
+    case NodeKind::ImportStmt: {
+      const auto& imp = static_cast<const ImportStmt&>(node);
+      obj["from"] = imp.isFrom();
+      obj["star"] = imp.star();
+      obj["modulePath"] = imp.modulePath();
+      obj["names"] = imp.names();
+      break;
+    }
+    default:
+      break;
+  }
+  if (node.kind() >= NodeKind::TypeExpr && node.kind() <= NodeKind::WalrusExpr) {
+    const auto& expr = static_cast<const Expr&>(node);
+    obj["type"] =
+        expr.resolvedType() != nullptr ? expr.resolvedType()->name() : std::string{};
+    if (node.kind() == NodeKind::CallExpr) {
+      const auto& call = static_cast<const CallExpr&>(node);
+      obj["callee"] = nodeKindText(call.callee().kind());
+    }
+  }
+  return llvm::json::Value(std::move(obj));
+}
+
+void printAstJson(const Module& module) {
+  llvm::json::Object root;
+  root["kind"] = "sere.ast";
+  root["statements"] = [](const std::vector<std::unique_ptr<Stmt>>& stmts) {
+    llvm::json::Array out;
+    for (const std::unique_ptr<Stmt>& stmt : stmts) {
+      out.push_back(astJsonValue(*stmt));
+    }
+    return out;
+  }(module.statements());
+  llvm::outs() << llvm::json::Value(std::move(root)) << '\n';
+}
+
+void printSymbolsJson(const TypeChecker& checker) {
+  llvm::json::Array items;
+  for (const SemanticSymbol& symbol : checker.symbols()) {
+    items.push_back(jsonSymbolObject(symbol));
+  }
+  llvm::json::Object root{
+      {"kind", "sere.symbols"},
+      {"symbols", std::move(items)},
+  };
+  llvm::outs() << llvm::json::Value(std::move(root)) << '\n';
+}
+
 void printAnalyzeJson(const DiagnosticEngine& diagnostics) {
   llvm::json::Array items;
   for (const Diagnostic& diagnostic : diagnostics.diagnostics()) {
@@ -333,8 +508,20 @@ int compileInput(const CompilerOptions& options) {
       language.stdlib.empty() ? findStdlibDirectory(compilerDirectory()) : language.stdlib;
   const bool ok = frontend.analyze(options.inputPath.string(), *text, stdlibDir);
   frontend.diagnostics().setColorMode(options.colorMode);
+  if (options.dumpAst) {
+    if (frontend.module() != nullptr) {
+      printAstJson(*frontend.module());
+    }
+    return frontend.diagnostics().hasErrors() ? 1 : 0;
+  }
   if (options.analyze) {
     printAnalyzeJson(frontend.diagnostics());
+    return frontend.diagnostics().hasErrors() ? 1 : 0;
+  }
+  if (options.dumpSymbols) {
+    if (frontend.checker() != nullptr) {
+      printSymbolsJson(*frontend.checker());
+    }
     return frontend.diagnostics().hasErrors() ? 1 : 0;
   }
   if (!ok || frontend.module() == nullptr || frontend.types() == nullptr ||
@@ -354,6 +541,18 @@ int compileInput(const CompilerOptions& options) {
   if (module == nullptr || frontend.diagnostics().hasErrors()) {
     frontend.diagnostics().printAll();
     return 1;
+  }
+  if (options.dumpLlvmIrRaw) {
+    std::error_code rawEc;
+    llvm::raw_fd_ostream rawOut("sere-raw-before-pipeline.ll", rawEc,
+                                llvm::sys::fs::OF_Text);
+    if (!rawEc) {
+      module->print(rawOut, nullptr);
+      llvm::outs() << "wrote sere-raw-before-pipeline.ll\n";
+    } else {
+      frontend.diagnostics().error("cannot write sere-raw-before-pipeline.ll: " +
+                                   rawEc.message());
+    }
   }
   std::string optError;
   if (!runOptPipeline(*module, options.optLevel, options.passes, optError)) {

@@ -364,6 +364,12 @@ llvm::FunctionType* IRGenerator::llvmFunctionType(const FunctionDef& function) {
     params.push_back(llvm::PointerType::getUnqual(*context_));
     return llvm::FunctionType::get(llvm::Type::getVoidTy(*context_), params, false);
   }
+  // An async function is a coroutine: its ramp returns the coroutine handle
+  // (a pointer), never the declared result value. The result travels through
+  // the coroutine promise instead.
+  if (function.isAsync()) {
+    return llvm::FunctionType::get(llvm::PointerType::getUnqual(*context_), params, false);
+  }
   return llvm::FunctionType::get(lower(fnType->returnType()), params, false);
 }
 
@@ -797,6 +803,24 @@ void IRGenerator::emitReturn(llvm::IRBuilder<>& builder,
                              const Type* returnType) {
   emitDeferred(builder, returnType);
   emitDrops(builder);
+  if (asyncFn_) {
+    if (asyncPromise_ != nullptr && value != nullptr && !value->getType()->isVoidTy()) {
+      llvm::Value* stored = value;
+      if (stored->getType() != asyncResultTy_) {
+        if (stored->getType()->isIntegerTy() && asyncResultTy_ != nullptr &&
+            asyncResultTy_->isIntegerTy()) {
+          stored = builder.CreateIntCast(stored, asyncResultTy_, true);
+        } else {
+          stored = nullptr;
+        }
+      }
+      if (stored != nullptr) {
+        builder.CreateStore(stored, asyncPromise_);
+      }
+    }
+    builder.CreateBr(asyncFinal_);
+    return;
+  }
   llvm::Function* function = builder.GetInsertBlock()->getParent();
   llvm::Type* llvmRet = function->getReturnType();
   if (llvmRet->isVoidTy()) {
@@ -2906,19 +2930,9 @@ llvm::Value* IRGenerator::emitCall(llvm::IRBuilder<>& builder, const CallExpr& e
   }
   if (callee->getReturnType()->isVoidTy()) {
     builder.CreateCall(callee, args);
-    if (functionDef != nullptr && functionDef->isAsync()) {
-      return emitTaskBox(builder, nullptr, nullptr);
-    }
     return nullptr;
   }
-  llvm::Value* result = builder.CreateCall(callee, args);
-  if (functionDef != nullptr && functionDef->isAsync()) {
-    const Type* inner = functionDef->resolvedType() == nullptr
-                            ? nullptr
-                            : functionDef->resolvedType()->returnType();
-    return emitTaskBox(builder, result, inner);
-  }
-  return result;
+  return builder.CreateCall(callee, args);
 }
 
 llvm::Value* IRGenerator::emitConstruct(llvm::IRBuilder<>& builder, const CallExpr& expr) {
@@ -4827,8 +4841,7 @@ IRGenerator::emitTaskUnbox(llvm::IRBuilder<>& builder, llvm::Value* task, const 
 llvm::Value* IRGenerator::emitAwait(llvm::IRBuilder<>& builder, const AwaitExpr& expr) {
   const Type* inner = nullptr;
   const Type* operandRaw = expr.operand().resolvedType();
-  const Type* operandType =
-      operandRaw == nullptr ? nullptr : operandRaw->canonical();
+  const Type* operandType = operandRaw == nullptr ? nullptr : operandRaw->canonical();
   const Type* probe = operandRaw != nullptr ? operandRaw : operandType;
   if (probe != nullptr && probe->isGenericCtor("Task") && probe->args().size() == 1) {
     inner = probe->args()[0];
@@ -4844,8 +4857,39 @@ llvm::Value* IRGenerator::emitAwait(llvm::IRBuilder<>& builder, const AwaitExpr&
       inner = resultType;
     }
   }
-  llvm::Value* task = emitExpr(builder, expr.operand());
-  return emitTaskUnbox(builder, task, inner);
+  llvm::Value* child = emitExpr(builder, expr.operand());
+  if (child == nullptr) {
+    return nullptr;
+  }
+  llvm::Function* fn = builder.GetInsertBlock()->getParent();
+  // The awaited child is a coroutine handle produced by an async call; its
+  // ramp already ran it to its first suspend point or to completion. Drive it
+  // to completion with @llvm.coro.resume, then read the typed result from the
+  // promise and destroy the frame.
+  llvm::BasicBlock* poll = llvm::BasicBlock::Create(*context_, "await.poll", fn);
+  llvm::BasicBlock* ready = llvm::BasicBlock::Create(*context_, "await.ready", fn);
+  llvm::Value* done0 = builder.CreateCall(asyncCoroDoneFn_, {child});
+  builder.CreateCondBr(done0, ready, poll);
+  builder.SetInsertPoint(poll);
+  builder.CreateCall(asyncCoroResumeFn_, {child});
+  llvm::Value* done1 = builder.CreateCall(asyncCoroDoneFn_, {child});
+  builder.CreateCondBr(done1, ready, poll);
+  builder.SetInsertPoint(ready);
+  llvm::Value* result = nullptr;
+  if (inner != nullptr && !inner->isVoidLike()) {
+    llvm::Type* ty = lower(inner->canonical());
+    if (ty != nullptr && !ty->isVoidTy()) {
+      const unsigned align =
+          static_cast<unsigned>(module_->getDataLayout().getABITypeAlign(ty).value());
+      llvm::Value* addr =
+          builder.CreateCall(asyncCoroPromiseFn_,
+                             {child, builder.getInt32(static_cast<int>(align)), builder.getFalse()},
+                             "await.result");
+      result = builder.CreateLoad(ty, addr);
+    }
+  }
+  builder.CreateCall(asyncCoroDestroyFn_, {child});
+  return result;
 }
 
 bool IRGenerator::shouldEmit(const FunctionDef& function) const {
@@ -4962,26 +5006,80 @@ bool IRGenerator::emitCMainWrapper(llvm::Function* userMain) {
   if (moduleInitFn_ != nullptr) {
     builder.CreateCall(moduleInitFn_);
   }
-  llvm::Value* result = nullptr;
+  const auto mainDef = functionDefs_.find("sere_main");
+  const FunctionDef* asyncDef =
+      mainDef == functionDefs_.end() ? nullptr : mainDef->second;
+  const bool asyncMain = asyncDef != nullptr && asyncDef->isAsync();
+  if (!asyncMain) {
+    llvm::Value* result = nullptr;
+    if (userMain->arg_size() == 1) {
+      llvm::Function* fromArgv = runtimeDecl("sere_list_from_argv", ptr, {i32, ptr});
+      llvm::Value* list = builder.CreateCall(fromArgv, {cMain->getArg(0), cMain->getArg(1)});
+      if (userMain->getReturnType()->isVoidTy()) {
+        builder.CreateCall(userMain, {list});
+      } else {
+        result = builder.CreateCall(userMain, {list});
+      }
+    } else if (userMain->getReturnType()->isVoidTy()) {
+      builder.CreateCall(userMain);
+    } else {
+      result = builder.CreateCall(userMain);
+    }
+    if (result != nullptr && (result->getType()->isVoidTy() || result->getType() != i32)) {
+      result = result->getType()->isIntegerTy() ? builder.CreateIntCast(result, i32, true)
+                                                : builder.getInt32(0);
+    }
+    builder.CreateRet(result == nullptr || result->getType()->isVoidTy() ? builder.getInt32(0)
+                                                                         : result);
+    return true;
+  }
+
+  // Async main: spawn the root coroutine, then drive it with @llvm.coro.resume
+  // until @llvm.coro.done, read its typed result from the promise, destroy the
+  // frame, and return the exit code.
+  llvm::Value* hdl = nullptr;
   if (userMain->arg_size() == 1) {
     llvm::Function* fromArgv = runtimeDecl("sere_list_from_argv", ptr, {i32, ptr});
     llvm::Value* list = builder.CreateCall(fromArgv, {cMain->getArg(0), cMain->getArg(1)});
-    if (userMain->getReturnType()->isVoidTy()) {
-      builder.CreateCall(userMain, {list});
-    } else {
-      result = builder.CreateCall(userMain, {list});
-    }
-  } else if (userMain->getReturnType()->isVoidTy()) {
-    builder.CreateCall(userMain);
+    hdl = builder.CreateCall(userMain, {list}, "root.coro");
   } else {
-    result = builder.CreateCall(userMain);
+    hdl = builder.CreateCall(userMain, {}, "root.coro");
   }
-  if (result != nullptr && (result->getType()->isVoidTy() || result->getType() != i32)) {
-    result = result->getType()->isIntegerTy() ? builder.CreateIntCast(result, i32, true)
-                                              : builder.getInt32(0);
+  llvm::Function* coroResume =
+      llvm::Intrinsic::getOrInsertDeclaration(module_, llvm::Intrinsic::coro_resume);
+  llvm::Function* coroDone =
+      llvm::Intrinsic::getOrInsertDeclaration(module_, llvm::Intrinsic::coro_done);
+  llvm::Function* coroPromise =
+      llvm::Intrinsic::getOrInsertDeclaration(module_, llvm::Intrinsic::coro_promise);
+  llvm::Function* coroDestroy =
+      llvm::Intrinsic::getOrInsertDeclaration(module_, llvm::Intrinsic::coro_destroy);
+
+  llvm::BasicBlock* loopBB = llvm::BasicBlock::Create(*context_, "drive.loop", cMain);
+  llvm::BasicBlock* doneBB = llvm::BasicBlock::Create(*context_, "drive.done", cMain);
+  builder.CreateBr(loopBB);
+  builder.SetInsertPoint(loopBB);
+  builder.CreateCall(coroResume, {hdl});
+  llvm::Value* isDone = builder.CreateCall(coroDone, {hdl});
+  builder.CreateCondBr(isDone, doneBB, loopBB);
+  builder.SetInsertPoint(doneBB);
+  llvm::Value* code = builder.getInt32(0);
+  const Type* retType = asyncDef->resolvedType() == nullptr
+                            ? nullptr
+                            : asyncDef->resolvedType()->returnType();
+  if (retType != nullptr && !retType->isVoidLike()) {
+    llvm::Type* retLL = lower(retType);
+    if (retLL != nullptr && !retLL->isVoidTy() && retLL->isIntegerTy()) {
+      const unsigned align =
+          static_cast<unsigned>(module_->getDataLayout().getABITypeAlign(retLL).value());
+      llvm::Value* addr = builder.CreateCall(
+          coroPromise, {hdl, builder.getInt32(static_cast<int>(align)), builder.getFalse()},
+          "root.result");
+      llvm::Value* value = builder.CreateLoad(retLL, addr);
+      code = builder.CreateIntCast(value, i32, true);
+    }
   }
-  builder.CreateRet(result == nullptr || result->getType()->isVoidTy() ? builder.getInt32(0)
-                                                                       : result);
+  builder.CreateCall(coroDestroy, {hdl});
+  builder.CreateRet(code);
   return true;
 }
 
@@ -5114,6 +5212,135 @@ bool IRGenerator::emitInstantiations(const std::vector<const Module*>& modules) 
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Async coroutine lowering (LLVM switched-resume coroutines).
+//
+// An `async def f() -> T` becomes a coroutine whose ramp returns the coroutine
+// handle (the Task[T] value). The declared result `T` is stored in a typed
+// promise `alloca` (passed to @llvm.coro.id) before the final suspend and read
+// back by the awaiter through @llvm.coro.promise. The CFG follows LLVM's
+// Coroutines documentation: suspend switches route resume(0)/destroy(1)/
+// suspend(default); cleanup frees the GC-allocated frame; suspend ends with
+// @llvm.coro.end and returns the handle.
+// ---------------------------------------------------------------------------
+
+static llvm::Function* sereCoroIntrinsic(llvm::Module* module,
+                                         unsigned id,
+                                         llvm::ArrayRef<llvm::Type*> tys = {}) {
+  return llvm::Intrinsic::getOrInsertDeclaration(
+      module, static_cast<llvm::Intrinsic::ID>(id), tys);
+}
+
+bool IRGenerator::setupAsyncCoroutine(llvm::IRBuilder<>& builder,
+                                      llvm::Function* llvmFn,
+                                      const Type* returnType) {
+  llvm::PointerType* ptrTy = builder.getPtrTy();
+  asyncCoroIdFn_ = sereCoroIntrinsic(module_, llvm::Intrinsic::coro_id);
+  asyncCoroSizeFn_ =
+      sereCoroIntrinsic(module_, llvm::Intrinsic::coro_size, {builder.getInt64Ty()});
+  asyncCoroBeginFn_ = sereCoroIntrinsic(module_, llvm::Intrinsic::coro_begin);
+  asyncCoroSuspendFn_ = sereCoroIntrinsic(module_, llvm::Intrinsic::coro_suspend);
+  asyncCoroFreeFn_ = sereCoroIntrinsic(module_, llvm::Intrinsic::coro_free);
+  asyncCoroEndFn_ = sereCoroIntrinsic(module_, llvm::Intrinsic::coro_end);
+  asyncCoroPromiseFn_ = sereCoroIntrinsic(module_, llvm::Intrinsic::coro_promise);
+  asyncCoroDoneFn_ = sereCoroIntrinsic(module_, llvm::Intrinsic::coro_done);
+  asyncCoroResumeFn_ = sereCoroIntrinsic(module_, llvm::Intrinsic::coro_resume);
+  asyncCoroDestroyFn_ = sereCoroIntrinsic(module_, llvm::Intrinsic::coro_destroy);
+
+  asyncResultTy_ = nullptr;
+  asyncPromise_ = nullptr;
+  if (returnType != nullptr && !returnType->isVoidLike()) {
+    asyncResultTy_ = lower(returnType);
+    if (asyncResultTy_ != nullptr && !asyncResultTy_->isVoidTy()) {
+      asyncPromise_ = builder.CreateAlloca(asyncResultTy_, nullptr, "promise");
+    }
+  }
+
+  llvm::Value* id = builder.CreateCall(asyncCoroIdFn_,
+                                       {builder.getInt32(0),
+                                        asyncPromise_ == nullptr
+                                            ? llvm::ConstantPointerNull::get(ptrTy)
+                                            : asyncPromise_,
+                                        llvm::ConstantPointerNull::get(ptrTy),
+                                        llvm::ConstantPointerNull::get(ptrTy)},
+                                       "coro.id");
+  llvm::Value* size = builder.CreateCall(asyncCoroSizeFn_, {}, "coro.size");
+  llvm::Function* alloc = runtimeDecl("sere_alloc", ptrTy, {builder.getInt64Ty()});
+  llvm::Value* mem = builder.CreateCall(alloc, {size}, "coro.alloc");
+  llvm::Function* rootFn = runtimeDecl("sere_gc_add_root", builder.getVoidTy(), {ptrTy});
+  builder.CreateCall(rootFn, {mem});
+  llvm::Value* hdl = builder.CreateCall(asyncCoroBeginFn_, {id, mem}, "coro.hdl");
+  asyncId_ = id;
+  asyncMem_ = mem;
+  asyncHdl_ = hdl;
+
+  asyncFinal_ = llvm::BasicBlock::Create(*context_, "coro.final", llvmFn);
+  asyncCleanup_ = llvm::BasicBlock::Create(*context_, "coro.cleanup", llvmFn);
+  asyncSuspend_ = llvm::BasicBlock::Create(*context_, "coro.suspend", llvmFn);
+
+  // Every async coroutine begins with an initial non-final suspend so that the
+  // coroutine is a genuine switched-resume coroutine from CoroSplit's point of
+  // view (a coroutine with only a final suspend is never split by LLVM). The
+  // ramp therefore returns a suspended (lazy) task handle; the executor or an
+  // `await` resumes it through `coro.resume`.
+  llvm::BasicBlock* coroInit = llvm::BasicBlock::Create(*context_, "coro.init", llvmFn);
+  llvm::BasicBlock* coroBody = llvm::BasicBlock::Create(*context_, "coro.body", llvmFn);
+  builder.CreateBr(coroInit);
+  builder.SetInsertPoint(coroInit);
+  llvm::Value* initSuspend = builder.CreateCall(
+      asyncCoroSuspendFn_,
+      {llvm::ConstantTokenNone::get(*context_), builder.getFalse()},
+      "coro.init.suspend");
+  llvm::SwitchInst* initSwitch = builder.CreateSwitch(initSuspend, asyncSuspend_, 2);
+  initSwitch->addCase(builder.getInt8(0), coroBody);
+  initSwitch->addCase(builder.getInt8(1), asyncCleanup_);
+  builder.SetInsertPoint(coroBody);
+
+  llvmFn->addFnAttr("presplitcoroutine");
+  return true;
+}
+
+void IRGenerator::buildAsyncTail(llvm::IRBuilder<>& builder, llvm::Function* llvmFn) {
+  llvm::Type* ptrTy = builder.getPtrTy();
+  (void)llvmFn;
+  llvm::Value* noneToken = llvm::ConstantTokenNone::get(*context_);
+
+  // coro.cleanup: free the GC frame and release its root.
+  {
+    llvm::IRBuilder<> cb(asyncCleanup_);
+    llvm::Value* freeMem = cb.CreateCall(asyncCoroFreeFn_, {asyncId_, asyncHdl_}, "coro.free");
+    llvm::Function* unrootFn = runtimeDecl("sere_gc_remove_root", cb.getVoidTy(), {ptrTy});
+    cb.CreateCall(unrootFn, {freeMem});
+    llvm::Function* freeFn = runtimeDecl("sere_free", cb.getVoidTy(), {ptrTy});
+    cb.CreateCall(freeFn, {freeMem});
+    cb.CreateBr(asyncSuspend_);
+  }
+
+  // coro.suspend: mark the end of coroutine access and return the handle.
+  {
+    llvm::IRBuilder<> sb(asyncSuspend_);
+    sb.CreateCall(asyncCoroEndFn_, {asyncHdl_, sb.getFalse(), noneToken});
+    sb.CreateRet(asyncHdl_);
+  }
+
+  // coro.final: final suspend; resuming a completed coroutine is UB (trap).
+  {
+    llvm::IRBuilder<> fb(asyncFinal_);
+    llvm::Value* suspended = fb.CreateCall(asyncCoroSuspendFn_, {noneToken, fb.getTrue()},
+                                           "coro.final.suspend");
+    llvm::BasicBlock* trap =
+        llvm::BasicBlock::Create(*context_, "coro.trap", asyncFinal_->getParent());
+    llvm::SwitchInst* sw = fb.CreateSwitch(suspended, asyncSuspend_, 2);
+    sw->addCase(fb.getInt8(0), trap);
+    sw->addCase(fb.getInt8(1), asyncCleanup_);
+    llvm::IRBuilder<> tb(trap);
+    llvm::Function* trapFn =
+        llvm::Intrinsic::getOrInsertDeclaration(module_, llvm::Intrinsic::trap);
+    tb.CreateCall(trapFn, {});
+    tb.CreateUnreachable();
+  }
+}
+
 bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& overrideName) {
   if (function.isExtern()) {
     return true;
@@ -5131,6 +5358,7 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
   loops_.clear();
   defers_.clear();
   withStack_.clear();
+  asyncFn_ = function.isAsync();
   if (moduleInitFn_ != nullptr && function.name() == "main" && function.params().size() != 1) {
     builder.CreateCall(moduleInitFn_);
   }
@@ -5182,6 +5410,13 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
     ++index;
   }
   const Type* returnType = fnType->returnType();
+  if (asyncFn_) {
+    if (!setupAsyncCoroutine(builder, llvmFn, returnType)) {
+      currentFunction_ = nullptr;
+      asyncFn_ = false;
+      return false;
+    }
+  }
   for (const std::unique_ptr<Stmt>& statement : function.body()) {
     if (!emitStatement(builder, *statement, returnType)) {
       return false;
@@ -5193,7 +5428,11 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
   if (builder.GetInsertBlock()->getTerminator() == nullptr) {
     emitReturn(builder, nullptr, returnType);
   }
+  if (asyncFn_) {
+    buildAsyncTail(builder, llvmFn);
+  }
   currentFunction_ = nullptr;
+  asyncFn_ = false;
   return true;
 }
 

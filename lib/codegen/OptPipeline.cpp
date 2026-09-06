@@ -7,23 +7,15 @@
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Passes/StandardInstrumentations.h>
 #include <llvm/Support/Error.h>
+#include <llvm/Support/FileSystem.h>
+#include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/Coroutines/CoroCleanup.h>
 #include <llvm/Transforms/Coroutines/CoroEarly.h>
 #include <llvm/Transforms/Coroutines/CoroSplit.h>
 
+#include <cstdlib>
+
 namespace sere {
-namespace {
-
-// Async functions are lowered with LLVM's coroutine intrinsics. The splitting
-// passes must run at *every* optimization level (including O0, where the rest
-// of the pipeline is skipped) or the coroutine frames are never materialized.
-void addCoroutinePasses(llvm::ModulePassManager& mpm) {
-  mpm.addPass(llvm::CoroEarlyPass());
-  mpm.addPass(llvm::createModuleToPostOrderCGSCCPassAdaptor(llvm::CoroSplitPass()));
-  mpm.addPass(llvm::CoroCleanupPass());
-}
-
-} // namespace
 
 bool parseOptLevel(std::string_view text, OptLevel& level, std::string& error) {
   if (text == "0" || text == "O0") {
@@ -58,6 +50,13 @@ bool runOptPipeline(llvm::Module& module,
                     OptLevel level,
                     std::string_view passes,
                     std::string& error) {
+  if (std::getenv("SERE_DUMP_RAW_IR") != nullptr) {
+    std::error_code dumpEc;
+    llvm::raw_fd_ostream dumpOut("sere-coro-before.ll", dumpEc, llvm::sys::fs::OF_Text);
+    if (!dumpEc) {
+      module.print(dumpOut, nullptr);
+    }
+  }
   llvm::LoopAnalysisManager loops;
   llvm::FunctionAnalysisManager functions;
   llvm::CGSCCAnalysisManager cgscc;
@@ -69,16 +68,14 @@ bool runOptPipeline(llvm::Module& module,
   builder.registerLoopAnalyses(loops);
   builder.crossRegisterProxies(loops, functions, cgscc, modules);
 
+  llvm::ModulePassManager coroPipeline;
   llvm::ModulePassManager pipeline;
   if (!passes.empty()) {
     if (auto failed = builder.parsePassPipeline(pipeline, passes)) {
       error = llvm::toString(std::move(failed));
       return false;
     }
-    addCoroutinePasses(pipeline);
-  } else if (level == OptLevel::O0) {
-    addCoroutinePasses(pipeline);
-  } else {
+  } else if (level != OptLevel::O0) {
     llvm::OptimizationLevel llvmLevel = llvm::OptimizationLevel::O1;
     if (level == OptLevel::O2) {
       llvmLevel = llvm::OptimizationLevel::O2;
@@ -90,8 +87,16 @@ bool runOptPipeline(llvm::Module& module,
       llvmLevel = llvm::OptimizationLevel::Oz;
     }
     pipeline = builder.buildPerModuleDefaultPipeline(llvmLevel);
-    addCoroutinePasses(pipeline);
   }
+
+  // Coroutine lowering must run before any middle-end pass that could clone or
+  // inline an unsplit coroutine. Parsing the textual pipeline mirrors what the
+  // standalone `opt` driver does and is proven to split Sere's coroutine shape.
+  if (auto failed = builder.parsePassPipeline(coroPipeline, "coro-early,coro-split,coro-cleanup")) {
+    error = llvm::toString(std::move(failed));
+    return false;
+  }
+  coroPipeline.run(module, modules);
   pipeline.run(module, modules);
   return true;
 }

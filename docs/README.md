@@ -21,6 +21,7 @@ The compiler is `sere` (`tools/sere`). The same binary also speaks LSP
 | Understand `Any` and collection inference | [gradual-typing.md](gradual-typing.md) |
 | Restrict a generic parameter to specific types | [Constrained generics](language.md#constrained-generic-parameters) |
 | Work with numeric lists and matrices | [arrays.md](arrays.md) |
+| Wrap functions or classes with `@name` / `@name(...)` | **[decorators.md](decorators.md)** |
 | Learn or look up the language | **[language.md](language.md)** |
 | See the whole pipeline | [architecture.md](architecture.md) |
 | Add a keyword, type, operator, intrinsic, stdlib module, native lib, GC, or LSP feature | **[extending.md](extending.md)** |

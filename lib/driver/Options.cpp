@@ -41,6 +41,9 @@ void printUsage(std::string& error) {
       "  --emit-llvm         Write LLVM IR instead of linking an executable\n"
       "  --emit-asm, -S      Write native assembly instead of linking an executable\n"
       "  --dump-tokens       Print lexer tokens\n"
+      "  --dump-ast          Print the parsed AST as JSON and stop\n"
+      "  --dump-symbols      Print the semantic symbol table as JSON and stop\n"
+      "  --dump-llvm-ir-raw  Write pre-optimization LLVM IR to sere-raw-before-pipeline.ll\n"
       "  --analyze           Print JSON diagnostics and stop\n"
       "  --lsp               Run the language server on stdin/stdout\n"
       "  --refresh-bin       Same as refresh-bin\n"
@@ -147,6 +150,18 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
     }
     if (argument == "--dump-tokens") {
       options.dumpTokens = true;
+      continue;
+    }
+    if (argument == "--dump-ast") {
+      options.dumpAst = true;
+      continue;
+    }
+    if (argument == "--dump-symbols") {
+      options.dumpSymbols = true;
+      continue;
+    }
+    if (argument == "--dump-llvm-ir-raw") {
+      options.dumpLlvmIrRaw = true;
       continue;
     }
     if (argument == "--analyze") {

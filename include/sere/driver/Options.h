@@ -32,6 +32,9 @@ struct CompilerOptions {
   bool emitLlvm = false;
   bool emitAsm = false;
   bool dumpTokens = false;
+  bool dumpAst = false;
+  bool dumpSymbols = false;
+  bool dumpLlvmIrRaw = false;
   bool analyze = false;
   bool lsp = false;
   bool help = false;

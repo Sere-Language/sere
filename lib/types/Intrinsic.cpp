@@ -1,145 +1,81 @@
 /// @file Intrinsic.cpp
-/// Name table for compiler memory/collection primitives.
+/// Single declarative registry for compiler intrinsics.
+///
+/// This is the only file that maps an IntrinsicKind to its source name,
+/// parameter list, and builtin-symbol visibility. Everything else iterates
+/// allIntrinsics() or reads intrinsicInfo(kind), so adding an intrinsic never
+/// requires touching sema, codegen, or LSP name tables again.
 
 #include "sere/types/Intrinsic.h"
 
+#include <array>
+#include <cstddef>
+
 namespace sere {
+namespace {
+
+/// One row per IntrinsicKind, in enumerator order (index == enum value).
+constexpr std::array<IntrinsicInfo, 27> IntrinsicTable = {{
+    {IntrinsicKind::None, "", "", false},
+    {IntrinsicKind::UniqueNew, "unique", "value", true},
+    {IntrinsicKind::SharedNew, "shared", "value", true},
+    {IntrinsicKind::Alloc, "alloc", "value", true},
+    {IntrinsicKind::Free, "free", "value", true},
+    {IntrinsicKind::Load, "load", "value", true},
+    {IntrinsicKind::Store, "store", "pointer value", true},
+    {IntrinsicKind::Len, "len", "items", true},
+    {IntrinsicKind::Print, "print", "*values", true},
+    {IntrinsicKind::Str, "str", "value", true},
+    {IntrinsicKind::Repr, "repr", "", true},
+    {IntrinsicKind::Append, "append", "value", true},
+    {IntrinsicKind::BuiltinMethod, "", "", false},
+    {IntrinsicKind::ListNew, "list", "", true},
+    {IntrinsicKind::ArrayNew, "array", "", true},
+    {IntrinsicKind::DictNew, "dict", "", true},
+    {IntrinsicKind::Range, "range", "start stop step", true},
+    {IntrinsicKind::TypeOf, "typeof", "value", true},
+    {IntrinsicKind::IsInstance, "isinstance", "value type", true},
+    {IntrinsicKind::Dir, "dir", "value", true},
+    {IntrinsicKind::Inspect, "inspect", "value", true},
+    {IntrinsicKind::SizeOf, "sizeof", "value", true},
+    {IntrinsicKind::AlignOf, "alignof", "value", true},
+    {IntrinsicKind::Panic, "panic", "value", true},
+    {IntrinsicKind::Super, "super", "", false},
+    {IntrinsicKind::Parse, "parse", "text", true},
+    {IntrinsicKind::TryParse, "try_parse", "text", true},
+}};
+
+// Compile-time guards: the table must never be empty and must begin with the
+// None sentinel row so intrinsicInfo() always has a valid fallback to return.
+static_assert(!IntrinsicTable.empty());
+static_assert(IntrinsicTable.front().kind == IntrinsicKind::None);
+
+constexpr IntrinsicInfo FallbackIntrinsic = {IntrinsicKind::None, "", "", false};
+
+} // namespace
+
+std::span<const IntrinsicInfo> allIntrinsics() {
+  return IntrinsicTable;
+}
+
+const IntrinsicInfo& intrinsicInfo(IntrinsicKind kind) {
+  const std::size_t kindIndex = static_cast<std::size_t>(kind);
+  if (kindIndex >= IntrinsicTable.size()) {
+    // Bounds check: a kind added without a registry row must not index OOB.
+    return FallbackIntrinsic;
+  }
+  return IntrinsicTable.at(kindIndex);
+}
 
 std::string_view intrinsicName(IntrinsicKind kind) {
-  switch (kind) {
-  case IntrinsicKind::UniqueNew:
-    return "unique";
-  case IntrinsicKind::SharedNew:
-    return "shared";
-  case IntrinsicKind::Alloc:
-    return "alloc";
-  case IntrinsicKind::Free:
-    return "free";
-  case IntrinsicKind::Load:
-    return "load";
-  case IntrinsicKind::Store:
-    return "store";
-  case IntrinsicKind::Len:
-    return "len";
-  case IntrinsicKind::Print:
-    return "print";
-  case IntrinsicKind::Str:
-    return "str";
-  case IntrinsicKind::Repr:
-    return "repr";
-  case IntrinsicKind::Append:
-    return "append";
-  case IntrinsicKind::BuiltinMethod:
-    return "";
-  case IntrinsicKind::ListNew:
-    return "list";
-  case IntrinsicKind::ArrayNew:
-    return "array";
-  case IntrinsicKind::DictNew:
-    return "dict";
-  case IntrinsicKind::Range:
-    return "range";
-  case IntrinsicKind::TypeOf:
-    return "typeof";
-  case IntrinsicKind::IsInstance:
-    return "isinstance";
-  case IntrinsicKind::Dir:
-    return "dir";
-  case IntrinsicKind::Inspect:
-    return "inspect";
-  case IntrinsicKind::SizeOf:
-    return "sizeof";
-  case IntrinsicKind::AlignOf:
-    return "alignof";
-  case IntrinsicKind::Panic:
-    return "panic";
-  case IntrinsicKind::Super:
-    return "super";
-  case IntrinsicKind::Parse:
-    return "parse";
-  case IntrinsicKind::TryParse:
-    return "try_parse";
-  case IntrinsicKind::None:
-    return "";
-  }
-  return "";
+  return intrinsicInfo(kind).name;
 }
 
 IntrinsicKind intrinsicByName(std::string_view name) {
-  if (name == "unique") {
-    return IntrinsicKind::UniqueNew;
-  }
-  if (name == "shared") {
-    return IntrinsicKind::SharedNew;
-  }
-  if (name == "alloc") {
-    return IntrinsicKind::Alloc;
-  }
-  if (name == "free") {
-    return IntrinsicKind::Free;
-  }
-  if (name == "load") {
-    return IntrinsicKind::Load;
-  }
-  if (name == "store") {
-    return IntrinsicKind::Store;
-  }
-  if (name == "len") {
-    return IntrinsicKind::Len;
-  }
-  if (name == "print") {
-    return IntrinsicKind::Print;
-  }
-  if (name == "str") {
-    return IntrinsicKind::Str;
-  }
-  if (name == "repr") {
-    return IntrinsicKind::Repr;
-  }
-  if (name == "append") {
-    return IntrinsicKind::Append;
-  }
-  if (name == "list") {
-    return IntrinsicKind::ListNew;
-  }
-  if (name == "array") {
-    return IntrinsicKind::ArrayNew;
-  }
-  if (name == "dict") {
-    return IntrinsicKind::DictNew;
-  }
-  if (name == "range") {
-    return IntrinsicKind::Range;
-  }
-  if (name == "typeof") {
-    return IntrinsicKind::TypeOf;
-  }
-  if (name == "isinstance") {
-    return IntrinsicKind::IsInstance;
-  }
-  if (name == "dir") {
-    return IntrinsicKind::Dir;
-  }
-  if (name == "inspect") {
-    return IntrinsicKind::Inspect;
-  }
-  if (name == "sizeof") {
-    return IntrinsicKind::SizeOf;
-  }
-  if (name == "alignof") {
-    return IntrinsicKind::AlignOf;
-  }
-  if (name == "panic") {
-    return IntrinsicKind::Panic;
-  }
-  if (name == "super") {
-    return IntrinsicKind::Super;
-  }
-  if (name == "parse") {
-    return IntrinsicKind::Parse;
-  }
-  if (name == "try_parse") {
-    return IntrinsicKind::TryParse;
+  for (const IntrinsicInfo& info : IntrinsicTable) {
+    if (!info.name.empty() && info.name == name) {
+      return info.kind;
+    }
   }
   return IntrinsicKind::None;
 }

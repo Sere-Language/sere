@@ -94,6 +94,31 @@ add_test(NAME sere.example.hello
 set_tests_properties(sere.example.hello PROPERTIES
   ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
 
+add_test(NAME sere.example.hello.ast
+  COMMAND "$<TARGET_FILE:sere>" --dump-ast
+          "${CMAKE_SOURCE_DIR}/examples/hello.sere")
+set_tests_properties(sere.example.hello.ast PROPERTIES
+  ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
+
+add_test(NAME sere.example.hello.symbols
+  COMMAND "$<TARGET_FILE:sere>" --dump-symbols
+          "${CMAKE_SOURCE_DIR}/examples/hello.sere")
+set_tests_properties(sere.example.hello.symbols PROPERTIES
+  ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
+
+add_test(NAME sere.example.hello.raw-ir
+  COMMAND "$<TARGET_FILE:sere>" --dump-llvm-ir-raw
+          "${CMAKE_SOURCE_DIR}/examples/hello.sere")
+set_tests_properties(sere.example.hello.raw-ir PROPERTIES
+  ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
+
+add_test(NAME sere.example.hello.combined
+  COMMAND "$<TARGET_FILE:sere>" --dump-llvm-ir-raw --emit-llvm
+          "${CMAKE_SOURCE_DIR}/examples/hello.sere"
+          -o "${CMAKE_BINARY_DIR}/hello-combined.ll")
+set_tests_properties(sere.example.hello.combined PROPERTIES
+  ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
+
 add_test(NAME sere.example.aliases
   COMMAND "$<TARGET_FILE:sere>" --emit-llvm
           "${CMAKE_SOURCE_DIR}/examples/aliases.sere"

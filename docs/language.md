@@ -36,20 +36,21 @@ The process exit code is `main`'s `i32` return value.
 5. [Expressions](#expressions)
 6. [Statements](#statements)
 7. [Functions](#functions)
-8. [Classes, structs, and enums](#classes-structs-and-enums)
-9. [Modules and imports](#modules-and-imports)
-10. [Memory and pointers](#memory-and-pointers)
-11. [Collections and strings](#collections-and-strings)
-12. [Pattern matching](#pattern-matching)
-13. [Errors](#errors)
-14. [Macros](#macros)
-15. [Introspection and platform](#introspection-and-platform)
-16. [Intrinsics](#intrinsics)
-17. [Standard library](#standard-library)
-18. [Native interop](#native-interop)
-19. [Diagnostics](#diagnostics)
-20. [Reserved, not implemented](#reserved-not-implemented)
-21. [Examples](#examples)
+8. [Decorators](#decorators)
+9. [Classes, structs, and enums](#classes-structs-and-enums)
+10. [Modules and imports](#modules-and-imports)
+11. [Memory and pointers](#memory-and-pointers)
+12. [Collections and strings](#collections-and-strings)
+13. [Pattern matching](#pattern-matching)
+14. [Errors](#errors)
+15. [Macros](#macros)
+16. [Introspection and platform](#introspection-and-platform)
+17. [Intrinsics](#intrinsics)
+18. [Standard library](#standard-library)
+19. [Native interop](#native-interop)
+20. [Diagnostics](#diagnostics)
+21. [Reserved, not implemented](#reserved-not-implemented)
+22. [Examples](#examples)
 
 ---
 
@@ -105,7 +106,7 @@ Identifiers: ASCII letters, digits, and `_`. Keywords are reserved.
 
 ```
 False  None  True
-and  as  assert  break  case  class  const  continue
+and  as  assert  async  await  break  case  class  const  continue
 def  defer  del  elif  else  enum  except  extern  finally
 for  from  if  import  in  is  lambda  macro  match
 not  or  pass  raise  return  static  struct  super
@@ -113,7 +114,9 @@ try  type  while  with
 ```
 
 `const` binds a readonly name. `lambda` is an anonymous function. `with`
-requires `__enter__` / `__exit__` on the context type.
+requires `__enter__` / `__exit__` on the context type. `async` and `await`
+are reserved but not ready to use yet — see
+[Reserved, not implemented](#reserved-not-implemented).
 
 ### Literals
 
@@ -274,44 +277,10 @@ def bump() -> i32:
 - Module-level `static` and function-level `static` persist
 - Functions and types can be aliased: `donut = print`
 
-Decorators follow Python: `@name`, `@name(args)`, and `@Class.method` on
-`def`, methods, `class`, and `struct`. Closest decorator runs first
-(`@a` then `@b` on `f` is `f = a(b(f))`). Built-ins stay reserved names
-(`@public`, `@private`, `@abstract`, `@override`, `@frozen`, `@flags`,
-`@static`).
-
-```sere
-def identity(fn: Callable) -> Callable:
-    return fn
-
-def labeled(with_params: bool) -> Callable:
-    return identity
-
-class Hook:
-    def wrap(self, fn: Callable) -> Callable:
-        return fn
-
-@identity
-def add(a: i32, b: i32) -> i32:
-    return a + b
-
-@labeled(with_params=True)
-def mul(a: i32, b: i32) -> i32:
-    return a * b
-
-@Hook.wrap
-def sub(a: i32, b: i32) -> i32:
-    return a - b
-```
-
-| Decorator | On | Effect |
-| --- | --- | --- |
-| `@public` / `@private` | field, `def`, property accessor, `class`, `struct`, `enum`, `type`, `macro`, module binding | `@private` is not exported: `import` / `from` and `module.name` cannot see it (`PermissionError`). Private methods and setters are only usable inside the owning class. |
-| `@static` | field | Same as `static name: T`: one shared class variable |
-| `@abstract` | method | Empty/`pass` body must be overridden; a real body is a default hook |
-| `@override` | method | Marks an override |
-| `@frozen` | class | Fields are not assignable after init |
-| `@flags` | enum | Parsed and stored; no extra checking yet |
+A declaration may be preceded by `@` decorator lines. Reserved modifier
+decorators (`@public`, `@private`, `@static`, `@abstract`, `@override`,
+`@frozen`, `@flags`) and user-defined runtime decorators are covered in
+[Decorators](#decorators).
 
 ---
 
@@ -412,8 +381,8 @@ with Guard() as value:
 ```
 
 Untyped `lambda x: ...` parameters are `Any`. Lambdas do not capture enclosing
-locals; pass values as parameters. `with` calls `__enter__` and `__exit__` on
-one evaluated context object.
+locals; pass values as parameters, or use a nested `def`, which can capture.
+`with` calls `__enter__` and `__exit__` on one evaluated context object.
 
 ---
 
@@ -436,6 +405,8 @@ def identity[T](value: T) -> T:
 - `print(..., sep=" ", end="\n")` — `end=""` suppresses the trailing newline
 - Generic type parameters: `[T]` on `def` or `class`
 - Methods take `self` as the first parameter
+- Nested `def` is allowed and may capture enclosing locals — useful for
+decorator wrappers and closures (lambdas still cannot capture)
 
 Native:
 
@@ -494,6 +465,70 @@ bare `Box` cannot silently select `Any`.
 
 See [generic_constraints.sere](../examples/generic_constraints.sere) for an
 executable example with functions, classes, methods, and enum payloads.
+
+---
+
+## Decorators
+
+Sere has two kinds of decorator:
+
+- **Reserved modifiers**, handled at compile time: `@public`, `@private`,
+  `@static`, `@abstract`, `@override`, `@frozen`, `@flags`.
+- **Runtime decorators**: any user callable applied with `@name`,
+  `@name(args)`, or `@Class.method`.
+
+Both kinds may appear in the same stack. Decorators run **bottom-up** — the
+one closest to the declaration runs first, so `@a` above `@b` on `f` means
+`f = a(b(f))`.
+
+### Reserved decorators
+
+| Decorator | On | Effect |
+| --- | --- | --- |
+| `@public` / `@private` | field, `def`, property accessor, `class`, `struct`, `enum`, `type`, `macro`, module binding | `@private` is not exported: `import` / `from` and `module.name` cannot see it (`PermissionError`). Private methods and setters are only usable inside the owning class. |
+| `@static` | field | Same as `static name: T`: one shared class variable |
+| `@abstract` | method | Empty/`pass` body must be overridden; a real body is a default hook |
+| `@override` | method | Marks an override |
+| `@frozen` | class | Fields are not assignable after init |
+| `@flags` | enum | Variants are bit flags; `Flag.A in mask` is a bitwise test |
+
+Reserved decorator names cannot be redefined and never produce a runtime
+wrapper.
+
+### Runtime decorators
+
+A runtime decorator is a callable that receives the decorated object and
+returns its replacement:
+
+```sere
+def identity(fn: Callable) -> Callable:
+    return fn
+
+def logged(fn: Function[[i32], i32]) -> Function[[i32], i32]:
+    def wrapper(n: i32) -> i32:
+        print("logged", n)
+        return fn(n)
+    return wrapper
+
+@identity
+@logged
+def bump(n: i32) -> i32:
+    return n + 1
+```
+
+- `@name(args)` is a **factory**: the call is evaluated and its result is the
+decorator.
+- `@Class.method` uses a class method as the decorator.
+- Decorating a `class` / `struct` passes the **type object** to the decorator.
+
+Runtime decorators run **once, at module initialization**, before `main`. The
+wrapped value is stored and every later call to the name goes through it. A
+decorator whose static signature is unknown (it returns a bare `Callable`)
+leaves the original signature intact, Python-style. Nested `def` wrappers may
+capture the decorated function.
+
+The full reference — type-checking rules, factory and class-method patterns,
+class decoration, and diagnostics — is in **[decorators.md](decorators.md)**.
 
 ---
 
@@ -1043,14 +1078,42 @@ Sere is a **typed Python superset**, not CPython. These remain out of scope or
 incomplete. They diagnose instead of generating silent wrong code:
 
 - keyword-only parameters (after `*args`), `global` / `nonlocal`
-- Nested `def`, `yield`
+- `yield` / generator functions (a nested `def` is fine — see
+  [Functions](#functions))
 - Unmodified CPython stdlib (use Sere modules such as `requests` and `wsgi`)
-- Lambda capture of enclosing locals (pass parameters instead)
+- Lambda capture of enclosing locals (pass parameters instead, or use a nested
+  `def`, which can capture)
 - `del name` (only `del xs[i]` / `del d[k]`)
 - `print x` as a statement (`print` is a call)
 
 If a construct parses but lowering is incomplete, you get
 `NotImplementedError` rather than silent wrong code.
+
+### Async / await status
+
+`async def`, `await`, and the `Task[T]` / `Future[T]` types parse and
+type-check. Calling an `async def` yields a `Task[T]`; `await` unwraps it back
+to `T` and may only appear inside an `async def`:
+
+```sere
+async def number() -> i32:
+    return 42
+
+async def combine() -> i32:
+    a = await number()
+    b = await number()
+    return a + b
+
+async def main(argv: list[str]) -> i32:
+    print(await combine())
+    return 0
+```
+
+The runtime lowering (LLVM switched-resume coroutines and the `coro-*`
+splitting passes) is under active development and is **not currently
+reliable** — compiled async programs are not guaranteed to build or run
+correctly. Treat `async` / `await` as a preview feature until this note is
+removed.
 
 ---
 

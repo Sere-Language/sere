@@ -209,6 +209,28 @@ int main() {
     return fail("expected --emit-llvm and --emit-asm together to fail");
   }
 
+  sere::CompilerOptions dumpAst;
+  if (!parseArgs({"sere", "--dump-ast", "main.sere"}, dumpAst, error)) {
+    return fail("failed to parse --dump-ast");
+  }
+  if (!dumpAst.dumpAst || dumpAst.emitLlvm || dumpAst.emitAsm) {
+    return fail("expected dumpAst from --dump-ast");
+  }
+  sere::CompilerOptions dumpSymbols;
+  if (!parseArgs({"sere", "--dump-symbols", "main.sere"}, dumpSymbols, error)) {
+    return fail("failed to parse --dump-symbols");
+  }
+  if (!dumpSymbols.dumpSymbols || dumpSymbols.emitLlvm || dumpSymbols.emitAsm) {
+    return fail("expected dumpSymbols from --dump-symbols");
+  }
+  sere::CompilerOptions dumpLlvmIrRaw;
+  if (!parseArgs({"sere", "--dump-llvm-ir-raw", "main.sere"}, dumpLlvmIrRaw, error)) {
+    return fail("failed to parse --dump-llvm-ir-raw");
+  }
+  if (!dumpLlvmIrRaw.dumpLlvmIrRaw || dumpLlvmIrRaw.emitLlvm || dumpLlvmIrRaw.emitAsm) {
+    return fail("expected dumpLlvmIrRaw from --dump-llvm-ir-raw");
+  }
+
   sere::CompilerOptions shellOptions;
   if (!parseArgs({"sere", "shell", "--host", "powershell"}, shellOptions, error)) {
     return fail("failed to parse 'sere shell'");

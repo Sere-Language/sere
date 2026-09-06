@@ -73,6 +73,10 @@ private:
   [[nodiscard]] static std::string functionStaticName(const FunctionDef& function,
                                                       std::string_view name);
   bool emitFunction(const FunctionDef& function, const std::string& overrideName = {});
+  bool setupAsyncCoroutine(llvm::IRBuilder<>& builder,
+                           llvm::Function* llvmFn,
+                           const Type* returnType);
+  void buildAsyncTail(llvm::IRBuilder<>& builder, llvm::Function* llvmFn);
   void declareInstantiations();
   bool emitInstantiations(const std::vector<const Module*>& modules);
   bool emitCMainWrapper(llvm::Function* userMain);
@@ -230,6 +234,26 @@ private:
   std::unordered_map<std::string, const Type*> subst_{};
   std::vector<const DeferStmt*> defers_{};
   std::vector<WithFrame> withStack_{};
+  // Coroutine lowering state for the async function currently being emitted.
+  bool asyncFn_ = false;
+  llvm::Value* asyncId_ = nullptr;
+  llvm::Value* asyncHdl_ = nullptr;
+  llvm::Value* asyncMem_ = nullptr;
+  llvm::Value* asyncPromise_ = nullptr;
+  llvm::Type* asyncResultTy_ = nullptr;
+  llvm::BasicBlock* asyncFinal_ = nullptr;
+  llvm::BasicBlock* asyncCleanup_ = nullptr;
+  llvm::BasicBlock* asyncSuspend_ = nullptr;
+  llvm::Function* asyncCoroIdFn_ = nullptr;
+  llvm::Function* asyncCoroSizeFn_ = nullptr;
+  llvm::Function* asyncCoroBeginFn_ = nullptr;
+  llvm::Function* asyncCoroSuspendFn_ = nullptr;
+  llvm::Function* asyncCoroFreeFn_ = nullptr;
+  llvm::Function* asyncCoroEndFn_ = nullptr;
+  llvm::Function* asyncCoroPromiseFn_ = nullptr;
+  llvm::Function* asyncCoroDoneFn_ = nullptr;
+  llvm::Function* asyncCoroResumeFn_ = nullptr;
+  llvm::Function* asyncCoroDestroyFn_ = nullptr;
 };
 
 } // namespace sere

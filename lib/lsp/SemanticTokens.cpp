@@ -10,6 +10,7 @@
 #include "sere/lex/TokenKind.h"
 #include "sere/sema/TypeChecker.h"
 #include "sere/source/SourceManager.h"
+#include "sere/types/Intrinsic.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -53,11 +54,12 @@ namespace {
 }
 
 [[nodiscard]] bool isCompilerIntrinsic(std::string_view name) {
-  return name == "print" || name == "str" || name == "unique" || name == "shared" ||
-         name == "alloc" || name == "load" || name == "store" || name == "free" || name == "len" ||
-         name == "range" || name == "append" || name == "typeof" || name == "isinstance" ||
-         name == "dir" || name == "inspect" || name == "sizeof" || name == "alignof" ||
-         name == "panic" || name == "parse" || name == "try_parse";
+  // Derive from the intrinsic registry so this list cannot drift from the
+  // intrinsics actually registered by the frontend.
+  const auto isDeclared = [name](const IntrinsicInfo& info) {
+    return info.declared && info.name == name;
+  };
+  return std::ranges::any_of(allIntrinsics(), isDeclared);
 }
 
 [[nodiscard]] bool isOperatorToken(TokenKind kind) {

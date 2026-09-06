@@ -22,6 +22,24 @@
 namespace sere {
 namespace {
 
+/// Expands the space-separated parameter-name string stored on an intrinsic
+/// registry row (IntrinsicInfo::params) into the vector used by symbols and
+/// hover text. Keeping the tokens inline on the row means there is a single
+/// source of truth for an intrinsic's parameters.
+[[nodiscard]] std::vector<std::string> splitIntrinsicParams(std::string_view params) {
+  std::vector<std::string> names;
+  std::size_t tokenStart = 0;
+  while (tokenStart <= params.size()) {
+    const std::size_t space = params.find(' ', tokenStart);
+    const std::size_t tokenEnd = space == std::string_view::npos ? params.size() : space;
+    if (tokenEnd > tokenStart) {
+      names.emplace_back(params.substr(tokenStart, tokenEnd - tokenStart));
+    }
+    tokenStart = tokenEnd + 1;
+  }
+  return names;
+}
+
 // Generic parameter names are scoped to their declaration, including unconstrained
 // parameters that shadow a constrained parameter with the same name.
 class TypeConstraintScope {
@@ -804,62 +822,15 @@ void TypeChecker::injectModuleGlobals() {
 }
 
 void TypeChecker::registerBuiltins() {
-  const IntrinsicKind kinds[] = {
-      IntrinsicKind::UniqueNew, IntrinsicKind::SharedNew,  IntrinsicKind::Alloc,
-      IntrinsicKind::Free,      IntrinsicKind::Load,       IntrinsicKind::Store,
-      IntrinsicKind::Len,       IntrinsicKind::Print,      IntrinsicKind::Str,
-      IntrinsicKind::Repr,      IntrinsicKind::Append,     IntrinsicKind::ListNew,
-      IntrinsicKind::ArrayNew,  IntrinsicKind::DictNew,    IntrinsicKind::Range,
-      IntrinsicKind::TypeOf,    IntrinsicKind::IsInstance, IntrinsicKind::Dir,
-      IntrinsicKind::Inspect,   IntrinsicKind::SizeOf,     IntrinsicKind::AlignOf,
-      IntrinsicKind::Panic,     IntrinsicKind::Parse,      IntrinsicKind::TryParse,
-  };
-  for (const IntrinsicKind kind : kinds) {
+  for (const IntrinsicInfo& info : allIntrinsics()) {
+    if (!info.declared) {
+      continue;
+    }
     Symbol symbol;
     symbol.kind = SymbolKind::Intrinsic;
-    symbol.intrinsic = kind;
-    switch (kind) {
-    case IntrinsicKind::Print:
-      symbol.paramNames = {"*values"};
-      break;
-    case IntrinsicKind::Len:
-      symbol.paramNames = {"items"};
-      break;
-    case IntrinsicKind::Str:
-    case IntrinsicKind::TypeOf:
-    case IntrinsicKind::Inspect:
-    case IntrinsicKind::SizeOf:
-    case IntrinsicKind::AlignOf:
-    case IntrinsicKind::Panic:
-    case IntrinsicKind::Free:
-    case IntrinsicKind::Load:
-    case IntrinsicKind::UniqueNew:
-    case IntrinsicKind::SharedNew:
-      symbol.paramNames = {"value"};
-      break;
-    case IntrinsicKind::Store:
-      symbol.paramNames = {"pointer", "value"};
-      break;
-    case IntrinsicKind::Append:
-      symbol.paramNames = {"value"};
-      break;
-    case IntrinsicKind::Range:
-      symbol.paramNames = {"start", "stop", "step"};
-      break;
-    case IntrinsicKind::IsInstance:
-      symbol.paramNames = {"value", "type"};
-      break;
-    case IntrinsicKind::Dir:
-      symbol.paramNames = {"value"};
-      break;
-    case IntrinsicKind::Parse:
-    case IntrinsicKind::TryParse:
-      symbol.paramNames = {"text"};
-      break;
-    default:
-      break;
-    }
-    if (!declare(std::string(intrinsicName(kind)), symbol, {}, false)) {
+    symbol.intrinsic = info.kind;
+    symbol.paramNames = splitIntrinsicParams(info.params);
+    if (!declare(std::string(info.name), symbol, {}, false)) {
       return;
     }
   }
