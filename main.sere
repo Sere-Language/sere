@@ -1,4 +1,8 @@
 
+import log
 
-async def main():
+def main():
+    logger = log.Logger("my-logger")
+    logger.info("Hello world")
+
     return 0

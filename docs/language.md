@@ -313,6 +313,40 @@ argument list is skipped, so `range(0, ..., 3)` is `range(0, 3)`.
 
 Ternary is Python-style: `x if cond else y`.
 
+### Calls
+
+Positional and keyword arguments may mix; keyword arguments must name a
+parameter: `scale(factor=3, value=1)`. Keyword arguments are **not** supported
+on indirect calls through a `Callable` or a function-typed value — use
+positional form there.
+
+### Comprehensions
+
+`[expr for name in iterable]` builds a `list`. The iterable may be a `range`,
+`list`, or `str`:
+
+```sere
+squares: list[i32] = [x * x for x in range(0, 5)]
+```
+
+### Truthiness and equality
+
+`bool`, integers, and floats test directly in `if` / `while`. `is` compares
+identity (enum variants, `None`); `==` compares value equality and works on
+strings, numbers, lists, dicts, and user types with `__eq__`-style arithmetic
+or comparison dunders.
+
+### Walrus
+
+`name := expr` assigns and yields the value. If `name` already exists it must
+be assignable (and not `const`); otherwise it is declared with the inferred
+type:
+
+```sere
+if (n := next()) > 0:
+    print(n)
+```
+
 ---
 
 ## Statements
@@ -832,6 +866,15 @@ match moved:
 `case _` is the wildcard. Enum payloads bind names in the arm. `case pat if expr`
 is a guard.
 
+When the subject is an enum, the `match` must be **exhaustive**: every variant
+is covered, or the last arm is `case _`. Missing variants are a compile-time
+diagnostic (`match is not exhaustive; missing Color.Blue`). Non-enum subjects
+have no exhaustiveness requirement.
+
+Payload bindings are plain names (`case Message.Move(x, y)`); the binding type
+is the declared payload type. Arms are checked in order; the first matching arm
+runs.
+
 ---
 
 ## Errors
@@ -846,6 +889,24 @@ except TypeError as e:
 `try` needs `except` and/or `finally`. Optional `else` (no error) and `finally`
 (always). `except Type` matches that class and its subclasses. Bare `except:`
 catches everything. `as e` binds an instance with `.message`.
+
+```sere
+try:
+    risky()
+except ValueError as e:
+    print(e.message)
+except RuntimeError:
+    print("known failure")
+else:
+    print("no error")
+finally:
+    print("always")
+```
+
+Multiple `except` clauses are allowed; the first matching handler runs.
+Exceptions propagate out of functions and `for` / `while` bodies until a
+handler or the top level. `defer` bodies run on the way out, including when an
+exception unwinds the function.
 
 Builtin exception classes (all subclass `Exception`):
 `SyntaxError`, `IndentationError`, `NameError`, `AttributeError`, `TypeError`,
@@ -969,18 +1030,38 @@ Type.__name__
 
 These names are compiler primitives (see `IntrinsicKind`):
 
-`unique` `shared` `alloc` `free` `load` `store` `len` `print` `str`
-`append` `list` / list construction `array` `dict` `range`
+`unique` `shared` `alloc` `free` `load` `store` `len` `print` `str` `repr`
+`parse` `try_parse` `append` `list` / list construction `array` `dict` `range`
 `typeof` `isinstance` `dir` `inspect` `sizeof` `alignof` `panic` `super`
 
 `print` accepts any printable value, including pointers. `str(x)` converts.
+`repr(x)` also converts (debug-oriented spelling for a value).
+
+### Conversion intrinsics
+
+| Call | Meaning |
+| --- | --- |
+| `str(x)` | Convert any value to its `str` form |
+| `repr(x)` | Convert any value to its `str` form (debug spelling) |
+| `parse[T](text)` | Parse `text` as `T` (`parse[i32]("123")`), `T | None` on failure |
+| `try_parse[T](text)` | Parse `text` as `T`, yielding `T | None` instead of a hard failure |
+
+Integers parse from decimal (plus `0x` / `0b` / `0o` prefixes); floats parse
+from decimal and exponent forms. `bool` parses `"True"` / `"False"`.
+
+### Input
+
+| Call | Meaning |
+| --- | --- |
+| `input(prompt: str)` | Print `prompt`, read one line from stdin, return it as `str` (from the prelude) |
 
 ---
 
 ## Standard library
 
-Injected: `stdlib/prelude.sere` (`abs`, `min`, `max`, `clamp`, `sign`,
-`Int` / `Float`, macros `dbg!` `todo!` `unreachable!` `cfg!`).
+Injected: `stdlib/prelude.sere` (`abs`, `min`, `max`, `clamp`, `sign`, `input`,
+`Int` / `Float`, the `Exception` class hierarchy, macros `dbg!` `todo!`
+`unreachable!` `cfg!`).
 
 Import the rest:
 

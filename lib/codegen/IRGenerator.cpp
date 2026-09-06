@@ -4106,16 +4106,23 @@ llvm::Value* IRGenerator::emitExpr(llvm::IRBuilder<>& builder, const Expr& expr)
     const Type* objectType = member.object().resolvedType() == nullptr
                                  ? nullptr
                                  : member.object().resolvedType()->canonical();
-    if (objectType != nullptr && objectType->isEnum() && member.field() == "name") {
+    // A bare type name (class or enum) resolves to a TypeObject; enum
+    // variants such as `Color.Red` are then accessed through that meta type.
+    const Type* instanceType = objectType;
+    if (objectType != nullptr && objectType->isTypeObject() &&
+        objectType->typeObjectInstance() != nullptr) {
+      instanceType = objectType->typeObjectInstance()->canonical();
+    }
+    if (instanceType != nullptr && instanceType->isEnum() && member.field() == "name") {
       return emitEnumName(builder, member.object());
     }
-    if (objectType != nullptr && objectType->isEnum() && member.field() == "value") {
+    if (instanceType != nullptr && instanceType->isEnum() && member.field() == "value") {
       return emitEnumTag(builder, emitExpr(builder, member.object()));
     }
-    if (objectType != nullptr && objectType->isEnum()) {
-      const RecordField* field = objectType->findField(member.field());
+    if (instanceType != nullptr && instanceType->isEnum()) {
+      const RecordField* field = instanceType->findField(member.field());
       if (field != nullptr && !field->llvmName.empty()) {
-        return emitEnumUnit(builder, objectType, enumTagFromField(field));
+        return emitEnumUnit(builder, instanceType, enumTagFromField(field));
       }
     }
     if (member.isUnboundMethod()) {
