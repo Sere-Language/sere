@@ -2906,9 +2906,19 @@ llvm::Value* IRGenerator::emitCall(llvm::IRBuilder<>& builder, const CallExpr& e
   }
   if (callee->getReturnType()->isVoidTy()) {
     builder.CreateCall(callee, args);
+    if (functionDef != nullptr && functionDef->isAsync()) {
+      return emitTaskBox(builder, nullptr, nullptr);
+    }
     return nullptr;
   }
-  return builder.CreateCall(callee, args);
+  llvm::Value* result = builder.CreateCall(callee, args);
+  if (functionDef != nullptr && functionDef->isAsync()) {
+    const Type* inner = functionDef->resolvedType() == nullptr
+                            ? nullptr
+                            : functionDef->resolvedType()->returnType();
+    return emitTaskBox(builder, result, inner);
+  }
+  return result;
 }
 
 llvm::Value* IRGenerator::emitConstruct(llvm::IRBuilder<>& builder, const CallExpr& expr) {
@@ -3993,6 +4003,8 @@ llvm::Value* IRGenerator::emitExpr(llvm::IRBuilder<>& builder, const Expr& expr)
     return builder.getInt1(static_cast<const BooleanLiteral&>(expr).value());
   case NodeKind::NoneLiteral:
     return llvm::ConstantPointerNull::get(builder.getPtrTy());
+  case NodeKind::AwaitExpr:
+    return emitAwait(builder, static_cast<const AwaitExpr&>(expr));
   case NodeKind::StringLiteral: {
     return emitStrLiteral(builder, static_cast<const StringLiteral&>(expr).value());
   }
@@ -4773,6 +4785,67 @@ void IRGenerator::collectReachable(const std::vector<const Module*>& modules) {
       mark(record->name() + "___str__");
     }
   }
+}
+
+// Task[T] values are represented at runtime as a pointer to a small heap cell
+// that holds the produced value of type T. `async def` bodies run to
+// completion (there is no I/O suspend primitive yet) and `await` simply
+// unwraps the cell. This keeps async/await fully type-correct and executable
+// today, and reserves the Task handle that real coroutine suspension can later
+// drive.
+llvm::Value*
+IRGenerator::emitTaskBox(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* inner) {
+  (void)inner;
+  llvm::Function* alloc = runtimeDecl("sere_alloc", builder.getPtrTy(), {builder.getInt64Ty()});
+  std::uint64_t size = 1;
+  if (value != nullptr && !value->getType()->isVoidTy() && value->getType()->isSized()) {
+    size = module_->getDataLayout().getTypeAllocSize(value->getType()).getFixedValue();
+  }
+  llvm::Value* memory = builder.CreateCall(alloc, {builder.getInt64(size)});
+  if (value != nullptr && !value->getType()->isVoidTy()) {
+    builder.CreateStore(value, memory);
+  }
+  return memory;
+}
+
+llvm::Value*
+IRGenerator::emitTaskUnbox(llvm::IRBuilder<>& builder, llvm::Value* task, const Type* inner) {
+  if (task == nullptr) {
+    return nullptr;
+  }
+  const Type* target = inner == nullptr ? nullptr : inner->canonical();
+  if (target == nullptr || target->isVoidLike()) {
+    return nullptr;
+  }
+  llvm::Type* ty = lower(target);
+  if (ty == nullptr || ty->isVoidTy()) {
+    return nullptr;
+  }
+  return builder.CreateLoad(ty, task);
+}
+
+llvm::Value* IRGenerator::emitAwait(llvm::IRBuilder<>& builder, const AwaitExpr& expr) {
+  const Type* inner = nullptr;
+  const Type* operandRaw = expr.operand().resolvedType();
+  const Type* operandType =
+      operandRaw == nullptr ? nullptr : operandRaw->canonical();
+  const Type* probe = operandRaw != nullptr ? operandRaw : operandType;
+  if (probe != nullptr && probe->isGenericCtor("Task") && probe->args().size() == 1) {
+    inner = probe->args()[0];
+  }
+  if (inner == nullptr && operandType != nullptr && operandType->isGenericCtor("Task") &&
+      operandType->args().size() == 1) {
+    inner = operandType->args()[0];
+  }
+  if (inner == nullptr) {
+    const Type* resultType =
+        expr.resolvedType() == nullptr ? nullptr : expr.resolvedType()->canonical();
+    if (resultType != nullptr && !resultType->isGenericCtor("Task")) {
+      inner = resultType;
+    }
+  }
+  llvm::Value* task = emitExpr(builder, expr.operand());
+  return emitTaskUnbox(builder, task, inner);
 }
 
 bool IRGenerator::shouldEmit(const FunctionDef& function) const {

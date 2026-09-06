@@ -1,9 +1,0 @@
-def identity(fn: Callable) -> Callable:
-    return fn
-
-@identity
-def add(a: i32, b: i32) -> i32:
-    return a + b
-
-def main() -> i32:
-    return add(1, 2)

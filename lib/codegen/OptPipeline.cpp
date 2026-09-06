@@ -12,15 +12,18 @@
 #include <llvm/Transforms/Coroutines/CoroSplit.h>
 
 namespace sere {
+namespace {
 
 // Async functions are lowered with LLVM's coroutine intrinsics. The splitting
 // passes must run at *every* optimization level (including O0, where the rest
 // of the pipeline is skipped) or the coroutine frames are never materialized.
-static void addCoroutinePasses(llvm::ModulePassManager& mpm) {
+void addCoroutinePasses(llvm::ModulePassManager& mpm) {
   mpm.addPass(llvm::CoroEarlyPass());
   mpm.addPass(llvm::createModuleToPostOrderCGSCCPassAdaptor(llvm::CoroSplitPass()));
   mpm.addPass(llvm::CoroCleanupPass());
 }
+
+} // namespace
 
 bool parseOptLevel(std::string_view text, OptLevel& level, std::string& error) {
   if (text == "0" || text == "O0") {

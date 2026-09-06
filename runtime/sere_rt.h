@@ -36,8 +36,8 @@ const char* sere_str_bool_data(int8_t value, int64_t* out_len);
 const char* sere_str_ptr_data(const void* pointer, int64_t* out_len);
 const char* sere_str_f64_data(double value, int64_t* out_len);
 const char* sere_str_repr_data(const char* data, int64_t len, int64_t* out_len);
-const char* sere_str_concat_data(const char* left, int64_t left_len, const char* right,
-                                int64_t right_len, int64_t* out_len);
+const char* sere_str_concat_data(
+    const char* left, int64_t left_len, const char* right, int64_t right_len, int64_t* out_len);
 void* sere_alloc(uint64_t size);
 void sere_free(void* pointer);
 void* sere_gc_alloc(uint64_t size);
@@ -93,19 +93,30 @@ int64_t sere_dict_len(void* dict);
 int32_t sere_dict_has(void* dict, const void* key);
 void sere_dict_clear(void* dict);
 void* sere_dict_copy(void* dict);
-void* sere_dict_keys(void* dict);
-void* sere_dict_values(void* dict);
-int32_t sere_dict_pop(void* dict, const void* key, void* out_value);
 
-void sere_str_index(const char* data, int64_t len, int64_t index, const char** out_data,
+// Cooperative async executor (see sere_async.c). Wakers are scheduled with a
+// function pointer + opaque argument; generated coroutine glue posts wakeups
+// through these entry points.
+void sere_async_post(void (*fn)(void* arg), void* arg);
+void sere_async_sleep_ms(void (*fn)(void* arg), void* arg, int64_t ms);
+void sere_async_run(void);
+int64_t sere_async_now_ms(void);
+
+void sere_str_index(
+    const char* data, int64_t len, int64_t index, const char** out_data, int64_t* out_len);
+void sere_str_slice(const char* data,
+                    int64_t len,
+                    int64_t start,
+                    int64_t end,
+                    int32_t has_start,
+                    int32_t has_end,
+                    const char** out_data,
                     int64_t* out_len);
-void sere_str_slice(const char* data, int64_t len, int64_t start, int64_t end, int32_t has_start,
-                    int32_t has_end, const char** out_data, int64_t* out_len);
 int32_t sere_str_contains(const char* hay, int64_t hay_len, const char* needle, int64_t needle_len);
 int32_t sere_str_eq(const char* left, int64_t left_len, const char* right, int64_t right_len);
 int32_t sere_str_cmp(const char* left, int64_t left_len, const char* right, int64_t right_len);
-void sere_str_repeat(const char* data, int64_t len, int64_t count, const char** out_data,
-                     int64_t* out_len);
+void sere_str_repeat(
+    const char* data, int64_t len, int64_t count, const char** out_data, int64_t* out_len);
 void sere_raise(const char* type, const char* message, int64_t message_len);
 int32_t sere_has_error(void);
 void sere_clear_error(void);
@@ -113,7 +124,8 @@ int32_t sere_error_isa(const char* name);
 const char* sere_error_type(void);
 const char* sere_error_message(int64_t* out_len);
 void sere_panic(const char* message, int64_t len);
-int32_t sere_parse_int(const char* data, int64_t len, int32_t bits, int32_t is_signed, int64_t* out);
+int32_t
+sere_parse_int(const char* data, int64_t len, int32_t bits, int32_t is_signed, int64_t* out);
 int32_t sere_parse_float(const char* data, int64_t len, int32_t is_f32, double* out);
 int32_t sere_parse_bool(const char* data, int64_t len, int32_t* out);
 int32_t sere_parse_none(const char* data, int64_t len);
@@ -133,10 +145,17 @@ int32_t sere_fs_is_dir(const char* path, int64_t path_len);
 int32_t sere_fs_remove(const char* path, int64_t path_len);
 int32_t sere_fs_mkdir(const char* path, int64_t path_len);
 
-void sere_path_join(const char* left, int64_t left_len, const char* right, int64_t right_len,
-                    const char** out_data, int64_t* out_len);
+void sere_path_join(const char* left,
+                    int64_t left_len,
+                    const char* right,
+                    int64_t right_len,
+                    const char** out_data,
+                    int64_t* out_len);
 void sere_path_dirname(const char* path, int64_t path_len, const char** out_data, int64_t* out_len);
-void sere_path_basename(const char* path, int64_t path_len, const char** out_data, int64_t* out_len);
+void sere_path_basename(const char* path,
+                        int64_t path_len,
+                        const char** out_data,
+                        int64_t* out_len);
 void sere_path_ext(const char* path, int64_t path_len, const char** out_data, int64_t* out_len);
 int32_t sere_path_is_abs(const char* path, int64_t path_len);
 
@@ -151,17 +170,29 @@ void sere_time_sleep_ms(int32_t ms);
 void sere_string_upper(const char* data, int64_t len, const char** out_data, int64_t* out_len);
 void sere_string_lower(const char* data, int64_t len, const char** out_data, int64_t* out_len);
 void sere_string_strip(const char* data, int64_t len, const char** out_data, int64_t* out_len);
-int32_t sere_string_starts_with(const char* data, int64_t len, const char* prefix, int64_t prefix_len);
-int32_t sere_string_ends_with(const char* data, int64_t len, const char* suffix, int64_t suffix_len);
-void sere_string_repeat(const char* data, int64_t len, int64_t count, const char** out_data,
-                        int64_t* out_len);
+int32_t
+sere_string_starts_with(const char* data, int64_t len, const char* prefix, int64_t prefix_len);
+int32_t
+sere_string_ends_with(const char* data, int64_t len, const char* suffix, int64_t suffix_len);
+void sere_string_repeat(
+    const char* data, int64_t len, int64_t count, const char** out_data, int64_t* out_len);
 
-int32_t sere_re_is_match(const char* pattern, int64_t pattern_len, const char* text,
-                         int64_t text_len);
-void sere_re_find(const char* pattern, int64_t pattern_len, const char* text, int64_t text_len,
-                  const char** out_data, int64_t* out_len);
-void sere_re_replace(const char* pattern, int64_t pattern_len, const char* text, int64_t text_len,
-                     const char* repl, int64_t repl_len, const char** out_data, int64_t* out_len);
+int32_t
+sere_re_is_match(const char* pattern, int64_t pattern_len, const char* text, int64_t text_len);
+void sere_re_find(const char* pattern,
+                  int64_t pattern_len,
+                  const char* text,
+                  int64_t text_len,
+                  const char** out_data,
+                  int64_t* out_len);
+void sere_re_replace(const char* pattern,
+                     int64_t pattern_len,
+                     const char* text,
+                     int64_t text_len,
+                     const char* repl,
+                     int64_t repl_len,
+                     const char** out_data,
+                     int64_t* out_len);
 
 double sere_math_sqrt(double value);
 double sere_math_sin(double value);
@@ -229,7 +260,11 @@ void* sere_f64_normalize(void* values);
 void* sere_f64_cross3(void* left, void* right);
 
 void* sere_mat_identity(int64_t n);
-void* sere_mat_mul(void* left, int64_t left_rows, int64_t left_cols, void* right, int64_t right_rows,
+void* sere_mat_mul(void* left,
+                   int64_t left_rows,
+                   int64_t left_cols,
+                   void* right,
+                   int64_t right_rows,
                    int64_t right_cols);
 void* sere_mat_transpose(void* values, int64_t rows, int64_t cols);
 double sere_mat_det2(void* values);
@@ -244,8 +279,8 @@ void* sere_mat4_rotate_x(double radians);
 void* sere_mat4_rotate_y(double radians);
 void* sere_mat4_rotate_z(double radians);
 void* sere_mat4_perspective(double fov_y, double aspect, double near_z, double far_z);
-void* sere_mat4_ortho(double left, double right, double bottom, double top, double near_z,
-                      double far_z);
+void* sere_mat4_ortho(
+    double left, double right, double bottom, double top, double near_z, double far_z);
 void* sere_mat4_look_at(void* eye, void* center, void* up);
 void* sere_mat4_transform_point(void* matrix, double x, double y, double z);
 void* sere_mat4_transform_dir(void* matrix, double x, double y, double z);
@@ -313,12 +348,17 @@ void sere_b64_encode(const char* data, int64_t len, const char** out_data, int64
 void sere_b64_decode(const char* data, int64_t len, const char** out_data, int64_t* out_len);
 
 int64_t sere_string_find(const char* data, int64_t len, const char* needle, int64_t needle_len);
-void sere_string_replace(const char* data, int64_t len, const char* old_data, int64_t old_len,
-                         const char* new_data, int64_t new_len, const char** out_data,
+void sere_string_replace(const char* data,
+                         int64_t len,
+                         const char* old_data,
+                         int64_t old_len,
+                         const char* new_data,
+                         int64_t new_len,
+                         const char** out_data,
                          int64_t* out_len);
 void* sere_string_split(const char* data, int64_t len, const char* sep, int64_t sep_len);
-void sere_string_join(const char* sep, int64_t sep_len, void* parts, const char** out_data,
-                      int64_t* out_len);
+void sere_string_join(
+    const char* sep, int64_t sep_len, void* parts, const char** out_data, int64_t* out_len);
 int64_t sere_string_rfind(const char* data, int64_t len, const char* needle, int64_t needle_len);
 int64_t sere_string_count(const char* data, int64_t len, const char* needle, int64_t needle_len);
 void sere_string_capitalize(const char* data, int64_t len, const char** out_data, int64_t* out_len);
@@ -331,8 +371,8 @@ int32_t sere_string_is_alpha(const char* data, int64_t len);
 int32_t sere_string_is_space(const char* data, int64_t len);
 
 int32_t sere_win_available(void);
-int32_t sere_win_message_box(const char* text, int64_t text_len, const char* title,
-                             int64_t title_len, int32_t flags);
+int32_t sere_win_message_box(
+    const char* text, int64_t text_len, const char* title, int64_t title_len, int32_t flags);
 int32_t sere_win_beep(int32_t freq, int32_t ms);
 int32_t sere_win_last_error(void);
 void sere_win_computer_name(const char** out_data, int64_t* out_len);
@@ -351,8 +391,8 @@ int32_t sere_win_open(const char* path, int64_t path_len);
 
 int32_t sere_gl_available(void);
 void* sere_gl_window_new(const char* title, int64_t title_len, int32_t width, int32_t height);
-void* sere_gl_window_new_ex(const char* title, int64_t title_len, int32_t width, int32_t height,
-                            int32_t flags);
+void* sere_gl_window_new_ex(
+    const char* title, int64_t title_len, int32_t width, int32_t height, int32_t flags);
 int32_t sere_gl_window_poll(void* window);
 int32_t sere_gl_window_wait(void* window);
 int32_t sere_gl_window_should_close(void* window);
@@ -429,7 +469,10 @@ void sere_gl_scissor(int32_t x, int32_t y, int32_t width, int32_t height);
 void sere_gl_enable(uint32_t cap);
 void sere_gl_disable(uint32_t cap);
 void sere_gl_blend_func(uint32_t src, uint32_t dst);
-void sere_gl_blend_func_separate(uint32_t src_rgb, uint32_t dst_rgb, uint32_t src_a, uint32_t dst_a);
+void sere_gl_blend_func_separate(uint32_t src_rgb,
+                                 uint32_t dst_rgb,
+                                 uint32_t src_a,
+                                 uint32_t dst_a);
 void sere_gl_blend_equation(uint32_t mode);
 void sere_gl_blend_equation_separate(uint32_t rgb, uint32_t alpha);
 void sere_gl_blend_color(double r, double g, double b, double a);
@@ -508,8 +551,12 @@ void sere_gl_delete_vao(uint32_t vao);
 void sere_gl_bind_vao(uint32_t vao);
 void sere_gl_enable_attrib(uint32_t index);
 void sere_gl_disable_attrib(uint32_t index);
-void sere_gl_attrib_pointer(uint32_t index, int32_t size, uint32_t type, int32_t normalized,
-                            int32_t stride, int64_t offset);
+void sere_gl_attrib_pointer(uint32_t index,
+                            int32_t size,
+                            uint32_t type,
+                            int32_t normalized,
+                            int32_t stride,
+                            int64_t offset);
 void sere_gl_draw_arrays(uint32_t mode, int32_t first, int32_t count);
 void sere_gl_draw_elements(uint32_t mode, int32_t count, uint32_t type, int64_t offset);
 uint32_t sere_gl_gen_texture(void);
@@ -517,42 +564,77 @@ void sere_gl_delete_texture(uint32_t texture);
 void sere_gl_bind_texture(uint32_t target, uint32_t texture);
 void sere_gl_active_texture(uint32_t unit);
 void sere_gl_tex_param(uint32_t target, uint32_t pname, int32_t value);
-void sere_gl_tex_image2d(uint32_t target, int32_t level, int32_t internal, int32_t width,
-                         int32_t height, uint32_t format, uint32_t type, void* pixels);
-void sere_gl_tex_storage(uint32_t target, int32_t internal, int32_t width, int32_t height,
-                         uint32_t format);
-void sere_gl_tex_sub_image2d(uint32_t target, int32_t level, int32_t x, int32_t y, int32_t width,
-                             int32_t height, uint32_t format, uint32_t type, void* pixels);
+void sere_gl_tex_image2d(uint32_t target,
+                         int32_t level,
+                         int32_t internal,
+                         int32_t width,
+                         int32_t height,
+                         uint32_t format,
+                         uint32_t type,
+                         void* pixels);
+void sere_gl_tex_storage(
+    uint32_t target, int32_t internal, int32_t width, int32_t height, uint32_t format);
+void sere_gl_tex_sub_image2d(uint32_t target,
+                             int32_t level,
+                             int32_t x,
+                             int32_t y,
+                             int32_t width,
+                             int32_t height,
+                             uint32_t format,
+                             uint32_t type,
+                             void* pixels);
 void sere_gl_generate_mipmap(uint32_t target);
 uint32_t sere_gl_gen_framebuffer(void);
 void sere_gl_delete_framebuffer(uint32_t fbo);
 void sere_gl_bind_framebuffer(uint32_t target, uint32_t fbo);
-void sere_gl_framebuffer_texture2d(uint32_t target, uint32_t attachment, uint32_t textarget,
-                                   uint32_t texture, int32_t level);
+void sere_gl_framebuffer_texture2d(
+    uint32_t target, uint32_t attachment, uint32_t textarget, uint32_t texture, int32_t level);
 uint32_t sere_gl_check_framebuffer(uint32_t target);
 uint32_t sere_gl_gen_renderbuffer(void);
 void sere_gl_delete_renderbuffer(uint32_t rbo);
 void sere_gl_bind_renderbuffer(uint32_t target, uint32_t rbo);
-void sere_gl_renderbuffer_storage(uint32_t target, uint32_t internal, int32_t width, int32_t height);
-void sere_gl_framebuffer_renderbuffer(uint32_t target, uint32_t attachment, uint32_t rbo_target,
+void sere_gl_renderbuffer_storage(uint32_t target,
+                                  uint32_t internal,
+                                  int32_t width,
+                                  int32_t height);
+void sere_gl_framebuffer_renderbuffer(uint32_t target,
+                                      uint32_t attachment,
+                                      uint32_t rbo_target,
                                       uint32_t rbo);
-void sere_gl_blit_framebuffer(int32_t src_x0, int32_t src_y0, int32_t src_x1, int32_t src_y1,
-                              int32_t dst_x0, int32_t dst_y0, int32_t dst_x1, int32_t dst_y1,
-                              uint32_t mask, uint32_t filter);
-void* sere_gl_read_pixels(int32_t x, int32_t y, int32_t width, int32_t height, uint32_t format,
-                          uint32_t type);
+void sere_gl_blit_framebuffer(int32_t src_x0,
+                              int32_t src_y0,
+                              int32_t src_x1,
+                              int32_t src_y1,
+                              int32_t dst_x0,
+                              int32_t dst_y0,
+                              int32_t dst_x1,
+                              int32_t dst_y1,
+                              uint32_t mask,
+                              uint32_t filter);
+void* sere_gl_read_pixels(
+    int32_t x, int32_t y, int32_t width, int32_t height, uint32_t format, uint32_t type);
 
-void sere_http_request(const char* method, int64_t method_len, const char* url, int64_t url_len,
-                       const char* body, int64_t body_len, int32_t timeout_ms,
-                       const char** out_text, int64_t* out_text_len);
+void sere_http_request(const char* method,
+                       int64_t method_len,
+                       const char* url,
+                       int64_t url_len,
+                       const char* body,
+                       int64_t body_len,
+                       int32_t timeout_ms,
+                       const char** out_text,
+                       int64_t* out_text_len);
 int32_t sere_http_last_status(void);
 void* sere_http_listen(const char* host, int64_t host_len, int32_t port);
 void* sere_http_accept(void* server);
 void sere_http_req_method(void* req, const char** out_data, int64_t* out_len);
 void sere_http_req_path(void* req, const char** out_data, int64_t* out_len);
 void sere_http_req_body(void* req, const char** out_data, int64_t* out_len);
-void sere_http_reply(void* req, int32_t status, const char* content_type, int64_t content_type_len,
-                     const char* body, int64_t body_len);
+void sere_http_reply(void* req,
+                     int32_t status,
+                     const char* content_type,
+                     int64_t content_type_len,
+                     const char* body,
+                     int64_t body_len);
 void sere_http_close(void* server);
 
 #ifdef __cplusplus

@@ -1,7 +1,7 @@
 
 async def getName() -> str:
     return "Alice"
-    
+
 async def main() -> i32:
     name = await getName()
     print(name)

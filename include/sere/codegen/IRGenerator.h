@@ -78,6 +78,9 @@ private:
   bool emitCMainWrapper(llvm::Function* userMain);
   bool emitStatement(llvm::IRBuilder<>& builder, const Stmt& statement, const Type* returnType);
   llvm::Value* emitExpr(llvm::IRBuilder<>& builder, const Expr& expr);
+  llvm::Value* emitAwait(llvm::IRBuilder<>& builder, const AwaitExpr& expr);
+  llvm::Value* emitTaskBox(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* inner);
+  llvm::Value* emitTaskUnbox(llvm::IRBuilder<>& builder, llvm::Value* task, const Type* inner);
   llvm::Value* emitCall(llvm::IRBuilder<>& builder, const CallExpr& expr);
   llvm::Value* emitConstruct(llvm::IRBuilder<>& builder, const CallExpr& expr);
   llvm::Value* emitInitConstruct(llvm::IRBuilder<>& builder, const CallExpr& expr);

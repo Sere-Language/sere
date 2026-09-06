@@ -13,6 +13,7 @@ add_library(sere_runtime
   sere_stdlib.c
   sere_re.c
   sere_gc.c
+  sere_async.c
   sere_win.c
   sere_gl.c
   sere_http.c
