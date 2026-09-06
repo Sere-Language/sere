@@ -1,8 +1,17 @@
-# Stderr logging. Import with: import log
+# Pythonic stderr logger. Import with: import log
+#
+#   import log
+#   logger = log.get_logger("app")
+#   logger.info("booted")          # default level is Info, so this prints
+#   logger.warning("uh oh")
+#   logger.set_level(log.Level.Debug)
+#   logger.debug("detail")         # now emitted
+#
+# Each enabled record is written to stderr as:
+#   <timestamp> [LEVEL] <logger>: <message>
 
 import io
-import fs
-import sys
+import time
 
 
 
@@ -67,9 +76,29 @@ class Logger:
         self.level = level
 
     def log(self, level: Level, message: str) -> void:
-        if level >= self.level:
-            timestamp = 
-            record = LogRecord(self.name, message, level, timestamp)
-            formatter = Formatter()
-            formatted_message = formatter.format(record)
-            write(level.get_name(), formatted_message)
+        if level.value < self.level.value:
+            return
+        record = LogRecord(self.name, message, level, time.get_timestamp())
+        io.eprint(Formatter().format(record))
+        io.eprint_nl()
+
+    def trace(self, message: str) -> void:
+        self.log(Level.Trace, message)
+
+    def debug(self, message: str) -> void:
+        self.log(Level.Debug, message)
+
+    def info(self, message: str) -> void:
+        self.log(Level.Info, message)
+
+    def warning(self, message: str) -> void:
+        self.log(Level.Warning, message)
+
+    def error(self, message: str) -> void:
+        self.log(Level.Error, message)
+
+    def critical(self, message: str) -> void:
+        self.log(Level.Critical, message)
+
+def get_logger(name: str, level: Level = Level.Info) -> Logger:
+    return Logger(name, level)

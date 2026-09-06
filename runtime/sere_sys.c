@@ -16,9 +16,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <chrono>
-#include <ctime>
-#include <cstdio>
 
 #ifdef _WIN32
 #include <direct.h>
@@ -529,67 +526,48 @@ void* sere_os_listdir(const char* path, int64_t path_len) {
 }
 #endif
 
-const char* sere_time_get_timestamp(void) {
-    // Static buffer to hold the formatted timestamp
-    static char buffer[32];
-
-    // Get current time
-    auto now = std::chrono::system_clock::now();
-
-    // Seconds since epoch
-    std::time_t seconds_since_epoch = std::chrono::system_clock::to_time_t(now);
-
-    // Milliseconds since epoch
-    auto milliseconds_since_epoch = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now.time_since_epoch()
-    ).count();
-
-    // Extract milliseconds part (0–999)
-    long ms_part = milliseconds_since_epoch % 1000;
-
-    // Format into buffer: "seconds.milliseconds"
-    // Example: "1783363206.123"
-    std::snprintf(buffer, sizeof(buffer), "%lld.%03ld",
-                  static_cast<long long>(seconds_since_epoch),
-                  ms_part);
-
-    return buffer; // Safe because buffer is static
-}
-
-int64_t sere_time_now_ms(void) {
+static int64_t sereEpochMillis(void) {
+#ifdef _WIN32
   FILETIME fileTime;
   GetSystemTimeAsFileTime(&fileTime);
   ULARGE_INTEGER value;
   value.LowPart = fileTime.dwLowDateTime;
   value.HighPart = fileTime.dwHighDateTime;
   return (int64_t)((value.QuadPart / 10000ULL) - 11644473600000ULL);
-}
-
-void sere_time_sleep_ms(int32_t ms) {
-  if (ms > 0) {
-    Sleep((DWORD)ms);
-  }
-}
-
 #else
-int64_t sere_time_now_ms(void) {
   struct timespec ts;
   if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
     return 0;
   }
   return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
+#endif
+}
+
+int64_t sere_time_now_ms(void) {
+  return sereEpochMillis();
 }
 
 void sere_time_sleep_ms(int32_t ms) {
   if (ms <= 0) {
     return;
   }
+#ifdef _WIN32
+  Sleep((DWORD)ms);
+#else
   struct timespec ts;
   ts.tv_sec = ms / 1000;
   ts.tv_nsec = (long)(ms % 1000) * 1000000L;
   nanosleep(&ts, NULL);
-}
 #endif
+}
+
+void sere_time_get_timestamp(const char** out_data, int64_t* out_len) {
+  char buffer[32];
+  const int64_t millis = sereEpochMillis();
+  snprintf(buffer, sizeof(buffer), "%lld.%03lld", (long long)(millis / 1000),
+           (long long)(millis % 1000));
+  outStr(copyCString(buffer), out_data, out_len);
+}
 
 static SereStr mapAscii(const char* data, int64_t len, int (*fn)(int)) {
   if (data == NULL || len <= 0) {
