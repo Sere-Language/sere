@@ -115,8 +115,7 @@ try  type  while  with
 
 `const` binds a readonly name. `lambda` is an anonymous function. `with`
 requires `__enter__` / `__exit__` on the context type. `async` and `await`
-are reserved but not ready to use yet — see
-[Reserved, not implemented](#reserved-not-implemented).
+are supported — see [Async / await status](#async-await-status).
 
 ### Literals
 
@@ -1190,11 +1189,13 @@ async def main(argv: list[str]) -> i32:
     return 0
 ```
 
-The runtime lowering (LLVM switched-resume coroutines and the `coro-*`
-splitting passes) is under active development and is **not currently
-reliable** — compiled async programs are not guaranteed to build or run
-correctly. Treat `async` / `await` as a preview feature until this note is
-removed.
+The runtime lowering uses LLVM switched-resume coroutines (the `coro-early`,
+`coro-split`, and `coro-cleanup` passes). Calling an `async def` spawns the
+coroutine lazily: its body does not run until the returned `Task[T]` is
+awaited (or driven by the async entry point). `await` resumes the child task,
+reads its typed result from the coroutine promise, and destroys the frame.
+The child's frame is allocated by the GC allocator and its root is released
+when the task completes.
 
 ---
 

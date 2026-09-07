@@ -1,0 +1,11 @@
+async def number() -> i32:
+    return 42
+
+async def double(x: i32) -> i32:
+    return x * 2
+
+async def main() -> i32:
+    a = await number()
+    b = await double(21)
+    print(a + b)
+    return 0

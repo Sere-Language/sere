@@ -5359,7 +5359,11 @@ bool IRGenerator::setupAsyncCoroutine(llvm::IRBuilder<>& builder,
   initSwitch->addCase(builder.getInt8(1), asyncCleanup_);
   builder.SetInsertPoint(coroBody);
 
-  llvmFn->addFnAttr("presplitcoroutine");
+  // The attribute must be the real PresplitCoroutine *kind* (as written by the
+  // textual `presplitcoroutine` keyword), not a plain string attribute: LLVM's
+  // CoroSplit pass checks Function::isPresplitCoroutine(), which only matches
+  // the kind, and silently skips functions that merely carry the string.
+  llvmFn->addFnAttr(llvm::Attribute::PresplitCoroutine);
   return true;
 }
 

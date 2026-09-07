@@ -351,6 +351,19 @@ foreach(_sere_example IN ITEMS
     ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
 endforeach()
 
+foreach(_async_case IN ITEMS await suspend)
+  add_test(NAME sere.test.async_${_async_case}
+    COMMAND "${CMAKE_COMMAND}"
+      "-DSERE=${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}"
+      "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/async_${_async_case}.sere"
+      "-DOUTPUT=${CMAKE_BINARY_DIR}/async_${_async_case}${CMAKE_EXECUTABLE_SUFFIX}"
+      "-DEXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/async_${_async_case}.expected"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/run_async_await.cmake")
+  set_tests_properties(sere.test.async_${_async_case} PROPERTIES
+    ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib"
+    TIMEOUT 120)
+endforeach()
+
 add_executable(sere_test_project_cli project_cli.cpp)
 target_link_libraries(sere_test_project_cli PRIVATE sere_driver)
 sere_apply_warnings(sere_test_project_cli)

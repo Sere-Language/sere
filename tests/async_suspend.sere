@@ -1,0 +1,17 @@
+async def noisy() -> i32:
+    print("body")
+    return 7
+
+async def chain(x: i32) -> i32:
+    return x + 1
+
+async def main() -> i32:
+    # A spawned task is lazy: its body must not run until it is awaited.
+    t = noisy()
+    print("spawned")
+    v = await t
+    print(v)
+    # Nested awaits through multiple tasks preserve their values.
+    a = await chain(await chain(await chain(0)))
+    print(a)
+    return 0
