@@ -1,0 +1,73 @@
+import log
+
+class Tuple[T1, T2]:
+    @private a: T1
+    @private b: T2
+
+    def __init__(self, a: T1, b: T2) -> void:
+        self.a = a
+        self.b = b
+
+    def __getitem__(self, index: i32) -> Any:
+        if index == 0:
+            return self.a
+        elif index == 1:
+            return self.b
+        raise IndexError("bad index")
+
+    def __setitem__(self, index: i32, value: Any) -> void:
+        if index == 0:
+            self.a = value
+        elif index == 1:
+            self.b = value
+
+    def as_list(self) -> list[Any]:
+        return [self.a, self.b]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"left": self.a, "right": self.b}
+
+    def list_text(self) -> str:
+        return str(self.as_list())
+
+    def __str__(self) -> str:
+        return f"({self.a}, {self.b})"
+
+class Nullable[T]:
+    value: T | None
+
+    def __init__(self, value: T) -> void:
+        self.value = value
+
+    def clear(self) -> void:
+        self.value = None
+
+    def __str__(self) -> str:
+        return str(self.value)
+
+def main() -> i32:
+    first = Tuple[i32, str](42, "hello")
+    second = Tuple[str, i64]("world", 99)
+    print(first)
+    print(second)
+    print(first.list_text())
+    print(second.list_text())
+    print(first.as_dict())
+    first[0] = 7
+    first[1] = "updated"
+    print(first)
+    print(first[0])
+    print(first[1])
+    optional = Nullable[i32](42)
+    print(optional)
+    optional.clear()
+    print(optional)
+    try:
+        first[2]
+    except IndexError as error:
+        print(error.message)
+    try:
+        raise ValueError("bad value")
+    except ValueError as error:
+        print(error.message)
+    return 0

@@ -1,5 +1,15 @@
 # Sere toolchain tests.
 
+add_test(NAME sere.test.generic_tuple
+  COMMAND "${CMAKE_COMMAND}"
+    "-DSERE=${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}"
+    "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/generic_tuple.sere"
+    "-DOUTPUT=${CMAKE_BINARY_DIR}/generic_tuple${CMAKE_EXECUTABLE_SUFFIX}"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/run_generic_tuple.cmake")
+set_tests_properties(sere.test.generic_tuple PROPERTIES
+  ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib"
+  TIMEOUT 120)
+
 add_executable(sere_smoke_llvm smoke_llvm.cpp)
 target_link_libraries(sere_smoke_llvm PRIVATE sere_codegen)
 sere_apply_warnings(sere_smoke_llvm)

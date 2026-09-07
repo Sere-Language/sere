@@ -5190,9 +5190,10 @@ bool TypeChecker::collectMethods(Module& module) {
       RecordMethod info;
       info.name = method->name();
       info.type = fnType;
-      if (moduleName_ != "__main__" && !moduleName_.empty()) {
-        method->setModulePrefix(moduleName_);
-        info.llvmName = moduleName_ + "_" + classDef.name() + "_" + method->name();
+      const std::string methodModule = classDef.fromPrelude() ? "prelude" : moduleName_;
+      if (methodModule != "__main__" && !methodModule.empty()) {
+        method->setModulePrefix(methodModule);
+        info.llvmName = methodModule + "_" + classDef.name() + "_" + method->name();
       } else {
         info.llvmName = classDef.name() + "_" + method->name();
       }

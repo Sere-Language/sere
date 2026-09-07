@@ -215,6 +215,8 @@ private:
   void emitDrops(llvm::IRBuilder<>& builder);
   void rememberLocal(const std::string& name, llvm::Value* allocaInst, const Type* type);
 
+  [[nodiscard]] const Type* resolveType(const Type* type);
+
   llvm::LLVMContext* context_;
   DiagnosticEngine* diagnostics_;
   TypeContext* types_;

@@ -1,8 +1,0 @@
-
-import log
-
-def main():
-    logger = log.Logger("my-logger")
-    logger.info("Hello world")
-
-    return 0

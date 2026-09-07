@@ -208,11 +208,23 @@ IRGenerator::IRGenerator(llvm::LLVMContext& context,
     : context_(&context), diagnostics_(&diagnostics), types_(&types) {
 }
 
+const Type* IRGenerator::resolveType(const Type* type) {
+  if (type == nullptr) {
+    return nullptr;
+  }
+  type = type->canonical();
+  if (subst_.empty()) {
+    return type;
+  }
+  const auto found = subst_.find(type->name());
+  return found != subst_.end() ? found->second : types_->substitute(type, subst_);
+}
+
 llvm::Type* IRGenerator::lower(const Type* type) {
   if (type == nullptr) {
     return llvm::Type::getVoidTy(*context_);
   }
-  type = type->canonical();
+  type = resolveType(type);
   if (type->isTypeParam()) {
     const auto found = subst_.find(type->name());
     if (found != subst_.end()) {
@@ -934,8 +946,8 @@ llvm::Value* IRGenerator::emitCoerce(llvm::IRBuilder<>& builder,
   if (from == nullptr || to == nullptr) {
     return value;
   }
-  from = from->canonical();
-  to = to->canonical();
+  from = resolveType(from);
+  to = resolveType(to);
   if (to->isAny() && !from->isAny()) {
     if (std::find(boxedTypes_.begin(), boxedTypes_.end(), from) == boxedTypes_.end()) {
       boxedTypes_.push_back(from);
@@ -953,11 +965,11 @@ llvm::Value* IRGenerator::emitCoerce(llvm::IRBuilder<>& builder,
         packed, builder.CreateGlobalString(from->isVoidLike() ? "None" : from->display()), {0});
     return builder.CreateInsertValue(packed, memory, {1});
   }
-  if (value == nullptr) {
-    return value;
-  }
   if (from->isVoidLike()) {
     return emitDefault(to);
+  }
+  if (value == nullptr) {
+    return value;
   }
   if (from == to) {
     return value;
@@ -1255,7 +1267,7 @@ llvm::Value* IRGenerator::emitAddress(llvm::IRBuilder<>& builder, const Expr& ex
     if (objectType == nullptr) {
       return nullptr;
     }
-    objectType = objectType->canonical();
+    objectType = resolveType(objectType);
     if (objectType->isTypeObject() && objectType->typeObjectInstance() != nullptr) {
       objectType = objectType->typeObjectInstance()->canonical();
     }
@@ -1315,7 +1327,7 @@ llvm::Value* IRGenerator::emitAddress(llvm::IRBuilder<>& builder, const Expr& ex
 
 llvm::Value* IRGenerator::emitIndex(llvm::IRBuilder<>& builder, const IndexExpr& expr) {
   const Type* objectType =
-      expr.object().resolvedType() == nullptr ? nullptr : expr.object().resolvedType()->canonical();
+      resolveType(expr.object().resolvedType());
   if (objectType != nullptr && objectType->methodIndex("__getitem__") < 0) {
     objectType = objectType->valueType();
   }
@@ -1877,9 +1889,7 @@ bool IRGenerator::emitDictAssign(llvm::IRBuilder<>& builder,
   llvm::Function* setFn = runtimeDecl("sere_dict_set",
                                       builder.getVoidTy(),
                                       {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()});
-  const Type* objectType = target.object().resolvedType() == nullptr
-                               ? nullptr
-                               : target.object().resolvedType()->canonical();
+  const Type* objectType = resolveType(target.object().resolvedType());
   const Type* keyType =
       objectType != nullptr ? objectType->dictKeyType() : target.start()->resolvedType();
   const Type* valueType =
@@ -2151,7 +2161,7 @@ IRGenerator::emitStrConcat(llvm::IRBuilder<>& builder, llvm::Value* left, llvm::
 
 llvm::Value* IRGenerator::emitRecordStr(llvm::IRBuilder<>& builder, const Expr& object) {
   const Type* record =
-      object.resolvedType() == nullptr ? nullptr : object.resolvedType()->canonical();
+      resolveType(object.resolvedType());
   if (record == nullptr) {
     return emitStrLiteral(builder, "?");
   }
@@ -2217,7 +2227,7 @@ llvm::Value* IRGenerator::emitEnumSwitchStr(llvm::IRBuilder<>& builder,
 }
 
 llvm::Value* IRGenerator::emitEnumStr(llvm::IRBuilder<>& builder, const Expr& expr) {
-  const Type* type = expr.resolvedType() == nullptr ? nullptr : expr.resolvedType()->canonical();
+  const Type* type = resolveType(expr.resolvedType());
   if (type == nullptr) {
     return emitStrLiteral(builder, "?");
   }
@@ -2233,7 +2243,7 @@ IRGenerator::emitScalarToStr(llvm::IRBuilder<>& builder, llvm::Value* value, con
   if (value == nullptr || type == nullptr) {
     return emitStrLiteral(builder, "?");
   }
-  type = type->canonical();
+  type = resolveType(type);
   if (type->isNamed("bool")) {
     return emitStrFromC(
         builder, "sere_str_bool_data", builder.CreateZExt(value, builder.getInt8Ty()));
@@ -2261,7 +2271,7 @@ IRGenerator::emitScalarToStr(llvm::IRBuilder<>& builder, llvm::Value* value, con
 }
 
 llvm::Value* IRGenerator::emitUnionStr(llvm::IRBuilder<>& builder, const Expr& expr) {
-  const Type* type = expr.resolvedType() == nullptr ? nullptr : expr.resolvedType()->canonical();
+  const Type* type = resolveType(expr.resolvedType());
   llvm::Value* packed = emitExpr(builder, expr);
   if (type == nullptr || packed == nullptr) {
     return emitStrLiteral(builder, "?");
@@ -2284,8 +2294,14 @@ llvm::Value* IRGenerator::emitUnionStr(llvm::IRBuilder<>& builder, const Expr& e
     llvm::BasicBlock* block = llvm::BasicBlock::Create(*context_, "union.str.case", function);
     sw->addCase(builder.getInt32(static_cast<unsigned>(index)), block);
     builder.SetInsertPoint(block);
-    llvm::Value* unpacked = valueFromBits(builder, bits, member, lower(member));
-    builder.CreateStore(emitScalarToStr(builder, unpacked, member), slot);
+    llvm::Value* text = nullptr;
+    if (member->isVoidLike()) {
+      text = emitStrLiteral(builder, "None");
+    } else {
+      llvm::Value* unpacked = valueFromBits(builder, bits, member, lower(member));
+      text = emitScalarToStr(builder, unpacked, member);
+    }
+    builder.CreateStore(text, slot);
     builder.CreateBr(merge);
   }
   builder.SetInsertPoint(fallback);
@@ -2296,7 +2312,7 @@ llvm::Value* IRGenerator::emitUnionStr(llvm::IRBuilder<>& builder, const Expr& e
 }
 
 llvm::Value* IRGenerator::emitToStr(llvm::IRBuilder<>& builder, const Expr& expr) {
-  const Type* type = expr.resolvedType() == nullptr ? nullptr : expr.resolvedType()->canonical();
+  const Type* type = resolveType(expr.resolvedType());
   if (type != nullptr && type->isAny()) {
     return emitValueRepr(builder, emitExpr(builder, expr), type);
   }
@@ -2385,7 +2401,7 @@ llvm::Value*
 IRGenerator::emitValueRepr(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* type) {
   if (type == nullptr)
     return emitStrLiteral(builder, "?");
-  type = type->canonical();
+  type = resolveType(type);
   if (type->isVoidLike())
     return emitStrLiteral(builder, "None");
   if (value == nullptr)
@@ -2583,8 +2599,8 @@ llvm::Value* IRGenerator::emitCastValue(llvm::IRBuilder<>& builder,
   if (from == nullptr || to == nullptr) {
     return nullptr;
   }
-  from = from->canonical();
-  to = to->canonical();
+  from = resolveType(from);
+  to = resolveType(to);
   llvm::Value* source = emitExpr(builder, value);
   if (source == nullptr) {
     return nullptr;
@@ -2646,7 +2662,7 @@ void IRGenerator::emitWriteStr(llvm::IRBuilder<>& builder, llvm::Value* str) {
 }
 
 void IRGenerator::emitWriteValue(llvm::IRBuilder<>& builder, const Expr& expr) {
-  const Type* type = expr.resolvedType() == nullptr ? nullptr : expr.resolvedType()->canonical();
+  const Type* type = resolveType(expr.resolvedType());
   if (type != nullptr && type->isEnum()) {
     emitWriteStr(builder, emitEnumStr(builder, expr));
     return;
@@ -2943,7 +2959,7 @@ llvm::Value* IRGenerator::emitConstruct(llvm::IRBuilder<>& builder, const CallEx
   if (record == nullptr) {
     return nullptr;
   }
-  record = record->canonical();
+  record = resolveType(record);
   if (record->isPointerLike()) {
     if (expr.arguments().empty()) {
       return emitDefault(record);
@@ -3114,14 +3130,22 @@ llvm::Value* IRGenerator::emitMethodCall(llvm::IRBuilder<>& builder, const CallE
     thisPtr = builder.CreateAlloca(lower(member.object().resolvedType()), nullptr, "this.tmp");
     builder.CreateStore(value, thisPtr);
   }
-  const auto found = functions_.find(expr.loweredName());
+  std::string methodName = expr.loweredName();
+  const Type* receiver = resolveType(member.object().resolvedType());
+  if (!subst_.empty() && receiver != nullptr) {
+    const int index = receiver->methodIndex(member.field());
+    if (index >= 0) {
+      methodName = receiver->methods()[static_cast<std::size_t>(index)].llvmName;
+    }
+  }
+  const auto found = functions_.find(methodName);
   if (found == functions_.end()) {
     diagnostics_->error(expr.range(), "no LLVM function for method '" + expr.loweredName() + "'");
     return nullptr;
   }
   std::vector<llvm::Value*> args;
   args.push_back(thisPtr);
-  const auto defFound = functionDefs_.find(expr.loweredName());
+  const auto defFound = functionDefs_.find(methodName);
   const Type* methodType = nullptr;
   const FunctionDef* methodDef = nullptr;
   if (defFound != functionDefs_.end() && defFound->second != nullptr) {
@@ -3157,9 +3181,7 @@ llvm::Value* IRGenerator::emitMethodCall(llvm::IRBuilder<>& builder, const CallE
     }
   }
   llvm::Function* callee = found->second;
-  const Type* staticType = member.object().resolvedType() == nullptr
-                               ? nullptr
-                               : member.object().resolvedType()->canonical();
+  const Type* staticType = resolveType(member.object().resolvedType());
   const bool superCall =
       member.object().kind() == NodeKind::CallExpr &&
       static_cast<const CallExpr&>(member.object()).intrinsic() == IntrinsicKind::Super;
@@ -3285,7 +3307,7 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
   if ((expr.op() == BinaryOp::Is || expr.op() == BinaryOp::IsNot) &&
       asName(expr.right()) != nullptr) {
     const Type* target =
-        expr.right().resolvedType() == nullptr ? nullptr : expr.right().resolvedType()->canonical();
+        resolveType(expr.right().resolvedType());
     if (recordHasTypeId(target) && locals_.find(asName(expr.right())->name()) == locals_.end() &&
         globals_.find(asName(expr.right())->name()) == globals_.end()) {
       llvm::Value* left = emitExpr(builder, expr.left());
@@ -3304,9 +3326,9 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
     return nullptr;
   }
   const Type* leftType =
-      expr.left().resolvedType() == nullptr ? nullptr : expr.left().resolvedType()->canonical();
+      resolveType(expr.left().resolvedType());
   const Type* rightType =
-      expr.right().resolvedType() == nullptr ? nullptr : expr.right().resolvedType()->canonical();
+      resolveType(expr.right().resolvedType());
   // Comparing a pointer-like value to None is a null check. None's type is
   // void-like, so emitCoerce below would drop the None operand to nullptr and
   // the generic compare path would dereference it. Handle identity/equality
@@ -4029,7 +4051,7 @@ llvm::Value* IRGenerator::emitExpr(llvm::IRBuilder<>& builder, const Expr& expr)
   switch (expr.kind()) {
   case NodeKind::IntegerLiteral: {
     const auto& literal = static_cast<const IntegerLiteral&>(expr);
-    const Type* type = expr.resolvedType() == nullptr ? nullptr : expr.resolvedType()->canonical();
+    const Type* type = resolveType(expr.resolvedType());
     if (literal.isByte() || (type != nullptr && (type->isNamed("i8") || type->isNamed("u8")))) {
       return builder.getInt8(static_cast<std::uint8_t>(literal.value()));
     }
@@ -4059,7 +4081,7 @@ llvm::Value* IRGenerator::emitExpr(llvm::IRBuilder<>& builder, const Expr& expr)
     if (name.hasCompileTimeBool()) {
       return builder.getInt1(name.compileTimeBool());
     }
-    const Type* type = expr.resolvedType() == nullptr ? nullptr : expr.resolvedType()->canonical();
+    const Type* type = resolveType(expr.resolvedType());
     if (type != nullptr && type->isVoidLike()) {
       return nullptr;
     }
@@ -4103,9 +4125,7 @@ llvm::Value* IRGenerator::emitExpr(llvm::IRBuilder<>& builder, const Expr& expr)
     if (!member.compileTimeText().empty()) {
       return emitStrLiteral(builder, member.compileTimeText());
     }
-    const Type* objectType = member.object().resolvedType() == nullptr
-                                 ? nullptr
-                                 : member.object().resolvedType()->canonical();
+    const Type* objectType = resolveType(member.object().resolvedType());
     // A bare type name (class or enum) resolves to a TypeObject; enum
     // variants such as `Color.Red` are then accessed through that meta type.
     const Type* instanceType = objectType;
@@ -4246,7 +4266,7 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
     }
     if (assign.target().kind() == NodeKind::IndexExpr) {
       const auto& index = static_cast<const IndexExpr&>(assign.target());
-      const Type* objectType = index.object().resolvedType();
+      const Type* objectType = resolveType(index.object().resolvedType());
       if (objectType != nullptr && objectType->isDict()) {
         return emitDictAssign(builder, index, assign.value());
       }
@@ -4254,6 +4274,14 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
           index.hasStart()) {
         llvm::Value* key = emitExpr(builder, *index.start());
         llvm::Value* stored = emitExpr(builder, assign.value());
+        const RecordMethod& method = objectType->methods()[
+            static_cast<std::size_t>(objectType->methodIndex("__setitem__"))];
+        if (method.type != nullptr && method.type->paramTypes().size() == 3) {
+          key = emitCoerce(builder, key, index.start()->resolvedType(),
+                           method.type->paramTypes()[1]);
+          stored = emitCoerce(builder, stored, assign.value().resolvedType(),
+                              method.type->paramTypes()[2]);
+        }
         emitDunderCall(builder, index.object(), "__setitem__", {key, stored});
         return true;
       }
@@ -4886,7 +4914,7 @@ llvm::Value* IRGenerator::emitAwait(llvm::IRBuilder<>& builder, const AwaitExpr&
   }
   if (inner == nullptr) {
     const Type* resultType =
-        expr.resolvedType() == nullptr ? nullptr : expr.resolvedType()->canonical();
+        resolveType(expr.resolvedType());
     if (resultType != nullptr && !resultType->isGenericCtor("Task")) {
       inner = resultType;
     }
@@ -5215,6 +5243,7 @@ bool IRGenerator::emitInstantiations(const std::vector<const Module*>& modules) 
          ++index) {
       subst_[generic->typeParams()[index]] = instance->args()[index];
     }
+    subst_[generic->name()] = instance;
     const ClassDef* source = nullptr;
     for (const Module* module : modules) {
       if (module == nullptr) {
@@ -5643,7 +5672,7 @@ llvm::Value* IRGenerator::emitEnumUnit(llvm::IRBuilder<>& builder, const Type* t
 }
 
 llvm::Value* IRGenerator::emitEnumName(llvm::IRBuilder<>& builder, const Expr& expr) {
-  const Type* type = expr.resolvedType() == nullptr ? nullptr : expr.resolvedType()->canonical();
+  const Type* type = resolveType(expr.resolvedType());
   if (type == nullptr || !type->isEnum()) {
     return emitStrLiteral(builder, "?");
   }
@@ -5711,7 +5740,7 @@ llvm::Value* IRGenerator::emitDunderOnSelf(llvm::IRBuilder<>& builder,
   if (record == nullptr || self == nullptr) {
     return nullptr;
   }
-  record = record->canonical();
+  record = resolveType(record);
   const int index = record->methodIndex(name);
   if (index < 0) {
     return nullptr;
@@ -5736,7 +5765,7 @@ llvm::Value* IRGenerator::emitDunderCall(llvm::IRBuilder<>& builder,
                                          std::string_view name,
                                          const std::vector<llvm::Value*>& extra) {
   const Type* record =
-      object.resolvedType() == nullptr ? nullptr : object.resolvedType()->canonical();
+      resolveType(object.resolvedType());
   if (record == nullptr) {
     return nullptr;
   }
@@ -5757,7 +5786,7 @@ IRGenerator::emitObjectPointer(llvm::IRBuilder<>& builder, const Expr& object, c
   if (record == nullptr) {
     return nullptr;
   }
-  record = record->canonical();
+  record = resolveType(record);
   llvm::Value* thisPtr = emitAddress(builder, object, false);
   if (thisPtr != nullptr) {
     return thisPtr;
@@ -5823,7 +5852,7 @@ bool IRGenerator::emitRaise(llvm::IRBuilder<>& builder, const RaiseStmt& stateme
   if (statement.value() != nullptr) {
     const Expr& value = *statement.value();
     const Type* type =
-        value.resolvedType() == nullptr ? nullptr : value.resolvedType()->canonical();
+        resolveType(value.resolvedType());
     if (const NameExpr* name = asName(value)) {
       appendExceptionName(chain, name->name());
       appendExceptionType(chain, type);
@@ -6151,7 +6180,7 @@ llvm::Value* IRGenerator::emitConstructorThunk(const Type* record) {
   if (record == nullptr) {
     return nullptr;
   }
-  record = record->canonical();
+  record = resolveType(record);
   const std::string name = "__sere_callable_" + record->name();
   if (llvm::Function* existing = module_->getFunction(name)) {
     return existing;
@@ -6583,9 +6612,7 @@ bool IRGenerator::emitWithExit(llvm::IRBuilder<>& builder, const WithFrame& fram
 bool IRGenerator::emitWith(llvm::IRBuilder<>& builder,
                            const WithStmt& statement,
                            const Type* returnType) {
-  const Type* record = statement.context().resolvedType() == nullptr
-                           ? nullptr
-                           : statement.context().resolvedType()->canonical();
+  const Type* record = resolveType(statement.context().resolvedType());
   if (record == nullptr) {
     return false;
   }
