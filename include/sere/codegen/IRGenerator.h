@@ -40,6 +40,7 @@ public:
 
 private:
   llvm::Type* lower(const Type* type);
+  llvm::StructType* closureEnvironmentType(const FunctionDef& function);
   llvm::Value* emitAnyTypeMatch(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* target);
   std::uint64_t valueSize(const Type* type);
   llvm::Function*

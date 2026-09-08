@@ -220,6 +220,17 @@ const Type* IRGenerator::resolveType(const Type* type) {
   return found != subst_.end() ? found->second : types_->substitute(type, subst_);
 }
 
+llvm::StructType* IRGenerator::closureEnvironmentType(const FunctionDef& function) {
+  std::vector<llvm::Type*> fields;
+  for (const FunctionDef::Capture& capture : function.captures()) {
+    const Type* type = resolveType(capture.type);
+    fields.push_back(type != nullptr && type->isRecord() && !type->isEnum()
+                         ? llvm::PointerType::getUnqual(*context_)
+                         : lower(type));
+  }
+  return llvm::StructType::get(*context_, fields);
+}
+
 llvm::Type* IRGenerator::lower(const Type* type) {
   if (type == nullptr) {
     return llvm::Type::getVoidTy(*context_);
@@ -3055,7 +3066,7 @@ llvm::Value* IRGenerator::emitConstruct(llvm::IRBuilder<>& builder, const CallEx
     agg = builder.CreateInsertValue(agg, memory, {1});
     return agg;
   }
-  if (expr.arguments().empty()) {
+  if (expr.arguments().empty() && expr.keywordArguments().empty()) {
     llvm::Value* value = emitDefault(record);
     if (recordHasTypeId(record) && value != nullptr) {
       value = builder.CreateInsertValue(value, builder.getInt32(recordTypeId(record)), {0});
@@ -3084,6 +3095,19 @@ llvm::Value* IRGenerator::emitConstruct(llvm::IRBuilder<>& builder, const CallEx
       semantic = record->fieldIndex(instanceFields[index]->name);
     }
     aggregate = builder.CreateInsertValue(aggregate, field, {llvmFieldIndex(record, semantic)});
+  }
+  for (const NamedArgument& keyword : expr.keywordArguments()) {
+    const RecordField* field = record->findField(keyword.name);
+    if (field == nullptr || keyword.value == nullptr) {
+      return nullptr;
+    }
+    llvm::Value* value = emitExpr(builder, *keyword.value);
+    if (value == nullptr) {
+      return nullptr;
+    }
+    value = emitCoerce(builder, value, keyword.value->resolvedType(), field->type);
+    aggregate = builder.CreateInsertValue(
+        aggregate, value, {llvmFieldIndex(record, record->fieldIndex(keyword.name))});
   }
   return aggregate;
 }
@@ -4566,21 +4590,9 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
     }
     llvm::Value* environment = nullptr;
     if (!function.captures().empty()) {
-      std::vector<llvm::Type*> fields;
-      std::uint64_t bytes = 0;
-      for (const FunctionDef::Capture& capture : function.captures()) {
-        const Type* captureType = capture.type == nullptr ? nullptr : capture.type->canonical();
-        if (captureType != nullptr && captureType->isRecord() && !captureType->isEnum()) {
-          // Class instances are captured by reference so writes through the
-          // closure mutate the original object, not a frame-local copy.
-          fields.push_back(llvm::PointerType::getUnqual(*context_));
-          bytes += sizeof(void*);
-        } else {
-          fields.push_back(lower(capture.type));
-          bytes += valueSize(capture.type);
-        }
-      }
-      llvm::StructType* environmentType = llvm::StructType::get(*context_, fields);
+      llvm::StructType* environmentType = closureEnvironmentType(function);
+      const std::uint64_t bytes =
+          module_->getDataLayout().getTypeAllocSize(environmentType).getFixedValue();
       llvm::Function* allocate =
           runtimeDecl("sere_alloc", builder.getPtrTy(), {builder.getInt64Ty()});
       environment = builder.CreateCall(
@@ -4614,7 +4626,9 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
     // pointer: readers load the pointer and then the fat pair through it.
     // Storing a load of the first word here would alias the function pointer
     // as an environment and crash on call.
-    rememberLocal(function.name(), packed, function.resolvedType());
+    llvm::Value* slot = builder.CreateAlloca(builder.getPtrTy(), nullptr, function.name());
+    builder.CreateStore(packed, slot);
+    rememberLocal(function.name(), slot, function.resolvedType());
     return true;
   }
   return statement.kind() == NodeKind::PassStmt || statement.kind() == NodeKind::ClassDef ||
@@ -5546,11 +5560,7 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
   if (!function.captures().empty()) {
     llvm::Argument& environment = *argIt++;
     environment.setName("closure.env");
-    std::vector<llvm::Type*> fields;
-    for (const FunctionDef::Capture& capture : function.captures()) {
-      fields.push_back(lower(capture.type));
-    }
-    llvm::StructType* environmentType = llvm::StructType::get(*context_, fields);
+    llvm::StructType* environmentType = closureEnvironmentType(function);
     for (std::size_t captureIndex = 0; captureIndex < function.captures().size(); ++captureIndex) {
       const FunctionDef::Capture& capture = function.captures()[captureIndex];
       llvm::Value* cell = builder.CreateStructGEP(

@@ -3314,33 +3314,21 @@ const Type* TypeChecker::checkConstructor(CallExpr& expr, const Type* record) {
     expr.setResolvedType(record);
     return record;
   }
-  std::vector<const RecordField*> instanceFields;
-  for (const RecordField& field : record->fields()) {
-    if (!field.isStatic) {
-      instanceFields.push_back(&field);
-    }
-  }
-  if (!expr.arguments().empty() && expr.arguments().size() != instanceFields.size()) {
-    diagnostics_->error(expr.range(),
-                        "'" + record->display() + "' takes " +
-                            countLabel(instanceFields.size(), "argument", "arguments") + ", but " +
-                            std::to_string(expr.arguments().size()) + " provided");
-    return nullptr;
-  }
+  std::vector<ParamDecl> params;
+  std::vector<const Type*> paramTypes;
   std::vector<std::string> names;
-  for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
-    const Type* argType = checkExpr(*expr.arguments()[index]);
-    if (argType == nullptr) {
-      return nullptr;
+  for (const RecordField& field : record->fields()) {
+    if (!field.isStatic && field.stored) {
+      ParamDecl param;
+      param.name = field.name;
+      params.push_back(std::move(param));
+      paramTypes.push_back(field.type);
+      names.push_back(field.name);
     }
-    if (!isAssignable(argType, instanceFields[index]->type)) {
-      diagnostics_->error(expr.arguments()[index]->range(),
-                          "constructor argument type mismatch: expected " +
-                              quoteType(instanceFields[index]->type) + ", found " +
-                              quoteType(argType));
-      return nullptr;
-    }
-    names.push_back(instanceFields[index]->name);
+  }
+  if ((!expr.arguments().empty() || !expr.keywordArguments().empty()) &&
+      !checkFunctionArguments(expr, params, paramTypes, record->display(), 0)) {
+    return nullptr;
   }
   expr.setParamNames(std::move(names));
   expr.setConstructor(true);
@@ -4250,6 +4238,9 @@ bool TypeChecker::checkReturn(ReturnStmt& statement, const Type* expectedReturn)
   if (actual == nullptr) {
     return false;
   }
+  if (inferredNestedReturns_ != nullptr) {
+    inferredNestedReturns_->push_back(actual);
+  }
   if (value.kind() == NodeKind::UnaryExpr &&
       static_cast<const UnaryExpr&>(value).op() == UnaryOp::AddrOf) {
     const Expr* target = &static_cast<const UnaryExpr&>(value).operand();
@@ -4356,6 +4347,9 @@ bool TypeChecker::checkStatement(Stmt& statement, const Type* expectedReturn) {
     const bool ok = checkFunctionBody(function);
     nestedFunction_ = savedNested;
     nestedOuterScope_ = savedBoundary;
+    if (Symbol* bound = lookup(function.name())) {
+      bound->type = function.resolvedType();
+    }
     return ok;
   }
   case NodeKind::PassStmt:
@@ -4439,12 +4433,29 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
       returnType = field->type;
     }
   }
+  std::vector<const Type*> inferredReturns;
+  auto* savedReturns = inferredNestedReturns_;
+  const bool inferNested = nestedFunction_ == &function && function.hasInferredReturn() &&
+                           !function.isAsync();
+  inferredNestedReturns_ = inferNested ? &inferredReturns : nullptr;
   bool ok = returnType != nullptr;
   for (const std::unique_ptr<Stmt>& statement : function.body()) {
     if (statement == nullptr) {
       continue;
     }
     ok = checkStatement(*statement, returnType) && ok;
+  }
+  inferredNestedReturns_ = savedReturns;
+  // Preserve a concrete nested return ABI when all exits return the same type.
+  // Mixed/recursive inference continues to use Any until it can be resolved.
+  if (ok && inferNested && !inferredReturns.empty() && !function.body().empty() &&
+      function.body().back()->kind() == NodeKind::ReturnStmt) {
+    const Type* inferred = inferredReturns.front()->canonical();
+    if (!inferred->isAny() &&
+        std::all_of(inferredReturns.begin(), inferredReturns.end(),
+                    [&](const Type* type) { return type->canonical() == inferred; })) {
+      function.setResolvedType(types_->functionType(function.resolvedType()->paramTypes(), inferred));
+    }
   }
   popScope();
   currentClass_ = savedClass;
@@ -4525,11 +4536,31 @@ bool TypeChecker::validateParamList(const std::vector<ParamDecl>& params, Source
   return true;
 }
 
+void TypeChecker::importMethod(const Type* record, FunctionDef& method) {
+  if (record != nullptr) {
+    importedMethods_[record->canonical()][method.name()] = &method;
+  }
+}
+
 FunctionDef* TypeChecker::findMethodDef(const Type* record, std::string_view methodName) {
   if (record == nullptr) {
     return nullptr;
   }
   record = record->canonical();
+  const Type* definitionRecord = record;
+  for (const auto& [generic, instance] : types_->instantiations()) {
+    if (instance == record) {
+      definitionRecord = generic;
+      break;
+    }
+  }
+  if (const auto imported = importedMethods_.find(definitionRecord);
+      imported != importedMethods_.end()) {
+    const auto method = imported->second.find(std::string(methodName));
+    if (method != imported->second.end()) {
+      return method->second;
+    }
+  }
   std::string baseClassName = record->name();
   if (const auto bracket = baseClassName.find('['); bracket != std::string::npos) {
     baseClassName = baseClassName.substr(0, bracket);

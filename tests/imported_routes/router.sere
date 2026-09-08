@@ -1,0 +1,22 @@
+@flags
+enum Method:
+    GET = 1
+    POST = 2
+struct Route:
+    methods: Method
+    handler: Function
+class App:
+    name: str
+    routes: dict[str, Route]
+    def __init__(self, name: str = "app") -> None:
+        self.name = name
+        self.routes = {}
+    def get_routes(self) -> dict[str, Route]:
+        return self.routes
+    def add(self, path: str, methods: Method, handler: Function) -> None:
+        self.routes[path] = Route(methods=methods, handler=handler)
+    def route(self, path: str, methods: Method = Method.GET) -> Function:
+        def wrapper(func: Function):
+            self.add(path, methods, func)
+            return func
+        return wrapper

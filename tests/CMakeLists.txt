@@ -474,3 +474,13 @@ add_test(NAME sere.test.generic_pair_copy
 set_tests_properties(sere.test.generic_pair_copy PROPERTIES
   ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib"
   TIMEOUT 120)
+
+add_test(NAME sere.test.imported_routes
+  COMMAND "${CMAKE_COMMAND}"
+    "-DSERE=${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}"
+    "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/imported_routes/main.sere"
+    "-DOUTPUT=${CMAKE_BINARY_DIR}/imported_routes${CMAKE_EXECUTABLE_SUFFIX}"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/run_imported_routes.cmake")
+set_tests_properties(sere.test.imported_routes PROPERTIES
+  ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib"
+  TIMEOUT 120)

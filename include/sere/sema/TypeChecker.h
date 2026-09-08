@@ -70,6 +70,8 @@ public:
       std::string file, std::string name, std::string package, std::string doc, bool debug);
   [[nodiscard]] const std::vector<SemanticSymbol>& symbols() const;
   [[nodiscard]] std::vector<const SemanticSymbol*> visibleSymbolsAt(std::uint32_t offset) const;
+  // Keep source signatures for imported constructors and methods, including defaults.
+  void importMethod(const Type* record, FunctionDef& method);
   bool importSymbol(const std::string& name, Symbol symbol, SourceLocation location);
   [[nodiscard]] const Type* typeOfName(std::string_view name) const;
   [[nodiscard]] const Type* typeOfPath(const std::vector<std::string>& parts) const;
@@ -210,6 +212,7 @@ private:
   int loopDepth_ = 0;
   std::string currentClass_{};
   std::unordered_map<std::string, ClassDef*> classes_{};
+  std::unordered_map<const Type*, std::unordered_map<std::string, FunctionDef*>> importedMethods_{};
   std::unordered_map<std::string, bool> flattened_{};
   std::string moduleFile_{};
   std::string moduleName_{"__main__"};
@@ -223,6 +226,7 @@ private:
   int lambdaCounter_ = 0;
   int nestedFunctionCounter_ = 0;
   FunctionDef* nestedFunction_ = nullptr;
+  std::vector<const Type*>* inferredNestedReturns_ = nullptr;
   std::size_t nestedOuterScope_ = 0;
 };
 

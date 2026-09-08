@@ -142,6 +142,20 @@ void bindModuleExports(TypeChecker& checker,
                        const std::string& moduleName,
                        const ImportStmt& statement,
                        DiagnosticEngine& diagnostics) {
+  // Imported calls use the same source parameter binder as local calls.
+  for (const auto& item : module.statements()) {
+    if (item->kind() == NodeKind::ClassDef) {
+      auto& record = static_cast<ClassDef&>(*item);
+      for (const auto& method : record.methods()) {
+        checker.importMethod(record.resolvedType(), *method);
+      }
+    } else if (item->kind() == NodeKind::EnumDef) {
+      auto& record = static_cast<EnumDef&>(*item);
+      for (const auto& method : record.methods()) {
+        checker.importMethod(record.resolvedType(), *method);
+      }
+    }
+  }
   std::vector<RecordField> exports;
   for (std::unique_ptr<Stmt>& item : module.statements()) {
     if (item->fromPrelude()) {
