@@ -599,6 +599,7 @@ std::unique_ptr<Stmt> cloneStmt(const Stmt& stmt) {
     std::vector<IfBranch> branches;
     for (const IfBranch& branch : static_cast<const IfStmt&>(stmt).branches()) {
       IfBranch copy;
+      copy.range = branch.range;
       copy.condition = branch.condition == nullptr ? nullptr : cloneExpr(*branch.condition);
       copy.body = cloneStmts(branch.body);
       branches.push_back(std::move(copy));

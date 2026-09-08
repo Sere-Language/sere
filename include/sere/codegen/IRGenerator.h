@@ -231,7 +231,14 @@ private:
   std::vector<std::pair<llvm::Value*, const Type*>> dropStack_{};
   std::vector<std::pair<llvm::BasicBlock*, llvm::BasicBlock*>> loops_{};
   std::vector<llvm::BasicBlock*> tryHandlers_{};
-  int tryDepth_ = 0;
+  struct ExceptionCleanup {
+    const std::vector<std::unique_ptr<Stmt>>* body;
+    std::size_t handlerDepth;
+    std::size_t loopDepth;
+  };
+  std::vector<ExceptionCleanup> exceptionCleanups_{};
+  bool
+  emitExceptionCleanups(llvm::IRBuilder<>& builder, const Type* returnType, bool loopExit = false);
   const FunctionDef* userMain_ = nullptr;
   std::unordered_map<std::string, const Type*> subst_{};
   std::vector<const DeferStmt*> defers_{};

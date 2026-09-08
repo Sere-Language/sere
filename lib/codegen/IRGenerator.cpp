@@ -1233,7 +1233,7 @@ llvm::Value* IRGenerator::emitAddress(llvm::IRBuilder<>& builder, const Expr& ex
       static_cast<const CallExpr&>(expr).intrinsic() == IntrinsicKind::Super) {
     const auto found = locals_.find("self");
     if (found != locals_.end()) {
-      return found->second;
+      return builder.CreateLoad(builder.getPtrTy(), found->second);
     }
     if (required) {
       diagnostics_->error(expr.range(), "super() requires self");
@@ -1243,6 +1243,12 @@ llvm::Value* IRGenerator::emitAddress(llvm::IRBuilder<>& builder, const Expr& ex
   if (const NameExpr* name = asName(expr)) {
     const auto local = locals_.find(name->name());
     if (local != locals_.end()) {
+      const Type* type = resolveType(expr.resolvedType());
+      const auto* slot = llvm::dyn_cast<llvm::AllocaInst>(local->second);
+      if (type != nullptr && type->isRecord() && !type->isEnum() && slot != nullptr &&
+          slot->getAllocatedType()->isPointerTy()) {
+        return builder.CreateLoad(builder.getPtrTy(), local->second);
+      }
       return local->second;
     }
     const auto global = globals_.find(name->name());
@@ -3630,9 +3636,15 @@ bool IRGenerator::emitIf(llvm::IRBuilder<>& builder,
                          const Type* returnType) {
   llvm::Function* function = builder.GetInsertBlock()->getParent();
   llvm::BasicBlock* merge = llvm::BasicBlock::Create(*context_, "if.end", function);
+  auto emitBranch = [&](const IfBranch& branch) {
+    const auto savedLocals = locals_;
+    const bool ok = emitBlock(builder, branch.body, returnType);
+    locals_ = savedLocals;
+    return ok;
+  };
   for (const IfBranch& branch : statement.branches()) {
     if (branch.condition == nullptr) {
-      if (!emitBlock(builder, branch.body, returnType)) {
+      if (!emitBranch(branch)) {
         return false;
       }
       if (builder.GetInsertBlock()->getTerminator() == nullptr) {
@@ -3645,7 +3657,7 @@ bool IRGenerator::emitIf(llvm::IRBuilder<>& builder,
       continue;
     }
     if (known.has_value() && *known) {
-      if (!emitBlock(builder, branch.body, returnType)) {
+      if (!emitBranch(branch)) {
         return false;
       }
       if (builder.GetInsertBlock()->getTerminator() == nullptr) {
@@ -3658,7 +3670,7 @@ bool IRGenerator::emitIf(llvm::IRBuilder<>& builder,
     llvm::BasicBlock* nextBlock = llvm::BasicBlock::Create(*context_, "if.next", function);
     builder.CreateCondBr(cond, thenBlock, nextBlock);
     builder.SetInsertPoint(thenBlock);
-    if (!emitBlock(builder, branch.body, returnType)) {
+    if (!emitBranch(branch)) {
       return false;
     }
     if (builder.GetInsertBlock()->getTerminator() == nullptr) {
@@ -3874,6 +3886,7 @@ bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
     llvm::BasicBlock* header = llvm::BasicBlock::Create(*context_, "for.cond", function);
     llvm::BasicBlock* body = llvm::BasicBlock::Create(*context_, "for.body", function);
     llvm::BasicBlock* exit = llvm::BasicBlock::Create(*context_, "for.end", function);
+    llvm::BasicBlock* increment = llvm::BasicBlock::Create(*context_, "for.next", function);
     builder.CreateBr(header);
     builder.SetInsertPoint(header);
     llvm::Value* current = builder.CreateLoad(builder.getInt32Ty(), index);
@@ -3882,13 +3895,16 @@ bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
     llvm::Value* back = builder.CreateICmpSGT(current, stop);
     builder.CreateCondBr(builder.CreateSelect(positive, fwd, back), body, exit);
     builder.SetInsertPoint(body);
-    loops_.emplace_back(header, exit);
+    loops_.emplace_back(increment, exit);
     if (!emitBlock(builder, statement.body(), returnType)) {
       loops_.pop_back();
       return false;
     }
     loops_.pop_back();
-    if (builder.GetInsertBlock()->getTerminator() == nullptr) {
+    if (builder.GetInsertBlock()->getTerminator() == nullptr)
+      builder.CreateBr(increment);
+    builder.SetInsertPoint(increment);
+    {
       llvm::Value* now = builder.CreateLoad(builder.getInt32Ty(), index);
       builder.CreateStore(builder.CreateAdd(now, step), index);
       builder.CreateBr(header);
@@ -3906,6 +3922,7 @@ bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
     llvm::BasicBlock* header = llvm::BasicBlock::Create(*context_, "for.cond", function);
     llvm::BasicBlock* body = llvm::BasicBlock::Create(*context_, "for.body", function);
     llvm::BasicBlock* exit = llvm::BasicBlock::Create(*context_, "for.end", function);
+    llvm::BasicBlock* increment = llvm::BasicBlock::Create(*context_, "for.next", function);
     builder.CreateBr(header);
     builder.SetInsertPoint(header);
     llvm::Value* current = builder.CreateLoad(builder.getInt64Ty(), cursor);
@@ -3926,13 +3943,16 @@ bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
                                 builder.CreateLoad(builder.getPtrTy(), dataSlot),
                                 builder.CreateLoad(builder.getInt64Ty(), lenSlot)),
                         item);
-    loops_.emplace_back(header, exit);
+    loops_.emplace_back(increment, exit);
     if (!emitBlock(builder, statement.body(), returnType)) {
       loops_.pop_back();
       return false;
     }
     loops_.pop_back();
-    if (builder.GetInsertBlock()->getTerminator() == nullptr) {
+    if (builder.GetInsertBlock()->getTerminator() == nullptr)
+      builder.CreateBr(increment);
+    builder.SetInsertPoint(increment);
+    {
       llvm::Value* now = builder.CreateLoad(builder.getInt64Ty(), cursor);
       builder.CreateStore(builder.CreateAdd(now, builder.getInt64(1)), cursor);
       builder.CreateBr(header);
@@ -3953,6 +3973,7 @@ bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
   llvm::BasicBlock* header = llvm::BasicBlock::Create(*context_, "for.cond", function);
   llvm::BasicBlock* body = llvm::BasicBlock::Create(*context_, "for.body", function);
   llvm::BasicBlock* exit = llvm::BasicBlock::Create(*context_, "for.end", function);
+  llvm::BasicBlock* increment = llvm::BasicBlock::Create(*context_, "for.next", function);
   builder.CreateBr(header);
   builder.SetInsertPoint(header);
   llvm::Value* current = builder.CreateLoad(builder.getInt64Ty(), index);
@@ -3961,13 +3982,16 @@ bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
   builder.SetInsertPoint(body);
   llvm::Value* slot = builder.CreateCall(itemFn, {list, current});
   builder.CreateStore(builder.CreateLoad(lower(element), slot), item);
-  loops_.emplace_back(header, exit);
+  loops_.emplace_back(increment, exit);
   if (!emitBlock(builder, statement.body(), returnType)) {
     loops_.pop_back();
     return false;
   }
   loops_.pop_back();
-  if (builder.GetInsertBlock()->getTerminator() == nullptr) {
+  if (builder.GetInsertBlock()->getTerminator() == nullptr)
+    builder.CreateBr(increment);
+  builder.SetInsertPoint(increment);
+  {
     llvm::Value* now = builder.CreateLoad(builder.getInt64Ty(), index);
     builder.CreateStore(builder.CreateAdd(now, builder.getInt64(1)), index);
     builder.CreateBr(header);
@@ -4178,8 +4202,11 @@ llvm::Value* IRGenerator::emitExpr(llvm::IRBuilder<>& builder, const Expr& expr)
     }
     return builder.CreateLoad(lower(expr.resolvedType()), address);
   }
-  case NodeKind::CallExpr:
-    return emitCall(builder, static_cast<const CallExpr&>(expr));
+  case NodeKind::CallExpr: {
+    llvm::Value* result = emitCall(builder, static_cast<const CallExpr&>(expr));
+    emitErrorCheck(builder);
+    return result;
+  }
   case NodeKind::BinaryExpr:
     return emitBinary(builder, static_cast<const BinaryExpr&>(expr));
   case NodeKind::UnaryExpr:
@@ -4442,7 +4469,11 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
     if (value != nullptr && ret.value() != nullptr) {
       value = emitCoerce(builder, value, ret.value()->resolvedType(), returnType);
     }
-    emitReturn(builder, value, returnType);
+    emitErrorCheck(builder);
+    if (!emitExceptionCleanups(builder, returnType))
+      return false;
+    if (builder.GetInsertBlock()->getTerminator() == nullptr)
+      emitReturn(builder, value, returnType);
     return true;
   }
   if (statement.kind() == NodeKind::ExprStmt) {
@@ -4466,7 +4497,10 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
       diagnostics_->error(statement.range(), "'break' outside loop");
       return false;
     }
-    builder.CreateBr(loops_.back().second);
+    if (!emitExceptionCleanups(builder, returnType, true))
+      return false;
+    if (builder.GetInsertBlock()->getTerminator() == nullptr)
+      builder.CreateBr(loops_.back().second);
     return true;
   }
   if (statement.kind() == NodeKind::ContinueStmt) {
@@ -4474,7 +4508,10 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
       diagnostics_->error(statement.range(), "'continue' outside loop");
       return false;
     }
-    builder.CreateBr(loops_.back().first);
+    if (!emitExceptionCleanups(builder, returnType, true))
+      return false;
+    if (builder.GetInsertBlock()->getTerminator() == nullptr)
+      builder.CreateBr(loops_.back().first);
     return true;
   }
   if (statement.kind() == NodeKind::RaiseStmt) {
@@ -4537,8 +4574,10 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
             environmentType, environment, static_cast<unsigned>(index));
         const Type* captureType = capture.type == nullptr ? nullptr : capture.type->canonical();
         if (captureType != nullptr && captureType->isRecord() && !captureType->isEnum()) {
-          llvm::Value* object = builder.CreateLoad(
-              llvm::PointerType::getUnqual(*context_), local->second, capture.name + ".ref");
+          llvm::Value* object = local->second;
+          const auto* slot = llvm::dyn_cast<llvm::AllocaInst>(object);
+          if (slot != nullptr && slot->getAllocatedType()->isPointerTy())
+            object = builder.CreateLoad(builder.getPtrTy(), object, capture.name + ".ref");
           builder.CreateStore(object, dst);
         } else {
           llvm::Value* value = builder.CreateLoad(lower(capture.type), local->second);
@@ -4708,6 +4747,20 @@ void collectStmtUses(const Stmt& stmt,
     collectExprUses(static_cast<const AssignStmt&>(stmt).target(), names, printed);
     collectExprUses(static_cast<const AssignStmt&>(stmt).value(), names, printed);
     break;
+  case NodeKind::RaiseStmt: {
+    const Expr* value = static_cast<const RaiseStmt&>(stmt).value();
+    if (value != nullptr) {
+      collectExprUses(*value, names, printed);
+      const Type* type = value->resolvedType();
+      if (type != nullptr && type->isTypeObject()) {
+        const Type* record = type->typeObjectInstance();
+        const int init = record->methodIndex("__init__");
+        if (init >= 0)
+          names.push_back(record->methods()[static_cast<std::size_t>(init)].llvmName);
+      }
+    }
+    break;
+  }
   case NodeKind::ReturnStmt:
     if (static_cast<const ReturnStmt&>(stmt).value() != nullptr) {
       collectExprUses(*static_cast<const ReturnStmt&>(stmt).value(), names, printed);
@@ -4770,6 +4823,10 @@ void collectStmtUses(const Stmt& stmt,
         collectStmtUses(*bodyStmt, names, printed);
       }
     }
+    for (const auto& bodyStmt : tryStmt.elseBody())
+      collectStmtUses(*bodyStmt, names, printed);
+    for (const auto& bodyStmt : tryStmt.finallyBody())
+      collectStmtUses(*bodyStmt, names, printed);
     break;
   }
   case NodeKind::MatchStmt:
@@ -5106,6 +5163,7 @@ bool IRGenerator::emitCMainWrapper(llvm::Function* userMain) {
     } else {
       result = builder.CreateCall(userMain);
     }
+    builder.CreateCall(runtimeDecl("sere_error_unhandled", builder.getVoidTy(), {}));
     if (result != nullptr && (result->getType()->isVoidTy() || result->getType() != i32)) {
       result = result->getType()->isIntegerTy() ? builder.CreateIntCast(result, i32, true)
                                                 : builder.getInt32(0);
@@ -5160,6 +5218,7 @@ bool IRGenerator::emitCMainWrapper(llvm::Function* userMain) {
     }
   }
   builder.CreateCall(coroDestroy, {hdl});
+  builder.CreateCall(runtimeDecl("sere_error_unhandled", builder.getVoidTy(), {}));
   builder.CreateRet(code);
   return true;
 }
@@ -5442,6 +5501,8 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
   locals_.clear();
   dropStack_.clear();
   loops_.clear();
+  tryHandlers_.clear();
+  exceptionCleanups_.clear();
   defers_.clear();
   withStack_.clear();
   asyncFn_ = function.isAsync();
@@ -5801,9 +5862,12 @@ llvm::Value* IRGenerator::emitDunderOnSelf(llvm::IRBuilder<>& builder,
   args.insert(args.end(), extra.begin(), extra.end());
   if (found->second->getReturnType()->isVoidTy()) {
     builder.CreateCall(found->second, args);
+    emitErrorCheck(builder);
     return nullptr;
   }
-  return builder.CreateCall(found->second, args);
+  llvm::Value* result = builder.CreateCall(found->second, args);
+  emitErrorCheck(builder);
+  return result;
 }
 
 llvm::Value* IRGenerator::emitDunderCall(llvm::IRBuilder<>& builder,
@@ -5863,15 +5927,41 @@ llvm::Value* IRGenerator::emitNamedMethod(llvm::IRBuilder<>& builder,
   args.insert(args.end(), extra.begin(), extra.end());
   if (found->second->getReturnType()->isVoidTy()) {
     builder.CreateCall(found->second, args);
+    emitErrorCheck(builder);
     return nullptr;
   }
-  return builder.CreateCall(found->second, args);
+  llvm::Value* result = builder.CreateCall(found->second, args);
+  emitErrorCheck(builder);
+  return result;
+}
+
+bool IRGenerator::emitExceptionCleanups(llvm::IRBuilder<>& builder,
+                                        const Type* returnType,
+                                        bool loopExit) {
+  if (exceptionCleanups_.empty() ||
+      (loopExit && exceptionCleanups_.back().loopDepth < loops_.size()))
+    return true;
+  const auto cleanup = exceptionCleanups_.back();
+  const auto handlers = tryHandlers_;
+  exceptionCleanups_.pop_back();
+  tryHandlers_.resize(cleanup.handlerDepth);
+  bool ok = true;
+  if (cleanup.body != nullptr) {
+    ok = emitBlock(builder, *cleanup.body, returnType);
+  } else {
+    builder.CreateCall(runtimeDecl("sere_error_leave", builder.getVoidTy(), {builder.getInt32Ty()}),
+                       {builder.getInt32(0)});
+  }
+  if (ok && builder.GetInsertBlock()->getTerminator() == nullptr)
+    ok = emitExceptionCleanups(builder, returnType, loopExit);
+  tryHandlers_ = handlers;
+  exceptionCleanups_.push_back(cleanup);
+  return ok;
 }
 
 void IRGenerator::emitErrorCheck(llvm::IRBuilder<>& builder) {
-  if (tryHandlers_.empty() || builder.GetInsertBlock()->getTerminator() != nullptr) {
+  if (builder.GetInsertBlock()->getTerminator() != nullptr)
     return;
-  }
   llvm::Function* hasFn = runtimeDecl("sere_has_error", builder.getInt32Ty(), {});
   llvm::Value* has = builder.CreateICmpNE(builder.CreateCall(hasFn), builder.getInt32(0));
   llvm::Function* function = builder.GetInsertBlock()->getParent();
@@ -5879,65 +5969,63 @@ void IRGenerator::emitErrorCheck(llvm::IRBuilder<>& builder) {
   llvm::BasicBlock* ok = llvm::BasicBlock::Create(*context_, "err.ok", function);
   builder.CreateCondBr(has, fail, ok);
   builder.SetInsertPoint(fail);
-  if (!tryHandlers_.empty()) {
+  if (!tryHandlers_.empty() && tryHandlers_.back()->getParent() == function) {
     builder.CreateBr(tryHandlers_.back());
+  } else if (asyncFn_ && asyncFinal_ != nullptr && asyncFinal_->getParent() == function) {
+    builder.CreateBr(asyncFinal_);
+  } else if (function->getReturnType()->isVoidTy()) {
+    builder.CreateRetVoid();
   } else {
-    llvm::Function* panic =
-        runtimeDecl("sere_panic", builder.getVoidTy(), {builder.getPtrTy(), builder.getInt64Ty()});
-    llvm::Value* msg = emitStrLiteral(builder, "uncaught error");
-    builder.CreateCall(
-        panic, {builder.CreateExtractValue(msg, {0}), builder.CreateExtractValue(msg, {1})});
-    builder.CreateUnreachable();
+    builder.CreateRet(llvm::Constant::getNullValue(function->getReturnType()));
   }
   builder.SetInsertPoint(ok);
 }
 
 bool IRGenerator::emitRaise(llvm::IRBuilder<>& builder, const RaiseStmt& statement) {
-  std::string chain;
-  llvm::Value* message = nullptr;
-  if (statement.value() != nullptr) {
+  if (statement.value() == nullptr) {
+    builder.CreateCall(runtimeDecl("sere_reraise", builder.getVoidTy(), {}));
+  } else {
     const Expr& value = *statement.value();
-    const Type* type =
-        resolveType(value.resolvedType());
-    if (const NameExpr* name = asName(value)) {
-      appendExceptionName(chain, name->name());
-      appendExceptionType(chain, type);
-      if (type != nullptr && type->isRecord() && locals_.find(name->name()) == locals_.end() &&
-          globals_.find(name->name()) == globals_.end()) {
-        message = emitStrLiteral(builder, "");
-      }
-    } else if (value.kind() == NodeKind::CallExpr) {
-      const auto& call = static_cast<const CallExpr&>(value);
-      if (const NameExpr* callee = asName(call.callee())) {
-        appendExceptionName(chain, callee->name());
-      }
-      appendExceptionType(chain, type);
-      if (!call.arguments().empty()) {
-        message = emitToStr(builder, *call.arguments()[0]);
-      }
-      (void)emitExpr(builder, value);
-    } else if (type != nullptr && type->isNamed("str")) {
-      appendExceptionName(chain, "Exception");
-      message = emitToStr(builder, value);
+    const Type* type = resolveType(value.resolvedType());
+    const bool typeObject = type->isTypeObject();
+    if (typeObject)
+      type = type->typeObjectInstance();
+    std::string chain;
+    appendExceptionType(chain, type);
+    llvm::Value* object = nullptr;
+    if (typeObject) {
+      CallExpr construct(
+          value.range(), std::make_unique<NameExpr>(value.range(), type->name()), {}, {});
+      construct.setResolvedType(type);
+      construct.setConstructor(true);
+      const int init = type->methodIndex("__init__");
+      if (init >= 0)
+        construct.setLoweredName(type->methods()[static_cast<std::size_t>(init)].llvmName);
+      object = emitConstruct(builder, construct);
+      emitErrorCheck(builder);
     } else {
-      appendExceptionType(chain, type);
-      message = emitToStr(builder, value);
+      object = emitExpr(builder, value);
     }
+    if (object == nullptr)
+      return false;
+    const int field = type->fieldIndex("message");
+    llvm::Value* message = field < 0
+                               ? emitStrLiteral(builder, "")
+                               : builder.CreateExtractValue(object, {llvmFieldIndex(type, field)});
+    builder.CreateCall(runtimeDecl("sere_raise",
+                                   builder.getVoidTy(),
+                                   {builder.getPtrTy(), builder.getPtrTy(), builder.getInt64Ty()}),
+                       {builder.CreateGlobalString(chain, "", 0, module_),
+                        builder.CreateExtractValue(message, {0}),
+                        builder.CreateExtractValue(message, {1})});
+    llvm::Value* slot = builder.CreateAlloca(lower(type));
+    builder.CreateStore(object, slot);
+    builder.CreateCall(
+        runtimeDecl("sere_error_set_object",
+                    builder.getVoidTy(),
+                    {builder.getPtrTy(), builder.getInt64Ty()}),
+        {slot, builder.getInt64(module_->getDataLayout().getTypeAllocSize(lower(type)))});
   }
-  if (chain.empty()) {
-    chain = "Exception";
-  }
-  if (message == nullptr) {
-    message = emitStrLiteral(builder, "");
-  }
-  llvm::Function* raiseFn =
-      runtimeDecl("sere_raise",
-                  builder.getVoidTy(),
-                  {builder.getPtrTy(), builder.getPtrTy(), builder.getInt64Ty()});
-  builder.CreateCall(raiseFn,
-                     {builder.CreateGlobalString(chain, "", 0, module_),
-                      builder.CreateExtractValue(message, {0}),
-                      builder.CreateExtractValue(message, {1})});
   emitErrorCheck(builder);
   return true;
 }
@@ -5946,93 +6034,112 @@ bool IRGenerator::emitTry(llvm::IRBuilder<>& builder,
                           const TryStmt& statement,
                           const Type* returnType) {
   llvm::Function* function = builder.GetInsertBlock()->getParent();
-  llvm::BasicBlock* dispatch = llvm::BasicBlock::Create(*context_, "try.dispatch", function);
-  llvm::BasicBlock* after = llvm::BasicBlock::Create(*context_, "try.after", function);
+  auto block = [&](const char* name) {
+    return llvm::BasicBlock::Create(*context_, name, function);
+  };
+  auto branch = [&](llvm::BasicBlock* target) {
+    if (builder.GetInsertBlock()->getTerminator() == nullptr)
+      builder.CreateBr(target);
+  };
+  llvm::BasicBlock* dispatch = block("try.dispatch");
+  llvm::BasicBlock* finish = block("try.finally");
+  llvm::BasicBlock* after = block("try.after");
+  const std::size_t outerDepth = tryHandlers_.size();
+  exceptionCleanups_.push_back({&statement.finallyBody(), outerDepth, loops_.size()});
   tryHandlers_.push_back(dispatch);
-  tryDepth_ += 1;
-  const bool bodyOk = emitBlock(builder, statement.body(), returnType);
-  tryHandlers_.pop_back();
-  tryDepth_ -= 1;
-  if (!bodyOk) {
+  if (!emitBlock(builder, statement.body(), returnType))
     return false;
-  }
-  llvm::Function* hasFn = runtimeDecl("sere_has_error", builder.getInt32Ty(), {});
-  llvm::Function* clearFn = runtimeDecl("sere_clear_error", builder.getVoidTy(), {});
-  llvm::Function* isaFn = runtimeDecl("sere_error_isa", builder.getInt32Ty(), {builder.getPtrTy()});
-  llvm::Function* msgFn =
-      runtimeDecl("sere_error_message", builder.getPtrTy(), {builder.getPtrTy()});
+  tryHandlers_.back() = finish;
   if (builder.GetInsertBlock()->getTerminator() == nullptr) {
-    llvm::Value* failed = builder.CreateICmpNE(builder.CreateCall(hasFn), builder.getInt32(0));
-    llvm::BasicBlock* elseBlock = llvm::BasicBlock::Create(*context_, "try.else", function);
-    builder.CreateCondBr(failed, dispatch, elseBlock);
-    builder.SetInsertPoint(elseBlock);
-    if (!emitBlock(builder, statement.elseBody(), returnType)) {
+    if (!emitBlock(builder, statement.elseBody(), returnType))
       return false;
-    }
-    if (builder.GetInsertBlock()->getTerminator() == nullptr) {
-      builder.CreateBr(after);
-    }
+    branch(finish);
   }
   builder.SetInsertPoint(dispatch);
-  llvm::BasicBlock* unmatched = llvm::BasicBlock::Create(*context_, "try.unmatched", function);
-  if (statement.handlers().empty()) {
-    builder.CreateBr(unmatched);
-  }
-  llvm::BasicBlock* next = statement.handlers().empty() ? unmatched : nullptr;
-  for (std::size_t index = 0; index < statement.handlers().size(); ++index) {
-    const ExceptHandler& handler = statement.handlers()[index];
-    llvm::BasicBlock* taken = llvm::BasicBlock::Create(*context_, "try.except", function);
-    next = index + 1 == statement.handlers().size()
-               ? unmatched
-               : llvm::BasicBlock::Create(*context_, "try.next", function);
+  llvm::Function* enter = runtimeDecl("sere_error_enter", builder.getVoidTy(), {});
+  llvm::Function* leave =
+      runtimeDecl("sere_error_leave", builder.getVoidTy(), {builder.getInt32Ty()});
+  llvm::Function* isa = runtimeDecl("sere_error_isa", builder.getInt32Ty(), {builder.getPtrTy()});
+  for (const ExceptHandler& handler : statement.handlers()) {
+    llvm::BasicBlock* taken = block("try.except");
+    llvm::BasicBlock* next = block("try.next");
     if (handler.type == nullptr) {
       builder.CreateBr(taken);
     } else {
+      const Type* caught = handler.type->resolvedType()->canonical();
       llvm::Value* matched = builder.CreateICmpNE(
-          builder.CreateCall(isaFn,
-                             {builder.CreateGlobalString(handler.type->name(), "", 0, module_)}),
+          builder.CreateCall(isa, {builder.CreateGlobalString(caught->name(), "", 0, module_)}),
           builder.getInt32(0));
       builder.CreateCondBr(matched, taken, next);
     }
     builder.SetInsertPoint(taken);
+    const auto savedLocals = locals_;
     if (!handler.name.empty()) {
-      const Type* caught = handler.type != nullptr && handler.type->resolvedType() != nullptr
-                               ? handler.type->resolvedType()
-                               : types_->record("Exception");
-      if (caught != nullptr && caught->isRecord()) {
-        llvm::Value* slot = createLocalSlot(builder, handler.name, caught);
-        llvm::Value* object = emitDefault(caught);
-        if (recordHasTypeId(caught)) {
-          object = builder.CreateInsertValue(object, builder.getInt32(recordTypeId(caught)), {0});
-        }
-        llvm::Value* lenSlot = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "exc.len");
-        llvm::Value* data = builder.CreateCall(msgFn, {lenSlot});
-        llvm::Value* text =
-            packStr(builder, data, builder.CreateLoad(builder.getInt64Ty(), lenSlot));
-        const int field = caught->fieldIndex("message");
-        if (field >= 0) {
-          object = builder.CreateInsertValue(object, text, {llvmFieldIndex(caught, field)});
-        }
+      const Type* caught = handler.type->resolvedType();
+      llvm::Value* slot = createLocalSlot(builder, handler.name, caught);
+      llvm::Value* object = emitDefault(caught);
+      if (recordHasTypeId(caught))
+        object = builder.CreateInsertValue(object, builder.getInt32(recordTypeId(caught)), {0});
+      llvm::Value* length = builder.CreateAlloca(builder.getInt64Ty());
+      llvm::Value* data = builder.CreateCall(
+          runtimeDecl("sere_error_message", builder.getPtrTy(), {builder.getPtrTy()}), {length});
+      // Copy the message so an exception binding can outlive its handler.
+      llvm::Value* text =
+          emitStrConcat(builder,
+                        emitStrLiteral(builder, ""),
+                        packStr(builder, data, builder.CreateLoad(builder.getInt64Ty(), length)));
+      const int field = caught->fieldIndex("message");
+      builder.CreateStore(object, slot);
+      builder.CreateCall(
+          runtimeDecl("sere_error_copy_object",
+                      builder.getVoidTy(),
+                      {builder.getPtrTy(), builder.getInt64Ty()}),
+          {slot, builder.getInt64(module_->getDataLayout().getTypeAllocSize(lower(caught)))});
+      if (field >= 0) {
+        object = builder.CreateLoad(lower(caught), slot);
+        object = builder.CreateInsertValue(object, text, {llvmFieldIndex(caught, field)});
         builder.CreateStore(object, slot);
       }
     }
-    builder.CreateCall(clearFn);
-    if (!emitBlock(builder, handler.body, returnType)) {
+    builder.CreateCall(enter);
+    llvm::BasicBlock* handlerError = block("except.error");
+    exceptionCleanups_.push_back({nullptr, tryHandlers_.size(), loops_.size()});
+    tryHandlers_.push_back(handlerError);
+    if (!emitBlock(builder, handler.body, returnType))
       return false;
-    }
+    tryHandlers_.pop_back();
+    exceptionCleanups_.pop_back();
     if (builder.GetInsertBlock()->getTerminator() == nullptr) {
-      builder.CreateBr(after);
+      builder.CreateCall(leave, {builder.getInt32(0)});
+      builder.CreateBr(finish);
     }
+    builder.SetInsertPoint(handlerError);
+    builder.CreateCall(leave, {builder.getInt32(0)});
+    builder.CreateBr(finish);
+    locals_ = savedLocals;
     builder.SetInsertPoint(next);
   }
-  builder.SetInsertPoint(unmatched);
+  branch(finish);
+  tryHandlers_.pop_back();
+  exceptionCleanups_.pop_back();
+  builder.SetInsertPoint(finish);
+  // Suspend a pending error while finally runs, restoring it only on normal exit.
+  builder.CreateCall(enter);
+  llvm::BasicBlock* finallyError = block("finally.error");
+  exceptionCleanups_.push_back({nullptr, outerDepth, loops_.size()});
+  tryHandlers_.push_back(finallyError);
+  if (!emitBlock(builder, statement.finallyBody(), returnType))
+    return false;
+  tryHandlers_.pop_back();
+  exceptionCleanups_.pop_back();
   if (builder.GetInsertBlock()->getTerminator() == nullptr) {
+    builder.CreateCall(leave, {builder.getInt32(1)});
     builder.CreateBr(after);
   }
+  builder.SetInsertPoint(finallyError);
+  builder.CreateCall(leave, {builder.getInt32(0)});
+  builder.CreateBr(after);
   builder.SetInsertPoint(after);
-  if (!emitBlock(builder, statement.finallyBody(), returnType)) {
-    return false;
-  }
   emitErrorCheck(builder);
   return true;
 }

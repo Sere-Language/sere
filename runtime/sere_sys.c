@@ -10,6 +10,8 @@
 #include "sere_rt.h"
 
 #include <ctype.h>
+#include <errno.h>
+#include <limits.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -677,6 +679,75 @@ int64_t sere_hash_fnv1a(const char* data, int64_t len) {
     hash ^= (uint8_t)data[index];
     hash *= 1099511628211ULL;
   }
+  return (int64_t)hash;
+}
+
+static void raiseFileHashError(const char* path, int error) {
+  const char* detail = strerror(error);
+  const size_t size = strlen(path) + strlen(detail) + 32;
+  char* message = (char*)malloc(size);
+  if (message == NULL) {
+    const char fallback[] = "not enough memory to hash file";
+    sere_raise("FileHashError;Exception", fallback, sizeof(fallback) - 1);
+    return;
+  }
+  const int length = snprintf(message, size, "cannot hash '%s': %s", path, detail);
+  sere_raise("FileHashError;Exception", message, length);
+  free(message);
+}
+
+int64_t sere_hash_file(const char* path, int64_t path_len) {
+  if (path == NULL || path_len <= 0 || memchr(path, 0, (size_t)path_len) != NULL) {
+    raiseFileHashError("", EINVAL);
+    return 0;
+  }
+  char* name = toCString(path, path_len);
+  if (name == NULL) {
+    raiseFileHashError("", ENOMEM);
+    return 0;
+  }
+  FILE* file = NULL;
+#ifdef _WIN32
+  if (path_len > INT_MAX) {
+    raiseFileHashError(name, EINVAL);
+    free(name);
+    return 0;
+  }
+  const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, name, -1, NULL, 0);
+  wchar_t* wide = count > 0 ? (wchar_t*)malloc((size_t)count * sizeof(wchar_t)) : NULL;
+  if (wide == NULL) {
+    raiseFileHashError(name, count == 0 ? EINVAL : ENOMEM);
+    free(name);
+    return 0;
+  }
+  MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, name, -1, wide, count);
+  file = _wfopen(wide, L"rb");
+  free(wide);
+#else
+  file = fopen(name, "rb");
+#endif
+  if (file == NULL) {
+    raiseFileHashError(name, errno);
+    free(name);
+    return 0;
+  }
+  uint64_t hash = 14695981039346656037ULL;
+  unsigned char buffer[65536];
+  size_t countRead;
+  while ((countRead = fread(buffer, 1, sizeof(buffer), file)) != 0) {
+    for (size_t index = 0; index < countRead; ++index) {
+      hash ^= buffer[index];
+      hash *= 1099511628211ULL;
+    }
+  }
+  const int readError = ferror(file) ? (errno == 0 ? EIO : errno) : 0;
+  const int closeError = fclose(file) != 0 ? (errno == 0 ? EIO : errno) : 0;
+  if (readError != 0 || closeError != 0) {
+    raiseFileHashError(name, readError != 0 ? readError : closeError);
+    free(name);
+    return 0;
+  }
+  free(name);
   return (int64_t)hash;
 }
 

@@ -4,7 +4,7 @@ class Boom(ValueError):
 def main() -> i32:
     caught: i32 = 0
     try:
-        raise "boom"
+        raise Exception("boom")
     except:
         caught = 1
     assert caught == 1

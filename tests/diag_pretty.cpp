@@ -93,5 +93,32 @@ int main() {
       rendered.find("unknown name 'fooo'") == std::string::npos) {
     return failRendered("missing unknown-name diagnostic", rendered);
   }
+  const std::string duplicate = "def earlier() -> i32:\n"
+                                "    files = 1\n"
+                                "    return files\n"
+                                "def later() -> i32:\n"
+                                "    files: i32 = 2\n"
+                                "    files: i32 = 3\n"
+                                "    return files\n";
+  sere::DiagnosticEngine duplicateDiagnostics;
+  sere::SourceManager duplicateSource("duplicate.sere", duplicate);
+  duplicateDiagnostics.setSource(&duplicateSource);
+  sere::Lexer duplicateLexer(duplicateSource, duplicateDiagnostics);
+  sere::Parser duplicateParser(duplicateDiagnostics, duplicateLexer.tokenizeAll());
+  auto duplicateModule = duplicateParser.parseModule();
+  sere::TypeContext duplicateTypes;
+  sere::TypeChecker duplicateChecker(duplicateTypes, duplicateDiagnostics);
+  if (duplicateModule == nullptr || duplicateChecker.check(*duplicateModule))
+    return fail("same-scope redeclaration must fail");
+  bool foundDeclaration = false;
+  for (const auto& diagnostic : duplicateDiagnostics.diagnostics()) {
+    if (diagnostic.message == "'files' previously declared here") {
+      foundDeclaration = true;
+      if (diagnostic.range.start.offset != duplicate.find("files: i32 = 2"))
+        return fail("redeclaration note points outside the conflicting scope");
+    }
+  }
+  if (!foundDeclaration)
+    return fail("missing redeclaration note");
   return 0;
 }

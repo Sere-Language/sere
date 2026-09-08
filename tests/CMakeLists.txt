@@ -117,7 +117,7 @@ set_tests_properties(sere.example.hello.symbols PROPERTIES
   ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
 
 add_test(NAME sere.example.hello.raw-ir
-  COMMAND "$<TARGET_FILE:sere>" --dump-llvm-ir-raw
+  COMMAND "${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}" --dump-llvm-ir-raw
           "${CMAKE_SOURCE_DIR}/examples/hello.sere")
 set_tests_properties(sere.example.hello.raw-ir PROPERTIES
   ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
@@ -417,3 +417,34 @@ sere_apply_warnings(sere_test_member_completion)
 add_test(NAME sere.test.member_completion COMMAND sere_test_member_completion)
 set_tests_properties(sere.test.member_completion PROPERTIES
   ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
+
+add_test(NAME sere.test.exceptions
+  COMMAND "${CMAKE_COMMAND}"
+    "-DSERE=${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}"
+    "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/exceptions.sere"
+    "-DOUTPUT=${CMAKE_BINARY_DIR}/exceptions${CMAKE_EXECUTABLE_SUFFIX}"
+    "-DEXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/exceptions.expected"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/run_exceptions.cmake")
+set_tests_properties(sere.test.exceptions PROPERTIES
+  ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib"
+  TIMEOUT 120)
+
+foreach(_case IN ITEMS branch_scope hash_file)
+  add_test(NAME sere.test.${_case}
+    COMMAND "${CMAKE_COMMAND}"
+      "-DSERE=${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}"
+      "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/${_case}.sere"
+      "-DOUTPUT=${CMAKE_BINARY_DIR}/${_case}${CMAKE_EXECUTABLE_SUFFIX}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/run_async_await.cmake")
+  set_tests_properties(sere.test.${_case} PROPERTIES
+    ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib"
+    TIMEOUT 120)
+endforeach()
+add_executable(sere_test_file_hash file_hash.c)
+target_include_directories(sere_test_file_hash PRIVATE "${CMAKE_SOURCE_DIR}/runtime")
+target_link_libraries(sere_test_file_hash PRIVATE sere_runtime)
+if(MSVC)
+  target_compile_definitions(sere_test_file_hash PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+sere_apply_warnings(sere_test_file_hash)
+add_test(NAME sere.test.file_hash_runtime COMMAND sere_test_file_hash)

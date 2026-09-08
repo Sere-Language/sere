@@ -6,3 +6,13 @@ def fnv1a(text: str) -> i64
 
 extern "C" "sere_hash_combine"
 def combine(left: i64, right: i64) -> i64
+
+class FileHashError(Exception):
+    pass
+
+# Stream a file's raw bytes through FNV-1a 64-bit, using bounded memory.
+# Uses the same raw-byte checksum as fnv1a, without read_text's size limit.
+# Raises FileHashError on an invalid path, open failure, or read failure.
+# This is a change-detection checksum, not a cryptographic digest.
+extern "C" "sere_hash_file"
+def file(path: str) -> i64

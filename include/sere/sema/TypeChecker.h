@@ -31,6 +31,7 @@ enum class SymbolKind {
 struct Symbol {
   SymbolKind kind = SymbolKind::Variable;
   const Type* type = nullptr;
+  SourceLocation declarationLocation{};
   IntrinsicKind intrinsic = IntrinsicKind::None;
   const FunctionDef* function = nullptr;
   bool readonly = false;

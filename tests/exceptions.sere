@@ -1,0 +1,177 @@
+import subprocess
+import requests
+
+class CustomError(Exception):
+    code: i32
+    def __init__(self, message: str, code: i32) -> void:
+        self.message = "custom: " + message
+        self.code = code
+
+def fail() -> i32:
+    raise CustomError("failure", 42)
+    print("BAD after raise")
+    return 99
+
+def relay() -> i32:
+    return fail() + 10
+
+def cleanup_return() -> i32:
+    try:
+        return 7
+    finally:
+        print("return cleanup")
+
+def override_return() -> i32:
+    try:
+        raise ValueError("suppressed")
+    finally:
+        return 8
+
+def reraiser() -> void:
+    raise
+
+class DefaultError(Exception):
+    def __init__(self) -> void:
+        self.message = "default initialized"
+
+class BrokenError(Exception):
+    def __init__(self) -> void:
+        raise ValueError("constructor error")
+
+def message_once() -> str:
+    print("message evaluated once")
+    return "once"
+
+def main() -> i32:
+    try:
+        print(relay())
+        print("BAD after call")
+    except CustomError as error:
+        print(error.message)
+        print(error.code)
+        try:
+            raise ValueError("nested")
+        except ValueError as inner:
+            print(inner.message)
+        try:
+            reraiser()
+        except CustomError as original:
+            print(original.code)
+    finally:
+        print("caught cleanup")
+    try:
+        error: CustomError = CustomError("variable", 12)
+        raise error
+    except Exception as error:
+        print(error.message)
+    try:
+        try:
+            raise ValueError("unmatched")
+        except IndexError:
+            print("BAD wrong handler")
+        finally:
+            print("unmatched cleanup")
+    except ValueError as error:
+        print(error.message)
+    try:
+        try:
+            raise ValueError("first")
+        except ValueError:
+            raise IndexError("replacement")
+        finally:
+            print("handler cleanup")
+    except IndexError as error:
+        print(error.message)
+    try:
+        try:
+            print("body")
+        except Exception:
+            print("BAD else caught")
+        else:
+            raise ValueError("else failure")
+        finally:
+            print("else cleanup")
+    except ValueError as error:
+        print(error.message)
+    print(cleanup_return())
+    print(override_return())
+    iterations: i32 = 0
+    for i in range(3):
+        iterations += 1
+        assert iterations <= 3
+        try:
+            if i == 0:
+                continue
+            break
+        finally:
+            print(i)
+    try:
+        raise ValueError
+    except ValueError:
+        print("class caught")
+    try:
+        raise
+    except RuntimeError as error:
+        print(error.message)
+    try:
+        raise subprocess.CalledProcessError("command", 5, "output", "stderr")
+    except subprocess.CalledProcessError as error:
+        print(error.cmd)
+        print(error.returncode)
+        print(error.output)
+        print(error.stderr)
+    try:
+        response: requests.Response = requests.Response(404, "local", "missing")
+        response.raise_for_status()
+    except requests.HTTPError as error:
+        print(error.message)
+        print(error.status_code)
+        print(error.url)
+    try:
+        raise DefaultError
+    except DefaultError as error:
+        print(error.message)
+    try:
+        raise ValueError(message_once())
+    except ValueError as error:
+        print(error.message)
+    try:
+        subprocess.check_call("exit 7")
+    except subprocess.CalledProcessError as error:
+        print(error.returncode)
+    try:
+        requests.get("invalid-url")
+    except requests.ConnectionError:
+        print("connection failed")
+    try:
+        try:
+            raise ValueError("original")
+        finally:
+            raise IndexError("finally replacement")
+    except IndexError as error:
+        print(error.message)
+    try:
+        try:
+            raise ValueError("preserved")
+        finally:
+            try:
+                raise IndexError("temporary")
+            except IndexError:
+                print("nested finally handler")
+    except ValueError as error:
+        print(error.message)
+    try:
+        raise BrokenError()
+    except ValueError as error:
+        print(error.message)
+    long_message: str = "x" * 2048
+    try:
+        raise ValueError(long_message)
+    except ValueError as error:
+        assert error.message == long_message
+        try:
+            raise IndexError("another error")
+        except IndexError:
+            pass
+        assert error.message == long_message
+    return 0

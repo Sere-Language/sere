@@ -115,7 +115,7 @@ try  type  while  with
 
 `const` binds a readonly name. `lambda` is an anonymous function. `with`
 requires `__enter__` / `__exit__` on the context type. `async` and `await`
-are supported — see [Async / await status](#async-await-status).
+are supported â€” see [Async / await status](#async-await-status).
 
 ### Literals
 
@@ -126,7 +126,7 @@ are supported — see [Async / await status](#async-await-status).
 | Bool | `True`, `False` |
 | None | `None` |
 | String | `"..."`, multi-character `'...'`, `"""..."""` (multiline) |
-| Byte | one-character `'A'` / `'\n'` — type `i8`, assignable to `byte` (`u8`) |
+| Byte | one-character `'A'` / `'\n'` â€” type `i8`, assignable to `byte` (`u8`) |
 | F-string | `f"hi {x}"` with `{expr}` holes |
 | Regex | backtick `` `\d+` ``, type `regex` |
 
@@ -241,10 +241,10 @@ A bare `Callable` result is `Any`; annotate `Callable[R]` when the return value 
 
 ### User types
 
-- `class` — identity (reference)
-- `struct` — copy-by-value
-- `enum` — discriminant; variants `Color.Green`
-- `type Name = ...` — alias or union
+- `class` â€” identity (reference)
+- `struct` â€” copy-by-value
+- `enum` â€” discriminant; variants `Color.Green`
+- `type Name = ...` â€” alias or union
 
 ### Unions
 
@@ -285,9 +285,9 @@ decorators (`@public`, `@private`, `@static`, `@abstract`, `@override`,
 
 ## Expressions
 
-Precedence, high to low (roughly): postfix → unary → `as` → range →
-`* / // % **` → `+ -` → shifts → `&` → `^` → `|` → comparisons / `in` / `is` →
-`and` → `or` → ternary `a if c else b`.
+Precedence, high to low (roughly): postfix â†’ unary â†’ `as` â†’ range â†’
+`* / // % **` â†’ `+ -` â†’ shifts â†’ `&` â†’ `^` â†’ `|` â†’ comparisons / `in` / `is` â†’
+`and` â†’ `or` â†’ ternary `a if c else b`.
 
 ```sere
 xs: list[i32] = [1, 2, 3]
@@ -303,8 +303,8 @@ ok: bool = "ell" in hello and n > 0 and not False
 
 | Call | Meaning |
 | --- | --- |
-| `range(stop)` | `0, 1, …, stop-1` |
-| `range(start, stop)` | `start … stop-1` |
+| `range(stop)` | `0, 1, â€¦, stop-1` |
+| `range(start, stop)` | `start â€¦ stop-1` |
 | `range(start, stop, step)` | stepped |
 
 `start ... stop` desugars to `range(start, stop)`. A bare `...` in a call
@@ -316,7 +316,7 @@ Ternary is Python-style: `x if cond else y`.
 
 Positional and keyword arguments may mix; keyword arguments must name a
 parameter: `scale(factor=3, value=1)`. Keyword arguments are **not** supported
-on indirect calls through a `Callable` or a function-typed value — use
+on indirect calls through a `Callable` or a function-typed value â€” use
 positional form there.
 
 ### Comprehensions
@@ -435,10 +435,10 @@ def identity[T](value: T) -> T:
 - Default arguments are allowed
 - Keyword arguments at call sites: `scale(factor=3, value=1)`
 - Varargs and kwargs: `def log(prefix: str, *parts: list[str], **opts: dict[str, str]) -> void`
-- `print(..., sep=" ", end="\n")` — `end=""` suppresses the trailing newline
+- `print(..., sep=" ", end="\n")` â€” `end=""` suppresses the trailing newline
 - Generic type parameters: `[T]` on `def` or `class`
 - Methods take `self` as the first parameter
-- Nested `def` is allowed and may capture enclosing locals — useful for
+- Nested `def` is allowed and may capture enclosing locals â€” useful for
 decorator wrappers and closures (lambdas still cannot capture)
 
 Native:
@@ -510,7 +510,7 @@ Sere has two kinds of decorator:
 - **Runtime decorators**: any user callable applied with `@name`,
   `@name(args)`, or `@Class.method`.
 
-Both kinds may appear in the same stack. Decorators run **bottom-up** — the
+Both kinds may appear in the same stack. Decorators run **bottom-up** â€” the
 one closest to the declaration runs first, so `@a` above `@b` on `f` means
 `f = a(b(f))`.
 
@@ -560,8 +560,8 @@ decorator whose static signature is unknown (it returns a bare `Callable`)
 leaves the original signature intact, Python-style. Nested `def` wrappers may
 capture the decorated function.
 
-The full reference — type-checking rules, factory and class-method patterns,
-class decoration, and diagnostics — is in **[decorators.md](decorators.md)**.
+The full reference â€” type-checking rules, factory and class-method patterns,
+class decoration, and diagnostics â€” is in **[decorators.md](decorators.md)**.
 
 ---
 
@@ -690,10 +690,10 @@ enum Message:
 
 - Unit variants: `Color.Green`
 - Payload variants: `Message.Move(1, 2)`
-- `.name` → `str`, `.value` → discriminant, `i32(tone)` → tag
+- `.name` â†’ `str`, `.value` â†’ discriminant, `i32(tone)` â†’ tag
 - Unit / `@flags` enums (no payload) are integers in context: pass to `i32`
   parameters, assign to `i32`, compare with ints, and use `| & ^` without `.value`
-- `Color.variants()` → `list[str]`
+- `Color.variants()` â†’ `list[str]`
 - `tone is Color.Green` compares identity of the variant
 - `@flags` on an enum marks it as a flag set; `Flag.A in mask` is a bitwise test
 
@@ -754,7 +754,7 @@ wins when both exist. A folder named `util` with `util/util.sere` or
 `native/` are compiled and linked). The compiler extracts `.slib` files next
 to themselves under `.sere-lib/` and links any native objects they contain.
 `.slib` packs only the entry and the local modules it actually imports, plus
-compiled native objects — not the rest of the tree. The language server uses
+compiled native objects â€” not the rest of the tree. The language server uses
 the same search path, so drop-in `.slib` files and folder libraries complete
 and hover like ordinary modules.
 
@@ -1075,7 +1075,7 @@ Import the rest:
 | `inspect` | Extra labels (`label`, `describe`) |
 | `util` | Tiny helpers (`double`); used by import examples |
 | `html_lang` | `html:` raw macro + `Html` |
-| `windows` | Win32 message box, beep, clipboard, … (stub off Windows) |
+| `windows` | Win32 message box, beep, clipboard, â€¦ (stub off Windows) |
 | `gl` | OpenGL 2.1+ (WGL window, `should_close`, shaders, VBO/VAO, textures, FBO, input) |
 | `qt6` | Qt 6 widgets; linked automatically if the compiler was built with Qt |
 
@@ -1085,6 +1085,19 @@ Gate OS-only code with `if __windows__:`.
 More on how stdlib is wired: [stdlib.md](stdlib.md).
 
 ---
+
+### File checksums
+
+`hash.file(path) -> i64` streams a file's raw bytes in 64 KiB chunks and returns
+its FNV-1a 64-bit checksum. It supports binary files and does not load the whole
+file into memory. Invalid paths and open/read failures raise `hash.FileHashError`.
+Use it for change detection; FNV-1a is not a cryptographic digest.
+
+```sere
+import hash
+
+checksum: i64 = hash.file("src/main.sere")
+```
 
 ## Native interop
 
@@ -1158,7 +1171,7 @@ Sere is a **typed Python superset**, not CPython. These remain out of scope or
 incomplete. They diagnose instead of generating silent wrong code:
 
 - keyword-only parameters (after `*args`), `global` / `nonlocal`
-- `yield` / generator functions (a nested `def` is fine — see
+- `yield` / generator functions (a nested `def` is fine â€” see
   [Functions](#functions))
 - Unmodified CPython stdlib (use Sere modules such as `requests` and `wsgi`)
 - Lambda capture of enclosing locals (pass parameters instead, or use a nested
@@ -1226,7 +1239,7 @@ Under `examples/`:
 | `aliases.sere` | function aliases |
 | `macros_*.sere` | quote, match, HTML, pipeline, hygiene |
 | `native_add.sere` | `extern "C"` |
-| `stdlib_mods.sere` / `stdlib_more.sere` | fs, math, string, regex, hash, … |
+| `stdlib_mods.sere` / `stdlib_more.sere` | fs, math, string, regex, hash, â€¦ |
 | `numeric.sere` | vec, matrix, ml, bytes |
 | `gc_mem.sere` | collectors, arenas, pools |
 | `qt6_app.sere` | Qt widgets |

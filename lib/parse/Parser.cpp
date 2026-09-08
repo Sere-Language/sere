@@ -1520,7 +1520,9 @@ std::unique_ptr<IfStmt> Parser::parseIf() {
     if (branch.condition == nullptr) {
       return nullptr;
     }
+    branch.range.start = peek().range().start;
     branch.body = parseSuite();
+    branch.range.end = previous().range().end;
     branches.push_back(std::move(branch));
     skipNewlines();
     if (match(TokenKind::KeywordElif)) {
@@ -1531,7 +1533,9 @@ std::unique_ptr<IfStmt> Parser::parseIf() {
   skipNewlines();
   if (match(TokenKind::KeywordElse)) {
     IfBranch elseBranch;
+    elseBranch.range.start = peek().range().start;
     elseBranch.body = parseSuite();
+    elseBranch.range.end = previous().range().end;
     branches.push_back(std::move(elseBranch));
   }
   return std::make_unique<IfStmt>(keyword.range(), std::move(branches));
@@ -1684,10 +1688,19 @@ std::unique_ptr<TryStmt> Parser::parseTry() {
       }
     }
     handler.body = parseSuite();
+    const bool catchAll = handler.type == nullptr;
     handlers.push_back(std::move(handler));
+    if (catchAll && check(TokenKind::KeywordExcept)) {
+      diagnostics_->error(keyword.range(), "bare except must be the last handler");
+      return nullptr;
+    }
   }
   std::vector<std::unique_ptr<Stmt>> elseBody;
   if (match(TokenKind::KeywordElse)) {
+    if (handlers.empty()) {
+      diagnostics_->error(keyword.range(), "try else requires except");
+      return nullptr;
+    }
     elseBody = parseSuite();
   }
   std::vector<std::unique_ptr<Stmt>> finallyBody;

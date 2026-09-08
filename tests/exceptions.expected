@@ -1,0 +1,36 @@
+custom: failure
+42
+nested
+42
+caught cleanup
+custom: variable
+unmatched cleanup
+unmatched
+handler cleanup
+replacement
+body
+else cleanup
+else failure
+return cleanup
+7
+8
+0
+1
+class caught
+no active exception to reraise
+command
+5
+output
+stderr
+HTTP 404 for local
+404
+local
+default initialized
+message evaluated once
+once
+7
+connection failed
+finally replacement
+nested finally handler
+preserved
+constructor error

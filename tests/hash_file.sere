@@ -1,0 +1,18 @@
+import hash
+import fs
+
+def main() -> i32:
+    name: str = "sere_hash_stdlib_test.txt"
+    assert fs.write_text(name, "hello")
+    assert hash.file(name) == hash.fnv1a("hello")
+    assert fs.write_text(name, "changed")
+    assert hash.file(name) == hash.fnv1a("changed")
+    assert fs.remove(name)
+    caught: bool = False
+    try:
+        hash.file(name)
+    except hash.FileHashError as error:
+        assert len(error.message) > 0
+        caught = True
+    assert caught
+    return 0

@@ -523,12 +523,8 @@ bool TypeChecker::declare(const std::string& name,
   auto& scope = scopes_.back();
   if (scope.contains(name)) {
     diagnostics_->error(SourceRange{location, location}, "redeclaration of '" + name + "'");
-    for (const SemanticSymbol& existing : symbols_) {
-      if (existing.name == name) {
-        diagnostics_->note(existing.location, "'" + name + "' previously declared here");
-        break;
-      }
-    }
+    diagnostics_->note(scope.at(name).declarationLocation,
+                       "'" + name + "' previously declared here");
     return false;
   }
   SemanticSymbol collected;
@@ -587,6 +583,7 @@ bool TypeChecker::declare(const std::string& name,
     }
   }
   symbols_.push_back(std::move(collected));
+  symbol.declarationLocation = location;
   scope.emplace(name, symbol);
   return true;
 }
@@ -2526,9 +2523,11 @@ bool TypeChecker::checkIf(IfStmt& statement, const Type* expectedReturn) {
     } else {
       taken = true;
     }
+    pushScope(branch.range);
     for (std::unique_ptr<Stmt>& bodyStmt : branch.body) {
       ok = checkStatement(*bodyStmt, expectedReturn) && ok;
     }
+    popScope();
   }
   return ok;
 }
@@ -4508,10 +4507,17 @@ FunctionDef* TypeChecker::findMethodDef(const Type* record, std::string_view met
       }
     }
   }
+  const int methodIndex = record->methodIndex(methodName);
   for (const Type* base : record->bases()) {
-    if (FunctionDef* found = findMethodDef(base, methodName)) {
+    const int baseIndex = base->methodIndex(methodName);
+    // Imported overrides have no local AST. Do not bind their arguments using
+    // the unrelated signature of an ancestor's method.
+    if (methodIndex >= 0 && baseIndex >= 0 &&
+        record->methods()[static_cast<std::size_t>(methodIndex)].llvmName !=
+            base->methods()[static_cast<std::size_t>(baseIndex)].llvmName)
+      continue;
+    if (FunctionDef* found = findMethodDef(base, methodName))
       return found;
-    }
   }
   return nullptr;
 }
@@ -5579,7 +5585,33 @@ bool TypeChecker::checkRaise(RaiseStmt& statement) {
   if (statement.value() == nullptr) {
     return true;
   }
-  return checkExpr(const_cast<Expr&>(*statement.value())) != nullptr;
+  const Type* raised = checkExpr(const_cast<Expr&>(*statement.value()));
+  if (raised == nullptr)
+    return false;
+  const Type* type = unwrapRecordType(raised);
+  auto isException = [](auto&& self, const Type* candidate) -> bool {
+    if (candidate == nullptr)
+      return false;
+    if (candidate->name() == "Exception")
+      return true;
+    for (const Type* base : candidate->bases())
+      if (self(self, base->canonical()))
+        return true;
+    return false;
+  };
+  if (!isException(isException, type)) {
+    diagnostics_->error(statement.range(), "raise requires an Exception subclass or instance");
+    return false;
+  }
+  if (raised->isTypeObject()) {
+    const int init = type->methodIndex("__init__");
+    if (init >= 0 && type->methods()[static_cast<std::size_t>(init)].requiredAfterSelf != 0) {
+      diagnostics_->error(statement.range(),
+                          "raised exception class requires constructor arguments");
+      return false;
+    }
+  }
+  return true;
 }
 
 bool TypeChecker::checkTry(TryStmt& statement, const Type* expectedReturn) {
@@ -5591,7 +5623,20 @@ bool TypeChecker::checkTry(TryStmt& statement, const Type* expectedReturn) {
     pushScope(handler.range);
     if (handler.type != nullptr) {
       const Type* type = resolveTypeExpr(*handler.type);
-      if (type != nullptr) {
+      auto isException = [](auto&& self, const Type* candidate) -> bool {
+        if (candidate == nullptr || !candidate->isRecord())
+          return false;
+        if (candidate->name() == "Exception")
+          return true;
+        for (const Type* base : candidate->bases())
+          if (self(self, base->canonical()))
+            return true;
+        return false;
+      };
+      if (type == nullptr || !isException(isException, type->canonical())) {
+        diagnostics_->error(handler.range, "except requires an Exception subclass");
+        ok = false;
+      } else {
         handler.type->setResolvedType(type);
       }
       if (!handler.name.empty() && type != nullptr) {

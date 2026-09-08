@@ -537,6 +537,7 @@ private:
 };
 
 struct IfBranch {
+  SourceRange range{};
   std::unique_ptr<Expr> condition;
   std::vector<std::unique_ptr<Stmt>> body;
 };

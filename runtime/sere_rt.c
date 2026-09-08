@@ -622,60 +622,154 @@ void sere_str_repeat(const char* data, int64_t len, int64_t count, const char** 
   *out_len = (int64_t)total;
 }
 
-static int g_has_error = 0;
-static char g_error_type[256];
-static char g_error_message[1024];
+// Pending exceptions and handled exceptions have separate lifetimes. A handler
+// keeps its exception alive while nested calls and nested handlers run.
+typedef struct SereError {
+  int refs;
+  char* type;
+  char* message;
+  int64_t message_len;
+  void* object;
+  int64_t object_size;
+} SereError;
+typedef struct SereErrorFrame {
+  SereError* error;
+  struct SereErrorFrame* previous;
+} SereErrorFrame;
+static _Thread_local SereError* pendingError;
+static _Thread_local SereErrorFrame* handledErrors;
 
-void sere_raise(const char* type, const char* message, int64_t message_len) {
-  g_has_error = 1;
-  snprintf(g_error_type, sizeof(g_error_type), "%s", type == NULL ? "Error" : type);
-  if (message == NULL || message_len <= 0) {
-    g_error_message[0] = '\0';
-    return;
+static void releaseError(SereError* error) {
+  if (error != NULL && --error->refs == 0) {
+    free(error->type);
+    free(error->message);
+    free(error->object);
+    free(error);
   }
-  if (message_len >= (int64_t)sizeof(g_error_message)) {
-    message_len = (int64_t)sizeof(g_error_message) - 1;
-  }
-  memcpy(g_error_message, message, (size_t)message_len);
-  g_error_message[message_len] = '\0';
 }
 
-int32_t sere_has_error(void) { return g_has_error; }
+void sere_clear_error(void) {
+  releaseError(pendingError);
+  pendingError = NULL;
+}
 
-void sere_clear_error(void) { g_has_error = 0; }
+void sere_raise(const char* type, const char* message, int64_t message_len) {
+  SereError* error = (SereError*)calloc(1, sizeof(SereError));
+  if (error == NULL)
+    abort();
+  error->refs = 1;
+  error->type = (char*)malloc(strlen(type == NULL ? "Exception" : type) + 1);
+  if (error->type == NULL)
+    abort();
+  memcpy(error->type,
+         type == NULL ? "Exception" : type,
+         strlen(type == NULL ? "Exception" : type) + 1);
+  error->message_len = message != NULL && message_len > 0 ? message_len : 0;
+  error->message = (char*)malloc((size_t)error->message_len + 1);
+  if (error->message == NULL)
+    abort();
+  memcpy(error->message, message == NULL ? "" : message, (size_t)error->message_len);
+  error->message[error->message_len] = 0;
+  sere_clear_error();
+  pendingError = error;
+}
+
+void sere_error_set_object(const void* object, int64_t size) {
+  if (pendingError == NULL || size <= 0)
+    return;
+  pendingError->object = malloc((size_t)size);
+  if (pendingError->object == NULL)
+    abort();
+  memcpy(pendingError->object, object, (size_t)size);
+  pendingError->object_size = size;
+}
+
+void sere_error_copy_object(void* object, int64_t size) {
+  if (pendingError != NULL && pendingError->object != NULL && size <= pendingError->object_size) {
+    memcpy(object, pendingError->object, (size_t)size);
+  }
+}
+
+int32_t sere_has_error(void) {
+  return pendingError != NULL;
+}
 
 int32_t sere_error_isa(const char* name) {
-  if (!g_has_error) {
+  if (pendingError == NULL)
     return 0;
-  }
-  if (name == NULL || name[0] == '\0') {
+  if (name == NULL || name[0] == '\0')
     return 1;
-  }
   const size_t want = strlen(name);
-  const char* cursor = g_error_type;
+  const char* cursor = pendingError->type;
   while (*cursor != '\0') {
     const char* start = cursor;
-    while (*cursor != '\0' && *cursor != ';') {
+    while (*cursor != '\0' && *cursor != ';')
       ++cursor;
-    }
-    if ((size_t)(cursor - start) == want && memcmp(start, name, want) == 0) {
+    if ((size_t)(cursor - start) == want && memcmp(start, name, want) == 0)
       return 1;
-    }
-    if (*cursor == ';') {
+    if (*cursor == ';')
       ++cursor;
-    }
   }
   return 0;
 }
 
-const char* sere_error_type(void) { return g_error_type; }
+const char* sere_error_type(void) {
+  return pendingError == NULL ? "" : pendingError->type;
+}
 
 const char* sere_error_message(int64_t* out_len) {
-  const size_t n = strlen(g_error_message);
-  if (out_len != NULL) {
-    *out_len = (int64_t)n;
+  if (out_len != NULL)
+    *out_len = pendingError == NULL ? 0 : pendingError->message_len;
+  return pendingError == NULL ? "" : pendingError->message;
+}
+
+void sere_error_enter(void) {
+  SereErrorFrame* frame = (SereErrorFrame*)malloc(sizeof(SereErrorFrame));
+  if (frame == NULL)
+    abort();
+  frame->error = pendingError;
+  frame->previous = handledErrors;
+  handledErrors = frame;
+  pendingError = NULL;
+}
+
+void sere_error_leave(int32_t restore) {
+  SereErrorFrame* frame = handledErrors;
+  if (frame == NULL)
+    return;
+  handledErrors = frame->previous;
+  if (restore && pendingError == NULL) {
+    pendingError = frame->error;
+  } else {
+    releaseError(frame->error);
   }
-  return g_error_message;
+  free(frame);
+}
+
+void sere_reraise(void) {
+  for (SereErrorFrame* frame = handledErrors; frame != NULL; frame = frame->previous) {
+    if (frame->error != NULL) {
+      ++frame->error->refs;
+      sere_clear_error();
+      pendingError = frame->error;
+      return;
+    }
+  }
+  const char message[] = "no active exception to reraise";
+  sere_raise("RuntimeError;Exception", message, sizeof(message) - 1);
+}
+
+void sere_error_unhandled(void) {
+  if (pendingError == NULL)
+    return;
+  const char* end = strchr(pendingError->type, ';');
+  fprintf(stderr,
+          "%.*s: ",
+          (int)(end == NULL ? strlen(pendingError->type) : (size_t)(end - pendingError->type)),
+          pendingError->type);
+  fwrite(pendingError->message, 1, (size_t)pendingError->message_len, stderr);
+  fputc('\n', stderr);
+  exit(1);
 }
 
 static int sere_is_space(char character) {

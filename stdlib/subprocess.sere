@@ -1,12 +1,265 @@
-# Subprocess execution. Runs a command in a shell, capturing its
-# stdout and stderr. Output is printed as-is, with an error prefix
-# added if the child exits non-zero or cannot be spawned.
+# Subprocess execution, modelled on Python's `subprocess` module.
+#
 #   import subprocess
+#
+#   # 1. Simple, fire-and-forget call (like os.system):
 #   subprocess.run("git status")
+#
+#   # 2. Capture stdout/stderr, then inspect the result:
+#   result: subprocess.CompletedProcess = subprocess.run("echo hi", capture_output=true)
+#   if result.returncode != 0:
+#       print(result.stderr)
+#
+#   # 3. Raise on failure (like check=True / check_call):
+#   subprocess.check_call("make build")
+#
+#   # 4. Run and return only stdout, trimmed (like $(...) / check_output):
+#   commit: str = subprocess.check_output("git rev-parse --short HEAD")
+#
+#   # 5. Shorthands:
+#   subprocess.call("dir")          # -> exit code
+#   subprocess.getoutput("uname")   # -> combined output as str
+#
+import string
 
+# ---------------------------------------------------------------------------
+# Popen-style native bindings. The runtime keeps one opaque child handle;
+# stdin/stdout are pipes (stderr merged into stdout) so the parent can
+# talk to the process and read what it prints back.
+# ---------------------------------------------------------------------------
+extern "C" "sere_proc_open"
+def _open(cmd: str) -> Ptr[i8]
+
+extern "C" "sere_proc_write"
+def _write(proc: Ptr[i8], data: str) -> void
+
+extern "C" "sere_proc_close_stdin"
+def _close_stdin(proc: Ptr[i8]) -> void
+
+extern "C" "sere_proc_read"
+def _read(proc: Ptr[i8], buf: Ptr[i8], cap: i64, wait_ms: i32) -> i64
+
+extern "C" "sere_proc_poll"
+def _poll(proc: Ptr[i8], status: Ptr[i32]) -> i32
+
+extern "C" "sere_proc_wait"
+def _wait(proc: Ptr[i8]) -> i32
+
+extern "C" "sere_proc_kill"
+def _kill(proc: Ptr[i8]) -> void
+
+extern "C" "sere_proc_close"
+def _close(proc: Ptr[i8]) -> void
+
+extern "C" "sere_proc_communicate"
+def _communicate(proc: Ptr[i8]) -> str
+
+# ---------------------------------------------------------------------------
+# Popen
+#
+# A live child process, modelled on Python's subprocess.Popen:
+#
+#   proc: subprocess.Popen = subprocess.Popen("python repl.py")
+#   proc.write("1 + 2\n")        # send a line to the child's stdin
+#   proc.close_stdin()           # signal end-of-input
+#   out: str = proc.communicate()  # collect remaining output
+#   code: i32 = proc.wait()      # block until exit, get status
+#   proc.close()                 # release the handle
+#
+# Or interactively:
+#   if proc.poll() is None:      # None -> still running
+#       proc.kill()
+# ---------------------------------------------------------------------------
+class Popen:
+    args: str
+    handle: Ptr[i8]
+
+    def __init__(self, args: str) -> void:
+        self.args = args
+        self.handle = _open(args)
+        if self.handle is None:
+            raise SubprocessError("failed to spawn: " + args)
+
+    def alive(self) -> bool:
+        return self.handle != None
+
+    # Write `data` to the child's stdin.
+    def write(self, data: str) -> void:
+        _write(self.handle, data)
+
+    # Close the child's stdin, signalling end-of-input.
+    def close_stdin(self) -> void:
+        _close_stdin(self.handle)
+
+    # Read up to `cap` bytes of the child's merged stdout+stderr into
+    # `buf`, waiting at most `wait_ms`. Returns the number of bytes
+    # read; 0 means end-of-output. Returns -1 when the child is still
+    # running with nothing ready and wait_ms == 0.
+    def read(self, buf: Ptr[i8], cap: i64, wait_ms: i32 = 0) -> i64:
+        return _read(self.handle, buf, cap, wait_ms)
+
+    # Exit code if the child has finished, None if it is still running.
+    def poll(self) -> i32 | None:
+        if self.handle == None:
+            return None
+        box: Ptr[i32] = alloc[i32]()
+        done: i32 = _poll(self.handle, box)
+        if done == 0:
+            free(box)
+            return None
+        status: i32 = load(box)
+        free(box)
+        return status
+
+    # Block until the child exits; returns its exit status.
+    def wait(self) -> i32:
+        code: i32 = _wait(self.handle)
+        return code
+
+    # Read the child's remaining output until the stream closes
+    # (like Popen.communicate() without input), then wait and return
+    # the exit code alongside the collected text.
+    def communicate(self) -> str:
+        return _communicate(self.handle)
+
+    # Forcefully terminate the child.
+    def kill(self) -> void:
+        _kill(self.handle)
+
+    # Release the handle; kills the child if it is still running.
+    def close(self) -> void:
+        if self.handle != None:
+            _close(self.handle)
+            self.handle = None
+
+
+class SubprocessError(Exception):
+    pass
+
+class CalledProcessError(SubprocessError):
+    args: str
+    cmd: str
+    returncode: i32
+    output: str
+    stderr: str
+
+    def __init__(self, cmd: str, returncode: i32, output: str = "", stderr: str = "") -> void:
+        self.message = "command '" + cmd + "' returned exit status " + str(returncode)
+        self.args = cmd
+        self.cmd = cmd
+        self.returncode = returncode
+        self.output = output
+        self.stderr = stderr
+
+class CompletedProcess:
+    args: str
+    returncode: i32
+    stdout: str
+    stderr: str
+
+    def failed(self) -> bool:
+        return self.returncode != 0
+
+    def ok(self) -> bool:
+        return self.returncode == 0
+
+# ---------------------------------------------------------------------------
+# Native bindings. sere_proc_run runs `cmd` through the shell with stdout and
+# stderr merged into one buffer (PIPE -> STDOUT semantics); sere_proc_status
+# then reports that child's exit code. Runtime-side plumbing, not Python API.
+# ---------------------------------------------------------------------------
 extern "C" "sere_proc_run"
 def _run(cmd: str) -> str
 
-def run(cmd: str) -> void:
-    output: str = _run(cmd)
-    print(output)
+extern "C" "sere_proc_status"
+def _status() -> i32
+
+def _completed(args: str) -> CompletedProcess:
+    stdout: str = _run(args)
+    code: i32 = _status()
+    stderr: str = ""
+    if code != 0:
+        stderr = "subprocess: command failed with exit code " + str(code)
+    result: CompletedProcess = CompletedProcess()
+    result.args = args
+    result.returncode = code
+    result.stdout = stdout
+    result.stderr = stderr
+    return result
+
+# ---------------------------------------------------------------------------
+# run(args, capture_output) -> CompletedProcess | prints and returns
+#
+# The main entry point, mirroring Python's subprocess.run. With
+# capture_output=true it collects stdout/stderr into the returned
+# CompletedProcess instead of streaming them to the console. Like
+# check=False in Python: failures are recorded, never raised here.
+# ---------------------------------------------------------------------------
+def run(args: str, capture_output: bool = False) -> CompletedProcess:
+    if capture_output:
+        return _completed(args)
+    output: str = _run(args)
+    # print(output)
+    code: i32 = _status()
+    result: CompletedProcess = CompletedProcess()
+    result.args = args
+    result.returncode = code
+    result.stdout = output
+    result.stderr = ""
+    return result
+
+# ---------------------------------------------------------------------------
+# call(args) -> i32
+#
+# Like subprocess.call / Popen.wait: run the command and return only its
+# exit status, discarding all output. The if/else explicitly computes the
+# boolean used to decide the return value.
+# ---------------------------------------------------------------------------
+def call(args: str) -> i32:
+    result: CompletedProcess = _completed(args)
+    return result.returncode
+
+# ---------------------------------------------------------------------------
+# check_call(args) -> i32
+#
+# Like check_call(check=True): run the command and raise CalledProcessError
+# if it exits non-zero. On success the exit code (0) is returned.
+# ---------------------------------------------------------------------------
+def check_call(args: str) -> i32:
+    result: CompletedProcess = _completed(args)
+    if result.returncode != 0:
+        raise CalledProcessError(args, result.returncode, result.stdout, result.stderr)
+    return result.returncode
+
+# ---------------------------------------------------------------------------
+# check_output(args) -> str
+#
+# Like check_output / $(...): run the command, capture stdout, raise
+# CalledProcessError on failure. The trailing whitespace strip mirrors how
+# shell command substitution drops the final newline.
+# ---------------------------------------------------------------------------
+def check_output(args: str) -> str:
+    result: CompletedProcess = _completed(args)
+    if result.returncode != 0:
+        raise CalledProcessError(args, result.returncode, result.stdout, result.stderr)
+    return string.strip(result.stdout)
+
+# ---------------------------------------------------------------------------
+# getoutput(args) -> str
+#
+# Like subprocess.getoutput (the backticks of legacy os.popen): returns the
+# merged stdout+stderr without ever raising, whatever the exit code.
+# ---------------------------------------------------------------------------
+def getoutput(args: str) -> str:
+    result: CompletedProcess = _completed(args)
+    return string.strip(result.stdout)
+
+# ---------------------------------------------------------------------------
+# getstatusoutput(args) -> (i32, str)
+#
+# Like subprocess.getstatusoutput: (exit_code, output) tuple, output
+# whitespace-trimmed, never raises.
+# ---------------------------------------------------------------------------
+def getstatusoutput(args: str) -> tuple[i32, str]:
+    result: CompletedProcess = _completed(args)
+    return (result.returncode, string.strip(result.stdout))

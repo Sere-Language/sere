@@ -1,0 +1,34 @@
+def earlier() -> i32:
+    files = 99
+    return files
+
+def choose(value: i32) -> i32:
+    if value == 1:
+        files: list[str] = []
+        files.append("new")
+        return len(files)
+    if value == 2:
+        files: list[str] = []
+        files.append("modified")
+        files.append("again")
+        return len(files)
+    return 0
+
+def shadow(value: bool) -> i32:
+    files: i32 = 7
+    if value:
+        files: str = "branch"
+        assert files == "branch"
+    else:
+        files: str = "other"
+        assert files == "other"
+    return files
+
+def main() -> i32:
+    assert earlier() == 99
+    assert choose(0) == 0
+    assert choose(1) == 1
+    assert choose(2) == 2
+    assert shadow(True) == 7
+    assert shadow(False) == 7
+    return 0

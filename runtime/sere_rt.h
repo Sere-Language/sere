@@ -118,6 +118,12 @@ int32_t sere_str_cmp(const char* left, int64_t left_len, const char* right, int6
 void sere_str_repeat(
     const char* data, int64_t len, int64_t count, const char** out_data, int64_t* out_len);
 void sere_raise(const char* type, const char* message, int64_t message_len);
+void sere_error_set_object(const void* object, int64_t size);
+void sere_error_copy_object(void* object, int64_t size);
+void sere_error_enter(void);
+void sere_error_leave(int32_t restore);
+void sere_reraise(void);
+void sere_error_unhandled(void);
 int32_t sere_has_error(void);
 void sere_clear_error(void);
 int32_t sere_error_isa(const char* name);
@@ -337,6 +343,7 @@ double sere_random_f64(void);
 int32_t sere_random_range(int32_t low, int32_t high);
 
 int64_t sere_hash_fnv1a(const char* data, int64_t len);
+int64_t sere_hash_file(const char* path, int64_t path_len);
 int64_t sere_hash_combine(int64_t left, int64_t right);
 
 void sere_sys_platform(const char** out_data, int64_t* out_len);
@@ -637,6 +644,69 @@ void sere_http_reply(void* req,
                      const char* body,
                      int64_t body_len);
 void sere_http_close(void* server);
+
+/// Run `cmd` in a shell, capturing the child's combined stdout+stderr.
+/// Pending parent stdio is flushed first so Sere writes land before
+/// the child's captured output. Returns the captured text as a
+/// runtime-owned string.
+void sere_proc_run(const char* cmd, int64_t cmd_len, const char** out_text, int64_t* out_text_len);
+
+/// Exit status of the child from the most recent sere_proc_run: the
+/// child's code, 128+signal if it was killed, or 127/-1-style failure
+/// if it could not be spawned.
+int32_t sere_proc_status(void);
+
+/// Opaque handle to a spawned child process (Popen-style).
+typedef struct sere_proc sere_proc_t;
+
+/// Spawn `cmd` through the shell. stdin/stdout are connected to pipes
+/// (stderr is merged into stdout) so the parent can communicate with the
+/// child. Returns NULL on spawn failure.
+sere_proc_t* sere_proc_open(const char* cmd, int64_t cmd_len);
+
+/// Write bytes to the child's stdin.
+void sere_proc_write(sere_proc_t* proc, const char* data, int64_t len);
+
+/// Close the child's stdin, signalling end-of-input.
+void sere_proc_close_stdin(sere_proc_t* proc);
+
+/// Read up to `cap` bytes of the child's merged stdout+stderr. Returns
+/// the number of bytes read; 0 means end-of-output (child closed its
+/// streams). A negative value means the child is still running and no
+/// output is available yet (only when `wait_ms` is 0).
+int64_t sere_proc_read(sere_proc_t* proc, char* buf, int64_t cap, int32_t wait_ms);
+
+/// Non-zero if the child has exited. Stores the exit status in `*status`.
+int32_t sere_proc_poll(sere_proc_t* proc, int32_t* status);
+
+/// Block until the child exits; returns its exit status
+/// (128+signal if killed, negative if unavailable).
+int32_t sere_proc_wait(sere_proc_t* proc);
+
+/// Forcefully terminate the child.
+void sere_proc_kill(sere_proc_t* proc);
+
+/// Release the handle; kills the child if it is still running.
+void sere_proc_close(sere_proc_t* proc);
+
+/// Owned growable byte buffer (result of communicate). `bytes` is
+/// NUL-terminated for convenience; `len` excludes the terminator.
+typedef struct {
+  char* bytes;
+  int64_t len;
+} sere_proc_buffer_t;
+
+/// Read the child's remaining stdout/stderr output, blocking until the
+/// stream closes (like Python's Popen.communicate without input). The
+/// caller receives ownership of `result.bytes` and must free it.
+sere_proc_buffer_t sere_proc_communicate(sere_proc_t* proc);
+
+/// Owned growable byte buffer (result of communicate). `bytes` is
+/// NUL-terminated for convenience; `len` excludes the terminator.
+typedef struct {
+  char* bytes;
+  int64_t len;
+} sere_proc_buffer_t;
 
 #ifdef __cplusplus
 }
