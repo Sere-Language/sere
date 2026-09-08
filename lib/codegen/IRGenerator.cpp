@@ -3089,7 +3089,7 @@ llvm::Value* IRGenerator::emitConstruct(llvm::IRBuilder<>& builder, const CallEx
 }
 
 llvm::Value* IRGenerator::emitInitConstruct(llvm::IRBuilder<>& builder, const CallExpr& expr) {
-  const Type* record = expr.resolvedType();
+  const Type* record = resolveType(expr.resolvedType());
   if (record == nullptr) {
     return nullptr;
   }
@@ -3099,7 +3099,12 @@ llvm::Value* IRGenerator::emitInitConstruct(llvm::IRBuilder<>& builder, const Ca
     builder.CreateStore(builder.getInt32(recordTypeId(record)),
                         builder.CreateStructGEP(lower(record), slot, 0u));
   }
-  const auto found = functions_.find(expr.loweredName());
+  std::string initName = expr.loweredName();
+  const int initIndex = record->methodIndex("__init__");
+  if (initIndex >= 0) {
+    initName = record->methods()[static_cast<std::size_t>(initIndex)].llvmName;
+  }
+  const auto found = functions_.find(initName);
   if (found == functions_.end()) {
     diagnostics_->error(expr.range(),
                         "no LLVM function for constructor '" + expr.loweredName() + "'");
@@ -3107,7 +3112,7 @@ llvm::Value* IRGenerator::emitInitConstruct(llvm::IRBuilder<>& builder, const Ca
   }
   std::vector<llvm::Value*> args;
   args.push_back(slot);
-  const auto defFound = functionDefs_.find(expr.loweredName());
+  const auto defFound = functionDefs_.find(initName);
   const Type* initType = nullptr;
   const FunctionDef* initDef = nullptr;
   if (defFound != functionDefs_.end() && defFound->second != nullptr) {

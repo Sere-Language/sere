@@ -1,0 +1,29 @@
+def reverse(s: str) -> str:
+    result = ""
+    for i in range(len(s) - 1, -1, -1):
+        result = result + s[i]
+    return result
+
+class Pair[First, Second]:
+    first: First
+    second: Second
+    def __init__(self, first: First, second: Second):
+        self.first = first
+        self.second = second
+    def __str__(self) -> str:
+        return f"{self.first} {self.second}"
+    def copy(self) -> Pair[First, Second]:
+        return Pair[First, Second](self.first, self.second)
+
+def main() -> i32:
+    print(reverse("hello"))
+    p = Pair[i32, str](15, "hi")
+    print(p.first)
+    print(p.second)
+    print(p)
+    pp = p.copy()
+    print(pp.first)
+    print(pp)
+    p.first = 99
+    print(p.first)
+    return 0

@@ -464,3 +464,13 @@ add_test(NAME sere.test.pointer_functions
 set_tests_properties(sere.test.pointer_functions PROPERTIES
   ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib"
   TIMEOUT 120)
+
+add_test(NAME sere.test.generic_pair_copy
+  COMMAND "${CMAKE_COMMAND}"
+    "-DSERE=${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}"
+    "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/generic_pair_copy.sere"
+    "-DOUTPUT=${CMAKE_BINARY_DIR}/generic_pair_copy${CMAKE_EXECUTABLE_SUFFIX}"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/run_generic_pair_copy.cmake")
+set_tests_properties(sere.test.generic_pair_copy PROPERTIES
+  ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib"
+  TIMEOUT 120)

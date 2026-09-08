@@ -349,6 +349,18 @@ const Type* TypeContext::instantiate(const Type* generic, const std::vector<cons
   if (generic->typeParams().size() != args.size() || args.empty()) {
     return generic;
   }
+  // Pair[First, Second] inside Pair's own definition is the generic record,
+  // not a specialization whose substitutions map First back to itself.
+  bool identity = true;
+  for (std::size_t index = 0; index < args.size(); ++index) {
+    if (!args[index]->isTypeParam() || args[index]->name() != generic->typeParams()[index]) {
+      identity = false;
+      break;
+    }
+  }
+  if (identity) {
+    return generic;
+  }
   std::string instName = generic->name() + "[";
   for (std::size_t index = 0; index < args.size(); ++index) {
     if (index != 0) {
@@ -410,7 +422,9 @@ const Type* TypeContext::instantiate(const Type* generic, const std::vector<cons
       if (!params.empty()) {
         params[0] = instance;
       }
-      copy.type = functionType(params, substitute(method.type->returnType(), subst));
+      copy.type = functionType(params, method.type->returnType() == generic
+                                           ? instance
+                                           : substitute(method.type->returnType(), subst));
     }
     copy.llvmName = generic->name() + mangled + "_" + method.name;
     addRecordMethod(instance, std::move(copy));
