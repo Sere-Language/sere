@@ -67,7 +67,7 @@
     {
       "name": "linux-clang-relwithdebinfo",
       "displayName": "Linux clang RelWithDebInfo",
-      "description": "Ubuntu 22.04 x86_64: clang + ld.lld + LLVM 22.1.8.",
+      "description": "Linux x86_64: clang + ld.lld + LLVM 22.1.8 (source scripts/env.sh first).",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
@@ -77,6 +77,8 @@
         "CMAKE_C_COMPILER": "$env{SERE_LLVM_DIR}/bin/clang",
         "CMAKE_CXX_COMPILER": "$env{SERE_LLVM_DIR}/bin/clang++",
         "CMAKE_LINKER": "$env{SERE_LLVM_DIR}/bin/ld.lld",
+        "CMAKE_EXE_LINKER_FLAGS_INIT": "-fuse-ld=lld",
+        "CMAKE_SHARED_LINKER_FLAGS_INIT": "-fuse-ld=lld",
         "CMAKE_AR": "$env{SERE_LLVM_DIR}/bin/llvm-ar",
         "CMAKE_RANLIB": "$env{SERE_LLVM_DIR}/bin/llvm-ranlib"
       },

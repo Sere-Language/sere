@@ -69,6 +69,51 @@ ctest --preset windows-clang-cl-relwithdebinfo --output-on-failure
 
 `env.ps1` must be dot-sourced so MSVC `vcvars64` and `SERE_LLVM_DIR` stay in the current session.
 
+## Linux source build
+
+Use Bash on Linux x86_64 (Ubuntu 24.04 is the dependency example below).
+You need CMake 3.28+, Ninja 1.11+, a system C/C++ development toolchain,
+and the LLVM 22.1.8 development archive, including clang and lld.
+
+```bash
+sudo apt-get update
+sudo apt-get install build-essential cmake ninja-build curl ca-certificates xz-utils \
+  zlib1g-dev libzstd-dev libxml2-dev libffi-dev libedit-dev libncurses-dev
+
+# From the repository root, download LLVM once and build:
+bash scripts/bootstrap-llvm.sh
+bash scripts/build.sh
+
+# Build and run the test suite:
+bash scripts/build.sh --test
+```
+
+LLVM is downloaded from the [official LLVM release](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8)
+and installed under `${XDG_DATA_HOME:-$HOME/.local/share}/sere/toolchains/llvm-22.1.8`.
+Set `SERE_TOOLCHAIN_ROOT` to change that parent directory for both bootstrap and build.
+Alternatively, set `SERE_LLVM_DIR` to an existing LLVM development installation;
+then skip the download. Bootstrap only installs LLVM, not system packages.
+On other distributions, install equivalent development packages and the required
+CMake/Ninja versions using your package manager. Qt6 Widgets development packages
+are optional; without them the Qt runtime is built as a stub.
+
+For manual CMake use, source the environment in each new Bash session:
+
+```bash
+source scripts/env.sh
+cmake --preset linux-clang-relwithdebinfo
+cmake --build --preset linux-clang-relwithdebinfo
+ctest --preset linux-clang-relwithdebinfo --output-on-failure
+./build/linux-clang-relwithdebinfo/bin/sere --version
+```
+
+The build copies the compiler, runtime, and standard library into
+`build/linux-clang-relwithdebinfo/bin/` and `bin/`. Keep these files together.
+Use a separate build directory from Windows; the Linux preset does this automatically.
+For machines with limited RAM, run `CMAKE_BUILD_PARALLEL_LEVEL=2 bash scripts/build.sh`.
+Additional configure options are accepted, for example
+`bash scripts/build.sh -DBUILD_TESTING=OFF` (omit `--test` in that case).
+
 ## Projects
 
 ```powershell
