@@ -137,12 +137,21 @@ Put the compiler on `PATH` from the repo or a project:
 `sere build` compiles `src/main.sere`; `sere run` builds and executes `bin/<name>.exe`.
 `sere refresh-bin` copies this compiler, runtime, and stdlib into `./bin` even
 when the previous `sere.exe` is locked (it is renamed to `sere.exe.old`).
-`sere --update` (or `sere update`) copies **this** compiler into
-`%LOCALAPPDATA%\\Programs\\Sere` if the system install is a different version
-or binary. Run it from the `sere.exe` you want on PATH (for example
-`.\releases\dev-0.1.4\bin\sere.exe update`). If you run it from a project with
-`sere.toml`, it also refreshes that project's venv **without changing your
-source**.
+`sere update` (or `sere --update`) checks GitHub for the latest Windows x64
+portable release, verifies its SHA-256 digest, and installs it automatically into
+`%LOCALAPPDATA%\Programs\Sere`. Prereleases are included. Replacing a portable
+asset on the same release also counts as an update: Sere records the release ID,
+asset ID, modification time, and digest after successful installation. An install
+without this record is refreshed once, even if its version already matches.
+Unchanged assets are skipped and newer development versions are not downgraded.
+The previous installation is retained beside the new one as a backup; a failed
+installation restores it. Close programs using Sere if Windows blocks the rename.
+
+`sere update-local` retains the previous behavior: copy this compiler into the
+system installation and refresh the current project's environment. GitHub updates
+install globally; existing project environments can be refreshed by running the
+new global compiler with `update-local` from the project directory.
+Automatic GitHub installation currently supports Windows x64 only.
 
 ## Libraries
 

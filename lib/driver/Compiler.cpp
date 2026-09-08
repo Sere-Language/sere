@@ -704,9 +704,12 @@ int Compiler::run(const CompilerOptions& options) {
     }
     return code;
   }
-  if (options.projectCommand == ProjectCommand::Update) {
+  if (options.projectCommand == ProjectCommand::Update ||
+      options.projectCommand == ProjectCommand::UpdateLocal) {
     std::string updateError;
-    const int code = updateSereEnvironment({}, updateError);
+    const int code = options.projectCommand == ProjectCommand::Update
+                         ? updateFromGithub(updateError)
+                         : updateSereEnvironment({}, updateError);
     if (code != 0 && !updateError.empty()) {
       llvm::errs() << "error: " << updateError << '\n';
     }

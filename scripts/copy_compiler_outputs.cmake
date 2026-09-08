@@ -132,3 +132,6 @@ sere_try_copy("${_sere_root}/scripts/sere-path.ps1" "${SERE_PROJECT_BIN}/sere-pa
 sere_try_copy("${_sere_root}/scripts/sere-path.cmd" "${SERE_PROJECT_BIN}/sere-path.cmd")
 sere_try_copy("${_sere_root}/scripts/sere-path.sh" "${SERE_PROJECT_BIN}/sere-path.sh")
 sere_try_copy("${_sere_root}/scripts/refresh-stdlib.ps1" "${SERE_PROJECT_BIN}/refresh-stdlib.ps1")
+
+sere_try_copy("${_sere_root}/scripts/update.ps1" "${SERE_BUILD_BIN}/update.ps1")
+sere_try_copy("${_sere_root}/scripts/update.ps1" "${SERE_PROJECT_BIN}/update.ps1")

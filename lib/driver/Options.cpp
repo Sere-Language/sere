@@ -23,7 +23,8 @@ void printUsage(std::string& error) {
       "  clean               Remove bin/ and dist/ artifacts\n"
       "  shell               Enter the Sere project shell\n"
       "  refresh-bin         Copy this compiler into ./bin (stdlib and runtime too)\n"
-      "  update              Copy this compiler into %LOCALAPPDATA%\\Programs\\Sere if it differs, "
+      "  update              Install the latest GitHub portable release or refreshed asset\n"
+      "  update-local        Copy this compiler into %LOCALAPPDATA%\\Programs\\Sere if it differs, "
       "then the project venv\n"
       "  build-installer     Package a Windows installer (compiler, LLVM, stdlib, editor)\n"
       "\n"
@@ -104,6 +105,10 @@ void printUsage(std::string& error) {
   }
   if (argument == "refresh-bin" || argument == "self-update") {
     command = ProjectCommand::RefreshBin;
+    return true;
+  }
+  if (argument == "update-local") {
+    command = ProjectCommand::UpdateLocal;
     return true;
   }
   if (argument == "update") {

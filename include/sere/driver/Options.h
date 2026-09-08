@@ -24,6 +24,7 @@ enum class ProjectCommand {
   BuildInstaller,
   RefreshBin,
   Update,
+  UpdateLocal,
 };
 
 struct CompilerOptions {

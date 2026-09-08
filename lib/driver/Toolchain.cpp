@@ -512,6 +512,10 @@ int copyCompilerBinImpl(const std::filesystem::path& fromDir,
       (void)copyFileOverwrite(*runtime, dest / runtime->filename(), error);
     }
   }
+  if (std::filesystem::exists(fromDir / "update.ps1", code) &&
+      !copyFileOverwrite(fromDir / "update.ps1", dest / "update.ps1", error)) {
+    return 1;
+  }
   const std::filesystem::path stdlibSrc = stdlibBeside(fromDir);
   const std::filesystem::path stdlibDest = dest / "stdlib";
   if (!stdlibSrc.empty() && !samePath(stdlibSrc, stdlibDest)) {

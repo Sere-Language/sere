@@ -280,6 +280,11 @@ int main() {
     return fail("expected ProjectCommand::Update from update");
   }
   sere::CompilerOptions updateFlag;
+  sere::CompilerOptions localUpdateOptions;
+  if (!parseArgs({"sere", "update-local"}, localUpdateOptions, error) ||
+      localUpdateOptions.projectCommand != sere::ProjectCommand::UpdateLocal) {
+    return fail("failed to parse update-local");
+  }
   if (!parseArgs({"sere", "--update"}, updateFlag, error)) {
     return fail("failed to parse --update");
   }

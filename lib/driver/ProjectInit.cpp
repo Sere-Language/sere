@@ -706,6 +706,8 @@ void copyToolchain(const std::filesystem::path& compilerDir, const std::filesyst
     }
   }
   copyIfExists(compilerDir / "platforms", venvBin / "platforms");
+  copyIfExists(compilerDir / "update.ps1", root / "bin" / "update.ps1");
+  copyIfExists(compilerDir / "update.ps1", venvBin / "update.ps1");
   copyIfExists(compilerDir / "sere-path.ps1", root / "bin" / "sere-path.ps1");
   copyIfExists(compilerDir / "sere-path.cmd", root / "bin" / "sere-path.cmd");
   copyIfExists(compilerDir / "sere-path.sh", root / "bin" / "sere-path.sh");
@@ -1121,6 +1123,34 @@ bool patchTomlSereVersion(const std::filesystem::path& tomlPath, const std::stri
 }
 
 } // namespace
+
+int updateFromGithub(std::string& error) {
+#ifndef _WIN32
+  error = "automatic release installation currently supports Windows x64 only";
+  return 1;
+#else
+  const auto script = compilerDirectory() / "update.ps1";
+  if (!std::filesystem::is_regular_file(script)) {
+    error = "updater missing beside compiler; install a complete Sere portable release";
+    return 1;
+  }
+  const auto shell = llvm::sys::findProgramByName("powershell.exe");
+  if (!shell) {
+    error = "PowerShell is required to update Sere";
+    return 1;
+  }
+  const std::vector<std::string> owned{*shell, "-NoProfile", "-ExecutionPolicy", "Bypass",
+                                      "-File", script.string(), "-CurrentVersion",
+                                      SERE_VERSION_STRING};
+  std::vector<llvm::StringRef> args;
+  for (const auto& arg : owned)
+    args.push_back(arg);
+  const int code = llvm::sys::ExecuteAndWait(*shell, args);
+  if (code != 0)
+    error = "GitHub update failed; see updater output above";
+  return code;
+#endif
+}
 
 int updateSereEnvironment(const std::filesystem::path& start, std::string& error) {
   if (updateGlobalInstall(error) != 0) {

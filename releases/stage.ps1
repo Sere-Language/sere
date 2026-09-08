@@ -58,6 +58,7 @@ function Copy-Contents([string]$From, [string]$To) {
 foreach ($file in @('sere.exe', 'sere_rt.lib', 'sere_qt6.lib', 'sere_icon.res')) { Copy-Required "$compilerDir\$file" "$dest\bin\$file" }
 Get-ChildItem $compilerDir -Filter '*.dll' | Copy-Item -Destination "$dest\bin"
 if (Test-Path "$compilerDir\platforms") { Copy-Contents "$compilerDir\platforms" "$dest\bin\platforms" }
+Copy-Required "$repo\scripts\update.ps1" "$dest\bin\update.ps1"
 Copy-Contents "$repo\stdlib" "$dest\stdlib"
 Copy-Contents "$repo\include\sere\api" "$dest\include\sere\api"
 Copy-Required "$repo\LICENSE" "$dest\LICENSE"

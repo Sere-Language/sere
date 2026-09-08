@@ -1,5 +1,11 @@
 # Sere toolchain tests.
 
+if(WIN32)
+  add_test(NAME sere.test.updater
+    COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+      -File "${CMAKE_CURRENT_SOURCE_DIR}/update.ps1")
+endif()
+
 add_test(NAME sere.test.generic_tuple
   COMMAND "${CMAKE_COMMAND}"
     "-DSERE=${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}"

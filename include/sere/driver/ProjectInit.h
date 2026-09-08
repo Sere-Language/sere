@@ -8,6 +8,9 @@
 
 namespace sere {
 
+/// Downloads and installs the newest supported GitHub release.
+[[nodiscard]] int updateFromGithub(std::string& error);
+
 [[nodiscard]] int initSereProject(const std::filesystem::path& name,
                                   const std::filesystem::path& compilerDir,
                                   std::string& error);
