@@ -5541,6 +5541,11 @@ bool TypeChecker::checkBodies(Module& module) {
       ok = checkAssign(static_cast<AssignStmt&>(*statement)) && ok;
     }
   }
+  // Decorator expressions can reference module variables (for example @app.route).
+  // Bind those variables first, then expose decorated signatures to body checking.
+  if (!ok || !applyDecorators(module)) {
+    return false;
+  }
   for (const std::unique_ptr<Stmt>& statement : module.statements()) {
     if (statement->kind() != NodeKind::ClassDef) {
       continue;
@@ -6257,9 +6262,6 @@ bool TypeChecker::check(Module& module) {
     return false;
   }
   if (!collectExports(module)) {
-    return false;
-  }
-  if (!applyDecorators(module)) {
     return false;
   }
   if (!checkBodies(module)) {
