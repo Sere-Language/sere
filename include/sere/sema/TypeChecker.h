@@ -211,6 +211,9 @@ private:
   std::vector<SemanticSymbol> symbols_{};
   int loopDepth_ = 0;
   std::string currentClass_{};
+  [[nodiscard]] bool canAccessPrivate(const Type* owner) const;
+  Symbol* lookupAssignment(const std::string& name);
+  std::vector<std::pair<FunctionDef*, std::size_t>> enclosingFunctions_{};
   std::unordered_map<std::string, ClassDef*> classes_{};
   std::unordered_map<const Type*, std::unordered_map<std::string, FunctionDef*>> importedMethods_{};
   std::unordered_map<std::string, bool> flattened_{};

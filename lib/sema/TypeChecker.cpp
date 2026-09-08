@@ -1723,6 +1723,11 @@ const Type* TypeChecker::checkName(NameExpr& expr) {
     }
     if (scopeIndex > 0 && static_cast<std::size_t>(scopeIndex) <= nestedOuterScope_) {
       nestedFunction_->addCapture(expr.name(), symbol->type);
+      for (const auto& [function, boundary] : enclosingFunctions_) {
+        if (static_cast<std::size_t>(scopeIndex) <= boundary) {
+          function->addCapture(expr.name(), symbol->type);
+        }
+      }
     }
   }
   if (lambdaDepth_ > 0 && symbol->kind == SymbolKind::Variable) {
@@ -1830,7 +1835,7 @@ const Type* TypeChecker::checkMember(MemberExpr& expr) {
     const int methodIndex = objectType->methodIndex(expr.field());
     if (methodIndex >= 0) {
       const RecordMethod& method = objectType->methods()[static_cast<std::size_t>(methodIndex)];
-      if (!method.isPublic && currentClass_ != objectType->name()) {
+      if (!method.isPublic && !canAccessPrivate(objectType)) {
         diagnostics_->error(expr.range(),
                             "method '" + expr.field() + "' of '" + objectType->name() +
                                 "' is private");
@@ -1877,13 +1882,13 @@ const Type* TypeChecker::checkMember(MemberExpr& expr) {
       diagnostics_->error(expr.range(), "property '" + expr.field() + "' has no backing field");
       return nullptr;
     }
-    if (!field->isPublic && currentClass_ != objectType->name()) {
+    if (!field->isPublic && !canAccessPrivate(objectType)) {
       diagnostics_->error(
           expr.range(), "field '" + expr.field() + "' of '" + objectType->name() + "' is private");
       return nullptr;
     }
   } else if (!field->getterLlvm.empty()) {
-    if (!field->getterPublic && currentClass_ != objectType->name()) {
+    if (!field->getterPublic && !canAccessPrivate(objectType)) {
       diagnostics_->error(
           expr.range(), "getter '" + expr.field() + "' of '" + objectType->name() + "' is private");
       return nullptr;
@@ -3761,7 +3766,7 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
     return nullptr;
   }
   const RecordMethod& method = objectType->methods()[static_cast<std::size_t>(index)];
-  if (!method.isPublic && currentClass_ != objectType->name()) {
+  if (!method.isPublic && !canAccessPrivate(objectType)) {
     diagnostics_->error(
         expr.range(), "method '" + member.field() + "' of '" + objectType->name() + "' is private");
     return nullptr;
@@ -4069,6 +4074,29 @@ bool TypeChecker::bindCallableAlias(AssignStmt& statement, NameExpr& target, con
   return declare(target.name(), source, statement.range().start);
 }
 
+bool TypeChecker::canAccessPrivate(const Type* owner) const {
+  const Type* current = classType(currentClass_);
+  if (current == nullptr || owner == nullptr || current->qualifier() != owner->qualifier()) {
+    return false;
+  }
+  return current->name() == owner->name() ||
+         current->name().starts_with(owner->name() + ".");
+}
+
+Symbol* TypeChecker::lookupAssignment(const std::string& name) {
+  if (nestedFunction_ == nullptr) {
+    return lookup(name);
+  }
+  // Assignment creates a local in this function, never an implicit nonlocal write.
+  for (std::size_t index = scopes_.size(); index > nestedOuterScope_ + 1; --index) {
+    auto found = scopes_[index - 1].find(name);
+    if (found != scopes_[index - 1].end()) {
+      return &found->second;
+    }
+  }
+  return nullptr;
+}
+
 bool TypeChecker::checkAssign(AssignStmt& statement) {
   Expr& targetExpr = const_cast<Expr&>(statement.target());
   if (statement.op() == AssignOp::Assign && targetExpr.kind() == NodeKind::TupleExpr) {
@@ -4095,7 +4123,7 @@ bool TypeChecker::checkAssign(AssignStmt& statement) {
         continue;
       }
       auto& name = static_cast<NameExpr&>(item);
-      Symbol* existing = lookup(name.name());
+      Symbol* existing = lookupAssignment(name.name());
       if (existing != nullptr) {
         if (existing->readonly) {
           diagnostics_->error(item.range(), "cannot assign to '" + name.name() + "'");
@@ -4132,7 +4160,7 @@ bool TypeChecker::checkAssign(AssignStmt& statement) {
   }
   if (targetExpr.kind() == NodeKind::NameExpr) {
     auto& name = static_cast<NameExpr&>(targetExpr);
-    Symbol* symbol = lookup(name.name());
+    Symbol* symbol = lookupAssignment(name.name());
     if (symbol != nullptr && symbol->readonly) {
       diagnostics_->error(statement.range(),
                           "cannot assign to module constant '" + name.name() + "'");
@@ -4162,7 +4190,7 @@ bool TypeChecker::checkAssign(AssignStmt& statement) {
                                currentFunctionName_ == "__init__" && field != nullptr &&
                                field->stored;
       if (field != nullptr && !field->setterLlvm.empty() && !ownAccessor && !initBacking) {
-        if (!field->setterPublic && currentClass_ != objectType->name()) {
+        if (!field->setterPublic && !canAccessPrivate(objectType)) {
           diagnostics_->error(statement.range(),
                               "setter '" + member.field() + "' of '" + objectType->name() +
                                   "' is private");
@@ -4342,9 +4370,15 @@ bool TypeChecker::checkStatement(Stmt& statement, const Type* expectedReturn) {
     }
     FunctionDef* savedNested = nestedFunction_;
     const std::size_t savedBoundary = nestedOuterScope_;
+    if (savedNested != nullptr) {
+      enclosingFunctions_.emplace_back(savedNested, savedBoundary);
+    }
     nestedFunction_ = &function;
     nestedOuterScope_ = scopes_.empty() ? 0 : scopes_.size() - 1;
     const bool ok = checkFunctionBody(function);
+    if (savedNested != nullptr) {
+      enclosingFunctions_.pop_back();
+    }
     nestedFunction_ = savedNested;
     nestedOuterScope_ = savedBoundary;
     if (Symbol* bound = lookup(function.name())) {
@@ -4392,7 +4426,9 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
   const std::string savedFunction = currentFunctionName_;
   const std::string savedProperty = currentPropertyName_;
   const bool savedAsync = currentFunctionIsAsync_;
-  currentClass_ = function.ownerClass();
+  currentClass_ = function.ownerClass().empty() && nestedFunction_ != nullptr
+                      ? savedClass
+                      : function.ownerClass();
   currentFunctionName_ = function.name();
   currentPropertyName_ = function.propertyName();
   currentFunctionIsAsync_ = function.isAsync();

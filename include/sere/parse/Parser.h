@@ -81,7 +81,7 @@ private:
   std::unique_ptr<Stmt> parseStatement();
   std::unique_ptr<FunctionDef> parseFunction(std::string externName);
   std::unique_ptr<FunctionDef> parsePropertyAccessor(std::string name, SourceRange nameRange);
-  std::unique_ptr<ClassDef> parseClass();
+  std::unique_ptr<ClassDef> parseClass(const std::string& enclosing = {});
   std::unique_ptr<TypeAlias> parseTypeAlias();
   std::unique_ptr<ImportStmt> parseImport();
   std::unique_ptr<ImportStmt> parseFromImport();
@@ -130,6 +130,8 @@ private:
   const SourceManager* source_ = nullptr;
   std::vector<Token> tokens_;
   std::size_t current_ = 0;
+  // Nested types lower to qualified declarations plus a type member on their parent.
+  std::vector<std::unique_ptr<ClassDef>> nestedClasses_;
   bool inQuote_ = false;
   bool allowAsCast_ = true;
 };

@@ -2878,6 +2878,12 @@ llvm::Value* IRGenerator::emitCall(llvm::IRBuilder<>& builder, const CallExpr& e
       callee = found->second;
     }
   }
+  // A named nested function is a closure value in the current frame. Calling
+  // its raw LLVM function would omit the captured environment argument.
+  if (const NameExpr* name = asName(expr.callee());
+      name != nullptr && locals_.contains(name->name())) {
+    callee = nullptr;
+  }
   if (callee == nullptr) {
     const Type* fnType = expr.callee().resolvedType();
     if (fnType != nullptr &&
@@ -2890,12 +2896,17 @@ llvm::Value* IRGenerator::emitCall(llvm::IRBuilder<>& builder, const CallExpr& e
         return nullptr;
       }
       std::vector<llvm::Value*> args;
-      for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
-        llvm::Value* value = emitExpr(builder, *argument);
-        if (value == nullptr) {
-          return nullptr;
+      const auto definition = functionDefs_.find(calleeName);
+      if (definition != functionDefs_.end() && definition->second != nullptr) {
+        appendBoundCallArgs(builder, expr, *definition->second, fnType, args, 0);
+      } else {
+        for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
+          llvm::Value* value = emitExpr(builder, *argument);
+          if (value == nullptr) {
+            return nullptr;
+          }
+          args.push_back(value);
         }
-        args.push_back(value);
       }
       return emitIndirectCallable(builder, fnptr, llvmFn, args);
     }

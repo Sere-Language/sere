@@ -484,3 +484,13 @@ add_test(NAME sere.test.imported_routes
 set_tests_properties(sere.test.imported_routes PROPERTIES
   ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib"
   TIMEOUT 120)
+
+add_test(NAME sere.test.nested_scopes
+  COMMAND "${CMAKE_COMMAND}"
+    "-DSERE=${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}"
+    "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/nested_scopes.sere"
+    "-DOUTPUT=${CMAKE_BINARY_DIR}/nested_scopes${CMAKE_EXECUTABLE_SUFFIX}"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/run_nested_scopes.cmake")
+set_tests_properties(sere.test.nested_scopes PROPERTIES
+  ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib"
+  TIMEOUT 120)

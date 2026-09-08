@@ -2157,10 +2157,13 @@ std::unique_ptr<FunctionDef> Parser::parsePropertyAccessor(std::string name,
   return function;
 }
 
-std::unique_ptr<ClassDef> Parser::parseClass() {
+std::unique_ptr<ClassDef> Parser::parseClass(const std::string& enclosing) {
   const Token& keyword = advance();
   const bool isStruct = keyword.kind() == TokenKind::KeywordStruct;
   std::string name = parseIdentifier(isStruct ? "expected struct name" : "expected class name");
+  if (!enclosing.empty() && !name.empty()) {
+    name = enclosing + "." + name;
+  }
   std::vector<std::unique_ptr<TypeExpr>> typeConstraints;
   std::vector<std::string> typeParams = parseTypeParamList(typeConstraints);
   std::vector<std::string> bases;
@@ -2229,8 +2232,26 @@ std::unique_ptr<ClassDef> Parser::parseClass() {
       continue;
     }
     if (check(TokenKind::KeywordClass) || check(TokenKind::KeywordStruct)) {
-      diagnostics_->error(peek().range(), "nested types must be declared at module scope");
-      synchronize();
+      auto child = parseClass(name);
+      if (child == nullptr) {
+        synchronize();
+        continue;
+      }
+      child->setDecorators(decorators);
+      child->setDecoratorExprs(std::move(decoratorExprs));
+      markPrivateFromDecorators(*child, decorators);
+      child->setFrozen(std::find(decorators.begin(), decorators.end(), "frozen") != decorators.end());
+      FieldDecl member;
+      member.name = child->name().substr(name.size() + 1);
+      member.range = child->range();
+      member.isStatic = true;
+      member.isPublic = !child->isPrivate();
+      std::vector<std::unique_ptr<TypeExpr>> args;
+      args.push_back(std::make_unique<TypeExpr>(child->range(), child->name(),
+                                              std::vector<std::unique_ptr<TypeExpr>>{}));
+      member.type = std::make_unique<TypeExpr>(child->range(), "type", std::move(args));
+      fields.push_back(std::move(member));
+      nestedClasses_.push_back(std::move(child));
       continue;
     }
     if (check(TokenKind::KeywordDef)) {
@@ -2547,6 +2568,10 @@ std::unique_ptr<Module> Parser::parseModule() {
       continue;
     }
     statements.push_back(std::move(statement));
+    for (auto& nested : nestedClasses_) {
+      statements.push_back(std::move(nested));
+    }
+    nestedClasses_.clear();
     skipNewlines();
   }
   SourceRange range;

@@ -1,0 +1,43 @@
+class Outer:
+    @private value: i32
+    @private static shared: i32 = 4
+    def __init__(self, value: i32) -> None:
+        self.value = value
+    class Child:
+        value: str
+        def __init__(self, value: str) -> None:
+            self.value = value
+        def read(self, outer: Outer) -> i32:
+            return outer.value + Outer.shared
+        class Deep:
+            def read(self, outer: Outer) -> i32:
+                return outer.value
+    def run(self) -> i32:
+        marker = 7
+        def child() -> i32:
+            marker = "local"
+            child_only = 99
+            return self.value
+        result = child()
+        child_only = "outer"
+        def middle() -> i32:
+            def inner() -> i32:
+                return self.value + marker
+            return inner()
+        return result + middle() + marker
+class Other:
+    class Child:
+        value: i32
+        def __init__(self, value: i32) -> None:
+            self.value = value
+def main() -> i32:
+    outer = Outer(10)
+    child: Outer.Child = Outer.Child("child")
+    other = Other.Child(8)
+    deep = Outer.Child.Deep()
+    print(child.value)
+    print(child.read(outer))
+    print(deep.read(outer))
+    print(outer.run())
+    print(other.value)
+    return 0
