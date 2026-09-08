@@ -1,0 +1,12 @@
+# Subprocess execution. Runs a command in a shell, capturing its
+# stdout and stderr. Output is printed as-is, with an error prefix
+# added if the child exits non-zero or cannot be spawned.
+#   import subprocess
+#   subprocess.run("git status")
+
+extern "C" "sere_proc_run"
+def _run(cmd: str) -> str
+
+def run(cmd: str) -> void:
+    output: str = _run(cmd)
+    print(output)

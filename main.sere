@@ -1,8 +1,16 @@
+﻿import wsgi
 
-async def getName() -> str:
-    return "Alice"
+# NOTE: nested defs inside methods are not yet supported by the codegen
+# ("internal: missing nested function"), so routes are declared directly
+# in handle() instead of via a @route decorator.
+class App(wsgi.Handler):
+    def handle(self, environ: wsgi.Environ) -> wsgi.Response:
+        if environ.path == "/":
+            return wsgi.Response(200, "text/plain", "Hello from Sere WSGI!")
+        if environ.path == "/about":
+            return wsgi.Response(200, "text/plain", "Sere WSGI demo")
+        return wsgi.Response(404, "text/plain", "not found")
 
-async def main() -> i32:
-    name = await getName()
-    print(f"Hello, {name}!")
+def main() -> i32:
+    wsgi.serve(App(), "127.0.0.1", 8000)
     return 0

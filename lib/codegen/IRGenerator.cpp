@@ -4509,8 +4509,16 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
       std::vector<llvm::Type*> fields;
       std::uint64_t bytes = 0;
       for (const FunctionDef::Capture& capture : function.captures()) {
-        fields.push_back(lower(capture.type));
-        bytes += valueSize(capture.type);
+        const Type* captureType = capture.type == nullptr ? nullptr : capture.type->canonical();
+        if (captureType != nullptr && captureType->isRecord() && !captureType->isEnum()) {
+          // Class instances are captured by reference so writes through the
+          // closure mutate the original object, not a frame-local copy.
+          fields.push_back(llvm::PointerType::getUnqual(*context_));
+          bytes += sizeof(void*);
+        } else {
+          fields.push_back(lower(capture.type));
+          bytes += valueSize(capture.type);
+        }
       }
       llvm::StructType* environmentType = llvm::StructType::get(*context_, fields);
       llvm::Function* allocate =
@@ -4525,17 +4533,26 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
                               "internal: missing captured local '" + capture.name + "'");
           return false;
         }
-        llvm::Value* value = builder.CreateLoad(lower(capture.type), local->second);
-        builder.CreateStore(
-            value,
-            builder.CreateStructGEP(environmentType, environment, static_cast<unsigned>(index)));
+        llvm::Value* dst = builder.CreateStructGEP(
+            environmentType, environment, static_cast<unsigned>(index));
+        const Type* captureType = capture.type == nullptr ? nullptr : capture.type->canonical();
+        if (captureType != nullptr && captureType->isRecord() && !captureType->isEnum()) {
+          llvm::Value* object = builder.CreateLoad(
+              llvm::PointerType::getUnqual(*context_), local->second, capture.name + ".ref");
+          builder.CreateStore(object, dst);
+        } else {
+          llvm::Value* value = builder.CreateLoad(lower(capture.type), local->second);
+          builder.CreateStore(value, dst);
+        }
       }
     }
     llvm::Value* packed = packCallable(builder, found->second, environment);
-    llvm::Type* callableType = lower(function.resolvedType());
-    llvm::Value* slot = builder.CreateAlloca(callableType, nullptr, function.name());
-    builder.CreateStore(builder.CreateLoad(callableType, packed), slot);
-    rememberLocal(function.name(), slot, function.resolvedType());
+    // lower(Function) is a plain pointer, but a callable value is the heap
+    // fat {fn, env} pair that `packed` points at. The local must hold that
+    // pointer: readers load the pointer and then the fat pair through it.
+    // Storing a load of the first word here would alias the function pointer
+    // as an environment and crash on call.
+    rememberLocal(function.name(), packed, function.resolvedType());
     return true;
   }
   return statement.kind() == NodeKind::PassStmt || statement.kind() == NodeKind::ClassDef ||
@@ -5024,6 +5041,7 @@ void IRGenerator::declareFunctions(const Module& ast) {
                                                   llvmNameFor(*method),
                                                   module_);
       functions_[llvmNameFor(*method)] = fn;
+      declareNestedFunctions(*method);
     }
   }
 }
@@ -5039,6 +5057,7 @@ void IRGenerator::declareNestedFunctions(const FunctionDef& function) {
     if (module_->getFunction(name) == nullptr) {
       functions_[name] = llvm::Function::Create(
           llvmFunctionType(nested), llvm::Function::InternalLinkage, name, module_);
+      functions_[nested.name()] = functions_[name];
     } else {
       functions_[name] = module_->getFunction(name);
     }
@@ -5450,10 +5469,21 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
     llvm::StructType* environmentType = llvm::StructType::get(*context_, fields);
     for (std::size_t captureIndex = 0; captureIndex < function.captures().size(); ++captureIndex) {
       const FunctionDef::Capture& capture = function.captures()[captureIndex];
-      rememberLocal(capture.name,
-                    builder.CreateStructGEP(
-                        environmentType, &environment, static_cast<unsigned>(captureIndex)),
-                    capture.type);
+      llvm::Value* cell = builder.CreateStructGEP(
+          environmentType, &environment, static_cast<unsigned>(captureIndex));
+      const Type* captureType = capture.type == nullptr ? nullptr : capture.type->canonical();
+      if (captureType != nullptr && captureType->isRecord() && !captureType->isEnum()) {
+        // By-reference capture: the environment holds a pointer to the object;
+        // give the nested local a slot holding that pointer, matching the
+        // layout of a method's `self` slot.
+        llvm::Value* slot =
+            builder.CreateAlloca(llvm::PointerType::getUnqual(*context_), nullptr,
+                                 capture.name + ".slot");
+        builder.CreateStore(builder.CreateLoad(builder.getPtrTy(), cell), slot);
+        rememberLocal(capture.name, slot, capture.type);
+      } else {
+        rememberLocal(capture.name, cell, capture.type);
+      }
     }
   }
   for (; argIt != llvmFn->arg_end(); ++argIt) {
@@ -5468,7 +5498,13 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
     const Type* paramType = fnType->paramTypes()[index];
     arg.setName(param.name);
     if (function.isMethod() && index == 0) {
-      rememberLocal(param.name, &arg, paramType);
+      // The self argument is already a pointer to the object, but captured
+      // locals are read back through a load (see the FunctionDef case in
+      // emitStatement), so keep a slot that holds the pointer itself.
+      llvm::Value* selfSlot =
+          builder.CreateAlloca(arg.getType(), nullptr, param.name + ".slot");
+      builder.CreateStore(&arg, selfSlot);
+      rememberLocal(param.name, selfSlot, paramType);
     } else {
       llvm::Value* slot = builder.CreateAlloca(arg.getType(), nullptr, param.name);
       builder.CreateStore(&arg, slot);
@@ -5581,6 +5617,9 @@ std::unique_ptr<llvm::Module> IRGenerator::emit(const Module& ast,
           if (!emitFunction(*method)) {
             return false;
           }
+          if (!emitNestedFunctions(*method)) {
+            return false;
+          }
         }
       } else if (statement->kind() == NodeKind::EnumDef) {
         const auto& enumDef = static_cast<const EnumDef&>(*statement);
@@ -5589,6 +5628,9 @@ std::unique_ptr<llvm::Module> IRGenerator::emit(const Module& ast,
             continue;
           }
           if (!emitFunction(*method)) {
+            return false;
+          }
+          if (!emitNestedFunctions(*method)) {
             return false;
           }
         }
