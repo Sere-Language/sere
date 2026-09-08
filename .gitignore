@@ -67,7 +67,8 @@ compile_commands.json
 !/releases/**/*.lib
 !/releases/**/*.dll
 !/releases/**/*.vsix
-releases/
+releases/*
+!releases/stage.ps1
 
 # OS
 Thumbs.db

@@ -47,6 +47,11 @@ Name: "vscodeext"; Description: "Install the Sere editor extension (VS Code / Cu
 Name: "qt6"; Description: "Install Qt6 GUI runtime (needed for import qt6)"; GroupDescription: "Optional libraries:"; Flags: checkedonce
 #endif
 
+[InstallDelete]
+; Remove deleted modules and the legacy copy that shadows {app}\stdlib.
+Type: filesandordirs; Name: "{app}\bin\stdlib"
+Type: filesandordirs; Name: "{app}\stdlib"
+
 [Files]
 Source: "@PAYLOAD_DIR@\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "@PAYLOAD_DIR@\stdlib\*"; DestDir: "{app}\stdlib"; Flags: ignoreversion recursesubdirs createallsubdirs

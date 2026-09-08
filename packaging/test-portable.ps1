@@ -13,6 +13,7 @@ try {
   $sere = Join-Path $Package 'bin\sere.exe'
   $info = & $sere --print-env | ConvertFrom-Json
   if ($LASTEXITCODE -or -not $info.clang.StartsWith($Package, [StringComparison]::OrdinalIgnoreCase)) { throw 'Compiler selected external clang' }
+  if ([IO.Path]::GetFullPath($info.stdlib) -ne [IO.Path]::GetFullPath((Join-Path $Package 'stdlib'))) { throw 'Compiler selected an unexpected standard library' }
   & $sere init smoke
   if ($LASTEXITCODE) { throw 'Portable init failed' }
   if (Test-Path 'smoke\venv\stdlib\stdlib') { throw 'Nested stdlib created' }
