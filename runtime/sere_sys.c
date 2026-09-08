@@ -38,7 +38,7 @@ static SereStr emptyStr(void) {
   return result;
 }
 
-static SereStr ownBytes(char* data, int64_t len) {
+static SereStr ownBytes(const char* data, int64_t len) {
   SereStr result;
   if (data == NULL) {
     return emptyStr();
@@ -301,8 +301,8 @@ static SereStr pathJoinImpl(const char* left, int64_t left_len, const char* righ
   if (sere_path_is_abs(right, right_len) || left == NULL || left_len <= 0) {
     return copyBytes(right, right_len);
   }
-  const int left_sep = isSep(left[left_len - 1]);
-  const int64_t extra = left_sep ? 0 : 1;
+  const int leftSep = isSep(left[left_len - 1]);
+  const int64_t extra = leftSep ? 0 : 1;
   const int64_t total = left_len + extra + right_len;
   char* out = (char*)malloc((size_t)total + 1);
   if (out == NULL) {
@@ -310,7 +310,7 @@ static SereStr pathJoinImpl(const char* left, int64_t left_len, const char* righ
   }
   memcpy(out, left, (size_t)left_len);
   int64_t n = left_len;
-  if (!left_sep) {
+  if (!leftSep) {
     out[n++] = pathSep();
   }
   if (right_len > 0) {
@@ -541,7 +541,7 @@ static int64_t sereEpochMillis(void) {
   if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
     return 0;
   }
-  return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
+  return ((int64_t)ts.tv_sec * 1000) + (int64_t)(ts.tv_nsec / 1000000);
 #endif
 }
 
@@ -640,16 +640,16 @@ void sere_string_repeat(const char* data, int64_t len, int64_t count, const char
   sere_str_repeat(data, len, count, out_data, out_len);
 }
 
-static uint64_t g_rng = 0x9E3779B97F4A7C15ULL;
+static uint64_t gRng = 0x9E3779B97F4A7C15ULL;
 
-void sere_random_seed(int64_t seed) { g_rng = (uint64_t)seed | 1ULL; }
+void sere_random_seed(int64_t seed) { gRng = (uint64_t)seed | 1ULL; }
 
 static uint64_t rngNext(void) {
-  uint64_t x = g_rng;
+  uint64_t x = gRng;
   x ^= x >> 12;
   x ^= x << 25;
   x ^= x >> 27;
-  g_rng = x;
+  gRng = x;
   return x * 2685821657736338717ULL;
 }
 
@@ -836,8 +836,8 @@ void sere_b64_encode(const char* data, int64_t len, const char** out_data, int64
     outStr(emptyStr(), out_data, out_len);
     return;
   }
-  const int64_t out_n = ((len + 2) / 3) * 4;
-  char* out = (char*)malloc((size_t)out_n + 1);
+  const int64_t outN = ((len + 2) / 3) * 4;
+  char* out = (char*)malloc((size_t)outN + 1);
   if (out == NULL) {
     outStr(emptyStr(), out_data, out_len);
     return;

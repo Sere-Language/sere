@@ -54,8 +54,10 @@ compile_commands.json
 /editors/vscode/*.vsix
 
 # IDE
-.vs/
-.idea/
+/.vs/
+/.vscode/
+/.zed/
+/.idea/
 *.user
 *.suo
 

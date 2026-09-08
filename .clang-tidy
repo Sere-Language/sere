@@ -31,5 +31,5 @@ CheckOptions:
   readability-identifier-naming.PrivateMemberPrefix: ''
   readability-identifier-naming.NamespaceCase: lower_case
   readability-identifier-naming.VariableCase: camelBack
-  readability-identifier-naming.ConstantCase: CamelCase
+  readability-identifier-naming.ConstantCase: camelBack
   readability-identifier-naming.TypeAliasCase: CamelCase
