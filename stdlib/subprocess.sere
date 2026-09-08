@@ -20,6 +20,13 @@
 #   subprocess.call("dir")          # -> exit code
 #   subprocess.getoutput("uname")   # -> combined output as str
 #
+#   # 6. Interactive child (like Popen with PIPE stdin/stdout):
+#   proc: subprocess.Popen = subprocess.Popen("python repl.py")
+#   proc.write("1 + 2\n")
+#   proc.close_stdin()
+#   out: str = proc.communicate()
+#   print(str(proc.wait()))
+#
 import string
 
 # ---------------------------------------------------------------------------

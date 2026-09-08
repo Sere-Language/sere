@@ -701,13 +701,6 @@ typedef struct {
 /// caller receives ownership of `result.bytes` and must free it.
 sere_proc_buffer_t sere_proc_communicate(sere_proc_t* proc);
 
-/// Owned growable byte buffer (result of communicate). `bytes` is
-/// NUL-terminated for convenience; `len` excludes the terminator.
-typedef struct {
-  char* bytes;
-  int64_t len;
-} sere_proc_buffer_t;
-
 #ifdef __cplusplus
 }
 #endif
