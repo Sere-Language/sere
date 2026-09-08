@@ -818,6 +818,42 @@ stack: Ptr[i32] = &local
 | `&x` | `Ptr[T]` for an addressable lvalue |
 | `*p` | load `T`; `*p = v` stores |
 
+### Output parameters
+
+Use `Ptr[T]` for a function that writes into a caller's variable. Pass its address
+with `&`; no `out` keyword is required. Declare the variable before the call.
+Use `*parameter = value` or `store(parameter, value)` to write it.
+
+```sere
+def get_name(out_name: Ptr[str]) -> void:
+    *out_name = "Sere"
+
+def main() -> i32:
+    name: str = ""
+    get_name(&name)
+    print(name)
+    return 0
+```
+
+The same syntax works for fields, list elements, forwarding to other functions,
+callbacks, and native C functions. `Ptr[str]` points to a Sere string value (data
+pointer plus length), not a C character buffer. Match the native function's ABI.
+
+Writable pointer parameters require the exact pointee type: `Ptr[i32]` cannot
+implicitly become `Ptr[i64]`, `Ptr[Any]`, or a pointer to a base class. `Unique[T]`
+and `Shared[T]` can be borrowed as `Ptr[T]`; raw pointers do not implicitly acquire
+ownership. Owning-pointer parameters are borrowed during a call and are not
+released on function return. Prefer `Ptr[T]` in functions that only need access.
+`free()` accepts raw `Ptr[T]` allocations; owning pointers are released automatically.
+
+Null dereferences through `*`, `load()`, and `store()` raise `RuntimeError`.
+Taking a mutable address of a constant and directly returning a local variable's
+address are rejected. Raw pointers still require lifetime discipline: do not keep
+an address after its storage goes out of scope, free a borrowed address, or keep
+an element pointer while resizing its list. These checks are not a borrow checker
+and do not detect all dangling aliases or use-after-free errors. Explicit pointer
+casts remain a low-level escape hatch.
+
 `alloc` / `free` go through the installed collector (`import gc`). Default
 collector is `"none"` (tracked malloc; you free it). Switch with
 `gc.use("mark_sweep")` or `gc.use("arena")`. Arenas and pools: `import heap`.

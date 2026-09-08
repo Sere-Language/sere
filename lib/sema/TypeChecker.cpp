@@ -876,11 +876,13 @@ bool TypeChecker::isAssignable(const Type* from, const Type* to) const {
   if (from->isPointerLike() && to->isPointerLike()) {
     const Type* fromPointee = from->pointeeType();
     const Type* toPointee = to->pointeeType();
-    if (fromPointee != nullptr && toPointee != nullptr &&
-        (fromPointee->canonical() == toPointee->canonical() || toPointee->isAny() ||
-         isAssignable(fromPointee, toPointee))) {
-      return true;
-    }
+    // Writable pointers are invariant: numeric widening and class slicing
+    // would let a callee overwrite storage with an incompatible layout.
+    return fromPointee != nullptr && toPointee != nullptr &&
+           fromPointee->canonical() == toPointee->canonical() &&
+           (to->isGenericCtor("Ptr") ||
+            (from->isGenericCtor("Unique") && to->isGenericCtor("Unique")) ||
+            (from->isGenericCtor("Shared") && to->isGenericCtor("Shared")));
   }
   if (from->isRecord() && to->isRecord()) {
     std::string_view fromName = from->name();
@@ -2249,6 +2251,14 @@ const Type* TypeChecker::checkBinary(BinaryExpr& expr) {
     diagnostics_->error(expr.range(), quoteType(right) + " does not support 'in'");
     return nullptr;
   }
+  if ((op == BinaryOp::Eq || op == BinaryOp::Ne) &&
+      ((left->isPointerLike() && right->isVoidLike()) ||
+       (right->isPointerLike() && left->isVoidLike()) ||
+       (left->isPointerLike() && right->isPointerLike() &&
+        left->pointeeType()->canonical() == right->pointeeType()->canonical()))) {
+    expr.setResolvedType(types_->boolType());
+    return types_->boolType();
+  }
   if (const Type* overloaded = rewriteDunderBinary(expr, left, right)) {
     return overloaded;
   }
@@ -2442,7 +2452,7 @@ const Type* TypeChecker::checkDeref(UnaryExpr& expr, const Type* operand) {
     return nullptr;
   }
   const Type* pointee = operand->pointeeType();
-  if (pointee == nullptr) {
+  if (pointee == nullptr || pointee->isVoidLike()) {
     diagnostics_->error(expr.range(), "cannot dereference " + quoteType(operand));
     return nullptr;
   }
@@ -2457,7 +2467,7 @@ const Type* TypeChecker::checkAddrOf(UnaryExpr& expr, const Type* operand) {
   }
   if (const NameExpr* name = asName(expr.operand())) {
     const Symbol* symbol = lookup(name->name());
-    if (symbol != nullptr && symbol->kind != SymbolKind::Variable) {
+    if (symbol != nullptr && (symbol->kind != SymbolKind::Variable || symbol->readonly)) {
       diagnostics_->error(expr.range(), "cannot take the address of '" + name->name() + "'");
       return nullptr;
     }
@@ -2717,14 +2727,20 @@ const Type* TypeChecker::checkIntrinsicCall(CallExpr& expr, IntrinsicKind kind) 
     result = kind == IntrinsicKind::UniqueNew ? types_->uniqueType(pointee)
                                               : types_->sharedType(pointee);
   } else if (kind == IntrinsicKind::Alloc) {
-    if (typeArgs.size() != 1 || !valueTypes.empty()) {
-      diagnostics_->error(expr.range(), "alloc[T]() takes one type argument");
+    if (typeArgs.size() != 1 || !valueTypes.empty() || typeArgs[0]->isVoidLike()) {
+      diagnostics_->error(expr.range(), "alloc[T]() requires one non-void type argument");
       return nullptr;
     }
     result = types_->ptrType(typeArgs[0]);
   } else if (kind == IntrinsicKind::Free) {
-    if (valueTypes.size() != 1 || !valueTypes[0]->isPointerLike()) {
-      diagnostics_->error(expr.range(), "free() requires Unique[T], Shared[T], or Ptr[T]");
+    if (valueTypes.size() != 1 || !valueTypes[0]->isGenericCtor("Ptr")) {
+      diagnostics_->error(expr.range(),
+                          "free() requires Ptr[T]; owning pointers are released automatically");
+      return nullptr;
+    }
+    if (expr.arguments()[0]->kind() == NodeKind::UnaryExpr &&
+        static_cast<const UnaryExpr&>(*expr.arguments()[0]).op() == UnaryOp::AddrOf) {
+      diagnostics_->error(expr.range(), "cannot free an address borrowed with '&'");
       return nullptr;
     }
     result = types_->voidType();
@@ -2734,8 +2750,13 @@ const Type* TypeChecker::checkIntrinsicCall(CallExpr& expr, IntrinsicKind kind) 
       return nullptr;
     }
     result = valueTypes[0]->pointeeType();
+    if (result == nullptr || result->isVoidLike()) {
+      diagnostics_->error(expr.range(), "load() requires a non-void pointee type");
+      return nullptr;
+    }
   } else if (kind == IntrinsicKind::Store) {
     if (valueTypes.size() != 2 || !valueTypes[0]->isPointerLike() ||
+        valueTypes[0]->pointeeType()->isVoidLike() ||
         !isAssignable(valueTypes[1], valueTypes[0]->pointeeType())) {
       diagnostics_->error(expr.range(),
                           "store() requires a pointer and a value of its pointee type");
@@ -4039,6 +4060,7 @@ bool TypeChecker::checkVarDecl(VarDecl& decl) {
   symbol.kind = SymbolKind::Variable;
   symbol.type = type;
   symbol.readonly = decl.isConst();
+  symbol.staticStorage = decl.isStatic();
   return declare(decl.name(), symbol, decl.range().start);
 }
 
@@ -4227,6 +4249,25 @@ bool TypeChecker::checkReturn(ReturnStmt& statement, const Type* expectedReturn)
   const Type* actual = checkExpr(value);
   if (actual == nullptr) {
     return false;
+  }
+  if (value.kind() == NodeKind::UnaryExpr &&
+      static_cast<const UnaryExpr&>(value).op() == UnaryOp::AddrOf) {
+    const Expr* target = &static_cast<const UnaryExpr&>(value).operand();
+    while (target->kind() == NodeKind::MemberExpr)
+      target = &static_cast<const MemberExpr&>(*target).object();
+    if (const NameExpr* name = asName(*target); name != nullptr && name->name() != "self") {
+      for (std::size_t index = scopes_.size(); index > 1; --index) {
+        const auto found = scopes_[index - 1].find(name->name());
+        if (found != scopes_[index - 1].end()) {
+          if (!found->second.staticStorage) {
+            diagnostics_->error(value.range(),
+                                "cannot return the address of local '" + name->name() + "'");
+            return false;
+          }
+          break;
+        }
+      }
+    }
   }
   if (expectedReturn->isVoidLike()) {
     if (!isVoidLike(actual)) {

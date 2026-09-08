@@ -1,0 +1,94 @@
+extern "C" "sere_parse_int"
+def parse_integer(text: str, bits: i32, signed: i32, out_value: Ptr[i64]) -> i32
+
+def get_name(out_name: Ptr[str]) -> void:
+    *out_name = "Sere"
+
+def forward(out_name: Ptr[str]) -> void:
+    get_name(out_name=out_name)
+
+def invoke(callback: Callable[[Ptr[str]], void], out_name: Ptr[str]) -> void:
+    callback(out_name)
+
+def borrowed(value: Unique[i64]) -> void:
+    store(value, -2)
+
+def borrow_shared(value: Shared[i64]) -> void:
+    *value = -3
+
+def set_wide(out_value: Ptr[i64]) -> void:
+    store(out_value, -1)
+
+class Result:
+    name: str
+    def fill(self) -> void:
+        get_name(&self.name)
+
+def redirect(out_pointer: Ptr[Ptr[str]], target: Ptr[str]) -> void:
+    *out_pointer = target
+
+def main() -> i32:
+    parsed: i64 = 0
+    assert parse_integer("123", 64, 1, &parsed) == 1
+    assert parsed == 123
+    name: str = ""
+    get_name(&name)
+    assert name == "Sere"
+    name = ""
+    forward(&name)
+    assert name == "Sere"
+    name = ""
+    invoke(get_name, &name)
+    assert name == "Sere"
+    result: Result = Result()
+    result.fill()
+    assert result.name == "Sere"
+    result.name = ""
+    get_name(&result.name)
+    assert result.name == "Sere"
+    names: list[str] = [""]
+    get_name(&names[0])
+    assert names[0] == "Sere"
+    wide: i64 = 0
+    set_wide(&wide)
+    assert wide == -1
+    owned: Unique[i64] = unique[i64](-1)
+    assert *owned == -1
+    borrowed(owned)
+    assert *owned == -2
+    set_wide(owned)
+    assert *owned == -1
+    shared_value: Shared[i64] = shared[i64](-1)
+    borrow_shared(shared_value)
+    assert *shared_value == -3
+    bad: Ptr[str] = None
+    assert bad == None
+    assert None == bad
+    assert not (bad != None)
+    other_name: str = "other"
+    assert &name == &name
+    assert &name != &other_name
+    assert &name != None
+    caught: i32 = 0
+    try:
+        get_name(bad)
+    except RuntimeError as error:
+        assert error.message == "null pointer dereference"
+        caught += 1
+    try:
+        name = *bad
+    except RuntimeError:
+        caught += 1
+    try:
+        name = load(bad)
+    except RuntimeError:
+        caught += 1
+    try:
+        store(bad, "bad")
+    except RuntimeError:
+        caught += 1
+    assert caught == 4
+    redirect(&bad, &name)
+    get_name(bad)
+    assert name == "Sere"
+    return 0

@@ -35,6 +35,7 @@ struct Symbol {
   IntrinsicKind intrinsic = IntrinsicKind::None;
   const FunctionDef* function = nullptr;
   bool readonly = false;
+  bool staticStorage = false;
   std::string compileTimeText{};
   bool hasCompileTimeBool = false;
   bool compileTimeBool = false;

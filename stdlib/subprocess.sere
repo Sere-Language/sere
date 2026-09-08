@@ -109,13 +109,10 @@ class Popen:
     def poll(self) -> i32 | None:
         if self.handle == None:
             return None
-        box: Ptr[i32] = alloc[i32]()
-        done: i32 = _poll(self.handle, box)
+        status: i32 = 0
+        done: i32 = _poll(self.handle, &status)
         if done == 0:
-            free(box)
             return None
-        status: i32 = load(box)
-        free(box)
         return status
 
     # Block until the child exits; returns its exit status.

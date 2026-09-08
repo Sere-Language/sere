@@ -2,7 +2,7 @@
 #
 # Unique[T]  exclusive heap pointer, freed automatically at end of scope
 # Shared[T]  reference-counted heap pointer
-# Ptr[T]     raw pointer, caller must free()
+# Ptr[T]     raw pointer: free allocations, never free borrowed &values
 # list[T]    runtime array
 #
 # Intrinsics (always in scope):
@@ -24,3 +24,11 @@
 # Deploy a custom collector from C with sere_gc_install (see sere/api/sere_gc.h).
 # Explicit arenas and pools: import heap.
 
+#
+# Output parameters use ordinary typed pointers (no out keyword):
+#   def get_name(out_name: Ptr[str]) -> void:
+#       *out_name = "Sere"
+#   name: str = ""
+#   get_name(&name)
+# Ptr[str] addresses a Sere string pair, not a C char buffer.
+# Borrowed addresses must not outlive the caller's storage.

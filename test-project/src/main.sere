@@ -1,6 +1,22 @@
-import matrix
+import subprocess
 
 def main() -> i32:
-    m4 = matrix.Mat4()
-    print("hi")
+    # Spawn a live child we can talk to (like Python's Popen with pipes)
+    proc: subprocess.Popen = subprocess.Popen("python -i -q")
+
+    # Send it some code and read what it prints back
+    proc.write("print(2 + 3)\n")
+    buf: Ptr[i8] = alloc_array[i8](4096)
+    n: i64 = proc.read(buf, 4096, 2000)
+    print("read " + str(n) + " bytes")
+
+    # Non-blocking status check (None = still running)
+    if proc.poll() is None:
+        print("still running")
+
+    # Stop it (like Python's terminate/kill), then collect the exit code
+    proc.kill()
+    exit_code: i32 = proc.wait()
+    print("exit code: " + str(exit_code))
+    proc.close()
     return 0

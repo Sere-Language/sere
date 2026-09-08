@@ -200,6 +200,7 @@ private:
   bool emitRaise(llvm::IRBuilder<>& builder, const RaiseStmt& statement);
   bool emitMatch(llvm::IRBuilder<>& builder, const MatchStmt& statement, const Type* returnType);
   void emitErrorCheck(llvm::IRBuilder<>& builder);
+  void emitPointerCheck(llvm::IRBuilder<>& builder, llvm::Value* pointer);
   void appendDefaultArgs(llvm::IRBuilder<>& builder,
                          std::vector<llvm::Value*>& args,
                          const FunctionDef& function,

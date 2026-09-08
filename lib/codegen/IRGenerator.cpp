@@ -1322,7 +1322,10 @@ llvm::Value* IRGenerator::emitAddress(llvm::IRBuilder<>& builder, const Expr& ex
   if (expr.kind() == NodeKind::UnaryExpr) {
     const auto& unary = static_cast<const UnaryExpr&>(expr);
     if (unary.op() == UnaryOp::Deref) {
-      return emitExpr(builder, unary.operand());
+      llvm::Value* pointer = emitExpr(builder, unary.operand());
+      if (pointer != nullptr)
+        emitPointerCheck(builder, pointer);
+      return pointer;
     }
   }
   if (required) {
@@ -1937,6 +1940,8 @@ llvm::Value* IRGenerator::emitIntrinsic(llvm::IRBuilder<>& builder, const CallEx
         builder.CreateCall(kind == IntrinsicKind::SharedNew ? sharedNew : allocFn, {size});
     if (kind != IntrinsicKind::Alloc && !expr.arguments().empty()) {
       llvm::Value* init = emitExpr(builder, *expr.arguments()[0]);
+      init = emitCoerce(builder, init, expr.arguments()[0]->resolvedType(), pointee);
+      emitPointerCheck(builder, memory);
       builder.CreateStore(init, memory);
     }
     return memory;
@@ -1948,11 +1953,17 @@ llvm::Value* IRGenerator::emitIntrinsic(llvm::IRBuilder<>& builder, const CallEx
   }
   if (kind == IntrinsicKind::Load) {
     llvm::Value* pointer = emitExpr(builder, *expr.arguments()[0]);
+    emitPointerCheck(builder, pointer);
     return builder.CreateLoad(lower(expr.resolvedType()), pointer);
   }
   if (kind == IntrinsicKind::Store) {
     llvm::Value* pointer = emitExpr(builder, *expr.arguments()[0]);
     llvm::Value* value = emitExpr(builder, *expr.arguments()[1]);
+    value = emitCoerce(builder,
+                       value,
+                       expr.arguments()[1]->resolvedType(),
+                       expr.arguments()[0]->resolvedType()->pointeeType());
+    emitPointerCheck(builder, pointer);
     builder.CreateStore(value, pointer);
     return nullptr;
   }
@@ -3426,6 +3437,12 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
                        expr.op() == BinaryOp::Lt || expr.op() == BinaryOp::Le ||
                        expr.op() == BinaryOp::Gt || expr.op() == BinaryOp::Ge ||
                        expr.op() == BinaryOp::Is || expr.op() == BinaryOp::IsNot;
+  if (left->getType()->isPointerTy() && right->getType()->isPointerTy()) {
+    if (expr.op() == BinaryOp::Eq || expr.op() == BinaryOp::Is)
+      return builder.CreateICmpEQ(left, right);
+    if (expr.op() == BinaryOp::Ne || expr.op() == BinaryOp::IsNot)
+      return builder.CreateICmpNE(left, right);
+  }
   if (compare && isStrLlvmType(left->getType()) && isStrLlvmType(right->getType())) {
     return emitStrCompare(builder, expr.op(), left, right);
   }
@@ -3577,6 +3594,7 @@ llvm::Value* IRGenerator::emitUnary(llvm::IRBuilder<>& builder, const UnaryExpr&
     if (pointer == nullptr || expr.resolvedType() == nullptr) {
       return nullptr;
     }
+    emitPointerCheck(builder, pointer);
     return builder.CreateLoad(lower(expr.resolvedType()), pointer);
   }
   if (expr.op() == UnaryOp::PreInc || expr.op() == UnaryOp::PreDec ||
@@ -5569,7 +5587,9 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
     } else {
       llvm::Value* slot = builder.CreateAlloca(arg.getType(), nullptr, param.name);
       builder.CreateStore(&arg, slot);
-      rememberLocal(param.name, slot, paramType);
+      // Parameters borrow their pointer values; ownership remains with the
+      // caller. Registering an owning parameter for drops double-frees it.
+      locals_[param.name] = slot;
     }
     ++index;
   }
@@ -5957,6 +5977,24 @@ bool IRGenerator::emitExceptionCleanups(llvm::IRBuilder<>& builder,
   tryHandlers_ = handlers;
   exceptionCleanups_.push_back(cleanup);
   return ok;
+}
+
+void IRGenerator::emitPointerCheck(llvm::IRBuilder<>& builder, llvm::Value* pointer) {
+  llvm::Function* function = builder.GetInsertBlock()->getParent();
+  llvm::BasicBlock* failed = llvm::BasicBlock::Create(*context_, "ptr.null", function);
+  llvm::BasicBlock* valid = llvm::BasicBlock::Create(*context_, "ptr.valid", function);
+  builder.CreateCondBr(builder.CreateIsNull(pointer), failed, valid);
+  builder.SetInsertPoint(failed);
+  const std::string message = "null pointer dereference";
+  builder.CreateCall(runtimeDecl("sere_raise",
+                                 builder.getVoidTy(),
+                                 {builder.getPtrTy(), builder.getPtrTy(), builder.getInt64Ty()}),
+                     {builder.CreateGlobalString("RuntimeError;Exception", "", 0, module_),
+                      builder.CreateGlobalString(message, "", 0, module_),
+                      builder.getInt64(message.size())});
+  emitErrorCheck(builder);
+  builder.CreateBr(valid);
+  builder.SetInsertPoint(valid);
 }
 
 void IRGenerator::emitErrorCheck(llvm::IRBuilder<>& builder) {
