@@ -1334,12 +1334,13 @@ std::unique_ptr<Expr> Parser::parseFString() {
 
 std::vector<ParamDecl> Parser::parseParams() {
   std::vector<ParamDecl> params;
-  if (check(TokenKind::RParen)) {
-    return params;
-  }
   bool sawVarArg = false;
   bool sawKwArg = false;
   while (true) {
+    skipNewlines();
+    if (check(TokenKind::RParen)) {
+      break;
+    }
     ParamDecl param;
     param.range = peek().range();
     if (match(TokenKind::StarStar)) {
@@ -1390,6 +1391,7 @@ std::vector<ParamDecl> Parser::parseParams() {
       }
     }
     params.push_back(std::move(param));
+    skipNewlines();
     if (!match(TokenKind::Comma)) {
       break;
     }
