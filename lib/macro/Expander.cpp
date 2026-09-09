@@ -478,7 +478,8 @@ bool MacroExpander::expandStmtList(std::vector<std::unique_ptr<Stmt>>& statement
         else
           item = std::make_unique<ReturnStmt>(item->range(), std::move(expanded));
       }
-      (void)expandInside(*item);
+      if (!expandInside(*item))
+        return false;
       out.push_back(std::move(item));
     }
   }
