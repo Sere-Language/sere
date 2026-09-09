@@ -1418,6 +1418,13 @@ const Type* TypeChecker::resolveNamedType(const std::string& name,
     }
     return types_->generic(name, resolvedArgs);
   }
+  if (name == "Iterator") {
+    if (resolvedArgs.size() != 1 || resolvedArgs[0]->isVoidLike()) {
+      diagnostics_->error(range, "Iterator requires exactly one non-void element type");
+      return nullptr;
+    }
+    return types_->generic("Iterator", resolvedArgs);
+  }
   if (name == "Task" || name == "Future") {
     // The canonical asynchronous-computation type. `Task[T]` (aliased `Future[T]`)
     // carries one element type; `await` unwraps it to `T`.
@@ -2571,6 +2578,8 @@ const Type* TypeChecker::iterableElementType(Expr& iterable) {
   if (type == nullptr) {
     return nullptr;
   }
+  if (type->isGenericCtor("Iterator"))
+    return type->genericArg(0);
   if (type->isSequence()) {
     return type->elementType();
   }
@@ -2582,9 +2591,10 @@ const Type* TypeChecker::iterableElementType(Expr& iterable) {
   }
   if (type->methodIndex("__iter__") >= 0) {
     const Type* iter = type->dunderReturn("__iter__");
-    if (iter != nullptr && iter->methodIndex("__next__") >= 0) {
-      return iter->dunderReturn("__next__");
-    }
+    const auto& method = type->methods()[static_cast<std::size_t>(type->methodIndex("__iter__"))];
+    if (iter != nullptr && iter->isGenericCtor("Iterator") &&
+        method.type->paramTypes().size() == 1 && method.isPublic)
+      return iter->genericArg(0);
   }
   if (iterable.kind() == NodeKind::CallExpr &&
       static_cast<const CallExpr&>(iterable).intrinsic() == IntrinsicKind::Range) {
@@ -3363,6 +3373,17 @@ TypeChecker::checkBuiltinMethod(CallExpr& expr, const Type* objectType, const st
     diagnostics_->error(expr.range(), "unknown method '" + name + "' on " + quoteType(objectType));
     return nullptr;
   };
+  if (objectType->isGenericCtor("Iterator")) {
+    if (name != "close")
+      return unknown();
+    if (!expr.typeArgs().empty() || !expr.keywordArguments().empty()) {
+      diagnostics_->error(expr.range(), "close() takes no type or keyword arguments");
+      return nullptr;
+    }
+    if (!argCount(0, "close() takes no arguments"))
+      return nullptr;
+    return finish(types_->voidType(), {}, "iterator.");
+  }
   if (objectType->isList()) {
     const Type* elem = objectType->elementType();
     if (name == "append" || name == "push") {
@@ -3639,8 +3660,8 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
       objectType->methodIndex(member.field()) < 0) {
     return checkBuiltinMethod(expr, objectType->valueType(), member.field());
   }
-  if (objectType != nullptr &&
-      (objectType->isList() || objectType->isDict() || objectType->isStrLayout())) {
+  if (objectType != nullptr && (objectType->isGenericCtor("Iterator") || objectType->isList() ||
+                                objectType->isDict() || objectType->isStrLayout())) {
     return checkBuiltinMethod(expr, objectType, member.field());
   }
   if (objectType != nullptr && objectType->isEnum() && isClassName(member.object())) {
@@ -4312,7 +4333,31 @@ bool TypeChecker::checkStatement(Stmt& statement, const Type* expectedReturn) {
     return checkVarDecl(static_cast<VarDecl&>(statement));
   case NodeKind::AssignStmt:
     return checkAssign(static_cast<AssignStmt&>(statement));
+  case NodeKind::YieldStmt: {
+    auto& yielded = static_cast<YieldStmt&>(statement);
+    if (yieldCleanupDepth_ != 0) {
+      diagnostics_->error(statement.range(), "yield cannot be used in a defer or finally block");
+      return false;
+    }
+    if (!currentFunctionIsGenerator_ || expectedReturn == nullptr ||
+        !expectedReturn->isGenericCtor("Iterator")) {
+      diagnostics_->error(statement.range(), "yield requires a function returning Iterator[T]");
+      return false;
+    }
+    if (yielded.value() == nullptr) {
+      diagnostics_->error(statement.range(), "yield requires a value");
+      return false;
+    }
+    return checkReturn(yielded, expectedReturn->genericArg(0));
+  }
   case NodeKind::ReturnStmt:
+    if (currentFunctionIsGenerator_) {
+      if (static_cast<ReturnStmt&>(statement).value() != nullptr) {
+        diagnostics_->error(statement.range(), "a generator cannot return a value; use yield");
+        return false;
+      }
+      return true;
+    }
     return checkReturn(static_cast<ReturnStmt&>(statement), expectedReturn);
   case NodeKind::ExprStmt:
     return checkExpr(const_cast<Expr&>(static_cast<ExprStmt&>(statement).expression())) != nullptr;
@@ -4426,6 +4471,10 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
   const std::string savedFunction = currentFunctionName_;
   const std::string savedProperty = currentPropertyName_;
   const bool savedAsync = currentFunctionIsAsync_;
+  const bool savedGenerator = currentFunctionIsGenerator_;
+  const unsigned savedCleanupDepth = yieldCleanupDepth_;
+  yieldCleanupDepth_ = 0;
+  currentFunctionIsGenerator_ = function.isGenerator();
   currentClass_ = function.ownerClass().empty() && nestedFunction_ != nullptr
                       ? savedClass
                       : function.ownerClass();
@@ -4445,6 +4494,8 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
       currentFunctionName_ = savedFunction;
       currentPropertyName_ = savedProperty;
       currentFunctionIsAsync_ = savedAsync;
+      currentFunctionIsGenerator_ = savedGenerator;
+      yieldCleanupDepth_ = savedCleanupDepth;
       return false;
     }
     if (param.defaultValue != nullptr) {
@@ -4456,6 +4507,8 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
         currentFunctionName_ = savedFunction;
         currentPropertyName_ = savedProperty;
         currentFunctionIsAsync_ = savedAsync;
+        currentFunctionIsGenerator_ = savedGenerator;
+        yieldCleanupDepth_ = savedCleanupDepth;
         return false;
       }
     }
@@ -4475,6 +4528,12 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
                            !function.isAsync();
   inferredNestedReturns_ = inferNested ? &inferredReturns : nullptr;
   bool ok = returnType != nullptr;
+  if (function.isGenerator() &&
+      (function.isAsync() || returnType == nullptr || !returnType->isGenericCtor("Iterator"))) {
+    diagnostics_->error(function.range(),
+                        "a generator must declare -> Iterator[T] and cannot be async");
+    ok = false;
+  }
   for (const std::unique_ptr<Stmt>& statement : function.body()) {
     if (statement == nullptr) {
       continue;
@@ -4498,7 +4557,8 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
   currentFunctionName_ = savedFunction;
   currentPropertyName_ = savedProperty;
   currentFunctionIsAsync_ = savedAsync;
-  currentFunctionIsAsync_ = savedAsync;
+  currentFunctionIsGenerator_ = savedGenerator;
+  yieldCleanupDepth_ = savedCleanupDepth;
   return ok;
 }
 
@@ -5767,9 +5827,11 @@ bool TypeChecker::checkTry(TryStmt& statement, const Type* expectedReturn) {
   for (std::unique_ptr<Stmt>& item : statement.elseBody()) {
     ok = checkStatement(*item, expectedReturn) && ok;
   }
+  ++yieldCleanupDepth_;
   for (std::unique_ptr<Stmt>& item : statement.finallyBody()) {
     ok = checkStatement(*item, expectedReturn) && ok;
   }
+  --yieldCleanupDepth_;
   return ok;
 }
 
@@ -5915,10 +5977,12 @@ bool TypeChecker::checkDel(DelStmt& statement) {
 }
 
 bool TypeChecker::checkDefer(DeferStmt& statement, const Type* expectedReturn) {
+  ++yieldCleanupDepth_;
   bool ok = true;
   for (std::unique_ptr<Stmt>& item : statement.body()) {
     ok = checkStatement(*item, expectedReturn) && ok;
   }
+  --yieldCleanupDepth_;
   return ok;
 }
 
@@ -6294,6 +6358,10 @@ const Type* TypeChecker::callDecorator(const Type* wrapper, const Type* target, 
 }
 
 bool TypeChecker::check(Module& module) {
+  if (containsYield(module.statements())) {
+    diagnostics_->error(module.range(), "yield may only be used inside a function");
+    return false;
+  }
   std::vector<std::unique_ptr<Stmt>>& statements = module.statements();
   statements.erase(
       std::remove_if(statements.begin(),

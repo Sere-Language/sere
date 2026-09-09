@@ -314,6 +314,8 @@ static std::string nodeKindText(NodeKind kind) {
     case NodeKind::MacroInvokeExpr: return "MacroInvokeExpr";
     case NodeKind::VarDecl: return "VarDecl";
     case NodeKind::AssignStmt: return "AssignStmt";
+    case NodeKind::YieldStmt:
+      return "YieldStmt";
     case NodeKind::ReturnStmt: return "ReturnStmt";
     case NodeKind::ExprStmt: return "ExprStmt";
     case NodeKind::PassStmt: return "PassStmt";

@@ -50,6 +50,7 @@ constexpr KeywordEntry kKeywords[] = {
     {"pass", TokenKind::KeywordPass},
     {"raise", TokenKind::KeywordRaise},
     {"return", TokenKind::KeywordReturn},
+    {"yield", TokenKind::KeywordYield},
     {"static", TokenKind::KeywordStatic},
     {"struct", TokenKind::KeywordStruct},
     {"super", TokenKind::KeywordSuper},
@@ -290,6 +291,8 @@ std::string_view tokenKindName(TokenKind kind) {
     return "KeywordPass";
   case TokenKind::KeywordRaise:
     return "KeywordRaise";
+  case TokenKind::KeywordYield:
+    return "KeywordYield";
   case TokenKind::KeywordReturn:
     return "KeywordReturn";
   case TokenKind::KeywordStatic:

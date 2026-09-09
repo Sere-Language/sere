@@ -55,8 +55,8 @@ constexpr int kCompletionProperty = 10;
   if (type == nullptr) {
     return false;
   }
-  return type->isRecord() || type->isModule() || type->isList() || type->isDict() ||
-         type->isStrLayout();
+  return type->isGenericCtor("Iterator") || type->isRecord() || type->isModule() ||
+         type->isList() || type->isDict() || type->isStrLayout();
 }
 
 [[nodiscard]] std::string takeIdentBack(std::string_view line, std::size_t& cursor) {
@@ -260,6 +260,9 @@ std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type) {
     item.sortText = "0" + item.label;
     items.push_back(std::move(item));
   };
+  if (type->isGenericCtor("Iterator")) {
+    addMethod("close", "close()");
+  }
   if (type->isList()) {
     addMethod("append", "append(value)");
     addMethod("push", "push(value)");

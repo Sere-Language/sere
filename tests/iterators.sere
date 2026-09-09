@@ -1,0 +1,129 @@
+class Numbers:
+    limit: i32
+
+    def __init__(self, limit: i32):
+        self.limit = limit
+
+    def __iter__(self) -> Iterator[i32]:
+        for i in range(self.limit):
+            yield i
+
+def count(limit: i32, calls: Ptr[i32]) -> Iterator[i32]:
+    i: i32 = 0
+    while i < limit:
+        *calls = *calls + 1
+        yield i
+        i = i + 1
+
+def empty() -> Iterator[i32]:
+    if False:
+        yield 1
+
+def forwards() -> Iterator[i32]:
+    return nested()
+
+def words() -> Iterator[str]:
+    yield "hello"
+    yield "world"
+
+def nested() -> Iterator[i32]:
+    for n in Numbers(3):
+        yield n + 10
+    return
+
+def closable(calls: Ptr[i32]) -> Iterator[i32]:
+    defer:
+        *calls = *calls + 100
+    yield 1
+    yield 2
+
+def finalizable(calls: Ptr[i32]) -> Iterator[i32]:
+    try:
+        yield 1
+        yield 2
+    finally:
+        *calls = *calls + 1000
+
+def failing() -> Iterator[i32]:
+    yield 1
+    raise ValueError("generator failure")
+
+def single[T](value: T) -> Iterator[T]:
+    yield value
+
+def take_one(values: Iterator[i32]) -> i32:
+    for n in values:
+        return n
+    return -1
+
+def main() -> i32:
+    vacant: Iterator[i32]
+    vacant.close()
+    for n in vacant:
+        assert False
+    n: i32 = 42
+    for n in Numbers(2):
+        for n in Numbers(1):
+            assert n == 0
+        assert n < 2
+    assert n == 42
+    for unused in empty():
+        assert False
+    for text in single[str]("generic"):
+        assert text == "generic"
+    calls: i32 = 0
+    values: Iterator[i32] = count(4, &calls)
+    assert calls == 0
+    for n in values:
+        assert n == 0
+        break
+    assert calls == 1
+    assert take_one(values) == 1
+    total: i32 = 0
+    for n in values:
+        if n == 2:
+            continue
+        total = total + n
+    assert total == 3
+    assert calls == 4
+    for n in values:
+        assert False
+    squares = [n * n for n in Numbers(4)]
+    assert len(squares) == 4
+    assert squares[3] == 9
+    total = 0
+    for n in forwards():
+        total = total + n
+    assert total == 33
+    text: str = ""
+    for word in words():
+        text = text + word
+    assert text == "helloworld"
+    closed = closable(&calls)
+    for n in closed:
+        break
+    alias = closed
+    alias.close()
+    closed.close()
+    assert calls == 104
+    unstarted = closable(&calls)
+    unstarted.close()
+    assert calls == 104
+    for n in closed:
+        assert False
+    finishing = finalizable(&calls)
+    for n in finishing:
+        break
+    finishing.close()
+    assert calls == 1104
+    for n in finalizable(&calls):
+        pass
+    assert calls == 2104
+    caught: bool = False
+    try:
+        for n in failing():
+            assert n == 1
+    except ValueError:
+        caught = True
+    assert caught
+    return 0

@@ -131,6 +131,7 @@ const Node* searchStmt(const Stmt& stmt, std::uint32_t offset) {
     inner = firstNotNull(searchExpr(assign.target(), offset), searchExpr(assign.value(), offset));
     break;
   }
+  case NodeKind::YieldStmt:
   case NodeKind::ReturnStmt: {
     const auto& ret = static_cast<const ReturnStmt&>(stmt);
     if (ret.value() != nullptr) {
@@ -426,6 +427,7 @@ void collectStmtCalls(const Stmt& stmt, std::vector<const CallExpr*>& out) {
     collectExprCalls(static_cast<const AssignStmt&>(stmt).target(), out);
     collectExprCalls(static_cast<const AssignStmt&>(stmt).value(), out);
     break;
+  case NodeKind::YieldStmt:
   case NodeKind::ReturnStmt:
     if (static_cast<const ReturnStmt&>(stmt).value() != nullptr) {
       collectExprCalls(*static_cast<const ReturnStmt&>(stmt).value(), out);
@@ -619,6 +621,7 @@ void collectNameRefsFromStmt(const Stmt& stmt,
     collectNameRefsFromExpr(static_cast<const AssignStmt&>(stmt).target(), name, out);
     collectNameRefsFromExpr(static_cast<const AssignStmt&>(stmt).value(), name, out);
     break;
+  case NodeKind::YieldStmt:
   case NodeKind::ReturnStmt:
     if (static_cast<const ReturnStmt&>(stmt).value() != nullptr) {
       collectNameRefsFromExpr(*static_cast<const ReturnStmt&>(stmt).value(), name, out);
@@ -875,6 +878,7 @@ void collectMacroUsesFromStmt(const Stmt& stmt, std::vector<MacroUse>& out) {
     collectMacroUsesFromExpr(static_cast<const AssignStmt&>(stmt).target(), out);
     collectMacroUsesFromExpr(static_cast<const AssignStmt&>(stmt).value(), out);
     break;
+  case NodeKind::YieldStmt:
   case NodeKind::ReturnStmt:
     if (static_cast<const ReturnStmt&>(stmt).value() != nullptr) {
       collectMacroUsesFromExpr(*static_cast<const ReturnStmt&>(stmt).value(), out);

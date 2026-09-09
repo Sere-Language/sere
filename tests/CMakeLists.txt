@@ -494,3 +494,17 @@ add_test(NAME sere.test.nested_scopes
 set_tests_properties(sere.test.nested_scopes PROPERTIES
   ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib"
   TIMEOUT 120)
+
+add_test(NAME sere.test.iterators
+  COMMAND "${CMAKE_COMMAND}"
+    "-DSERE=${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}"
+    "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/iterators.sere"
+    "-DOUTPUT=${CMAKE_BINARY_DIR}/iterators${CMAKE_EXECUTABLE_SUFFIX}"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/run_iterators.cmake")
+set_tests_properties(sere.test.iterators PROPERTIES
+  ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib" TIMEOUT 240)
+
+add_executable(sere_test_iterator_types iterator_types.cpp)
+target_link_libraries(sere_test_iterator_types PRIVATE sere_sema)
+sere_apply_warnings(sere_test_iterator_types)
+add_test(NAME sere.test.iterator_types COMMAND sere_test_iterator_types)

@@ -43,6 +43,7 @@ enum class NodeKind {
   VarDecl,
   AssignStmt,
   ReturnStmt,
+  YieldStmt,
   ExprStmt,
   PassStmt,
   BreakStmt,
@@ -750,13 +751,24 @@ private:
   bool isNameAlias_ = false;
 };
 
-class ReturnStmt final : public Stmt {
+class ReturnStmt : public Stmt {
 public:
   ReturnStmt(SourceRange range, std::unique_ptr<Expr> value);
   [[nodiscard]] const Expr* value() const;
 
+protected:
+  ReturnStmt(NodeKind kind, SourceRange range, std::unique_ptr<Expr> value);
+
 private:
   std::unique_ptr<Expr> value_;
+};
+
+/// True when a block yields, excluding nested functions and classes.
+[[nodiscard]] bool containsYield(const std::vector<std::unique_ptr<Stmt>>& body);
+
+class YieldStmt final : public ReturnStmt {
+public:
+  YieldStmt(SourceRange range, std::unique_ptr<Expr> value);
 };
 
 class ExprStmt final : public Stmt {
@@ -866,6 +878,7 @@ public:
   void setAbstract(bool value);
   void setOverride(bool value);
   [[nodiscard]] bool isAsync() const;
+  [[nodiscard]] bool isGenerator() const;
   void setAsync(bool value);
   void setDecorators(std::vector<std::string> decorators);
   [[nodiscard]] const std::vector<std::string>& decorators() const;

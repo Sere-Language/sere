@@ -223,6 +223,8 @@ private:
   std::string moduleDoc_{};
   bool moduleDebug_ = true;
   std::string currentFunctionName_{};
+  unsigned yieldCleanupDepth_ = 0;
+  bool currentFunctionIsGenerator_ = false;
   bool currentFunctionIsAsync_ = false;
   std::string currentPropertyName_{};
   int lambdaDepth_ = 0;

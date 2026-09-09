@@ -369,7 +369,7 @@ bool Type::isIterable() const {
   if (isSequence() || isNamed("str") || isDict()) {
     return true;
   }
-  return methodIndex("__iter__") >= 0;
+  return isGenericCtor("Iterator") || methodIndex("__iter__") >= 0;
 }
 
 const Type* Type::dunderReturn(std::string_view methodName) const {

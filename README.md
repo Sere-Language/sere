@@ -310,30 +310,7 @@ releases/       packaging scripts and versioned release artifacts
 Release packaging and per-user installation are documented in [releases/README.md](releases/README.md).
 See [docs/projects.md](docs/projects.md) for sectioned project configuration.
 
-## Nested scopes
+## Was this made with AI
 
-Classes and structs can contain nested classes or structs, addressed as
-`Outer.Child` (and `Outer.Child.Deep` for deeper nesting). A child has its own
-fields and methods. It does not automatically retain an outer instance; pass
-that instance explicitly when needed. Nested types can access their enclosing
-type's private members, while callers outside that lexical scope cannot.
-
-Functions inside methods capture enclosing local variables, including `self`,
-and retain the enclosing class's private access. Nested functions can themselves
-contain functions. A declaration or assignment to a plain name creates a local
-in that function; it does not change an enclosing local with the same name.
-Use explicit member access such as `self.value` to change object state.
-
-```python
-class Outer:
-    @private value: i32
-
-    class Child:
-        def read(self, outer: Outer) -> i32:
-            return outer.value
-
-    def read(self) -> i32:
-        def inner() -> i32:
-            return self.value
-        return inner()
-```
+AI agents have been used strictly for error-detection, optimization opportunities, and testing.
+AI has no part in creative design.

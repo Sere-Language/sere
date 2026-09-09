@@ -1012,7 +1012,15 @@ bool AssignStmt::isNameAlias() const {
 }
 
 ReturnStmt::ReturnStmt(SourceRange range, std::unique_ptr<Expr> value)
-    : Stmt(NodeKind::ReturnStmt, range), value_(std::move(value)) {
+    : ReturnStmt(NodeKind::ReturnStmt, range, std::move(value)) {
+}
+
+ReturnStmt::ReturnStmt(NodeKind kind, SourceRange range, std::unique_ptr<Expr> value)
+    : Stmt(kind, range), value_(std::move(value)) {
+}
+
+YieldStmt::YieldStmt(SourceRange range, std::unique_ptr<Expr> value)
+    : ReturnStmt(NodeKind::YieldStmt, range, std::move(value)) {
 }
 
 const Expr* ReturnStmt::value() const {
@@ -1109,6 +1117,59 @@ void FunctionDef::setAbstract(bool value) {
 
 void FunctionDef::setOverride(bool value) {
   isOverride_ = value;
+}
+
+bool containsYield(const std::vector<std::unique_ptr<Stmt>>& body) {
+  for (const auto& stmt : body) {
+    if (stmt == nullptr)
+      continue;
+    switch (stmt->kind()) {
+    case NodeKind::YieldStmt:
+      return true;
+    case NodeKind::IfStmt:
+      for (const auto& branch : static_cast<const IfStmt&>(*stmt).branches())
+        if (containsYield(branch.body))
+          return true;
+      break;
+    case NodeKind::ForStmt:
+      if (containsYield(static_cast<const ForStmt&>(*stmt).body()))
+        return true;
+      break;
+    case NodeKind::WhileStmt:
+      if (containsYield(static_cast<const WhileStmt&>(*stmt).body()))
+        return true;
+      break;
+    case NodeKind::WithStmt:
+      if (containsYield(static_cast<const WithStmt&>(*stmt).body()))
+        return true;
+      break;
+    case NodeKind::DeferStmt:
+      if (containsYield(static_cast<const DeferStmt&>(*stmt).body()))
+        return true;
+      break;
+    case NodeKind::TryStmt: {
+      const auto& t = static_cast<const TryStmt&>(*stmt);
+      if (containsYield(t.body()) || containsYield(t.elseBody()) || containsYield(t.finallyBody()))
+        return true;
+      for (const auto& handler : t.handlers())
+        if (containsYield(handler.body))
+          return true;
+      break;
+    }
+    case NodeKind::MatchStmt:
+      for (const auto& arm : static_cast<const MatchStmt&>(*stmt).arms())
+        if (containsYield(arm.body))
+          return true;
+      break;
+    default:
+      break; // Nested functions have their own generator status.
+    }
+  }
+  return false;
+}
+
+bool FunctionDef::isGenerator() const {
+  return containsYield(body());
 }
 
 bool FunctionDef::isAsync() const {

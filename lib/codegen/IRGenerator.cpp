@@ -390,7 +390,7 @@ llvm::FunctionType* IRGenerator::llvmFunctionType(const FunctionDef& function) {
   // An async function is a coroutine: its ramp returns the coroutine handle
   // (a pointer), never the declared result value. The result travels through
   // the coroutine promise instead.
-  if (function.isAsync()) {
+  if (function.isAsync() || function.isGenerator()) {
     return llvm::FunctionType::get(llvm::PointerType::getUnqual(*context_), params, false);
   }
   return llvm::FunctionType::get(lower(fnType->returnType()), params, false);
@@ -1599,6 +1599,23 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
                                ? nullptr
                                : member.object().resolvedType()->valueType();
   const std::string& name = expr.loweredName();
+  if (name == "iterator.close") {
+    auto* function = builder.GetInsertBlock()->getParent();
+    auto* close = llvm::BasicBlock::Create(*context_, "iterator.close", function);
+    auto* end = llvm::BasicBlock::Create(*context_, "iterator.closed", function);
+    auto* check = llvm::BasicBlock::Create(*context_, "iterator.check", function);
+    builder.CreateCondBr(builder.CreateIsNull(object), end, check);
+    builder.SetInsertPoint(check);
+    llvm::Value* handle = builder.CreateLoad(builder.getPtrTy(), object);
+    builder.CreateCondBr(builder.CreateIsNull(handle), end, close);
+    builder.SetInsertPoint(close);
+    builder.CreateStore(llvm::ConstantPointerNull::get(builder.getPtrTy()), object);
+    auto* destroy = llvm::Intrinsic::getOrInsertDeclaration(module_, llvm::Intrinsic::coro_destroy);
+    builder.CreateCall(destroy, {handle});
+    builder.CreateBr(end);
+    builder.SetInsertPoint(end);
+    return nullptr;
+  }
   auto toI64 = [&](llvm::Value* value) -> llvm::Value* {
     if (value->getType() != builder.getInt64Ty()) {
       value = builder.CreateSExt(value, builder.getInt64Ty());
@@ -2747,7 +2764,11 @@ llvm::Value* IRGenerator::emitPrint(llvm::IRBuilder<>& builder, const CallExpr& 
     }
     emitWriteStr(builder, str);
   };
-  if (expr.arguments().size() == 1 && expr.arguments()[0]->kind() == NodeKind::ComprehensionExpr) {
+  if (expr.arguments().size() == 1 && expr.arguments()[0]->kind() == NodeKind::ComprehensionExpr &&
+      static_cast<const ComprehensionExpr&>(*expr.arguments()[0])
+          .iterable()
+          .resolvedType()
+          ->isSequence()) {
     const auto& comp = static_cast<const ComprehensionExpr&>(*expr.arguments()[0]);
     llvm::Value* list = emitExpr(builder, comp.iterable());
     const Type* bindType =
@@ -3920,11 +3941,77 @@ IRGenerator::emitParse(llvm::IRBuilder<>& builder, const CallExpr& expr, bool op
   return emitCoerce(builder, raw, rawType, expr.resolvedType());
 }
 
+bool IRGenerator::emitIteratorLoop(llvm::IRBuilder<>& builder,
+                                   llvm::Value* iterator,
+                                   const Type* element,
+                                   const std::string& name,
+                                   const std::function<bool()>& emitBody) {
+  const auto savedLocals = locals_;
+  llvm::Function* function = builder.GetInsertBlock()->getParent();
+  llvm::Function* resumeFn =
+      llvm::Intrinsic::getOrInsertDeclaration(module_, llvm::Intrinsic::coro_resume);
+  llvm::Function* doneFn =
+      llvm::Intrinsic::getOrInsertDeclaration(module_, llvm::Intrinsic::coro_done);
+  llvm::Function* promiseFn =
+      llvm::Intrinsic::getOrInsertDeclaration(module_, llvm::Intrinsic::coro_promise);
+  llvm::Function* destroyFn =
+      llvm::Intrinsic::getOrInsertDeclaration(module_, llvm::Intrinsic::coro_destroy);
+  llvm::Value* item = builder.CreateAlloca(lower(element), nullptr, name);
+  rememberLocal(name, item, element);
+  auto* header = llvm::BasicBlock::Create(*context_, "iter.cond", function);
+  auto* check = llvm::BasicBlock::Create(*context_, "iter.check", function);
+  auto* advance = llvm::BasicBlock::Create(*context_, "iter.next", function);
+  auto* body = llvm::BasicBlock::Create(*context_, "iter.body", function);
+  auto* finish = llvm::BasicBlock::Create(*context_, "iter.finish", function);
+  auto* exit = llvm::BasicBlock::Create(*context_, "iter.end", function);
+  builder.CreateBr(header);
+  builder.SetInsertPoint(header);
+  builder.CreateCondBr(builder.CreateIsNull(iterator), exit, check);
+  builder.SetInsertPoint(check);
+  llvm::Value* handle = builder.CreateLoad(builder.getPtrTy(), iterator);
+  builder.CreateCondBr(builder.CreateIsNull(handle), exit, advance);
+  builder.SetInsertPoint(advance);
+  builder.CreateCall(resumeFn, {handle});
+  builder.CreateCondBr(builder.CreateCall(doneFn, {handle}), finish, body);
+  builder.SetInsertPoint(body);
+  unsigned align = module_->getDataLayout().getABITypeAlign(lower(element)).value();
+  llvm::Value* promise =
+      builder.CreateCall(promiseFn, {handle, builder.getInt32(align), builder.getFalse()});
+  builder.CreateStore(builder.CreateLoad(lower(element), promise), item);
+  loops_.emplace_back(header, exit);
+  bool ok = emitBody();
+  loops_.pop_back();
+  locals_ = savedLocals;
+  if (!ok)
+    return false;
+  if (builder.GetInsertBlock()->getTerminator() == nullptr)
+    builder.CreateBr(header);
+  builder.SetInsertPoint(finish);
+  builder.CreateStore(llvm::ConstantPointerNull::get(builder.getPtrTy()), iterator);
+  builder.CreateCall(destroyFn, {handle});
+  emitErrorCheck(builder);
+  builder.CreateBr(exit);
+  builder.SetInsertPoint(exit);
+  return true;
+}
+
 bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
                           const ForStmt& statement,
                           const Type* returnType) {
   llvm::Function* function = builder.GetInsertBlock()->getParent();
   const Expr& iterable = statement.iterable();
+  const Type* iterableType = resolveType(iterable.resolvedType());
+  const bool customIterator = iterableType != nullptr && iterableType->methodIndex("__iter__") >= 0;
+  const Type* iteratorType = customIterator ? iterableType->dunderReturn("__iter__") : iterableType;
+  if (iteratorType != nullptr && iteratorType->isGenericCtor("Iterator")) {
+    llvm::Value* iterator = customIterator ? emitDunderCall(builder, iterable, "__iter__", {})
+                                           : emitExpr(builder, iterable);
+    const Type* element = resolveType(iteratorType->genericArg(0));
+    return emitIteratorLoop(builder, iterator, element, statement.name(), [&] {
+      return emitBlock(builder, statement.body(), returnType);
+    });
+  }
+
   if (iterable.kind() == NodeKind::CallExpr &&
       static_cast<const CallExpr&>(iterable).intrinsic() == IntrinsicKind::Range) {
     const auto& range = static_cast<const CallExpr&>(iterable);
@@ -4060,6 +4147,30 @@ bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
 
 llvm::Value* IRGenerator::emitComprehension(llvm::IRBuilder<>& builder,
                                             const ComprehensionExpr& expr) {
+  const Type* sourceType = resolveType(expr.iterable().resolvedType());
+  const bool custom = sourceType != nullptr && sourceType->methodIndex("__iter__") >= 0;
+  const Type* iteratorType = custom ? sourceType->dunderReturn("__iter__") : sourceType;
+  if (iteratorType != nullptr && iteratorType->isGenericCtor("Iterator")) {
+    llvm::Value* iterator = custom ? emitDunderCall(builder, expr.iterable(), "__iter__", {})
+                                   : emitExpr(builder, expr.iterable());
+    const Type* valueType = resolveType(expr.element().resolvedType());
+    auto* newFn = runtimeDecl("sere_list_new", builder.getPtrTy(), {builder.getInt64Ty()});
+    auto* pushFn = runtimeDecl(
+        "sere_list_push", builder.getVoidTy(), {builder.getPtrTy(), builder.getPtrTy()});
+    llvm::Value* out = builder.CreateCall(newFn, {builder.getInt64(valueSize(valueType))});
+    llvm::Value* slot = builder.CreateAlloca(lower(valueType), nullptr, "comp.el");
+    if (!emitIteratorLoop(
+            builder, iterator, resolveType(iteratorType->genericArg(0)), expr.name(), [&] {
+              llvm::Value* value = emitExpr(builder, expr.element());
+              if (value == nullptr)
+                return false;
+              builder.CreateStore(value, slot);
+              builder.CreateCall(pushFn, {out, slot});
+              return true;
+            }))
+      return nullptr;
+    return out;
+  }
   llvm::Value* source = emitExpr(builder, expr.iterable());
   const Type* bindType =
       expr.iterable().resolvedType() != nullptr && expr.iterable().resolvedType()->isSequence()
@@ -4521,6 +4632,33 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
     }
     return true;
   }
+  if (statement.kind() == NodeKind::YieldStmt) {
+    const auto& yielded = static_cast<const YieldStmt&>(statement);
+    llvm::Value* value = emitExpr(builder, *yielded.value());
+    value = emitCoerce(builder, value, yielded.value()->resolvedType(), returnType->genericArg(0));
+    emitErrorCheck(builder);
+    builder.CreateStore(value, asyncPromise_);
+    llvm::BasicBlock* resume =
+        llvm::BasicBlock::Create(*context_, "yield.resume", builder.GetInsertBlock()->getParent());
+    llvm::Value* suspended =
+        builder.CreateCall(asyncCoroSuspendFn_,
+                           {llvm::ConstantTokenNone::get(*context_), builder.getFalse()},
+                           "yield.suspend");
+    llvm::SwitchInst* sw = builder.CreateSwitch(suspended, asyncSuspend_, 2);
+    sw->addCase(builder.getInt8(0), resume);
+    auto* cleanup = llvm::BasicBlock::Create(*context_, "yield.cleanup", resume->getParent());
+    sw->addCase(builder.getInt8(1), cleanup);
+    builder.SetInsertPoint(cleanup);
+    if (!emitExceptionCleanups(builder, returnType))
+      return false;
+    if (builder.GetInsertBlock()->getTerminator() == nullptr) {
+      emitDeferred(builder, returnType);
+      emitDrops(builder);
+      builder.CreateBr(asyncCleanup_);
+    }
+    builder.SetInsertPoint(resume);
+    return true;
+  }
   if (statement.kind() == NodeKind::ReturnStmt) {
     const auto& ret = static_cast<const ReturnStmt&>(statement);
     llvm::Value* value = ret.value() == nullptr ? nullptr : emitExpr(builder, *ret.value());
@@ -4809,6 +4947,7 @@ void collectStmtUses(const Stmt& stmt,
     }
     break;
   }
+  case NodeKind::YieldStmt:
   case NodeKind::ReturnStmt:
     if (static_cast<const ReturnStmt&>(stmt).value() != nullptr) {
       collectExprUses(*static_cast<const ReturnStmt&>(stmt).value(), names, printed);
@@ -5436,6 +5575,7 @@ bool IRGenerator::setupAsyncCoroutine(llvm::IRBuilder<>& builder,
   asyncCoroResumeFn_ = sereCoroIntrinsic(module_, llvm::Intrinsic::coro_resume);
   asyncCoroDestroyFn_ = sereCoroIntrinsic(module_, llvm::Intrinsic::coro_destroy);
 
+  generatorIterator_ = nullptr;
   asyncResultTy_ = nullptr;
   asyncPromise_ = nullptr;
   if (returnType != nullptr && !returnType->isVoidLike()) {
@@ -5459,6 +5599,10 @@ bool IRGenerator::setupAsyncCoroutine(llvm::IRBuilder<>& builder,
   llvm::Function* rootFn = runtimeDecl("sere_gc_add_root", builder.getVoidTy(), {ptrTy});
   builder.CreateCall(rootFn, {mem});
   llvm::Value* hdl = builder.CreateCall(asyncCoroBeginFn_, {id, mem}, "coro.hdl");
+  if (currentFunction_ != nullptr && currentFunction_->isGenerator()) {
+    generatorIterator_ = builder.CreateCall(alloc, {builder.getInt64(8)}, "iterator");
+    builder.CreateStore(hdl, generatorIterator_);
+  }
   asyncId_ = id;
   asyncMem_ = mem;
   asyncHdl_ = hdl;
@@ -5513,7 +5657,7 @@ void IRGenerator::buildAsyncTail(llvm::IRBuilder<>& builder, llvm::Function* llv
   {
     llvm::IRBuilder<> sb(asyncSuspend_);
     sb.CreateCall(asyncCoroEndFn_, {asyncHdl_, sb.getFalse(), noneToken});
-    sb.CreateRet(asyncHdl_);
+    sb.CreateRet(generatorIterator_ == nullptr ? asyncHdl_ : generatorIterator_);
   }
 
   // coro.final: final suspend; resuming a completed coroutine is UB (trap).
@@ -5553,7 +5697,7 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
   exceptionCleanups_.clear();
   defers_.clear();
   withStack_.clear();
-  asyncFn_ = function.isAsync();
+  asyncFn_ = function.isAsync() || function.isGenerator();
   if (moduleInitFn_ != nullptr && function.name() == "main" && function.params().size() != 1) {
     builder.CreateCall(moduleInitFn_);
   }
@@ -5621,7 +5765,8 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
   }
   const Type* returnType = fnType->returnType();
   if (asyncFn_) {
-    if (!setupAsyncCoroutine(builder, llvmFn, returnType)) {
+    if (!setupAsyncCoroutine(
+            builder, llvmFn, function.isGenerator() ? returnType->genericArg(0) : returnType)) {
       currentFunction_ = nullptr;
       asyncFn_ = false;
       return false;
@@ -5640,6 +5785,21 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
   }
   if (asyncFn_) {
     buildAsyncTail(builder, llvmFn);
+    if (function.isGenerator()) {
+      // Fixed-size locals must dominate every resume path, even when their
+      // values are overwritten before being read after a suspension.
+      std::vector<llvm::AllocaInst*> allocas;
+      for (llvm::BasicBlock& block : *llvmFn) {
+        if (&block == entry)
+          continue;
+        for (llvm::Instruction& inst : block)
+          if (auto* allocation = llvm::dyn_cast<llvm::AllocaInst>(&inst);
+              allocation != nullptr && llvm::isa<llvm::ConstantInt>(allocation->getArraySize()))
+            allocas.push_back(allocation);
+      }
+      for (auto* allocation : allocas)
+        allocation->moveBefore(entry->getFirstInsertionPt());
+    }
   }
   currentFunction_ = nullptr;
   asyncFn_ = false;
@@ -6548,6 +6708,7 @@ void IRGenerator::collectLambdas(const Stmt& stmt, std::vector<const LambdaExpr*
     collectLambdas(static_cast<const AssignStmt&>(stmt).target(), out);
     collectLambdas(static_cast<const AssignStmt&>(stmt).value(), out);
     break;
+  case NodeKind::YieldStmt:
   case NodeKind::ReturnStmt:
     if (static_cast<const ReturnStmt&>(stmt).value() != nullptr) {
       collectLambdas(*static_cast<const ReturnStmt&>(stmt).value(), out);

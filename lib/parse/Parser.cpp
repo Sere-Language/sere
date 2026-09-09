@@ -223,7 +223,8 @@ void Parser::synchronize() {
     if (check(TokenKind::Dedent) || check(TokenKind::KeywordDef) ||
         check(TokenKind::KeywordClass) || check(TokenKind::KeywordIf) ||
         check(TokenKind::KeywordElif) || check(TokenKind::KeywordElse) ||
-        check(TokenKind::KeywordWhile) || check(TokenKind::KeywordReturn) ||
+        check(TokenKind::KeywordWhile) ||
+        (check(TokenKind::KeywordReturn) || check(TokenKind::KeywordYield)) ||
         check(TokenKind::EndOfFile)) {
       return;
     }
@@ -1508,6 +1509,8 @@ std::unique_ptr<ReturnStmt> Parser::parseReturn() {
   if (!finishLine()) {
     return nullptr;
   }
+  if (keyword.kind() == TokenKind::KeywordYield)
+    return std::make_unique<YieldStmt>(keyword.range(), std::move(value));
   return std::make_unique<ReturnStmt>(keyword.range(), std::move(value));
 }
 
@@ -2473,7 +2476,7 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
     }
     return enumDef;
   }
-  if (check(TokenKind::KeywordReturn)) {
+  if ((check(TokenKind::KeywordReturn) || check(TokenKind::KeywordYield))) {
     return parseReturn();
   }
   if (check(TokenKind::KeywordIf)) {

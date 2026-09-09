@@ -8,6 +8,7 @@
 
 #include <llvm/IR/IRBuilder.h>
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -122,6 +123,11 @@ private:
   llvm::Value* emitUnary(llvm::IRBuilder<>& builder, const UnaryExpr& expr);
   bool emitIf(llvm::IRBuilder<>& builder, const IfStmt& statement, const Type* returnType);
   bool emitWhile(llvm::IRBuilder<>& builder, const WhileStmt& statement, const Type* returnType);
+  bool emitIteratorLoop(llvm::IRBuilder<>& builder,
+                        llvm::Value* iterator,
+                        const Type* element,
+                        const std::string& name,
+                        const std::function<bool()>& emitBody);
   bool emitFor(llvm::IRBuilder<>& builder, const ForStmt& statement, const Type* returnType);
   bool emitAssert(llvm::IRBuilder<>& builder, const AssertStmt& statement);
   llvm::Value* emitRange(llvm::IRBuilder<>& builder, const CallExpr& expr);
@@ -246,6 +252,7 @@ private:
   std::vector<const DeferStmt*> defers_{};
   std::vector<WithFrame> withStack_{};
   // Coroutine lowering state for the async function currently being emitted.
+  llvm::Value* generatorIterator_ = nullptr;
   bool asyncFn_ = false;
   llvm::Value* asyncId_ = nullptr;
   llvm::Value* asyncHdl_ = nullptr;

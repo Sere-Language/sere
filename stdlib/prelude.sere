@@ -41,9 +41,12 @@
 # Strings: double or single quotes, triple quotes for multiline, backticks for regex.
 # byte is a builtin alias of u8 (unsigned 8-bit).
 # prelude.sere is imported automatically into every program.
- 
+
 type Int = i8 | i16 | i32 | i64 | u8 | u16 | u32 | u64 # type: ignore
 type Float = f32 | f64 # type: ignore
+
+type UnsignedInt = u8 | u16 | u32 | u64 # type: ignore
+type SignedInt = i8 | i16 | i32 | i64
 
 extern "C" "sere_input"
 def input(prompt: str) -> str
@@ -150,4 +153,3 @@ macro cfg:
             __arm64__
         (debug) => quote:
             __debug__
-

@@ -98,6 +98,7 @@ void collectDeclNames(const Stmt& stmt, std::unordered_set<std::string>& names) 
     collectDeclNames(static_cast<const AssignStmt&>(stmt).target(), names);
     collectDeclNames(static_cast<const AssignStmt&>(stmt).value(), names);
     break;
+  case NodeKind::YieldStmt:
   case NodeKind::ReturnStmt:
     if (static_cast<const ReturnStmt&>(stmt).value() != nullptr) {
       collectDeclNames(*static_cast<const ReturnStmt&>(stmt).value(), names);
@@ -224,6 +225,7 @@ void rewriteNames(Stmt& stmt, const std::unordered_map<std::string, std::string>
     rewriteNames(const_cast<Expr&>(static_cast<AssignStmt&>(stmt).target()), map);
     rewriteNames(const_cast<Expr&>(static_cast<AssignStmt&>(stmt).value()), map);
     break;
+  case NodeKind::YieldStmt:
   case NodeKind::ReturnStmt:
     if (static_cast<const ReturnStmt&>(stmt).value() != nullptr) {
       rewriteNames(const_cast<Expr&>(*static_cast<const ReturnStmt&>(stmt).value()), map);
@@ -584,9 +586,12 @@ std::unique_ptr<Stmt> cloneStmt(const Stmt& stmt) {
     copy->setNameAlias(assign.isNameAlias());
     return copy;
   }
+  case NodeKind::YieldStmt:
   case NodeKind::ReturnStmt: {
     const auto& ret = static_cast<const ReturnStmt&>(stmt);
     std::unique_ptr<Expr> value = ret.value() == nullptr ? nullptr : cloneExpr(*ret.value());
+    if (stmt.kind() == NodeKind::YieldStmt)
+      return std::make_unique<YieldStmt>(stmt.range(), std::move(value));
     return std::make_unique<ReturnStmt>(stmt.range(), std::move(value));
   }
   case NodeKind::PassStmt:
@@ -693,10 +698,13 @@ std::vector<std::unique_ptr<Stmt>> substStmts(const std::vector<std::unique_ptr<
                                               decl.isConst()));
       continue;
     }
-    if (cloned->kind() == NodeKind::ReturnStmt) {
+    if (cloned->kind() == NodeKind::ReturnStmt || cloned->kind() == NodeKind::YieldStmt) {
       const Expr* value = static_cast<const ReturnStmt&>(*cloned).value();
       std::unique_ptr<Expr> subst = value == nullptr ? nullptr : substOne(*value, env, callSite);
-      out.push_back(std::make_unique<ReturnStmt>(callSite, std::move(subst)));
+      if (cloned->kind() == NodeKind::YieldStmt)
+        out.push_back(std::make_unique<YieldStmt>(callSite, std::move(subst)));
+      else
+        out.push_back(std::make_unique<ReturnStmt>(callSite, std::move(subst)));
       continue;
     }
     if (cloned->kind() == NodeKind::MatchStmt) {

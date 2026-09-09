@@ -468,10 +468,15 @@ bool MacroExpander::expandStmtList(std::vector<std::unique_ptr<Stmt>>& statement
         const auto& assign = static_cast<const AssignStmt&>(*item);
         item = std::make_unique<AssignStmt>(
             item->range(), expandExpr(assign.target()), expandExpr(assign.value()), assign.op());
-      } else if (item->kind() == NodeKind::ReturnStmt) {
+      } else if (item->kind() == NodeKind::ReturnStmt || item->kind() == NodeKind::YieldStmt) {
         const Expr* value = static_cast<const ReturnStmt&>(*item).value();
         std::unique_ptr<Expr> expanded = value == nullptr ? nullptr : expandExpr(*value);
-        item = std::make_unique<ReturnStmt>(item->range(), std::move(expanded));
+        if (value != nullptr && expanded == nullptr)
+          return false;
+        if (item->kind() == NodeKind::YieldStmt)
+          item = std::make_unique<YieldStmt>(item->range(), std::move(expanded));
+        else
+          item = std::make_unique<ReturnStmt>(item->range(), std::move(expanded));
       }
       (void)expandInside(*item);
       out.push_back(std::move(item));
