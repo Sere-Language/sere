@@ -279,6 +279,11 @@ const Node* searchStmt(const Stmt& stmt, std::uint32_t offset) {
     if (rangeContains(alias.type().range(), offset)) {
       return &alias.type();
     }
+    for (const std::unique_ptr<TypeExpr>& constraint : alias.typeConstraints()) {
+      if (constraint != nullptr && rangeContains(constraint->range(), offset)) {
+        return constraint.get();
+      }
+    }
     break;
   }
   case NodeKind::MacroDef: {

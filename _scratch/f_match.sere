@@ -1,0 +1,41 @@
+import string
+
+class MultiMap:
+    keys: list[str]
+    values: list[str]
+
+    def __init__(self) -> void:
+        self.keys = list[str]()
+        self.values = list[str]()
+
+    def add(self, key: str, value: str) -> void:
+        self.keys.append(key)
+        self.values.append(value)
+
+def match_path(pattern: str, path: str, captures: MultiMap) -> bool:
+    want: list[str] = string.split(pattern, "/")
+    have: list[str] = string.split(path, "/")
+    if len(want) != len(have):
+        return False
+    i: i64 = 0
+    while i < len(want):
+        segment: str = want[i]
+        if len(segment) > 0 and (segment[0] == "{" or segment[0] == ":"):
+            name: str = segment[1:]
+            if len(segment) >= 2 and segment[len(segment) - 1] == "}":
+                name = segment[1:len(segment) - 1]
+            captures.add(name, have[i])
+        elif segment != have[i]:
+            return False
+        i += 1
+    return True
+
+def main() -> i32:
+    caps: MultiMap = MultiMap()
+    ok: bool = match_path("/users/{id}/x", "/users/42/x", caps)
+    print(ok)
+    print(len(caps.keys))
+    print(caps.values[0])
+    bad: bool = match_path("/users/{id}", "/users/42/x", caps)
+    print(bad)
+    return 0

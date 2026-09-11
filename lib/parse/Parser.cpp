@@ -2379,14 +2379,23 @@ std::unique_ptr<ImportStmt> Parser::parseFromImport() {
 std::unique_ptr<TypeAlias> Parser::parseTypeAlias() {
   const Token& keyword = advance();
   std::string name = parseIdentifier("expected type name");
-  if (name.empty() || !consume(TokenKind::Equal, "expected '=' after type name")) {
+  if (name.empty()) {
+    return nullptr;
+  }
+  std::vector<std::unique_ptr<TypeExpr>> typeConstraints;
+  std::vector<std::string> typeParams = parseTypeParamList(typeConstraints);
+  if (!consume(TokenKind::Equal, "expected '=' after type name")) {
     return nullptr;
   }
   std::unique_ptr<TypeExpr> type = parseTypeExpr();
   if (type == nullptr || !finishLine()) {
     return nullptr;
   }
-  return std::make_unique<TypeAlias>(keyword.range(), std::move(name), std::move(type));
+  return std::make_unique<TypeAlias>(keyword.range(),
+                                     std::move(name),
+                                     std::move(type),
+                                     std::move(typeParams),
+                                     std::move(typeConstraints));
 }
 
 std::unique_ptr<Stmt> Parser::parseStatement() {

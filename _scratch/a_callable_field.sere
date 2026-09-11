@@ -1,0 +1,30 @@
+class Environ:
+    x: i32
+
+    def __init__(self, x: i32) -> void:
+        self.x = x
+
+class Response:
+    status: i32
+
+    def __init__(self, status: i32) -> void:
+        self.status = status
+
+class FunctionHandler:
+    fn: Callable[[Environ], Response]
+
+    def __init__(self, fn: Callable[[Environ], Response]) -> void:
+        self.fn = fn
+
+    def handle(self, environ: Environ) -> Response:
+        return self.fn(environ)
+
+def hello(environ: Environ) -> Response:
+    return Response(200 + environ.x)
+
+def main() -> i32:
+    h: FunctionHandler = FunctionHandler(hello)
+    e: Environ = Environ(1)
+    r: Response = h.handle(e)
+    print(r.status)
+    return 0

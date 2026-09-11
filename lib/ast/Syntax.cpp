@@ -1409,8 +1409,16 @@ bool ImportStmt::isFrom() const {
   return star_ || !names_.empty();
 }
 
-TypeAlias::TypeAlias(SourceRange range, std::string name, std::unique_ptr<TypeExpr> type)
-    : Stmt(NodeKind::TypeAlias, range), name_(std::move(name)), type_(std::move(type)) {
+TypeAlias::TypeAlias(SourceRange range,
+                     std::string name,
+                     std::unique_ptr<TypeExpr> type,
+                     std::vector<std::string> typeParams,
+                     std::vector<std::unique_ptr<TypeExpr>> typeConstraints)
+    : Stmt(NodeKind::TypeAlias, range),
+      name_(std::move(name)),
+      type_(std::move(type)),
+      typeParams_(std::move(typeParams)),
+      typeConstraints_(std::move(typeConstraints)) {
 }
 
 const std::string& TypeAlias::name() const {
@@ -1423,6 +1431,14 @@ const TypeExpr& TypeAlias::type() const {
 
 TypeExpr& TypeAlias::type() {
   return *type_;
+}
+
+const std::vector<std::string>& TypeAlias::typeParams() const {
+  return typeParams_;
+}
+
+const std::vector<std::unique_ptr<TypeExpr>>& TypeAlias::typeConstraints() const {
+  return typeConstraints_;
 }
 
 Module::Module(SourceRange range, std::vector<std::unique_ptr<Stmt>> statements)

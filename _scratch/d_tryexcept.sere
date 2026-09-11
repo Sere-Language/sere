@@ -1,0 +1,28 @@
+class Environ:
+    x: i32
+
+    def __init__(self, x: i32) -> void:
+        self.x = x
+
+class Response:
+    status: i32
+    body: str
+
+    def __init__(self, status: i32, body: str) -> void:
+        self.status = status
+        self.body = body
+
+def failing(environ: Environ) -> Response:
+    raise ValueError("nope")
+
+def guarded(environ: Environ) -> Response:
+    try:
+        return failing(environ)
+    except Exception as error:
+        return Response(500, error.message)
+
+def main() -> i32:
+    r: Response = guarded(Environ(1))
+    print(r.status)
+    print(r.body)
+    return 0

@@ -1,0 +1,9 @@
+extern "C" "sere_url_decode"
+def url_decode(text: str) -> str
+
+def main() -> i32:
+    print(url_decode("hello+world"))
+    print(url_decode("a%20b%2Fc"))
+    print(url_decode("na%C3%AFve"))
+    print(url_decode("plain"))
+    return 0

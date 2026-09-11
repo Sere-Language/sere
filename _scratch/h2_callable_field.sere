@@ -1,0 +1,52 @@
+class Environ:
+    path: str
+
+    def __init__(self, path: str) -> void:
+        self.path = path
+
+class Response:
+    status: i32
+    body: str
+
+    def __init__(self, status: i32, body: str) -> void:
+        self.status = status
+        self.body = body
+
+class Route:
+    pattern: str
+    handler: Callable[[Environ], Response]
+
+    def __init__(self, pattern: str, handler: Callable[[Environ], Response]) -> void:
+        self.pattern = pattern
+        self.handler = handler
+
+def hello(environ: Environ) -> Response:
+    return Response(200, "hi " + environ.path)
+
+class Router:
+    routes: list[Route]
+
+    def __init__(self) -> void:
+        self.routes = list[Route]()
+
+    def add(self, pattern: str, handler: Callable[[Environ], Response]) -> void:
+        self.routes.append(Route(pattern, handler))
+
+    def dispatch(self, environ: Environ) -> Response:
+        i: i64 = 0
+        while i < len(self.routes):
+            route: Route = self.routes[i]
+            if route.pattern == environ.path:
+                return route.handler(environ)
+            i += 1
+        return Response(404, "nope")
+
+def main() -> i32:
+    r: Router = Router()
+    r.add("/x", hello)
+    resp: Response = r.dispatch(Environ("/x"))
+    print(resp.status)
+    print(resp.body)
+    missing: Response = r.dispatch(Environ("/z"))
+    print(missing.status)
+    return 0

@@ -1,0 +1,68 @@
+import wsgi
+
+def home(environ: wsgi.Environ) -> wsgi.Response:
+    return wsgi.text("home")
+
+def greet(environ: wsgi.Environ) -> wsgi.Response:
+    return wsgi.text("hello " + environ.param("name", "world"))
+
+class Counter:
+    hits: i32
+
+    def __init__(self) -> void:
+        self.hits = 0
+
+    def count(self, environ: wsgi.Environ) -> wsgi.Response:
+        self.hits = self.hits + 1
+        return wsgi.text("hits=" + str(self.hits))
+
+def main() -> i32:
+    router: wsgi.Router = wsgi.Router()
+    router.get("/", home)
+    router.get("/greet", greet)
+    router.get("/users/{id}", greet)
+    counter: Counter = Counter()
+    router.post("/count", counter.count)
+
+    env1: wsgi.Environ = wsgi.Environ("GET", "/", "")
+    r1: wsgi.Response = router.dispatch(env1)
+    print(r1.status, r1.body)
+
+    env2: wsgi.Environ = wsgi.Environ("GET", "/greet", "")
+    env2.params = wsgi.parse_query("name=sere")
+    r2: wsgi.Response = router.dispatch(env2)
+    print(r2.status, r2.body)
+
+    env3: wsgi.Environ = wsgi.Environ("POST", "/count", "")
+    r3: wsgi.Response = router.dispatch(env3)
+    r4: wsgi.Response = router.dispatch(env3)
+    print(r3.body, r4.body)
+
+    env4: wsgi.Environ = wsgi.Environ("GET", "/nope", "")
+    r5: wsgi.Response = router.dispatch(env4)
+    print(r5.status, r5.status_line())
+
+    hdrs: wsgi.MultiMap = wsgi.parse_headers("Host: example.com\nX-Test:  1  \n\n")
+    print(hdrs.get("host"), hdrs.get("x-test"), hdrs.count())
+    print(wsgi.status_text(404), wsgi.json_string("a\"b\\c"))
+
+    resp: wsgi.Response = wsgi.redirect("/home")
+    resp.set_cookie("session", "abc")
+    print(resp.status, resp.headers.get("location"), resp.headers.get("set-cookie"))
+
+    form: wsgi.MultiMap = wsgi.Environ("POST", "/x", "a=1&b=two").form()
+    print(form.get("a"), form.get("b"))
+    print(wsgi.url_decode("a+b%2Fc"), wsgi.content_type_for("app.js"))
+
+    env5: wsgi.Environ = wsgi.Environ("GET", "/users/42", "")
+    r6: wsgi.Response = router.dispatch(env5)
+    print(r6.status, env5.param("id"))
+
+    router.mount("/static", home)
+    env6: wsgi.Environ = wsgi.Environ("GET", "/static/app.js", "")
+    r7: wsgi.Response = router.dispatch(env6)
+    print(r7.body)
+
+    missing: wsgi.Response = router.dispatch(wsgi.Environ("GET", "/static", ""))
+    print(missing.body)
+    return 0

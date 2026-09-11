@@ -50,7 +50,7 @@ namespace {
          name == "f32" || name == "f64" || name == "str" || name == "regex" || name == "byte" ||
          name == "Iterator" || name == "never" || name == "Unique" || name == "Shared" || name == "Ptr" ||
          name == "list" || name == "array" || name == "dict" || name == "Callable" ||
-         name == "Function" || name == "Class";
+         name == "Function" || name == "Class" || name == "Type";
 }
 
 [[nodiscard]] bool isCompilerIntrinsic(std::string_view name) {

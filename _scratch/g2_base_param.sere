@@ -1,0 +1,26 @@
+class Base:
+    a: i32
+
+    def __init__(self, a: i32) -> void:
+        self.a = a
+
+    def describe(self) -> i32:
+        return self.a
+
+class Derived(Base):
+    b: i32
+
+    def __init__(self, a: i32, b: i32) -> void:
+        super().__init__(a)
+        self.b = b
+
+    def describe(self) -> i32:
+        return self.a + self.b
+
+def run(item: Base) -> i32:
+    return item.describe() + item.a
+
+def main() -> i32:
+    d: Derived = Derived(1, 2)
+    print(run(d))
+    return 0

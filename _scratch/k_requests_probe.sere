@@ -1,0 +1,83 @@
+import string
+import bytes
+import encoding
+
+# 1. Class with static constants.
+class codes:
+    static ok: i32 = 200
+    static not_found: i32 = 404
+
+# 2. Exception subclass with extra fields.
+class Boom(Exception):
+    code: i32
+    def __init__(self, message: str, code: i32) -> void:
+        self.message = message
+        self.code = code
+
+class Case:
+    names: list[str]
+    values: list[str]
+    def __init__(self) -> void:
+        self.names = list[str]()
+        self.values = list[str]()
+
+    def set(self, name: str, value: str) -> void:
+        self.names.append(name)
+        self.values.append(value)
+
+# 3. Dict helper taking a dict param and `**kwargs`.
+def dump(prefix: str, *rest: list[str], **opts: dict[str, str]) -> void:
+    print(prefix, len(rest), len(opts.keys()))
+
+def use_dict(table: dict[str, str]) -> str:
+    keys: list[str] = table.keys()
+    if len(keys) > 0:
+        return table[keys[0]]
+    return ""
+
+# 4. Optional / None.
+def maybe(flag: bool) -> str | None:
+    if flag:
+        return "yes"
+    return None
+
+# 5. Nested def capture.
+def outer(base: i32) -> i32:
+    def inner(extra: i32) -> i32:
+        return base + extra
+    return inner(2)
+
+def main() -> i32:
+    print(codes.ok, codes.not_found)
+    table: dict[str, str] = {"A": "1", "B": "2"}
+    print(use_dict(table))
+    print(use_dict(dict[str, str]()))
+    print(table.get("A"))
+    print(table.get("missing"))
+    print(table.contains("A"), table.contains("z"))
+    dump("x", "a", "b", k="v")
+    value: str | None = maybe(True)
+    if value is None:
+        print("none")
+    else:
+        print(value)
+    if maybe(False) is None:
+        print("none2")
+    print(outer(40))
+    p = ("a", 1)
+    print(p)
+    a, b = ("x", 2)
+    print(a, b)
+    buf: list[byte] = bytes.from_str("hi")
+    print(len(buf), bytes.to_str(buf))
+    print(encoding.b64encode("user:pass"))
+    hello: str = "abcdef"
+    print(hello[-1], hello[1:4], hello[2:])
+    parts: list[str] = string.split("a,b,c", ",")
+    print(len(parts), parts[2])
+    out: str = ""
+    for ch in "ab":
+        out = out + ch
+    print(out)
+    raise Boom("kaboom", 7)
+    return 0

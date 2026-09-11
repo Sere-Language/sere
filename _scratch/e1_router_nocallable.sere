@@ -1,0 +1,57 @@
+class Environ:
+    path: str
+
+    def __init__(self, path: str) -> void:
+        self.path = path
+
+class Response:
+    status: i32
+    body: str
+
+    def __init__(self, status: i32, body: str) -> void:
+        self.status = status
+        self.body = body
+
+@abstract
+class Handler:
+    @abstract
+    def handle(self, environ: Environ) -> Response:
+        pass
+
+class Doubler(Handler):
+    def handle(self, environ: Environ) -> Response:
+        return Response(200, "d:" + environ.path)
+
+class Route:
+    pattern: str
+    handler: Handler
+
+    def __init__(self, pattern: str, handler: Handler) -> void:
+        self.pattern = pattern
+        self.handler = handler
+
+class Router(Handler):
+    routes: list[Route]
+
+    def __init__(self) -> void:
+        self.routes = list[Route]()
+
+    def add(self, pattern: str, handler: Handler) -> void:
+        self.routes.append(Route(pattern, handler))
+
+    def handle(self, environ: Environ) -> Response:
+        i: i64 = 0
+        while i < len(self.routes):
+            route: Route = self.routes[i]
+            if route.pattern == environ.path:
+                return route.handler.handle(environ)
+            i += 1
+        return Response(404, "nope")
+
+def main() -> i32:
+    app: Router = Router()
+    app.add("/x", Doubler())
+    r: Response = app.handle(Environ("/x"))
+    print(r.status)
+    print(r.body)
+    return 0

@@ -1,11 +1,39 @@
-# WSGI-like HTTP server. The application is a class with handle(environ) -> Response.
+# WSGI-style HTTP server toolkit.
+#
+# An application is any callable mapping an Environ to a Response, so both
+# plain functions and bound methods (which keep their receiver's state) work:
+#
 #   import wsgi
-#   class App:
-#       def handle(self, environ: wsgi.Environ) -> wsgi.Response:
-#           return wsgi.Response(200, "text/plain", "ok")
+#
+#   def home(environ: wsgi.Environ) -> wsgi.Response:
+#       return wsgi.text("Hello from Sere")
+#
+#   class Users:
+#       prefix: str
+#       def __init__(self, prefix: str) -> void:
+#           self.prefix = prefix
+#       def show(self, environ: wsgi.Environ) -> wsgi.Response:
+#           return wsgi.json(wsgi.json_string(self.prefix + environ.param("id", "0")))
+#
 #   def main() -> i32:
-#       wsgi.serve(App(), "127.0.0.1", 8000)
+#       users: Users = Users("user-")
+#       router: wsgi.Router = wsgi.Router()
+#       router.get("/", home)
+#       router.get("/users/{id}", users.show)
+#       router.mount("/static", wsgi.Files("./public", "/static").handle)
+#       wsgi.serve(router.dispatch, "127.0.0.1", 8000)
 #       return 0
+#
+# Requests expose the method, path (query stripped), raw query, HTTP version,
+# parsed headers, body and decoded query parameters. Responses carry a status,
+# content type, body, an optional custom reason phrase and extra headers.
+
+import fs
+import string
+
+# ---------------------------------------------------------------------------
+# Native bindings (see runtime/sere_http.c).
+# ---------------------------------------------------------------------------
 
 extern "C" "sere_http_listen"
 def _listen(host: str, port: i32) -> Ptr[i8]
@@ -14,13 +42,25 @@ extern "C" "sere_http_accept"
 def _accept(server: Ptr[i8]) -> Ptr[i8]
 
 extern "C" "sere_http_req_method"
-def _method(req: Ptr[i8]) -> str
+def _req_method(req: Ptr[i8]) -> str
 
 extern "C" "sere_http_req_path"
-def _path(req: Ptr[i8]) -> str
+def _req_path(req: Ptr[i8]) -> str
+
+extern "C" "sere_http_req_query"
+def _req_query(req: Ptr[i8]) -> str
+
+extern "C" "sere_http_req_version"
+def _req_version(req: Ptr[i8]) -> str
+
+extern "C" "sere_http_req_headers"
+def _req_headers(req: Ptr[i8]) -> str
 
 extern "C" "sere_http_req_body"
-def _body(req: Ptr[i8]) -> str
+def _req_body(req: Ptr[i8]) -> str
+
+extern "C" "sere_http_reply_ext"
+def _reply_ext(req: Ptr[i8], status: i32, reason: str, content_type: str, extra_headers: str, body: str) -> void
 
 extern "C" "sere_http_reply"
 def _reply(req: Ptr[i8], status: i32, content_type: str, body: str) -> void
@@ -28,38 +68,532 @@ def _reply(req: Ptr[i8], status: i32, content_type: str, body: str) -> void
 extern "C" "sere_http_close"
 def _close(server: Ptr[i8]) -> void
 
+extern "C" "sere_url_decode"
+def url_decode(text: str) -> str
+
+# ---------------------------------------------------------------------------
+# Multi-value name/value collections (headers, query strings, forms).
+# ---------------------------------------------------------------------------
+
+class MultiMap:
+    names: list[str]
+    values: list[str]
+
+    def __init__(self) -> void:
+        self.names = list[str]()
+        self.values = list[str]()
+
+    def add(self, name: str, value: str) -> void:
+        self.names.append(name)
+        self.values.append(value)
+
+    def count(self) -> i64:
+        return len(self.names)
+
+    def is_empty(self) -> bool:
+        return len(self.names) == 0
+
+    def index_of(self, name: str) -> i64:
+        target: str = string.lower(name)
+        i: i64 = 0
+        while i < len(self.names):
+            if string.lower(self.names[i]) == target:
+                return i
+            i += 1
+        return -1
+
+    def has(self, name: str) -> bool:
+        return self.index_of(name) >= 0
+
+    def get(self, name: str, fallback: str = "") -> str:
+        found: i64 = self.index_of(name)
+        if found < 0:
+            return fallback
+        return self.values[found]
+
+    def get_all(self, name: str) -> list[str]:
+        found_all: list[str] = list[str]()
+        target: str = string.lower(name)
+        i: i64 = 0
+        while i < len(self.names):
+            if string.lower(self.names[i]) == target:
+                found_all.append(self.values[i])
+            i += 1
+        return found_all
+
+    def name_at(self, index: i64) -> str:
+        return self.names[index]
+
+    def value_at(self, index: i64) -> str:
+        return self.values[index]
+
+    def set(self, name: str, value: str) -> void:
+        found: i64 = self.index_of(name)
+        if found < 0:
+            self.add(name, value)
+            return
+        self.values[found] = value
+
+    def remove(self, name: str) -> void:
+        kept_names: list[str] = list[str]()
+        kept_values: list[str] = list[str]()
+        target: str = string.lower(name)
+        i: i64 = 0
+        while i < len(self.names):
+            if string.lower(self.names[i]) != target:
+                kept_names.append(self.names[i])
+                kept_values.append(self.values[i])
+            i += 1
+        self.names = kept_names
+        self.values = kept_values
+
+# ---------------------------------------------------------------------------
+# Parsing helpers.
+# ---------------------------------------------------------------------------
+
+def parse_query(raw: str) -> MultiMap:
+    out: MultiMap = MultiMap()
+    if len(raw) == 0:
+        return out
+    pairs: list[str] = string.split(raw, "&")
+    i: i64 = 0
+    while i < len(pairs):
+        pair: str = pairs[i]
+        if len(pair) > 0:
+            sep: i64 = string.find(pair, "=")
+            if sep >= 0:
+                out.add(url_decode(pair[0:sep]), url_decode(pair[sep + 1:]))
+            else:
+                out.add(url_decode(pair), "")
+        i += 1
+    return out
+
+def parse_headers(raw: str) -> MultiMap:
+    out: MultiMap = MultiMap()
+    lines: list[str] = string.split(raw, "\n")
+    i: i64 = 0
+    while i < len(lines):
+        line: str = string.strip(lines[i])
+        if len(line) > 0:
+            sep: i64 = string.find(line, ":")
+            if sep >= 0:
+                name: str = string.strip(line[0:sep])
+                value: str = string.strip(line[sep + 1:])
+                if len(name) > 0:
+                    out.add(name, value)
+        i += 1
+    return out
+
+def headers_block(headers: MultiMap) -> str:
+    out: str = ""
+    i: i64 = 0
+    while i < len(headers.names):
+        out = out + headers.names[i] + ": " + headers.values[i] + "\r\n"
+        i += 1
+    return out
+
+def status_text(status: i32) -> str:
+    if status == 100:
+        return "Continue"
+    if status == 101:
+        return "Switching Protocols"
+    if status == 200:
+        return "OK"
+    if status == 201:
+        return "Created"
+    if status == 202:
+        return "Accepted"
+    if status == 204:
+        return "No Content"
+    if status == 205:
+        return "Reset Content"
+    if status == 206:
+        return "Partial Content"
+    if status == 301:
+        return "Moved Permanently"
+    if status == 302:
+        return "Found"
+    if status == 303:
+        return "See Other"
+    if status == 304:
+        return "Not Modified"
+    if status == 307:
+        return "Temporary Redirect"
+    if status == 308:
+        return "Permanent Redirect"
+    if status == 400:
+        return "Bad Request"
+    if status == 401:
+        return "Unauthorized"
+    if status == 403:
+        return "Forbidden"
+    if status == 404:
+        return "Not Found"
+    if status == 405:
+        return "Method Not Allowed"
+    if status == 406:
+        return "Not Acceptable"
+    if status == 408:
+        return "Request Timeout"
+    if status == 409:
+        return "Conflict"
+    if status == 410:
+        return "Gone"
+    if status == 413:
+        return "Payload Too Large"
+    if status == 415:
+        return "Unsupported Media Type"
+    if status == 418:
+        return "I'm a teapot"
+    if status == 422:
+        return "Unprocessable Entity"
+    if status == 429:
+        return "Too Many Requests"
+    if status == 500:
+        return "Internal Server Error"
+    if status == 501:
+        return "Not Implemented"
+    if status == 502:
+        return "Bad Gateway"
+    if status == 503:
+        return "Service Unavailable"
+    if status == 504:
+        return "Gateway Timeout"
+    if status == 505:
+        return "HTTP Version Not Supported"
+    return "OK"
+
+def json_escape(value: str) -> str:
+    out: str = ""
+    i: i64 = 0
+    while i < len(value):
+        ch: str = value[i]
+        if ch == "\"":
+            out = out + "\\\""
+        elif ch == "\\":
+            out = out + "\\\\"
+        elif ch == "\n":
+            out = out + "\\n"
+        elif ch == "\r":
+            out = out + "\\r"
+        elif ch == "\t":
+            out = out + "\\t"
+        else:
+            out = out + ch
+        i += 1
+    return out
+
+def json_string(value: str) -> str:
+    return "\"" + json_escape(value) + "\""
+
+def content_type_for(path: str) -> str:
+    lowered: str = string.lower(path)
+    if string.ends_with(lowered, ".html") or string.ends_with(lowered, ".htm"):
+        return "text/html; charset=utf-8"
+    if string.ends_with(lowered, ".css"):
+        return "text/css; charset=utf-8"
+    if string.ends_with(lowered, ".js"):
+        return "application/javascript; charset=utf-8"
+    if string.ends_with(lowered, ".json"):
+        return "application/json; charset=utf-8"
+    if string.ends_with(lowered, ".txt"):
+        return "text/plain; charset=utf-8"
+    if string.ends_with(lowered, ".svg"):
+        return "image/svg+xml"
+    if string.ends_with(lowered, ".xml"):
+        return "application/xml; charset=utf-8"
+    if string.ends_with(lowered, ".csv"):
+        return "text/csv; charset=utf-8"
+    return "application/octet-stream"
+
+# ---------------------------------------------------------------------------
+# Request / response model.
+# ---------------------------------------------------------------------------
+
 class Environ:
     method: str
     path: str
+    query: str
+    version: str
     body: str
+    headers: MultiMap
+    params: MultiMap
+
     def __init__(self, method: str, path: str, body: str) -> void:
         self.method = method
         self.path = path
+        self.query = ""
+        self.version = "HTTP/1.1"
         self.body = body
+        self.headers = MultiMap()
+        self.params = MultiMap()
+
+    def header(self, name: str, fallback: str = "") -> str:
+        return self.headers.get(name, fallback)
+
+    def param(self, name: str, fallback: str = "") -> str:
+        return self.params.get(name, fallback)
+
+    def form(self) -> MultiMap:
+        return parse_query(self.body)
+
+    def is_get(self) -> bool:
+        return string.lower(self.method) == "get"
+
+    def is_post(self) -> bool:
+        return string.lower(self.method) == "post"
+
+    def is_head(self) -> bool:
+        return string.lower(self.method) == "head"
 
 class Response:
     status: i32
     content_type: str
     body: str
-    def __init__(self, status: i32, content_type: str, body: str) -> void:
+    reason: str
+    headers: MultiMap
+
+    def __init__(self, status: i32 = 200, content_type: str = "text/plain; charset=utf-8", body: str = "") -> void:
         self.status = status
         self.content_type = content_type
         self.body = body
+        self.reason = ""
+        self.headers = MultiMap()
 
-class Handler:
+    def set_header(self, name: str, value: str) -> void:
+        self.headers.set(name, value)
+
+    def add_header(self, name: str, value: str) -> void:
+        self.headers.add(name, value)
+
+    def set_cookie(self, name: str, value: str, path: str = "/") -> void:
+        self.headers.add("Set-Cookie", name + "=" + value + "; Path=" + path)
+
+    def status_line(self) -> str:
+        if len(self.reason) > 0:
+            return str(self.status) + " " + self.reason
+        return str(self.status) + " " + status_text(self.status)
+
+# ---------------------------------------------------------------------------
+# Response builders.
+# ---------------------------------------------------------------------------
+
+def text(body: str, status: i32 = 200) -> Response:
+    return Response(status, "text/plain; charset=utf-8", body)
+
+def html(body: str, status: i32 = 200) -> Response:
+    return Response(status, "text/html; charset=utf-8", body)
+
+def json(body: str, status: i32 = 200) -> Response:
+    return Response(status, "application/json; charset=utf-8", body)
+
+def redirect(location: str, status: i32 = 302) -> Response:
+    response: Response = Response(status, "text/plain; charset=utf-8", "")
+    response.set_header("Location", location)
+    return response
+
+def not_found(body: str = "Not Found") -> Response:
+    return text(body, 404)
+
+def forbidden(body: str = "Forbidden") -> Response:
+    return text(body, 403)
+
+def bad_request(body: str = "Bad Request") -> Response:
+    return text(body, 400)
+
+def method_not_allowed(body: str = "Method Not Allowed") -> Response:
+    return text(body, 405)
+
+def server_error(body: str = "Internal Server Error") -> Response:
+    return text(body, 500)
+
+def no_content() -> Response:
+    return Response(204, "text/plain; charset=utf-8", "")
+
+# ---------------------------------------------------------------------------
+# Routing.
+# ---------------------------------------------------------------------------
+
+class Route:
+    method: str
+    pattern: str
+    kind: i32
+    handler: Callable[[Environ], Response]
+
+    def __init__(self, method: str, pattern: str, kind: i32, handler: Callable[[Environ], Response]) -> void:
+        self.method = method
+        self.pattern = pattern
+        self.kind = kind
+        self.handler = handler
+
+def _method_matches(allowed: str, actual: str) -> bool:
+    if allowed == "*":
+        return True
+    return string.lower(allowed) == string.lower(actual)
+
+def _prefix_matches(prefix: str, path: str) -> bool:
+    if not string.starts_with(path, prefix):
+        return False
+    if len(path) == len(prefix):
+        return True
+    if len(prefix) > 0 and prefix[len(prefix) - 1] == "/":
+        return True
+    return path[len(prefix)] == "/"
+
+def match_pattern(pattern: str, path: str, captures: MultiMap) -> bool:
+    want: list[str] = string.split(pattern, "/")
+    have: list[str] = string.split(path, "/")
+    if len(want) != len(have):
+        return False
+    i: i64 = 0
+    while i < len(want):
+        segment: str = want[i]
+        if len(segment) > 0 and (segment[0] == "{" or segment[0] == ":"):
+            name: str = segment[1:]
+            if len(segment) >= 2 and segment[len(segment) - 1] == "}":
+                name = segment[1:len(segment) - 1]
+            if len(name) == 0:
+                return False
+            captures.add(name, url_decode(have[i]))
+        elif segment != have[i]:
+            return False
+        i += 1
+    return True
+
+class Router:
+    routes: list[Route]
+
     def __init__(self) -> void:
-        pass
-    def handle(self, environ: Environ) -> Response:
-        return Response(200, "text/plain", "ok")
+        self.routes = list[Route]()
 
-def serve(app: Handler, host: str, port: i32) -> void:
-    server: Ptr[i8] = _listen(host, port)
-    if server is None:
+    def add(self, method: str, pattern: str, handler: Callable[[Environ], Response]) -> void:
+        self.routes.append(Route(method, pattern, 2, handler))
+
+    def any(self, pattern: str, handler: Callable[[Environ], Response]) -> void:
+        self.add("*", pattern, handler)
+
+    def get(self, pattern: str, handler: Callable[[Environ], Response]) -> void:
+        self.add("GET", pattern, handler)
+
+    def post(self, pattern: str, handler: Callable[[Environ], Response]) -> void:
+        self.add("POST", pattern, handler)
+
+    def put(self, pattern: str, handler: Callable[[Environ], Response]) -> void:
+        self.add("PUT", pattern, handler)
+
+    def patch(self, pattern: str, handler: Callable[[Environ], Response]) -> void:
+        self.add("PATCH", pattern, handler)
+
+    def delete(self, pattern: str, handler: Callable[[Environ], Response]) -> void:
+        self.add("DELETE", pattern, handler)
+
+    def mount(self, prefix: str, handler: Callable[[Environ], Response]) -> void:
+        self.routes.append(Route("*", prefix, 1, handler))
+
+    def count(self) -> i64:
+        return len(self.routes)
+
+    def dispatch(self, environ: Environ) -> Response:
+        i: i64 = 0
+        while i < len(self.routes):
+            route: Route = self.routes[i]
+            if _method_matches(route.method, environ.method):
+                if route.kind == 1:
+                    if _prefix_matches(route.pattern, environ.path):
+                        return route.handler(environ)
+                else:
+                    if match_pattern(route.pattern, environ.path, environ.params):
+                        return route.handler(environ)
+            i += 1
+        return not_found()
+
+# ---------------------------------------------------------------------------
+# Static files.
+# ---------------------------------------------------------------------------
+
+class Files:
+    root: str
+    prefix: str
+
+    def __init__(self, root: str, prefix: str = "") -> void:
+        self.root = root
+        self.prefix = prefix
+
+    def handle(self, environ: Environ) -> Response:
+        rel: str = environ.path
+        if len(self.prefix) > 0 and string.starts_with(rel, self.prefix):
+            rel = rel[len(self.prefix):]
+        if len(rel) == 0 or rel[len(rel) - 1] == "/":
+            rel = rel + "index.html"
+        if string.contains(rel, ".."):
+            return forbidden("Forbidden")
+        full: str = self.root + rel
+        if not fs.exists(full):
+            return not_found()
+        try:
+            body: str = fs.read_text(full)
+            return Response(200, content_type_for(rel), body)
+        except Exception as error:
+            return server_error(error.message)
+
+# ---------------------------------------------------------------------------
+# Server.
+# ---------------------------------------------------------------------------
+
+class Server:
+    handle: Ptr[i8]
+
+    def __init__(self, host: str, port: i32) -> void:
+        self.handle = _listen(host, port)
+
+    def is_running(self) -> bool:
+        return self.handle is not None
+
+    def accept(self) -> Ptr[i8]:
+        return _accept(self.handle)
+
+    def close(self) -> void:
+        if self.handle is not None:
+            _close(self.handle)
+            self.handle = None
+
+def request_environ(req: Ptr[i8]) -> Environ:
+    environ: Environ = Environ(_req_method(req), _req_path(req), _req_body(req))
+    environ.query = _req_query(req)
+    environ.version = _req_version(req)
+    environ.headers = parse_headers(_req_headers(req))
+    environ.params = parse_query(environ.query)
+    return environ
+
+def dispatch(app: Callable[[Environ], Response], environ: Environ) -> Response:
+    try:
+        return app(environ)
+    except Exception as error:
+        return server_error(error.message)
+
+def send(req: Ptr[i8], response: Response) -> void:
+    extra: str = headers_block(response.headers)
+    _reply_ext(req, response.status, response.reason, response.content_type, extra, response.body)
+
+def handle_request(app: Callable[[Environ], Response], req: Ptr[i8]) -> void:
+    environ: Environ = request_environ(req)
+    response: Response = dispatch(app, environ)
+    send(req, response)
+
+def serve_once(app: Callable[[Environ], Response], server: Server) -> bool:
+    req: Ptr[i8] = server.accept()
+    if req is None:
+        return False
+    handle_request(app, req)
+    return True
+
+def serve(app: Callable[[Environ], Response], host: str, port: i32) -> void:
+    server: Server = Server(host, port)
+    if not server.is_running():
         return
     while True:
-        req: Ptr[i8] = _accept(server)
+        req: Ptr[i8] = server.accept()
         if req is None:
             continue
-        environ: Environ = Environ(_method(req), _path(req), _body(req))
-        resp: Response = app.handle(environ)
-        _reply(req, resp.status, resp.content_type, resp.body)
+        handle_request(app, req)
+

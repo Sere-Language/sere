@@ -1,0 +1,71 @@
+class Environ:
+    method: str
+    path: str
+
+    def __init__(self, method: str, path: str) -> void:
+        self.method = method
+        self.path = path
+
+class Response:
+    status: i32
+    body: str
+
+    def __init__(self, status: i32, body: str) -> void:
+        self.status = status
+        self.body = body
+
+@abstract
+class Handler:
+    @abstract
+    def handle(self, environ: Environ) -> Response:
+        pass
+
+class FunctionHandler(Handler):
+    fn: Callable[[Environ], Response]
+
+    def __init__(self, fn: Callable[[Environ], Response]) -> void:
+        self.fn = fn
+
+    def handle(self, environ: Environ) -> Response:
+        return self.fn(environ)
+
+class Route:
+    method: str
+    pattern: str
+    handler: Handler
+
+    def __init__(self, method: str, pattern: str, handler: Handler) -> void:
+        self.method = method
+        self.pattern = pattern
+        self.handler = handler
+
+class Router(Handler):
+    routes: list[Route]
+
+    def __init__(self) -> void:
+        self.routes = list[Route]()
+
+    def add(self, method: str, pattern: str, handler: Handler) -> void:
+        self.routes.append(Route(method, pattern, handler))
+
+    def handle(self, environ: Environ) -> Response:
+        i: i64 = 0
+        while i < len(self.routes):
+            route: Route = self.routes[i]
+            if route.method == environ.method and route.pattern == environ.path:
+                return route.handler.handle(environ)
+            i += 1
+        return Response(404, "Not Found")
+
+def hello(environ: Environ) -> Response:
+    return Response(200, "hello " + environ.path)
+
+def main() -> i32:
+    app: Router = Router()
+    app.add("GET", "/hello", FunctionHandler(hello))
+    r: Response = app.handle(Environ("GET", "/hello"))
+    print(r.status)
+    print(r.body)
+    m: Response = app.handle(Environ("GET", "/other"))
+    print(m.status)
+    return 0

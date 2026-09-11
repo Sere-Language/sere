@@ -1264,6 +1264,27 @@ const Type* TypeChecker::resolveNamedType(const std::string& name,
     if (record == nullptr) {
       return nullptr;
     }
+    if (record->isGenericAlias()) {
+      const std::vector<std::string>& params = record->aliasTypeParams();
+      const std::vector<const Type*>& constraints = record->aliasTypeConstraints();
+      std::vector<const Type*> args = resolvedArgs;
+      if (args.empty()) {
+        args.assign(params.size(), types_->anyType());
+      } else if (args.size() != params.size()) {
+        diagnostics_->error(
+            range,
+            "'" + name + "' requires " + std::to_string(params.size()) + " type arguments");
+        return nullptr;
+      }
+      if (!checkTypeConstraints(params, constraints, args, range)) {
+        return nullptr;
+      }
+      std::unordered_map<std::string, const Type*> subst;
+      for (std::size_t index = 0; index < params.size(); ++index) {
+        subst[params[index]] = args[index];
+      }
+      return types_->substitute(record->aliasUnderlying(), subst);
+    }
     if (record->isTypeObject() && record->typeObjectInstance() != nullptr) {
       record = record->typeObjectInstance();
     }
@@ -1370,9 +1391,13 @@ const Type* TypeChecker::resolveNamedType(const std::string& name,
     }
     return finishRecord(current);
   }
-  if (name == "type") {
+  if (name == "type" || name == "Type") {
+    if (resolvedArgs.empty()) {
+      // Bare `Type` / `type` accepts any type object, like bare `Class`.
+      return types_->generic("Class", {});
+    }
     if (resolvedArgs.size() != 1) {
-      diagnostics_->error(range, "type requires exactly one type argument");
+      diagnostics_->error(range, name + " takes zero or one type argument");
       return nullptr;
     }
     return types_->typeObject(resolvedArgs[0]);
@@ -5037,11 +5062,22 @@ bool TypeChecker::collectAliases(Module& module) {
       continue;
     }
     auto& alias = static_cast<TypeAlias&>(*statement);
+    for (const std::string& param : alias.typeParams()) {
+      (void)types_->defineTypeParam(param);
+    }
+    if (!resolveTypeConstraints(alias.typeConstraints())) {
+      return false;
+    }
     const Type* underlying = resolveTypeExpr(alias.type());
     if (underlying == nullptr) {
       return false;
     }
-    const Type* type = types_->defineAlias(alias.name(), underlying);
+    const Type* type = alias.typeParams().empty()
+                           ? types_->defineAlias(alias.name(), underlying)
+                           : types_->defineGenericAlias(alias.name(),
+                                                        underlying,
+                                                        alias.typeParams(),
+                                                        resolvedConstraints(alias.typeConstraints()));
     alias.setResolvedType(type);
     Symbol symbol;
     symbol.kind = SymbolKind::Type;

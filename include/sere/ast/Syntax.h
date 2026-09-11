@@ -996,14 +996,22 @@ private:
 
 class TypeAlias final : public Stmt {
 public:
-  TypeAlias(SourceRange range, std::string name, std::unique_ptr<TypeExpr> type);
+  TypeAlias(SourceRange range,
+            std::string name,
+            std::unique_ptr<TypeExpr> type,
+            std::vector<std::string> typeParams = {},
+            std::vector<std::unique_ptr<TypeExpr>> typeConstraints = {});
   [[nodiscard]] const std::string& name() const;
   [[nodiscard]] const TypeExpr& type() const;
   [[nodiscard]] TypeExpr& type();
+  [[nodiscard]] const std::vector<std::string>& typeParams() const;
+  [[nodiscard]] const std::vector<std::unique_ptr<TypeExpr>>& typeConstraints() const;
 
 private:
   std::string name_;
   std::unique_ptr<TypeExpr> type_;
+  std::vector<std::string> typeParams_{};
+  std::vector<std::unique_ptr<TypeExpr>> typeConstraints_{};
 };
 
 /// How a macro invocation body is captured.

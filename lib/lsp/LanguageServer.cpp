@@ -402,8 +402,16 @@ void writeNullResult(const llvm::json::Value* id) {
   }
   if (node.kind() == NodeKind::TypeAlias) {
     const auto& alias = static_cast<const TypeAlias&>(node);
+    std::string params;
+    for (const std::string& param : alias.typeParams()) {
+      params += params.empty() ? "[" : ", ";
+      params += param;
+    }
+    if (!params.empty()) {
+      params += "]";
+    }
     const Type* aliasType = alias.type().resolvedType();
-    return "type " + alias.name() + " = " +
+    return "type " + alias.name() + params + " = " +
            (aliasType != nullptr ? aliasType->display() : alias.type().name());
   }
   if (node.kind() == NodeKind::TypeExpr) {

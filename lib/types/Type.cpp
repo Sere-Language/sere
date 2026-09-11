@@ -310,6 +310,23 @@ const Type* Type::typeObjectInstance() const {
   return isTypeObject() ? genericArg(0) : nullptr;
 }
 
+bool Type::isGenericAlias() const {
+  // Uses the raw kind: canonical() would unwrap the alias to its underlying type.
+  return kind_ == TypeKind::Alias && !typeParams_.empty();
+}
+
+const std::vector<std::string>& Type::aliasTypeParams() const {
+  return typeParams_;
+}
+
+const std::vector<const Type*>& Type::aliasTypeConstraints() const {
+  return typeConstraints_;
+}
+
+const Type* Type::aliasUnderlying() const {
+  return kind_ == TypeKind::Alias ? underlying_ : nullptr;
+}
+
 bool Type::isEllipsis() const {
   return isNamed("...");
 }

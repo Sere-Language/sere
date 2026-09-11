@@ -1,0 +1,52 @@
+import string
+
+class MultiMap:
+    keys: list[str]
+    values: list[str]
+
+    def __init__(self) -> void:
+        self.keys = list[str]()
+        self.values = list[str]()
+
+    def add(self, key: str, value: str) -> void:
+        self.keys.append(key)
+        self.values.append(value)
+
+    def index_of(self, key: str) -> i64:
+        target: str = string.lower(key)
+        i: i64 = 0
+        while i < len(self.keys):
+            if string.lower(self.keys[i]) == target:
+                return i
+            i += 1
+        return -1
+
+    def get(self, key: str, fallback: str = "") -> str:
+        found: i64 = self.index_of(key)
+        if found < 0:
+            return fallback
+        return self.values[found]
+
+def parse_query(raw: str) -> MultiMap:
+    out: MultiMap = MultiMap()
+    if len(raw) == 0:
+        return out
+    pairs: list[str] = string.split(raw, "&")
+    i: i64 = 0
+    while i < len(pairs):
+        pair: str = pairs[i]
+        sep: i64 = string.find(pair, "=")
+        if sep >= 0:
+            out.add(pair[0:sep], pair[sep + 1:])
+        elif len(pair) > 0:
+            out.add(pair, "")
+        i += 1
+    return out
+
+def main() -> i32:
+    q: MultiMap = parse_query("name=sere&empty=&flag")
+    print(q.get("name", "?"))
+    print(q.get("flag", "none"))
+    print(q.get("missing", "fallback"))
+    print(len(q.keys))
+    return 0

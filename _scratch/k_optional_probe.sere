@@ -1,0 +1,32 @@
+def maybe(flag: bool) -> str | None:
+    if flag:
+        return "yes"
+    return None
+
+def num(flag: bool) -> i32 | None:
+    if flag:
+        return 5
+    return None
+
+def main() -> i32:
+    if maybe(False) is None:
+        print("A-none")
+    else:
+        print("A-some")
+    a: str | None = maybe(True)
+    print("a is None:", a is None)
+    if a is None:
+        print("B-none")
+    else:
+        print("B-some", a)
+    n: i32 | None = num(False)
+    if n is None:
+        print("C-none")
+    else:
+        print("C-some", n)
+    m: i32 | None = num(True)
+    if m is None:
+        print("D-none")
+    else:
+        print("D-some", m)
+    return 0

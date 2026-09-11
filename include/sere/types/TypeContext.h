@@ -46,6 +46,10 @@ public:
   void setRecordFlags(const Type* record, bool isFlags);
   void replaceRecordMethod(const Type* record, RecordMethod method);
   [[nodiscard]] const Type* defineAlias(const std::string& name, const Type* underlying);
+  [[nodiscard]] const Type* defineGenericAlias(const std::string& name,
+                                               const Type* underlying,
+                                               std::vector<std::string> typeParams,
+                                               std::vector<const Type*> typeConstraints);
   [[nodiscard]] const Type* defineTypeParam(const std::string& name);
   [[nodiscard]] const Type* defineModule(const std::string& name, std::vector<RecordField> fields);
   [[nodiscard]] const Type* typeParam(std::string_view name) const;

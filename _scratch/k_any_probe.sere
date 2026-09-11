@@ -1,0 +1,18 @@
+def main() -> i32:
+    table: dict[str, Any] = dict[str, Any]()
+    table["s"] = "text"
+    table["n"] = 42
+    keys: list[str] = table.keys()
+    i: i64 = 0
+    while i < len(keys):
+        print(keys[i], table[keys[i]])
+        i += 1
+    raw: Any = table
+    print(raw)
+    nums: list[Any] = list[Any]()
+    nums.append("x")
+    nums.append(3)
+    print(nums[0], nums[1])
+    mixed: dict[str, Any] = {"a": "b", "c": 1}
+    print(mixed["a"], mixed["c"])
+    return 0

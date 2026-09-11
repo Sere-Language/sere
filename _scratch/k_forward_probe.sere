@@ -1,0 +1,63 @@
+class Base(Exception):
+    pass
+
+class ConnError(Base):
+    pass
+
+class Timeout(Base):
+    pass
+
+# Multiple inheritance of exceptions.
+class ConnectTimeout(ConnError, Timeout):
+    pass
+
+class Request:
+    url: str
+    def __init__(self, url: str = "") -> void:
+        self.url = url
+
+# Response defined before HTTPError, but references HTTPError defined later in a method body.
+class Response:
+    status_code: i32
+    url: str
+    def __init__(self, status_code: i32 = 0, url: str = "") -> void:
+        self.status_code = status_code
+        self.url = url
+
+    def raise_for_status(self) -> void:
+        if self.status_code >= 400:
+            raise HTTPError(status_code=self.status_code, url=self.url, response=self)
+
+class HTTPError(Base):
+    status_code: i32
+    url: str
+    response: Response
+    request: Request
+    def __init__(self, message: str = "", response: Response = None,
+                 status_code: i32 = 0, url: str = "") -> void:
+        if len(message) > 0:
+            self.message = message
+        else:
+            self.message = "HTTP " + str(status_code) + " for " + url
+        self.status_code = status_code
+        self.url = url
+        self.response = response
+        self.request = None
+
+def main() -> i32:
+    r: Response = Response(404, "local")
+    try:
+        r.raise_for_status()
+    except HTTPError as e:
+        print(e.message, e.status_code, e.url)
+    e2: HTTPError = HTTPError("custom")
+    print(e2.message)
+    try:
+        raise ConnectTimeout("ct")
+    except ConnError as e:
+        print("caught-as-ConnError", e.message)
+    try:
+        raise ConnectTimeout("ct2")
+    except Timeout as e:
+        print("caught-as-Timeout", e.message)
+    return 0

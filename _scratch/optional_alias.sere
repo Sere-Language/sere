@@ -1,0 +1,37 @@
+type Optional[T] = T | None
+
+type Pair[A, B] = A | B
+
+class Point:
+    x: i32
+    y: i32
+    def __init__(self, x: i32, y: i32) -> void:
+        self.x = x
+        self.y = y
+
+def accept_optional(value: Optional[i32]) -> bool:
+    return value is None
+
+def accept_name(value: Optional[str]) -> i32:
+    return 0
+
+def accept_type(cls: Type) -> i32:
+    return 0
+
+def accept_typed(cls: Class[Point]) -> Point:
+    return cls(3, 4)
+
+def accept_both(value: Pair[i32, str]) -> i32:
+    return 0
+
+def main() -> i32:
+    missing: Optional[i32] = None
+    present: Optional[i32] = 7
+    name: Optional[str] = "ada"
+    p: Point = accept_typed(Point)
+    accept_type(Point)
+    if accept_optional(missing) and not accept_optional(present):
+        print("ok")
+    accept_name(name)
+    accept_both(5)
+    return p.x

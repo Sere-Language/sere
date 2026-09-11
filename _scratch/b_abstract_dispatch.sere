@@ -1,0 +1,30 @@
+class Environ:
+    x: i32
+
+    def __init__(self, x: i32) -> void:
+        self.x = x
+
+class Response:
+    status: i32
+
+    def __init__(self, status: i32) -> void:
+        self.status = status
+
+@abstract
+class Handler:
+    @abstract
+    def handle(self, environ: Environ) -> Response:
+        pass
+
+class Doubler(Handler):
+    def handle(self, environ: Environ) -> Response:
+        return Response(environ.x * 2)
+
+def run(app: Handler, e: Environ) -> i32:
+    r: Response = app.handle(e)
+    return r.status
+
+def main() -> i32:
+    app: Doubler = Doubler()
+    print(run(app, Environ(21)))
+    return 0

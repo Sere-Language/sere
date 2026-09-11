@@ -635,7 +635,14 @@ int32_t sere_http_last_status(void);
 void* sere_http_listen(const char* host, int64_t host_len, int32_t port);
 void* sere_http_accept(void* server);
 void sere_http_req_method(void* req, const char** out_data, int64_t* out_len);
+/// Request target path with the query string stripped (WSGI PATH_INFO).
 void sere_http_req_path(void* req, const char** out_data, int64_t* out_len);
+/// Raw query string without the leading `?` (WSGI QUERY_STRING).
+void sere_http_req_query(void* req, const char** out_data, int64_t* out_len);
+/// HTTP protocol version reported by the request line, e.g. "HTTP/1.1".
+void sere_http_req_version(void* req, const char** out_data, int64_t* out_len);
+/// Request headers as a `Name: Value\n`-separated block (no trailing request line).
+void sere_http_req_headers(void* req, const char** out_data, int64_t* out_len);
 void sere_http_req_body(void* req, const char** out_data, int64_t* out_len);
 void sere_http_reply(void* req,
                      int32_t status,
@@ -643,7 +650,24 @@ void sere_http_reply(void* req,
                      int64_t content_type_len,
                      const char* body,
                      int64_t body_len);
+/// Like `sere_http_reply`, but with an explicit reason phrase and extra headers.
+/// `extra_headers` is a raw header block whose lines should end with CRLF; an
+/// empty `reason` falls back to the standard phrase for `status`.
+void sere_http_reply_ext(void* req,
+                         int32_t status,
+                         const char* reason,
+                         int64_t reason_len,
+                         const char* content_type,
+                         int64_t content_type_len,
+                         const char* extra_headers,
+                         int64_t extra_headers_len,
+                         const char* body,
+                         int64_t body_len);
 void sere_http_close(void* server);
+
+/// Percent-decode `text` for URLs: `%XX` escape sequences and `+` become the
+/// decoded byte and a space respectively. Returns a runtime-owned string.
+void sere_url_decode(const char* text, int64_t text_len, const char** out_data, int64_t* out_len);
 
 /// Run `cmd` in a shell, capturing the child's combined stdout+stderr.
 /// Pending parent stdio is flushed first so Sere writes land before

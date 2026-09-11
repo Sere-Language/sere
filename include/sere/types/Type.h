@@ -79,6 +79,13 @@ public:
   /// `type[T]`: a class object that constructs T.
   [[nodiscard]] bool isTypeObject() const;
   [[nodiscard]] const Type* typeObjectInstance() const;
+  /// A generic alias template such as `type Optional[T] = T | None`.
+  /// The template itself is not a usable value type; instantiate it with
+  /// `aliasTypeParams()` and `aliasUnderlying()`.
+  [[nodiscard]] bool isGenericAlias() const;
+  [[nodiscard]] const std::vector<std::string>& aliasTypeParams() const;
+  [[nodiscard]] const std::vector<const Type*>& aliasTypeConstraints() const;
+  [[nodiscard]] const Type* aliasUnderlying() const;
   [[nodiscard]] bool isEllipsis() const;
   [[nodiscard]] bool isParamList() const;
   [[nodiscard]] bool isCallableConstraint() const;

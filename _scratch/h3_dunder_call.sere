@@ -1,0 +1,32 @@
+class Environ:
+    path: str
+
+    def __init__(self, path: str) -> void:
+        self.path = path
+
+class Response:
+    status: i32
+    body: str
+
+    def __init__(self, status: i32, body: str) -> void:
+        self.status = status
+        self.body = body
+
+class CallableApp:
+    tag: str
+
+    def __init__(self, tag: str) -> void:
+        self.tag = tag
+
+    def __call__(self, environ: Environ) -> Response:
+        return Response(200, self.tag + environ.path)
+
+def serve(app: Callable[[Environ], Response], environ: Environ) -> Response:
+    return app(environ)
+
+def main() -> i32:
+    a: CallableApp = CallableApp("t:")
+    r: Response = serve(a, Environ("/x"))
+    print(r.status)
+    print(r.body)
+    return 0

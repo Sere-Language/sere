@@ -1,157 +1,44 @@
-﻿import path
-import fs
-import os
-import hash
-import time
+﻿
 
+enum Result[T]:
+    Ok(T)
+    Err(str)
 
-class FileError(Exception):
-    pass
+    def unwrap(self) -> T:
+        match self:
+            case Result.Ok(value):
+                return value
+            case Result.Err(message):
+                raise Exception(message)
 
+    def try_unwrap(self) -> T | None:
+        match self:
+            case Result.Ok(value):
+                return value
+            case Result.Err(_):
+                return None
 
-struct SyncContext:
-    project_path: str
-    files_snapshot: dict[str, i64]
+    def is_ok(self) -> bool:
+        match self:
+            case Result.Ok(_):
+                return True
+            case Result.Err(_):
+                return False
 
+def greet(name: str) -> Result[str]:
+    if name == "Jessica":
+        return Result.Err("Cannot greet Jessica")
+    return Result.Ok(f"Hello, {name}!")
 
-struct UpdatesResult:
-    has_updates: bool
-    updated_files: list[str]
+def main() -> i32:
+    greet1 = greet("John")
+    greet1_str = greet1.unwrap()
+    print(greet1_str)
 
+    greet2 = greet("Jessica")
+    greet2_str = greet2.try_unwrap()
+    print(greet2_str))
 
-static context: SyncContext
-
-
-def hash_file(file_path: str) -> i64:
-    return hash.fnv1a(fs.read_text(file_path))
-
-
-def empty_result() -> UpdatesResult:
-    return UpdatesResult(
-        has_updates=False,
-        updated_files=[]
-    )
-
-
-def merge_updates(left: UpdatesResult, right: UpdatesResult) -> UpdatesResult:
-    if not right.has_updates:
-        return left
-
-    files = left.updated_files
-
-    for file_path in right.updated_files:
-        files.append(file_path)
-
-    return UpdatesResult(
-        has_updates=True,
-        updated_files=files
-    )
-
-
-def check_file(file_path: str) -> UpdatesResult:
-    current_hash = hash_file(file_path)
-
-    # New file
-    if file_path not in context.files_snapshot:
-        context.files_snapshot[file_path] = current_hash
-
-        files: list[str] = []
-        files.append(file_path)
-
-        return UpdatesResult(
-            has_updates=True,
-            updated_files=files
-        )
-
-    # Modified file
-    if context.files_snapshot[file_path] != current_hash:
-        context.files_snapshot[file_path] = current_hash
-
-        files: list[str] = []
-        files.append(file_path)
-
-        return UpdatesResult(
-            has_updates=True,
-            updated_files=files
-        )
-
-    return empty_result()
-
-
-def scan_directory(dir_path: str) -> UpdatesResult:
-    if not fs.is_dir(dir_path):
-        raise FileError(
-            f"Path '{dir_path}' is not a directory."
-        )
-
-    result = empty_result()
-
-    for name in os.listdir(dir_path):
-        full_path = path.join(dir_path, name)
-
-        if fs.is_dir(full_path):
-            updates = scan_directory(full_path)
-            result = merge_updates(result, updates)
-        else:
-            updates = check_file(full_path)
-            result = merge_updates(result, updates)
-
-    return result
-
-
-def initialize_snapshot() -> None:
-    scan_directory(context.project_path)
-
-
-def report_updates(result: UpdatesResult) -> None:
-    print("")
-    print(f"Changes detected ({len(result.updated_files)}):")
-
-    for file_path in result.updated_files:
-        print(f"  -> {file_path}")
-
-    print("")
-
-
-def reload_project() -> None:
-    print("Reloading project...")
-    print("")
-
-
-def watch_project() -> None:
-    initialize_snapshot()
-
-    print(f"Watching '{context.project_path}'...")
-    print("Waiting for changes...")
-
-    while True:
-        result = scan_directory(context.project_path)
-
-        if result.has_updates:
-            report_updates(result)
-            reload_project()
-
-        time.sleep_ms(1000)
-
-
-def main(argv: list[str]) -> i32:
-    if len(argv) < 2:
-        print("Usage: sync <project>")
-        return 1
-
-    project_path = argv[1]
-
-    if not fs.exists(project_path):
-        print(f"Project path '{project_path}' does not exist.")
-        return 1
-
-    if not fs.is_dir(project_path):
-        print(f"Project path '{project_path}' is not a directory.")
-        return 1
-
-    context.project_path = project_path
-    context.files_snapshot = {}
-
-    watch_project()
+    greet2.unwrap()
 
     return 0

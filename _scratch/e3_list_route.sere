@@ -1,0 +1,48 @@
+class Environ:
+    path: str
+
+    def __init__(self, path: str) -> void:
+        self.path = path
+
+class Response:
+    status: i32
+    body: str
+
+    def __init__(self, status: i32, body: str) -> void:
+        self.status = status
+        self.body = body
+
+@abstract
+class Handler:
+    @abstract
+    def handle(self, environ: Environ) -> Response:
+        pass
+
+class FunctionHandler(Handler):
+    fn: Callable[[Environ], Response]
+
+    def __init__(self, fn: Callable[[Environ], Response]) -> void:
+        self.fn = fn
+
+    def handle(self, environ: Environ) -> Response:
+        return self.fn(environ)
+
+class Route:
+    pattern: str
+    handler: Handler
+
+    def __init__(self, pattern: str, handler: Handler) -> void:
+        self.pattern = pattern
+        self.handler = handler
+
+def hello(environ: Environ) -> Response:
+    return Response(200, "hi " + environ.path)
+
+def main() -> i32:
+    routes: list[Route] = list[Route]()
+    routes.append(Route("/x", FunctionHandler(hello)))
+    route: Route = routes[0]
+    r: Response = route.handler.handle(Environ("/x"))
+    print(r.status)
+    print(r.body)
+    return 0

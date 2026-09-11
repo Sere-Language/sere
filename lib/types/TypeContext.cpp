@@ -485,6 +485,25 @@ const Type* TypeContext::defineAlias(const std::string& name, const Type* underl
   return pointer;
 }
 
+const Type* TypeContext::defineGenericAlias(const std::string& name,
+                                            const Type* underlying,
+                                            std::vector<std::string> typeParams,
+                                            std::vector<const Type*> typeConstraints) {
+  const auto existing = aliases_.find(name);
+  if (existing != aliases_.end()) {
+    return existing->second;
+  }
+  const std::string key = "A:" + name;
+  auto type = std::unique_ptr<Type>(new Type(TypeKind::Alias, name));
+  type->underlying_ = underlying;
+  type->typeParams_ = std::move(typeParams);
+  type->typeConstraints_ = std::move(typeConstraints);
+  const Type* pointer = type.get();
+  interned_.emplace(key, std::move(type));
+  aliases_[name] = pointer;
+  return pointer;
+}
+
 const Type* TypeContext::record(std::string_view name) const {
   const auto found = records_.find(std::string(name));
   if (found == records_.end()) {

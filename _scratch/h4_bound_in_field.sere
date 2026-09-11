@@ -1,0 +1,61 @@
+class Environ:
+    path: str
+
+    def __init__(self, path: str) -> void:
+        self.path = path
+
+class Response:
+    status: i32
+    body: str
+
+    def __init__(self, status: i32, body: str) -> void:
+        self.status = status
+        self.body = body
+
+class Route:
+    pattern: str
+    handler: Callable[[Environ], Response]
+
+    def __init__(self, pattern: str, handler: Callable[[Environ], Response]) -> void:
+        self.pattern = pattern
+        self.handler = handler
+
+class Router:
+    routes: list[Route]
+
+    def __init__(self) -> void:
+        self.routes = list[Route]()
+
+    def add(self, pattern: str, handler: Callable[[Environ], Response]) -> void:
+        self.routes.append(Route(pattern, handler))
+
+    def dispatch(self, environ: Environ) -> Response:
+        i: i64 = 0
+        while i < len(self.routes):
+            route: Route = self.routes[i]
+            if route.pattern == environ.path:
+                return route.handler(environ)
+            i += 1
+        return Response(404, "nope")
+
+class UserApp:
+    greeting: str
+
+    def __init__(self, greeting: str) -> void:
+        self.greeting = greeting
+
+    def hello(self, environ: Environ) -> Response:
+        return Response(200, self.greeting + environ.path)
+
+def main() -> i32:
+    app: UserApp = UserApp("hello:")
+    router: Router = Router()
+    router.add("/x", app.hello)
+    r1: Response = router.dispatch(Environ("/x"))
+    print(r1.status)
+    print(r1.body)
+    r2: Response = router.dispatch(Environ("/x"))
+    print(r2.body)
+    r3: Response = router.dispatch(Environ("/z"))
+    print(r3.status)
+    return 0
