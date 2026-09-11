@@ -233,6 +233,9 @@ private:
   FunctionDef* nestedFunction_ = nullptr;
   std::vector<const Type*>* inferredNestedReturns_ = nullptr;
   std::size_t nestedOuterScope_ = 0;
+  /// Concrete type currently expected for the expression being checked,
+  /// used to infer enum type arguments that payloads alone cannot determine.
+  const Type* expectedExprType_ = nullptr;
 };
 
 } // namespace sere

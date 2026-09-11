@@ -97,6 +97,10 @@ private:
   [[nodiscard]] const Type* intern(const std::string& key, TypeKind kind, std::string name);
   const Type* internPrimitive(std::string name);
   Type* writable(const Type* type);
+  /// Rebuilds `instance`'s methods from `generic` with type arguments applied.
+  void specializeMethods(const Type* generic, const Type* instance);
+  /// Re-specializes methods for every materialized instance of `generic`.
+  void refreshInstanceMethods(const Type* generic);
 
   std::unordered_map<std::string, std::unique_ptr<Type>> interned_{};
   std::unordered_map<std::string, const Type*> primitives_{};

@@ -5509,7 +5509,7 @@ bool IRGenerator::emitInstantiations(const std::vector<const Module*>& modules) 
       subst_[generic->typeParams()[index]] = instance->args()[index];
     }
     subst_[generic->name()] = instance;
-    const ClassDef* source = nullptr;
+    const std::vector<std::unique_ptr<FunctionDef>>* sourceMethods = nullptr;
     for (const Module* module : modules) {
       if (module == nullptr) {
         continue;
@@ -5517,15 +5517,18 @@ bool IRGenerator::emitInstantiations(const std::vector<const Module*>& modules) 
       for (const std::unique_ptr<Stmt>& statement : module->statements()) {
         if (statement->kind() == NodeKind::ClassDef &&
             static_cast<const ClassDef&>(*statement).name() == generic->name()) {
-          source = static_cast<const ClassDef*>(statement.get());
+          sourceMethods = &static_cast<const ClassDef&>(*statement).methods();
+        } else if (statement->kind() == NodeKind::EnumDef &&
+                   static_cast<const EnumDef&>(*statement).name() == generic->name()) {
+          sourceMethods = &static_cast<const EnumDef&>(*statement).methods();
         }
       }
     }
-    if (source == nullptr) {
+    if (sourceMethods == nullptr) {
       subst_.clear();
       continue;
     }
-    for (const std::unique_ptr<FunctionDef>& method : source->methods()) {
+    for (const std::unique_ptr<FunctionDef>& method : *sourceMethods) {
       const int index = instance->methodIndex(method->name());
       if (index < 0) {
         continue;

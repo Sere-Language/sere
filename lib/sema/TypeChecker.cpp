@@ -59,6 +59,22 @@ private:
   std::unordered_map<std::string, const Type*> saved_;
 };
 
+/// Publishes the concrete type expected for the expression being checked so
+/// that enum variant construction can infer type arguments the payloads cannot.
+class ExpectedExprScope {
+public:
+  ExpectedExprScope(const Type*& slot, const Type* value) : slot_(slot), saved_(slot) {
+    slot_ = value;
+  }
+  ~ExpectedExprScope() { slot_ = saved_; }
+  ExpectedExprScope(const ExpectedExprScope&) = delete;
+  ExpectedExprScope& operator=(const ExpectedExprScope&) = delete;
+
+private:
+  const Type*& slot_;
+  const Type* saved_;
+};
+
 [[nodiscard]] std::vector<const Type*>
 resolvedConstraints(const std::vector<std::unique_ptr<TypeExpr>>& expressions) {
   std::vector<const Type*> result;
@@ -216,6 +232,36 @@ resolvedConstraints(const std::vector<std::unique_ptr<TypeExpr>>& expressions) {
     return true;
   }
   return true;
+}
+
+/// Binds a generic record's type parameters from a concrete instance of the same
+/// record, e.g. pattern `Result` with actual `Result[str]` binds `T` to `str`.
+[[nodiscard]] bool bindRecordTypeArgs(const Type* pattern,
+                                      const Type* actual,
+                                      std::unordered_map<std::string, const Type*>& bindings) {
+  if (pattern == nullptr || actual == nullptr) {
+    return false;
+  }
+  actual = actual->canonical();
+  if (!actual->isRecord()) {
+    return false;
+  }
+  const auto baseName = [](std::string_view name) {
+    const auto bracket = name.find('[');
+    return bracket == std::string_view::npos ? name : name.substr(0, bracket);
+  };
+  if (baseName(pattern->name()) != baseName(actual->name()) ||
+      actual->args().size() != pattern->typeParams().size()) {
+    return false;
+  }
+  bool bound = false;
+  for (std::size_t index = 0; index < pattern->typeParams().size(); ++index) {
+    if (bindings.find(pattern->typeParams()[index]) == bindings.end()) {
+      bindings[pattern->typeParams()[index]] = actual->args()[index];
+      bound = true;
+    }
+  }
+  return bound;
 }
 
 [[nodiscard]] bool abstractMethodNeedsOverride(const FunctionDef& method) {
@@ -3739,6 +3785,9 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
               return nullptr;
             }
           }
+          if (expectedExprType_ != nullptr) {
+            (void)bindRecordTypeArgs(objectType, expectedExprType_, bindings);
+          }
           std::vector<const Type*> inferred;
           for (const std::string& param : objectType->typeParams()) {
             const auto found = bindings.find(param);
@@ -4064,6 +4113,7 @@ bool TypeChecker::checkVarDecl(VarDecl& decl) {
           return false;
         }
       } else {
+        ExpectedExprScope expected(expectedExprType_, type->canonical());
         const Type* initType = checkExpr(init);
         if (initType == nullptr) {
           return false;
@@ -4308,6 +4358,7 @@ bool TypeChecker::checkReturn(ReturnStmt& statement, const Type* expectedReturn)
       (value.kind() == NodeKind::DictLiteral && expectedReturn->isDict())) {
     return bindCollectionInit(value, expectedReturn);
   }
+  ExpectedExprScope expected(expectedExprType_, expectedReturn->canonical());
   const Type* actual = checkExpr(value);
   if (actual == nullptr) {
     return false;

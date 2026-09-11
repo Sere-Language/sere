@@ -214,6 +214,7 @@ void TypeContext::addRecordMethod(const Type* record, RecordMethod method) {
   if (Type* writableRecord = writable(record)) {
     writableRecord->methods_.push_back(std::move(method));
   }
+  refreshInstanceMethods(record);
 }
 
 void TypeContext::setRecordBases(const Type* record, std::vector<const Type*> bases) {
@@ -273,10 +274,12 @@ void TypeContext::replaceRecordMethod(const Type* record, RecordMethod method) {
   for (RecordMethod& existing : writableRecord->methods_) {
     if (existing.name == method.name) {
       existing = std::move(method);
+      refreshInstanceMethods(record);
       return;
     }
   }
   writableRecord->methods_.push_back(std::move(method));
+  refreshInstanceMethods(record);
 }
 
 const Type* TypeContext::defineTypeParam(const std::string& name) {
@@ -410,27 +413,58 @@ const Type* TypeContext::instantiate(const Type* generic, const std::vector<cons
   if (Type* writableInstance = writable(instance)) {
     writableInstance->args_ = args;
   }
-  const std::string mangled = mangleTypeArgs(args);
-  for (const RecordMethod& method : generic->methods()) {
-    RecordMethod copy = method;
-    if (method.type != nullptr) {
-      std::vector<const Type*> params;
-      for (const Type* param : method.type->paramTypes()) {
-        const Type* replaced = substitute(param, subst);
-        params.push_back(param == method.type->paramTypes()[0] ? instance : replaced);
-      }
-      if (!params.empty()) {
-        params[0] = instance;
-      }
-      copy.type = functionType(params, method.type->returnType() == generic
-                                           ? instance
-                                           : substitute(method.type->returnType(), subst));
-    }
-    copy.llvmName = generic->name() + mangled + "_" + method.name;
-    addRecordMethod(instance, std::move(copy));
-  }
+  specializeMethods(generic, instance);
   instantiations_.emplace_back(generic, instance);
   return instance;
+}
+
+void TypeContext::specializeMethods(const Type* generic, const Type* instance) {
+  Type* target = writable(instance);
+  if (target == nullptr || generic == nullptr || instance == nullptr) {
+    return;
+  }
+  if (generic->typeParams().empty() || instance->args().size() != generic->typeParams().size()) {
+    return;
+  }
+  std::unordered_map<std::string, const Type*> subst;
+  for (std::size_t index = 0; index < generic->typeParams().size(); ++index) {
+    subst[generic->typeParams()[index]] = instance->args()[index];
+  }
+  const std::string mangled = mangleTypeArgs(instance->args());
+  std::vector<RecordMethod> methods;
+  methods.reserve(generic->methods().size());
+  for (const RecordMethod& method : generic->methods()) {
+    RecordMethod copy = method;
+    if (method.type != nullptr && !method.type->paramTypes().empty()) {
+      std::vector<const Type*> params;
+      params.reserve(method.type->paramTypes().size());
+      for (std::size_t index = 0; index < method.type->paramTypes().size(); ++index) {
+        const Type* param = method.type->paramTypes()[index];
+        params.push_back(index == 0 ? instance : substitute(param, subst));
+      }
+      copy.type = functionType(params,
+                               method.type->returnType() == generic
+                                   ? instance
+                                   : substitute(method.type->returnType(), subst));
+    }
+    copy.llvmName = generic->name() + mangled + "_" + method.name;
+    methods.push_back(std::move(copy));
+  }
+  target->methods_ = std::move(methods);
+}
+
+void TypeContext::refreshInstanceMethods(const Type* generic) {
+  if (generic == nullptr || generic->typeParams().empty()) {
+    return;
+  }
+  // Methods may be collected after an instance was first materialized from a
+  // signature, so re-specialize every existing instance of this generic.
+  const auto instances = instantiations_;
+  for (const auto& entry : instances) {
+    if (entry.first == generic) {
+      specializeMethods(entry.first, entry.second);
+    }
+  }
 }
 
 const FunctionInstantiation*
