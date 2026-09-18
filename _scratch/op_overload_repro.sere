@@ -1,0 +1,17 @@
+class Object:
+    @frozen part: str
+
+    def __init__(self, part: str):
+        self.part = part
+
+    def __add__(self, other: Object) -> Object:
+        return Object(self.part + other.part)
+
+    def __str__(self) -> str:
+        return self.part
+
+def main(argv: list[str]) -> i32:
+    o1 = Object("Hello ")
+    o2 = Object("World")
+    print(o1 + o2)
+    return 0

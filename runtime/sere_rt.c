@@ -1031,6 +1031,23 @@ void* sere_list_concat(void* left, void* right) {
   return out;
 }
 
+void* sere_list_repeat(void* list, int64_t count) {
+  SereList* typed = (SereList*)list;
+  const int64_t stride = typed != NULL ? typed->stride : 1;
+  SereList* out = (SereList*)sere_list_new(stride);
+  if (typed == NULL || count <= 0 || typed->len <= 0) {
+    return out;
+  }
+  // Elements are copied by value; nested sequences therefore alias exactly
+  // like Python's `[x] * n` (the outer list is fresh, the inner objects are shared).
+  for (int64_t repeat = 0; repeat < count; ++repeat) {
+    for (int64_t index = 0; index < typed->len; ++index) {
+      sere_list_push(out, (char*)typed->data + (size_t)(index * typed->stride));
+    }
+  }
+  return out;
+}
+
 void sere_list_insert(void* list, int64_t index, const void* item) {
   SereList* typed = (SereList*)list;
   if (typed == NULL || item == NULL) {

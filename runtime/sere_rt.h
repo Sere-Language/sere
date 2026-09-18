@@ -138,6 +138,7 @@ int32_t sere_parse_none(const char* data, int64_t len);
 
 int32_t sere_list_contains(void* list, const void* item);
 void* sere_list_concat(void* left, void* right);
+void* sere_list_repeat(void* list, int64_t count);
 
 void sere_io_read_line(const char** out_data, int64_t* out_len);
 void sere_io_eprint(const char* data, int64_t len);
