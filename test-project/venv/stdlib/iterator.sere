@@ -1,0 +1,25 @@
+# Iterator[T] is a built-in, single-pass iterator type; no import is required.
+# A function containing yield must declare -> Iterator[T]. Calling it creates
+# a suspended generator. Each iteration resumes it until the next yield.
+#
+# def count(stop: i32) -> Iterator[i32]:
+#     for i in range(stop):
+#         yield i
+#
+# for n in count(3):
+#     print(n)
+#
+# Classes are iterable by defining __iter__(self) -> Iterator[T]. The method
+# may yield values itself or return an iterator created by another function.
+# Iterator values also work in list comprehensions.
+#
+# break preserves the iterator position; a later loop resumes it. Exhausted
+# iterators stay exhausted. Iterator assignments share the same position.
+# Exhaustion releases the coroutine frame. Call it.close() when abandoning
+# a partially consumed iterator, including generators that never started.
+# close() is idempotent and executes cleanup active at the suspended yield.
+# As with other runtime containers, the iterator cell uses the selected GC.
+#
+# yield requires a value assignable to T. A bare return ends the generator;
+# return with a value is invalid. Async generators, yield expressions, and
+# yield from are not supported. Deferred and finally cleanup blocks cannot yield.

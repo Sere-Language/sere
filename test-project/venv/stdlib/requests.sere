@@ -2,7 +2,22 @@
 #   import requests
 #   r = requests.get("https://example.com")
 #   print(r.status_code)
-# Failed requests return status 0 and empty text.
+# Transport failures raise ConnectionError; HTTP errors can be checked with raise_for_status().
+
+class RequestException(Exception):
+    pass
+
+class ConnectionError(RequestException):
+    pass
+
+class HTTPError(RequestException):
+    status_code: i32
+    url: str
+
+    def __init__(self, status_code: i32, url: str) -> void:
+        self.message = "HTTP " + str(status_code) + " for " + url
+        self.status_code = status_code
+        self.url = url
 
 extern "C" "sere_http_request"
 def _request(method: str, url: str, body: str, timeout_ms: i32) -> str
@@ -18,12 +33,19 @@ class Response:
         self.status_code = status_code
         self.url = url
         self.text = text
+    def raise_for_status(self) -> void:
+        if self.status_code >= 400:
+            raise HTTPError(self.status_code, self.url)
+
     def ok(self) -> bool:
         return self.status_code >= 200 and self.status_code < 300
 
 def request(method: str, url: str, data: str = "", timeout_ms: i32 = 30000) -> Response:
     text: str = _request(method, url, data, timeout_ms)
-    return Response(_last_status(), url, text)
+    status: i32 = _last_status()
+    if status == 0:
+        raise ConnectionError("request failed for " + url)
+    return Response(status, url, text)
 
 def get(url: str, timeout_ms: i32 = 30000) -> Response:
     return request("GET", url, "", timeout_ms)

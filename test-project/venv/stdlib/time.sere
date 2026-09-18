@@ -5,3 +5,6 @@ def now_ms() -> i64
 
 extern "C" "sere_time_sleep_ms"
 def sleep_ms(ms: i32) -> void
+
+extern "C" "sere_time_get_timestamp"
+def get_timestamp() -> str
