@@ -25,6 +25,7 @@ void printUsage(std::string& error) {
       "  login [token]       Sign in to the Sere registry (no token: show status)\n"
       "  logout              Forget the saved registry token\n"
       "  publish             Pack this library project and upload it to the registry\n"
+      "  add <name>[@ver]    Install a registry package into ./libs\n"
       "  refresh-bin         Copy this compiler into ./bin (stdlib and runtime too)\n"
       "  update              Install the latest GitHub portable release or refreshed asset\n"
       "  update-local        Copy this compiler into %LOCALAPPDATA%\\Programs\\Sere if it differs, "
@@ -60,7 +61,8 @@ void printUsage(std::string& error) {
       "  --build-lib [file]  Same as pack\n"
       "  --publish           Same as publish\n"
       "  --token <token>     Registry token for this command (sere login, publish)\n"
-      "  --dry-run           With publish: list the upload and send nothing\n"
+      "  --force             With add: replace a package already in libs/\n"
+      "  --dry-run           With publish or add: describe the work, change nothing\n"
       "  --host <shell>      Shell to nest: powershell, cmd, bash (shell command)\n"
       "  --link <lib>        Link an extra native C/C++ library into the program\n"
       "  --color=<mode>      Color diagnostics: auto, always, never\n"
@@ -115,6 +117,10 @@ void printUsage(std::string& error) {
   }
   if (argument == "publish") {
     command = ProjectCommand::Publish;
+    return true;
+  }
+  if (argument == "add" || argument == "install") {
+    command = ProjectCommand::Add;
     return true;
   }
   if (argument == "build-installer") {
@@ -260,6 +266,10 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
       options.dryRun = true;
       continue;
     }
+    if (argument == "--force") {
+      options.force = true;
+      continue;
+    }
     if (argument == "--host") {
       if (index + 1 >= argc) {
         error = "missing shell name after --host";
@@ -367,6 +377,10 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
         ++index;
         options.authToken = argv[index];
       }
+      if (command == ProjectCommand::Add && index + 1 < argc && argv[index + 1][0] != '-') {
+        ++index;
+        options.packageSpec = argv[index];
+      }
       continue;
     }
     if (options.projectCommand == ProjectCommand::Run) {
@@ -385,6 +399,10 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
     }
     if (options.projectCommand == ProjectCommand::Login && options.authToken.empty()) {
       options.authToken = std::string(argument);
+      continue;
+    }
+    if (options.projectCommand == ProjectCommand::Add && options.packageSpec.empty()) {
+      options.packageSpec = std::string(argument);
       continue;
     }
     if (options.projectCommand != ProjectCommand::None) {

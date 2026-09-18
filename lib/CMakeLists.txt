@@ -73,6 +73,7 @@ add_library(sere_driver
   driver/Project.cpp
   driver/ProjectInit.cpp
   driver/Registry.cpp
+  driver/Packages.cpp
   driver/Library.cpp
   driver/ProjectShell.cpp
   driver/Frontend.cpp

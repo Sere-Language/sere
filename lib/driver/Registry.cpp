@@ -11,6 +11,7 @@
 #include "sere/Version.h"
 #include "sere/driver/Project.h"
 
+#include <llvm/Support/ErrorOr.h>
 #include <llvm/Support/JSON.h>
 #include <llvm/Support/Program.h>
 
@@ -221,14 +222,44 @@ struct HttpRequest {
   std::string url;
   std::vector<std::string> headers;
   std::string body;
+  /// 0 uses the default cap.
+  std::size_t maxBytes = 0;
 };
 
-struct HttpResponse {
-  bool reached = false;
-  int status = 0;
-  std::string body;
-  std::string error;
-};
+/// Appends the headers of every response block, keeping only the last block so
+/// redirects do not mask the final response.
+void collectHeaders(const std::string& raw, RegistryResponse& response) {
+  std::vector<std::pair<std::string, std::string>> current;
+  std::size_t position = 0;
+  while (position <= raw.size()) {
+    const std::size_t end = raw.find('\n', position);
+    std::string line =
+        raw.substr(position, end == std::string::npos ? std::string::npos : end - position);
+    position = end == std::string::npos ? raw.size() + 1 : end + 1;
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+    if (line.empty()) {
+      if (!current.empty()) {
+        response.headers = std::move(current);
+        current.clear();
+      }
+      continue;
+    }
+    const std::size_t colon = line.find(':');
+    if (colon == std::string::npos) {
+      continue;
+    }
+    std::string name = line.substr(0, colon);
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) {
+      return static_cast<char>(std::tolower(ch));
+    });
+    current.emplace_back(trimCopy(name), trimCopy(line.substr(colon + 1)));
+  }
+  if (!current.empty()) {
+    response.headers = std::move(current);
+  }
+}
 
 #ifdef _WIN32
 
@@ -307,11 +338,11 @@ private:
   HINTERNET handle_ = nullptr;
 };
 
-[[nodiscard]] HttpResponse sendWithWinHttp(const HttpRequest& request) {
+[[nodiscard]] RegistryResponse sendWithWinHttp(const HttpRequest& request) {
   constexpr DWORD HostLength = 256;
   constexpr DWORD PathLength = 2048;
   constexpr DWORD ExtraLength = 1024;
-  HttpResponse response;
+  RegistryResponse response;
   const std::wstring wideUrl = widen(request.url);
   const std::wstring wideMethod = widen(request.method);
   const std::wstring userAgent = widen("Sere/" SERE_VERSION_STRING);
@@ -356,7 +387,8 @@ private:
   wchar_t fullPath[3072] = {};
   if (parts.dwUrlPathLength > 0) {
     wcsncat_s(fullPath, std::size(fullPath), path, parts.dwUrlPathLength);
-  }  if (parts.dwExtraInfoLength > 0) {
+  }
+  if (parts.dwExtraInfoLength > 0) {
     wcsncat_s(fullPath, std::size(fullPath), extra, parts.dwExtraInfoLength);
   }
   WinHttpHandle handle(WinHttpOpenRequest(connect.get(), wideMethod.c_str(), fullPath, nullptr,
@@ -392,7 +424,20 @@ private:
   }
   response.reached = true;
   response.status = static_cast<int>(status);
-  while (response.body.size() < MaxResponseBytes) {
+  DWORD rawSize = 0;
+  WinHttpQueryHeaders(handle.get(), WINHTTP_QUERY_RAW_HEADERS_CRLF, WINHTTP_HEADER_NAME_BY_INDEX,
+                      WINHTTP_NO_OUTPUT_BUFFER, &rawSize, WINHTTP_NO_HEADER_INDEX);
+  if (rawSize > 0) {
+    std::wstring raw(static_cast<std::size_t>(rawSize) / sizeof(wchar_t), L'\0');
+    if (WinHttpQueryHeaders(handle.get(), WINHTTP_QUERY_RAW_HEADERS_CRLF,
+                            WINHTTP_HEADER_NAME_BY_INDEX, raw.data(), &rawSize,
+                            WINHTTP_NO_HEADER_INDEX) != FALSE) {
+      raw.resize(std::min(raw.size(), static_cast<std::size_t>(rawSize) / sizeof(wchar_t)));
+      collectHeaders(narrow(raw.c_str(), static_cast<int>(raw.size())), response);
+    }
+  }
+  const std::size_t limit = request.maxBytes == 0 ? MaxResponseBytes : request.maxBytes;
+  while (response.body.size() < limit) {
     DWORD available = 0;
     if (WinHttpQueryDataAvailable(handle.get(), &available) == FALSE || available == 0) {
       break;
@@ -412,10 +457,10 @@ private:
 
 #else
 
-[[nodiscard]] HttpResponse sendWithCurl(const HttpRequest& request) {
-  HttpResponse response;
-  const std::optional<std::string> curl = llvm::sys::findProgramByName("curl");
-  if (!curl.has_value()) {
+[[nodiscard]] RegistryResponse sendWithCurl(const HttpRequest& request) {
+  RegistryResponse response;
+  const llvm::ErrorOr<std::string> curl = llvm::sys::findProgramByName("curl");
+  if (!curl) {
     response.error = "curl is required to reach the registry on this platform";
     return response;
   }
@@ -428,8 +473,9 @@ private:
     return response;
   }
   const std::filesystem::path bodyPath = tempDir / "body.bin";
-  const std::filesystem::path responsePath = tempDir / "response.json";
+  const std::filesystem::path responsePath = tempDir / "response.bin";
   const std::filesystem::path statusPath = tempDir / "status.txt";
+  const std::filesystem::path headersPath = tempDir / "headers.txt";
   const std::string statusFile = statusPath.string();
   std::vector<std::string> owned{*curl, "-sS", "--max-time", "180", "-X", request.method,
                                  "-H", "Expect:"};
@@ -448,6 +494,8 @@ private:
     owned.push_back("--data-binary");
     owned.push_back("@" + bodyPath.string());
   }
+  owned.push_back("-D");
+  owned.push_back(headersPath.string());
   owned.push_back("-o");
   owned.push_back(responsePath.string());
   owned.push_back("-w");
@@ -471,6 +519,7 @@ private:
   }
   response.body = readFileBytes(responsePath);
   const std::string status = trimCopy(readFileBytes(statusPath));
+  const std::string rawHeaders = readFileBytes(headersPath);
   std::filesystem::remove_all(tempDir, fsError);
   if (status.empty()) {
     response.error = "curl did not report an HTTP status";
@@ -478,12 +527,16 @@ private:
   }
   response.reached = true;
   response.status = std::atoi(status.c_str());
+  collectHeaders(rawHeaders, response);
+  if (request.maxBytes != 0 && response.body.size() > request.maxBytes) {
+    response.body.resize(request.maxBytes);
+  }
   return response;
 }
 
 #endif
 
-[[nodiscard]] HttpResponse httpRequest(const HttpRequest& request) {
+[[nodiscard]] RegistryResponse httpRequest(const HttpRequest& request) {
 #ifdef _WIN32
   return sendWithWinHttp(request);
 #else
@@ -645,6 +698,28 @@ bool isPublishTokenShape(std::string_view token) {
   return splitPublishToken(token).has_value();
 }
 
+const std::string* registryHeader(const RegistryResponse& response, std::string_view name) {
+  std::string wanted(name);
+  std::transform(wanted.begin(), wanted.end(), wanted.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
+  for (const std::pair<std::string, std::string>& header : response.headers) {
+    if (header.first == wanted) {
+      return &header.second;
+    }
+  }
+  return nullptr;
+}
+
+RegistryResponse registryHttpGet(const std::string& url, std::size_t maxBytes) {
+  HttpRequest request;
+  request.method = "GET";
+  request.url = url;
+  request.maxBytes = maxBytes;
+  request.headers = {"Accept: application/json, application/octet-stream", "User-Agent: sere-cli"};
+  return httpRequest(request);
+}
+
 std::string maskPublishToken(std::string_view token) {
   const std::optional<std::pair<std::string_view, std::string_view>> parts =
       splitPublishToken(token);
@@ -783,7 +858,7 @@ int publishCommand(const CompilerOptions& options) {
                      "Accept: application/json",
                      "User-Agent: sere-cli",
                      "Content-Type: multipart/form-data; boundary=" + boundary};
-  const HttpResponse response = httpRequest(request);
+  const RegistryResponse response = httpRequest(request);
   if (!response.reached) {
     llvm::errs() << "error: " << response.error << '\n';
     return 1;
@@ -805,7 +880,7 @@ int publishCommand(const CompilerOptions& options) {
   std::string install;
   std::string page;
   std::string checksum;
-  if (const llvm::Expected<llvm::json::Value> parsed = llvm::json::parse(response.body)) {
+  if (llvm::Expected<llvm::json::Value> parsed = llvm::json::parse(response.body)) {
     if (const llvm::json::Object* object = parsed->getAsObject()) {
       const llvm::json::Object* published = nullptr;
       if (const llvm::json::Value* value = object->get("published")) {

@@ -10,10 +10,12 @@
 #include "sere/driver/Frontend.h"
 #include "sere/driver/Installer.h"
 #include "sere/driver/Library.h"
+#include "sere/driver/Packages.h"
 #include "sere/driver/Prelude.h"
 #include "sere/driver/Project.h"
 #include "sere/driver/ProjectInit.h"
 #include "sere/driver/ProjectShell.h"
+#include "sere/driver/Registry.h"
 #include "sere/driver/Toolchain.h"
 #include "sere/lex/Lexer.h"
 #include "sere/lex/Token.h"
@@ -703,6 +705,9 @@ int Compiler::run(const CompilerOptions& options) {
   }
   if (options.projectCommand == ProjectCommand::Publish) {
     return publishCommand(options);
+  }
+  if (options.projectCommand == ProjectCommand::Add) {
+    return addCommand(options);
   }
   if (options.projectCommand == ProjectCommand::BuildInstaller) {
     return buildInstaller(options);

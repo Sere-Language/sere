@@ -28,6 +28,7 @@ enum class ProjectCommand {
   Login,
   Logout,
   Publish,
+  Add,
 };
 
 struct CompilerOptions {
@@ -51,7 +52,11 @@ struct CompilerOptions {
   std::string shellHost;
   /// Registry publish token: `sere login <token>` or `--token`.
   std::string authToken;
-  /// `sere publish --dry-run`: describe the upload without sending it.
+  /// `sere add <name>[@<version>]`.
+  std::string packageSpec;
+  /// `sere add --force`: replace an existing install in libs/.
+  bool force = false;
+  /// `--dry-run`: describe the registry work without sending or writing.
   bool dryRun = false;
   std::vector<std::string> programArgs;
   std::vector<std::filesystem::path> linkLibraries;

@@ -13,6 +13,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace sere {
 
@@ -34,6 +36,26 @@ inline constexpr const char* DefaultRegistryUrl = "https://sere-lang.com";
 
 /// Registry base URL with any trailing slash removed.
 [[nodiscard]] std::string registryBaseUrl();
+
+/// One HTTP response from the registry.
+struct RegistryResponse {
+  /// False when the request never completed; see `error`.
+  bool reached = false;
+  int status = 0;
+  /// Response bytes (JSON, an error page, or a downloaded archive).
+  std::string body;
+  /// Transport failure message, empty when `reached` is true.
+  std::string error;
+  /// Response header names lowercased, in the order they arrived.
+  std::vector<std::pair<std::string, std::string>> headers;
+};
+
+/// Case-insensitive header lookup; nullptr when the header is absent.
+[[nodiscard]] const std::string* registryHeader(const RegistryResponse& response,
+                                                std::string_view name);
+
+/// `GET url`. `maxBytes` caps the body (0 uses the default cap).
+[[nodiscard]] RegistryResponse registryHttpGet(const std::string& url, std::size_t maxBytes = 0);
 
 /// True when `token` looks like a registry publish token (`sere_<prefix>_<secret>`).
 [[nodiscard]] bool isPublishTokenShape(std::string_view token);
