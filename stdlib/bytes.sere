@@ -136,6 +136,9 @@ class Buffer:
     def hex(self) -> str:
         return hex(self.data)
 
+    def __str__(self) -> str:
+        return str(self.data[0:min(len(self.data), 128)])
+
     def to_str(self) -> str:
         return to_str(self.data)
 

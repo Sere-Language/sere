@@ -696,6 +696,10 @@ const std::vector<std::unique_ptr<Module>>& Frontend::importedModules() const {
   return imported_;
 }
 
+const std::vector<std::unique_ptr<SourceManager>>& Frontend::importedSources() const {
+  return importSources_;
+}
+
 const std::vector<std::filesystem::path>& Frontend::importedModulePaths() const {
   return importPaths_;
 }

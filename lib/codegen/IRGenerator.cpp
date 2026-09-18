@@ -6,6 +6,7 @@
 #include "sere/ast/Syntax.h"
 #include "sere/diag/DiagnosticEngine.h"
 #include "sere/source/SourceLocation.h"
+#include "sere/source/SourceManager.h"
 #include "sere/types/Intrinsic.h"
 #include "sere/types/Type.h"
 #include "sere/types/TypeContext.h"
@@ -38,6 +39,7 @@
 #include <queue>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <unordered_set>
 #include <vector>
 
@@ -200,12 +202,63 @@ void matchCallArgs(llvm::IRBuilder<>& builder,
          structType->getElementType(1)->isIntegerTy(64);
 }
 
+/// Points diagnostics at another source file for the duration of a scope, then
+/// restores the previous file. Codegen spans several modules, so lowering an
+/// imported module must attribute its errors to that module's file.
+class DiagnosticFileScope {
+public:
+  DiagnosticFileScope(DiagnosticEngine& diagnostics, const SourceManager* source)
+      : diagnostics_(&diagnostics), previous_(diagnostics.source()) {
+    diagnostics.setSource(source);
+  }
+
+  DiagnosticFileScope(const DiagnosticFileScope&) = delete;
+  DiagnosticFileScope& operator=(const DiagnosticFileScope&) = delete;
+
+  ~DiagnosticFileScope() { diagnostics_->setSource(previous_); }
+
+private:
+  DiagnosticEngine* diagnostics_;
+  const SourceManager* previous_;
+};
+
+/// First line of a multi-line toolchain message, for diagnostics that quote it.
+[[nodiscard]] std::string firstLineOf(std::string_view text) {
+  const std::size_t newline = text.find('\n');
+  std::string line(text.substr(0, newline == std::string_view::npos ? text.size() : newline));
+  while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
+    line.pop_back();
+  }
+  return line;
+}
+
 } // namespace
 
 IRGenerator::IRGenerator(llvm::LLVMContext& context,
                          DiagnosticEngine& diagnostics,
                          TypeContext& types)
     : context_(&context), diagnostics_(&diagnostics), types_(&types) {
+}
+
+void IRGenerator::setModuleSources(
+    std::unordered_map<const Module*, const SourceManager*> sources) {
+  moduleSources_ = std::move(sources);
+}
+
+void IRGenerator::reportCodegenFailure(const std::string& reason) {
+  const std::unique_ptr<DiagnosticFileScope> scope =
+      lastFunctionSource_ == nullptr
+          ? std::unique_ptr<DiagnosticFileScope>()
+          : std::make_unique<DiagnosticFileScope>(*diagnostics_, lastFunctionSource_);
+  if (lastFunction_ != nullptr) {
+    diagnostics_->error(lastFunction_->range(),
+                        "cannot generate code for '" + lastFunction_->name() + "': " + reason);
+    diagnostics_->help(
+        "this is a compiler bug rather than a mistake in your code; please report it");
+    return;
+  }
+  diagnostics_->error("cannot generate code: " + reason);
+  diagnostics_->help("this is a compiler bug rather than a mistake in your code; please report it");
 }
 
 const Type* IRGenerator::resolveType(const Type* type) {
@@ -4057,35 +4110,45 @@ bool IRGenerator::emitWhile(llvm::IRBuilder<>& builder,
 }
 
 llvm::Value* IRGenerator::emitRange(llvm::IRBuilder<>& builder, const CallExpr& expr) {
-  llvm::Value* start = builder.getInt32(0);
-  llvm::Value* stop = emitExpr(builder, *expr.arguments()[0]);
-  llvm::Value* step = builder.getInt32(1);
-  if (expr.arguments().size() >= 2) {
-    start = stop;
-    stop = emitExpr(builder, *expr.arguments()[1]);
+  // `range()` is typed as a list of the widest bound, so the counter and the
+  // pushed elements follow that width instead of always being i32.
+  const Type* rangeType = resolveType(expr.resolvedType());
+  const Type* element = rangeType == nullptr ? nullptr : rangeType->elementType();
+  if (element == nullptr) {
+    element = types_->i32Type();
   }
-  if (expr.arguments().size() == 3) {
-    step = emitExpr(builder, *expr.arguments()[2]);
-  }
+  llvm::Type* indexType = lower(element);
+  const auto bound = [&](std::size_t argumentIndex, std::uint64_t fallback) -> llvm::Value* {
+    if (argumentIndex >= expr.arguments().size()) {
+      return llvm::ConstantInt::get(indexType, fallback);
+    }
+    const Expr& argument = *expr.arguments()[argumentIndex];
+    return emitCoerce(builder, emitExpr(builder, argument), argument.resolvedType(), element);
+  };
+  const bool startsAtZero = expr.arguments().size() < 2;
+  llvm::Value* start = startsAtZero ? llvm::ConstantInt::get(indexType, 0) : bound(0, 0);
+  llvm::Value* stop = startsAtZero ? bound(0, 0) : bound(1, 0);
+  llvm::Value* step =
+      expr.arguments().size() == 3 ? bound(2, 1) : llvm::ConstantInt::get(indexType, 1);
   llvm::Function* newFn = runtimeDecl("sere_list_new", builder.getPtrTy(), {builder.getInt64Ty()});
   llvm::Function* pushFn =
       runtimeDecl("sere_list_push", builder.getVoidTy(), {builder.getPtrTy(), builder.getPtrTy()});
-  llvm::Value* list = builder.CreateCall(newFn, {builder.getInt64(4)});
+  llvm::Value* list = builder.CreateCall(newFn, {builder.getInt64(valueSize(element))});
   llvm::Function* function = builder.GetInsertBlock()->getParent();
-  llvm::Value* index = builder.CreateAlloca(builder.getInt32Ty(), nullptr, "range.i");
+  llvm::Value* index = builder.CreateAlloca(indexType, nullptr, "range.i");
   builder.CreateStore(start, index);
   llvm::BasicBlock* header = llvm::BasicBlock::Create(*context_, "range.cond", function);
   llvm::BasicBlock* body = llvm::BasicBlock::Create(*context_, "range.body", function);
   llvm::BasicBlock* exit = llvm::BasicBlock::Create(*context_, "range.end", function);
   builder.CreateBr(header);
   builder.SetInsertPoint(header);
-  llvm::Value* current = builder.CreateLoad(builder.getInt32Ty(), index);
-  llvm::Value* positive = builder.CreateICmpSGT(step, builder.getInt32(0));
+  llvm::Value* current = builder.CreateLoad(indexType, index);
+  llvm::Value* positive = builder.CreateICmpSGT(step, llvm::ConstantInt::get(indexType, 0));
   llvm::Value* fwd = builder.CreateICmpSLT(current, stop);
   llvm::Value* back = builder.CreateICmpSGT(current, stop);
   builder.CreateCondBr(builder.CreateSelect(positive, fwd, back), body, exit);
   builder.SetInsertPoint(body);
-  llvm::Value* slot = builder.CreateAlloca(builder.getInt32Ty(), nullptr, "range.el");
+  llvm::Value* slot = builder.CreateAlloca(indexType, nullptr, "range.el");
   builder.CreateStore(current, slot);
   builder.CreateCall(pushFn, {list, slot});
   builder.CreateStore(builder.CreateAdd(current, step), index);
@@ -4278,27 +4341,38 @@ bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
   if (iterable.kind() == NodeKind::CallExpr &&
       static_cast<const CallExpr&>(iterable).intrinsic() == IntrinsicKind::Range) {
     const auto& range = static_cast<const CallExpr&>(iterable);
-    llvm::Value* start = builder.getInt32(0);
-    llvm::Value* stop = emitExpr(builder, *range.arguments()[0]);
-    llvm::Value* step = builder.getInt32(1);
-    if (range.arguments().size() >= 2) {
-      start = stop;
-      stop = emitExpr(builder, *range.arguments()[1]);
+    // The loop variable is as wide as the widest bound: sema types `range()` as
+    // a list of that element type, so comparing an i64 bound against an i32
+    // counter (and vice versa) must not happen here.
+    const Type* iterableType = resolveType(iterable.resolvedType());
+    const Type* element = iterableType == nullptr ? nullptr : iterableType->elementType();
+    if (element == nullptr) {
+      element = types_->i32Type();
     }
-    if (range.arguments().size() == 3) {
-      step = emitExpr(builder, *range.arguments()[2]);
-    }
-    llvm::Value* index = builder.CreateAlloca(builder.getInt32Ty(), nullptr, statement.name());
+    llvm::Type* indexType = lower(element);
+    const auto bound = [&](std::size_t argumentIndex, std::uint64_t fallback) -> llvm::Value* {
+      if (argumentIndex >= range.arguments().size()) {
+        return llvm::ConstantInt::get(indexType, fallback);
+      }
+      const Expr& argument = *range.arguments()[argumentIndex];
+      return emitCoerce(builder, emitExpr(builder, argument), argument.resolvedType(), element);
+    };
+    const bool startsAtZero = range.arguments().size() < 2;
+    llvm::Value* start = startsAtZero ? llvm::ConstantInt::get(indexType, 0) : bound(0, 0);
+    llvm::Value* stop = startsAtZero ? bound(0, 0) : bound(1, 0);
+    llvm::Value* step =
+        range.arguments().size() == 3 ? bound(2, 1) : llvm::ConstantInt::get(indexType, 1);
+    llvm::Value* index = builder.CreateAlloca(indexType, nullptr, statement.name());
     builder.CreateStore(start, index);
-    rememberLocal(statement.name(), index, types_->i32Type());
+    rememberLocal(statement.name(), index, element);
     llvm::BasicBlock* header = llvm::BasicBlock::Create(*context_, "for.cond", function);
     llvm::BasicBlock* body = llvm::BasicBlock::Create(*context_, "for.body", function);
     llvm::BasicBlock* exit = llvm::BasicBlock::Create(*context_, "for.end", function);
     llvm::BasicBlock* increment = llvm::BasicBlock::Create(*context_, "for.next", function);
     builder.CreateBr(header);
     builder.SetInsertPoint(header);
-    llvm::Value* current = builder.CreateLoad(builder.getInt32Ty(), index);
-    llvm::Value* positive = builder.CreateICmpSGT(step, builder.getInt32(0));
+    llvm::Value* current = builder.CreateLoad(indexType, index);
+    llvm::Value* positive = builder.CreateICmpSGT(step, llvm::ConstantInt::get(indexType, 0));
     llvm::Value* fwd = builder.CreateICmpSLT(current, stop);
     llvm::Value* back = builder.CreateICmpSGT(current, stop);
     builder.CreateCondBr(builder.CreateSelect(positive, fwd, back), body, exit);
@@ -4313,7 +4387,7 @@ bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
       builder.CreateBr(increment);
     builder.SetInsertPoint(increment);
     {
-      llvm::Value* now = builder.CreateLoad(builder.getInt32Ty(), index);
+      llvm::Value* now = builder.CreateLoad(indexType, index);
       builder.CreateStore(builder.CreateAdd(now, step), index);
       builder.CreateBr(header);
     }
@@ -5897,6 +5971,8 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
   llvm::BasicBlock* entry = llvm::BasicBlock::Create(*context_, "entry", llvmFn);
   llvm::IRBuilder<> builder(entry);
   currentFunction_ = &function;
+  lastFunction_ = &function;
+  lastFunctionSource_ = diagnostics_->source();
   locals_.clear();
   dropStack_.clear();
   loops_.clear();
@@ -6112,9 +6188,21 @@ std::unique_ptr<llvm::Module> IRGenerator::emit(const Module& ast,
     }
     return true;
   };
+  // Lowering an imported module switches the diagnostic source to that module's
+  // file, so codegen errors name the file the code actually came from.
+  const auto enterModule = [this](const Module* source) {
+    const auto found = moduleSources_.find(source);
+    const SourceManager* manager = found == moduleSources_.end() ? nullptr : found->second;
+    return manager == nullptr ? std::unique_ptr<DiagnosticFileScope>()
+                              : std::make_unique<DiagnosticFileScope>(*diagnostics_, manager);
+  };
   if (imported != nullptr) {
     for (const Module* extra : *imported) {
-      if (extra != nullptr && !emitModuleFns(*extra)) {
+      if (extra == nullptr) {
+        continue;
+      }
+      const std::unique_ptr<DiagnosticFileScope> scope = enterModule(extra);
+      if (!emitModuleFns(*extra)) {
         return nullptr;
       }
     }
@@ -6146,7 +6234,7 @@ std::unique_ptr<llvm::Module> IRGenerator::emit(const Module& ast,
   std::string verifyError;
   llvm::raw_string_ostream errorStream(verifyError);
   if (llvm::verifyModule(*module, &errorStream)) {
-    diagnostics_->error("LLVM IR verification failed: " + errorStream.str());
+    reportCodegenFailure(firstLineOf(errorStream.str()));
     return nullptr;
   }
   module_ = nullptr;

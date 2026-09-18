@@ -279,6 +279,22 @@ resolvedConstraints(const std::vector<std::unique_ptr<TypeExpr>>& expressions) {
   return !sawCode;
 }
 
+/// Integer type of a `range()` sequence: the widest of its bounds, so
+/// `range(i64_start, i64_stop)` yields i64 elements instead of truncating them.
+[[nodiscard]] const Type* rangeElementType(TypeContext& types,
+                                           const std::vector<const Type*>& bounds) {
+  for (const Type* bound : bounds) {
+    if (bound == nullptr) {
+      continue;
+    }
+    const Type* canonical = bound->canonical();
+    if (canonical->isNamed("i64") || canonical->isNamed("u64")) {
+      return types.i64Type();
+    }
+  }
+  return types.i32Type();
+}
+
 /// True when a value of this type has a textual form, so `s + value` can
 /// concatenate it implicitly (mirroring interpolated-string conversion).
 [[nodiscard]] bool isStringifiable(const Type* type) {
@@ -2665,7 +2681,13 @@ const Type* TypeChecker::iterableElementType(Expr& iterable) {
   }
   if (iterable.kind() == NodeKind::CallExpr &&
       static_cast<const CallExpr&>(iterable).intrinsic() == IntrinsicKind::Range) {
-    return types_->i32Type();
+    const auto& range = static_cast<const CallExpr&>(iterable);
+    std::vector<const Type*> bounds;
+    bounds.reserve(range.arguments().size());
+    for (const std::unique_ptr<Expr>& argument : range.arguments()) {
+      bounds.push_back(argument->resolvedType());
+    }
+    return rangeElementType(*types_, bounds);
   }
   diagnostics_->error(iterable.range(),
                       "for-in requires a list, array, str, dict, range(), or __iter__, found " +
@@ -2935,7 +2957,7 @@ const Type* TypeChecker::checkIntrinsicCall(CallExpr& expr, IntrinsicKind kind) 
     } else {
       expr.setParamNames({"start", "stop", "step"});
     }
-    result = types_->listType(types_->i32Type());
+    result = types_->listType(rangeElementType(*types_, valueTypes));
   } else if (kind == IntrinsicKind::Print) {
     if (!typeArgs.empty()) {
       diagnostics_->error(expr.range(), "print() does not take type arguments");

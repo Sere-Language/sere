@@ -540,6 +540,20 @@ int compileInput(const CompilerOptions& options) {
   for (const std::unique_ptr<Module>& extra : frontend.importedModules()) {
     imported.push_back(extra.get());
   }
+  std::unordered_map<const Module*, const SourceManager*> moduleSources;
+  if (frontend.source() != nullptr) {
+    moduleSources[frontend.module()] = frontend.source();
+  }
+  const std::vector<std::unique_ptr<Module>>& importedModules = frontend.importedModules();
+  const std::vector<std::unique_ptr<SourceManager>>& importedSources =
+      frontend.importedSources();
+  for (std::size_t index = 0; index < importedModules.size() && index < importedSources.size();
+       ++index) {
+    if (importedModules[index] != nullptr && importedSources[index] != nullptr) {
+      moduleSources[importedModules[index].get()] = importedSources[index].get();
+    }
+  }
+  generator.setModuleSources(std::move(moduleSources));
   std::unique_ptr<llvm::Module> module =
       generator.emit(*frontend.module(), options.inputPath.string(), &imported);
   if (module == nullptr || frontend.diagnostics().hasErrors()) {

@@ -37,6 +37,8 @@ public:
   [[nodiscard]] TypeChecker* checker();
   [[nodiscard]] const TypeChecker* checker() const;
   [[nodiscard]] const std::vector<std::unique_ptr<Module>>& importedModules() const;
+  /// Source file of each module in importedModules(), in the same order.
+  [[nodiscard]] const std::vector<std::unique_ptr<SourceManager>>& importedSources() const;
   [[nodiscard]] std::vector<std::string> importedModuleNames() const;
   [[nodiscard]] const std::vector<std::filesystem::path>& importedModulePaths() const;
   [[nodiscard]] const std::vector<MacroUse>& macroUses() const;

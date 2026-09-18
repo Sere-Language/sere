@@ -29,6 +29,7 @@ class Value;
 namespace sere {
 
 class DiagnosticEngine;
+class SourceManager;
 
 class IRGenerator {
 public:
@@ -39,11 +40,16 @@ public:
        const std::string& moduleName,
        const std::vector<const Module*>* imported = nullptr);
 
+  /// File each module was parsed from. Codegen switches the diagnostic source
+  /// while lowering a module so errors in an imported module name that file
+  /// instead of the entry file.
+  void setModuleSources(std::unordered_map<const Module*, const SourceManager*> sources);
+
 private:
   llvm::Type* lower(const Type* type);
   llvm::StructType* closureEnvironmentType(const FunctionDef& function);
   llvm::Value* emitAnyTypeMatch(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* target);
-  std::uint64_t valueSize(const Type* type);
+  [[nodiscard]] std::uint64_t valueSize(const Type* type);
   llvm::Function*
   runtimeDecl(const char* name, llvm::Type* returnType, const std::vector<llvm::Type*>& params);
   llvm::FunctionType* llvmFunctionType(const FunctionDef& function);
@@ -236,6 +242,9 @@ private:
   bool emitMatch(llvm::IRBuilder<>& builder, const MatchStmt& statement, const Type* returnType);
   void emitErrorCheck(llvm::IRBuilder<>& builder);
   void emitPointerCheck(llvm::IRBuilder<>& builder, llvm::Value* pointer);
+  /// Reports a failed LLVM module verification against the Sere function that
+  /// was being lowered, instead of dumping the generated IR.
+  void reportCodegenFailure(const std::string& reason);
   void appendDefaultArgs(llvm::IRBuilder<>& builder,
                          std::vector<llvm::Value*>& args,
                          const FunctionDef& function,
@@ -263,7 +272,13 @@ private:
   std::unordered_map<std::string, llvm::Value*> globals_{};
   llvm::Function* moduleInitFn_ = nullptr;
   std::unordered_map<std::string, llvm::Value*> decoratorSlots_{};
+  std::unordered_map<const Module*, const SourceManager*> moduleSources_{};
   const FunctionDef* currentFunction_ = nullptr;
+  /// Last function whose body was lowered, kept after currentFunction_ clears so
+  /// a module-level verification failure can point at real Sere code.
+  const FunctionDef* lastFunction_ = nullptr;
+  /// Source file that lastFunction_ came from, so the failure points at it.
+  const SourceManager* lastFunctionSource_ = nullptr;
   std::vector<std::pair<llvm::Value*, const Type*>> dropStack_{};
   std::vector<std::pair<llvm::BasicBlock*, llvm::BasicBlock*>> loops_{};
   std::vector<llvm::BasicBlock*> tryHandlers_{};
