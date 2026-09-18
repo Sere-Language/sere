@@ -2924,14 +2924,86 @@ llvm::Value* IRGenerator::emitInterpolated(llvm::IRBuilder<>& builder,
                                            const InterpolatedStringExpr& expr) {
   llvm::Value* result = nullptr;
   for (const StringPart& part : expr.parts()) {
-    llvm::Value* piece = part.value == nullptr ? emitStrLiteral(builder, part.literal)
-                                               : emitToStr(builder, *part.value);
+    llvm::Value* piece = nullptr;
+    if (part.value == nullptr) {
+      piece = emitStrLiteral(builder, part.literal);
+    } else if (part.spec.empty()) {
+      piece = emitToStr(builder, *part.value);
+    } else {
+      piece = emitFormatted(builder, *part.value, part.spec);
+    }
     if (piece == nullptr) {
       return nullptr;
     }
     result = result == nullptr ? piece : emitStrConcat(builder, result, piece);
   }
   return result == nullptr ? emitStrLiteral(builder, "") : result;
+}
+
+llvm::Value* IRGenerator::emitFormatted(llvm::IRBuilder<>& builder,
+                                        const Expr& value,
+                                        const std::string& spec) {
+  const Type* type = resolveType(value.resolvedType());
+  if (type == nullptr) {
+    return emitToStr(builder, value);
+  }
+  // Kinds match runtime/sere_rt.c: 0 int, 1 float, 2 str, 3 bool.
+  int32_t kind = 2;
+  llvm::Value* intValue = builder.getInt64(0);
+  llvm::Value* floatValue = llvm::ConstantFP::get(builder.getDoubleTy(), 0.0);
+  llvm::Value* data = llvm::ConstantPointerNull::get(builder.getPtrTy());
+  llvm::Value* length = builder.getInt64(0);
+  if (type->isNamed("bool")) {
+    kind = 3;
+    intValue = builder.CreateZExt(emitExpr(builder, value), builder.getInt64Ty());
+  } else if (type->isInteger() || type->isIntEnum()) {
+    kind = 0;
+    llvm::Value* raw = emitExpr(builder, value);
+    if (raw == nullptr) {
+      return nullptr;
+    }
+    intValue = emitCoerce(builder, raw, type, types_->i64Type());
+  } else if (type->isFloat()) {
+    kind = 1;
+    llvm::Value* raw = emitExpr(builder, value);
+    if (raw == nullptr) {
+      return nullptr;
+    }
+    floatValue = type->isNamed("f32") ? builder.CreateFPExt(raw, builder.getDoubleTy()) : raw;
+  } else {
+    // str, and every other printable value, formats from its text form.
+    llvm::Value* text = emitToStr(builder, value);
+    if (text == nullptr) {
+      return nullptr;
+    }
+    data = builder.CreateExtractValue(text, {0});
+    length = builder.CreateExtractValue(text, {1});
+  }
+  if (intValue == nullptr) {
+    return nullptr;
+  }
+  llvm::Function* fn = runtimeDecl("sere_format_value",
+                                   builder.getPtrTy(),
+                                   {builder.getInt32Ty(),
+                                    builder.getInt64Ty(),
+                                    builder.getDoubleTy(),
+                                    builder.getPtrTy(),
+                                    builder.getInt64Ty(),
+                                    builder.getPtrTy(),
+                                    builder.getInt64Ty(),
+                                    builder.getPtrTy()});
+  llvm::Value* specData = builder.CreateGlobalString(spec);
+  llvm::Value* outLen = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "fmt.len");
+  llvm::Value* text = builder.CreateCall(fn,
+                                         {builder.getInt32(kind),
+                                          intValue,
+                                          floatValue,
+                                          data,
+                                          length,
+                                          specData,
+                                          builder.getInt64(spec.size()),
+                                          outLen});
+  return packStr(builder, text, builder.CreateLoad(builder.getInt64Ty(), outLen));
 }
 
 llvm::Value* IRGenerator::emitCall(llvm::IRBuilder<>& builder, const CallExpr& expr) {

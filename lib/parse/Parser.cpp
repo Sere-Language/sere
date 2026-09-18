@@ -1288,12 +1288,35 @@ std::unique_ptr<Expr> Parser::parseFString() {
       }
       ++index;
       const std::size_t exprStart = index;
+      // Scan to the matching `}` while tracking quotes so a `:` inside a slice,
+      // dict literal, or string does not start the format spec.
+      std::size_t specStart = std::string::npos;
       int depth = 1;
+      int brackets = 0;
+      char quote = '\0';
       while (index < inner.size() && depth > 0) {
-        if (inner[index] == '{') {
+        const char ch = inner[index];
+        if (quote != '\0') {
+          if (ch == '\\') {
+            index += 2;
+            continue;
+          }
+          if (ch == quote) {
+            quote = '\0';
+          }
+        } else if (ch == '"' || ch == '\'') {
+          quote = ch;
+        } else if (ch == '(' || ch == '[') {
+          ++brackets;
+        } else if (ch == ')' || ch == ']') {
+          --brackets;
+        } else if (ch == '{') {
           ++depth;
-        } else if (inner[index] == '}') {
+        } else if (ch == '}') {
           --depth;
+        } else if (ch == ':' && brackets == 0 && depth == 1 &&
+                   specStart == std::string::npos) {
+          specStart = index;
         }
         if (depth > 0) {
           ++index;
@@ -1303,7 +1326,8 @@ std::unique_ptr<Expr> Parser::parseFString() {
         diagnostics_->error(token.range().start, "unterminated interpolation");
         return nullptr;
       }
-      const std::string exprText = inner.substr(exprStart, index - exprStart);
+      const std::size_t exprEnd = specStart == std::string::npos ? index : specStart;
+      const std::string exprText = inner.substr(exprStart, exprEnd - exprStart);
       SourceLocation base = innerStart;
       base.offset += static_cast<std::uint32_t>(exprStart);
       base.column += static_cast<std::uint32_t>(exprStart);
@@ -1312,6 +1336,9 @@ std::unique_ptr<Expr> Parser::parseFString() {
         return nullptr;
       }
       StringPart part;
+      if (specStart != std::string::npos) {
+        part.spec = inner.substr(specStart + 1, index - specStart - 1);
+      }
       part.value = std::move(expr);
       parts.push_back(std::move(part));
       ++index;

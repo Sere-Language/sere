@@ -36,6 +36,16 @@ const char* sere_str_bool_data(int8_t value, int64_t* out_len);
 const char* sere_str_ptr_data(const void* pointer, int64_t* out_len);
 const char* sere_str_f64_data(double value, int64_t* out_len);
 const char* sere_str_repr_data(const char* data, int64_t len, int64_t* out_len);
+/* Renders a value with a Python-style format spec from an f-string (`{x:>8.2f}`).
+   `kind`: 0 int, 1 float, 2 str, 3 bool. */
+const char* sere_format_value(int32_t kind,
+                              int64_t int_value,
+                              double float_value,
+                              const char* str_data,
+                              int64_t str_len,
+                              const char* spec,
+                              int64_t spec_len,
+                              int64_t* out_len);
 const char* sere_str_concat_data(
     const char* left, int64_t left_len, const char* right, int64_t right_len, int64_t* out_len);
 void* sere_alloc(uint64_t size);

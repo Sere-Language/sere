@@ -117,6 +117,405 @@ const char* sere_str_f64_data(double value, int64_t* out_len) {
   return heapCopy(buf, n < 0 ? 0 : (size_t)n, out_len);
 }
 
+/* ------------------------------------------------------------ format specs */
+
+/* Value kinds accepted by sere_format_value. */
+enum { SERE_FMT_INT = 0, SERE_FMT_FLOAT = 1, SERE_FMT_STR = 2, SERE_FMT_BOOL = 3 };
+
+typedef struct {
+  char fill[8];
+  int64_t fill_len;
+  char align;        /* 0 default, '<', '>', '^', '=' */
+  char sign;         /* 0, '+', '-', ' ' */
+  int32_t alternate; /* '#' */
+  int32_t zero_pad;  /* leading '0' before the width */
+  int32_t comma;     /* ',' grouping */
+  int32_t width;     /* -1 when unset */
+  int32_t precision; /* -1 when unset */
+  char type;         /* 0 when unset */
+} SereFmtSpec;
+
+typedef struct {
+  char* data;
+  size_t len;
+  size_t cap;
+} SereFmtBuf;
+
+static int sere_fmt_is_align(char ch) {
+  return ch == '<' || ch == '>' || ch == '^' || ch == '=';
+}
+
+/* Byte length of the UTF-8 sequence starting with `lead`. */
+static int64_t sere_fmt_utf8_len(unsigned char lead) {
+  if (lead < 0x80)
+    return 1;
+  if ((lead & 0xE0) == 0xC0)
+    return 2;
+  if ((lead & 0xF0) == 0xE0)
+    return 3;
+  if ((lead & 0xF8) == 0xF0)
+    return 4;
+  return 1;
+}
+
+static void sere_fmt_buf_init(SereFmtBuf* buf) {
+  buf->data = NULL;
+  buf->len = 0;
+  buf->cap = 0;
+}
+
+static void sere_fmt_buf_reserve(SereFmtBuf* buf, size_t extra) {
+  if (buf->len + extra + 1 <= buf->cap) {
+    return;
+  }
+  size_t cap = buf->cap == 0 ? 32 : buf->cap;
+  while (cap < buf->len + extra + 1) {
+    cap *= 2;
+  }
+  char* grown = (char*)realloc(buf->data, cap);
+  if (grown == NULL) {
+    return;
+  }
+  buf->data = grown;
+  buf->cap = cap;
+}
+
+static void sere_fmt_buf_push(SereFmtBuf* buf, const char* data, size_t len) {
+  if (len == 0) {
+    return;
+  }
+  sere_fmt_buf_reserve(buf, len);
+  if (buf->data == NULL) {
+    return;
+  }
+  memcpy(buf->data + buf->len, data, len);
+  buf->len += len;
+}
+
+static void sere_fmt_buf_push_char(SereFmtBuf* buf, char ch) {
+  sere_fmt_buf_push(buf, &ch, 1);
+}
+
+static void sere_fmt_buf_repeat(SereFmtBuf* buf, const char* fill, size_t fill_len, int64_t count) {
+  if (count <= 0) {
+    return;
+  }
+  if (fill == NULL || fill_len == 0) {
+    fill = " ";
+    fill_len = 1;
+  }
+  for (int64_t index = 0; index < count; ++index) {
+    sere_fmt_buf_push(buf, fill, fill_len);
+  }
+}
+
+/* Parses `[[fill]align][sign][#][0][width][,][.precision][type]`. */
+static int sere_fmt_parse(const char* spec, int64_t len, SereFmtSpec* out) {
+  memset(out, 0, sizeof(*out));
+  out->width = -1;
+  out->precision = -1;
+  if (spec == NULL || len <= 0) {
+    return 1;
+  }
+  int64_t index = 0;
+  while (index < len && spec[index] == ' ') {
+    ++index;
+  }
+  if (index < len) {
+    const int64_t fill_len = sere_fmt_utf8_len((unsigned char)spec[index]);
+    if (index + fill_len < len && sere_fmt_is_align(spec[index + fill_len])) {
+      if (fill_len < (int64_t)sizeof(out->fill) - 1) {
+        memcpy(out->fill, spec + index, (size_t)fill_len);
+        out->fill[fill_len] = '\0';
+        out->fill_len = fill_len;
+        out->align = spec[index + fill_len];
+        index += fill_len + 1;
+      }
+    } else if (sere_fmt_is_align(spec[index])) {
+      out->align = spec[index];
+      ++index;
+    }
+  }
+  if (index < len && (spec[index] == '+' || spec[index] == '-' || spec[index] == ' ')) {
+    out->sign = spec[index];
+    ++index;
+  }
+  if (index < len && spec[index] == '#') {
+    out->alternate = 1;
+    ++index;
+  }
+  if (index < len && spec[index] == '0') {
+    out->zero_pad = 1;
+    ++index;
+  }
+  int64_t width = 0;
+  int64_t digits = index;
+  while (index < len && spec[index] >= '0' && spec[index] <= '9') {
+    width = width * 10 + (spec[index] - '0');
+    ++index;
+  }
+  if (index > digits) {
+    out->width = (int32_t)width;
+  }
+  if (index < len && spec[index] == ',') {
+    out->comma = 1;
+    ++index;
+  }
+  if (index < len && spec[index] == '.') {
+    ++index;
+    int64_t precision = 0;
+    digits = index;
+    while (index < len && spec[index] >= '0' && spec[index] <= '9') {
+      precision = precision * 10 + (spec[index] - '0');
+      ++index;
+    }
+    if (index == digits) {
+      return 0;
+    }
+    out->precision = (int32_t)precision;
+  }
+  if (index < len) {
+    out->type = spec[index];
+    ++index;
+  }
+  return index == len;
+}
+
+/* Appends the sign and base prefix to `prefix` and the digits to `body`. */
+static void
+sere_fmt_int_body(SereFmtBuf* prefix, SereFmtBuf* body, int64_t value, const SereFmtSpec* spec) {
+  const int32_t base = spec->type == 'b'                          ? 2
+                       : spec->type == 'o'                        ? 8
+                       : (spec->type == 'x' || spec->type == 'X') ? 16
+                                                                  : 10;
+  const int upper = spec->type == 'X';
+  uint64_t magnitude = 0;
+  if (value < 0) {
+    sere_fmt_buf_push_char(prefix, '-');
+    magnitude = (uint64_t)(-(value + 1)) + 1u;
+  } else {
+    if (spec->sign == '+') {
+      sere_fmt_buf_push_char(prefix, '+');
+    } else if (spec->sign == ' ') {
+      sere_fmt_buf_push_char(prefix, ' ');
+    }
+    magnitude = (uint64_t)value;
+  }
+  if (spec->alternate) {
+    if (base == 16) {
+      sere_fmt_buf_push(prefix, upper ? "0X" : "0x", 2);
+    } else if (base == 8) {
+      sere_fmt_buf_push(prefix, "0o", 2);
+    } else if (base == 2) {
+      sere_fmt_buf_push(prefix, "0b", 2);
+    }
+  }
+  char digits[72];
+  size_t count = 0;
+  if (magnitude == 0) {
+    digits[count++] = '0';
+  } else {
+    const char* alphabet = upper ? "0123456789ABCDEF" : "0123456789abcdef";
+    while (magnitude > 0) {
+      digits[count++] = alphabet[magnitude % (uint64_t)base];
+      magnitude /= (uint64_t)base;
+    }
+  }
+  /* `digits` holds the least-significant digit first. */
+  size_t written = 0;
+  for (size_t index = count; index > 0; --index) {
+    if (spec->comma && base == 10 && written > 0 && (count - written) % 3 == 0) {
+      sere_fmt_buf_push_char(body, ',');
+    }
+    sere_fmt_buf_push_char(body, digits[index - 1]);
+    ++written;
+  }
+}
+
+static void
+sere_fmt_float_body(SereFmtBuf* prefix, SereFmtBuf* body, double value, const SereFmtSpec* spec) {
+  char conversion = spec->type == '\0' ? 'g' : spec->type;
+  if (conversion == '%') {
+    conversion = 'f';
+  } else if (conversion == 'F' || conversion == 'E' || conversion == 'G') {
+    conversion = (char)(conversion - 'A' + 'a');
+  }
+  int precision = spec->precision < 0 ? 6 : spec->precision;
+  if (precision > 99) {
+    precision = 99;
+  }
+  char format[16];
+  size_t format_len = 0;
+  format[format_len++] = '%';
+  if (spec->alternate) {
+    format[format_len++] = '#';
+  }
+  format[format_len++] = '.';
+  if (precision >= 10) {
+    format[format_len++] = (char)('0' + precision / 10);
+  }
+  format[format_len++] = (char)('0' + precision % 10);
+  format[format_len++] = conversion;
+  format[format_len] = '\0';
+  const double scaled = spec->type == '%' ? value * 100.0 : value;
+  char buffer[512];
+  int written = snprintf(buffer, sizeof(buffer), format, scaled);
+  if (written < 0) {
+    written = 0;
+  }
+  if ((size_t)written >= sizeof(buffer)) {
+    written = (int)sizeof(buffer) - 1;
+  }
+  if (written > 0 && buffer[0] == '-') {
+    sere_fmt_buf_push_char(prefix, '-');
+    sere_fmt_buf_push(body, buffer + 1, (size_t)written - 1);
+  } else {
+    if (spec->sign == '+') {
+      sere_fmt_buf_push_char(prefix, '+');
+    } else if (spec->sign == ' ') {
+      sere_fmt_buf_push_char(prefix, ' ');
+    }
+    sere_fmt_buf_push(body, buffer, (size_t)written);
+  }
+  if (spec->type == '%') {
+    sere_fmt_buf_push_char(body, '%');
+  }
+  if (!spec->comma) {
+    return;
+  }
+  /* Group the integer part in place; everything from '.' or an exponent stays. */
+  size_t end = 0;
+  while (end < body->len && body->data[end] != '.' && body->data[end] != 'e' &&
+         body->data[end] != 'E') {
+    ++end;
+  }
+  if (end <= 3) {
+    return;
+  }
+  char* regrouped = (char*)malloc(body->len + end + 4);
+  if (regrouped == NULL) {
+    return;
+  }
+  size_t position = 0;
+  for (size_t index = 0; index < end; ++index) {
+    if (index > 0 && (end - index) % 3 == 0) {
+      regrouped[position++] = ',';
+    }
+    regrouped[position++] = body->data[index];
+  }
+  memcpy(regrouped + position, body->data + end, body->len - end);
+  position += body->len - end;
+  free(body->data);
+  body->data = regrouped;
+  body->len = position;
+  body->cap = position + 1;
+}
+
+/* Renders `value` with a Python-style format spec written after `:` in an
+   f-string. `kind` selects which value argument is meaningful:
+   0 = int, 1 = float, 2 = str, 3 = bool. */
+const char* sere_format_value(int32_t kind,
+                              int64_t int_value,
+                              double float_value,
+                              const char* str_data,
+                              int64_t str_len,
+                              const char* spec,
+                              int64_t spec_len,
+                              int64_t* out_len) {
+  SereFmtSpec settings;
+  if (!sere_fmt_parse(spec, spec_len, &settings)) {
+    /* Sema rejects invalid specs, so this path only guards malformed input. */
+    memset(&settings, 0, sizeof(settings));
+    settings.width = -1;
+    settings.precision = -1;
+  }
+  if (str_data == NULL || str_len < 0) {
+    str_len = 0;
+  }
+  if (out_len != NULL) {
+    *out_len = 0;
+  }
+  const int wants_float = settings.type == 'e' || settings.type == 'E' || settings.type == 'f' ||
+                          settings.type == 'F' || settings.type == 'g' || settings.type == 'G' ||
+                          settings.type == '%';
+  const int bool_numeric = settings.type == 'd' || settings.type == 'b' || settings.type == 'o' ||
+                           settings.type == 'x' || settings.type == 'X' || settings.type == 'c';
+  SereFmtBuf prefix;
+  SereFmtBuf body;
+  sere_fmt_buf_init(&prefix);
+  sere_fmt_buf_init(&body);
+  int32_t default_align = '>';
+  int numeric = 0;
+  if (kind == SERE_FMT_STR) {
+    default_align = '<';
+    int64_t length = str_len;
+    if (settings.precision >= 0) {
+      /* Truncate on a character boundary so multi-byte text stays valid. */
+      int64_t bytes = 0;
+      int64_t characters = 0;
+      while (bytes < str_len && characters < settings.precision) {
+        bytes += sere_fmt_utf8_len((unsigned char)str_data[bytes]);
+        ++characters;
+      }
+      length = bytes < str_len ? bytes : str_len;
+    }
+    sere_fmt_buf_push(&body, str_data, (size_t)length);
+  } else if (kind == SERE_FMT_FLOAT || (kind == SERE_FMT_INT && wants_float)) {
+    numeric = 1;
+    sere_fmt_float_body(
+        &prefix, &body, kind == SERE_FMT_FLOAT ? float_value : (double)int_value, &settings);
+  } else if (kind == SERE_FMT_BOOL && !bool_numeric) {
+    default_align = '<';
+    const char* text = int_value != 0 ? "True" : "False";
+    int64_t length = int_value != 0 ? 4 : 5;
+    if (settings.precision >= 0 && settings.precision < length) {
+      length = settings.precision;
+    }
+    sere_fmt_buf_push(&body, text, (size_t)length);
+  } else {
+    numeric = 1;
+    sere_fmt_int_body(&prefix, &body, int_value, &settings);
+  }
+  const int64_t content = (int64_t)prefix.len + (int64_t)body.len;
+  int64_t pad = settings.width > 0 ? (int64_t)settings.width - content : 0;
+  if (pad < 0) {
+    pad = 0;
+  }
+  char align = settings.align;
+  if (align == '\0') {
+    align = settings.zero_pad != 0 && numeric != 0 ? '=' : (char)default_align;
+  }
+  const char* fill = settings.fill_len > 0 ? settings.fill : " ";
+  size_t fill_len = settings.fill_len > 0 ? (size_t)settings.fill_len : 1;
+  if (settings.zero_pad != 0 && numeric != 0 && settings.fill_len == 0) {
+    fill = "0";
+  }
+  const int64_t left = align == '>' ? pad : (align == '^' ? pad / 2 : 0);
+  const int64_t right = pad - left;
+  SereFmtBuf out;
+  sere_fmt_buf_init(&out);
+  if (align == '=') {
+    sere_fmt_buf_push(&out, prefix.data, prefix.len);
+    sere_fmt_buf_repeat(&out, fill, fill_len, pad);
+    sere_fmt_buf_push(&out, body.data, body.len);
+  } else {
+    sere_fmt_buf_repeat(&out, fill, fill_len, left);
+    sere_fmt_buf_push(&out, prefix.data, prefix.len);
+    sere_fmt_buf_push(&out, body.data, body.len);
+    sere_fmt_buf_repeat(&out, fill, fill_len, right);
+  }
+  free(prefix.data);
+  free(body.data);
+  if (out.data == NULL) {
+    return "";
+  }
+  out.data[out.len] = '\0';
+  if (out_len != NULL) {
+    *out_len = (int64_t)out.len;
+  }
+  return out.data;
+}
+
 const char* sere_str_repr_data(const char* data, int64_t len, int64_t* out_len) {
   if (data == NULL || len < 0) len = 0;
   char quote = '\'';

@@ -295,6 +295,160 @@ resolvedConstraints(const std::vector<std::unique_ptr<TypeExpr>>& expressions) {
   return types.i32Type();
 }
 
+/// Parsed Python-style format spec written after `:` in an f-string.
+struct FormatSpec {
+  std::string fill;  ///< UTF-8 fill character; empty uses the type default.
+  char align = '\0'; ///< '<', '>', '^', '=', or 0 when unset.
+  char sign = '\0';  ///< '+', ' ', or 0 when unset.
+  bool alternate = false;
+  bool zeroPad = false;
+  bool comma = false;
+  int width = -1;
+  int precision = -1;
+  char type = '\0';
+};
+
+[[nodiscard]] bool isAlignChar(char ch) {
+  return ch == '<' || ch == '>' || ch == '^' || ch == '=';
+}
+
+/// Byte length of the UTF-8 sequence starting with `lead`.
+[[nodiscard]] std::size_t utf8SequenceLength(char lead) {
+  const unsigned char byte = static_cast<unsigned char>(lead);
+  if (byte < 0x80) {
+    return 1;
+  }
+  if ((byte & 0xE0) == 0xC0) {
+    return 2;
+  }
+  if ((byte & 0xF0) == 0xE0) {
+    return 3;
+  }
+  if ((byte & 0xF8) == 0xF0) {
+    return 4;
+  }
+  return 1;
+}
+
+/// Parses `[[fill]align][sign][#][0][width][,][.precision][type]`.
+[[nodiscard]] bool parseFormatSpec(std::string_view text, FormatSpec& spec, std::string& error) {
+  std::size_t index = 0;
+  while (index < text.size() && text[index] == ' ') {
+    ++index;
+  }
+  if (index < text.size()) {
+    const std::size_t fillLength = utf8SequenceLength(text[index]);
+    if (index + fillLength < text.size() && isAlignChar(text[index + fillLength])) {
+      spec.fill = std::string(text.substr(index, fillLength));
+      spec.align = text[index + fillLength];
+      index += fillLength + 1;
+    } else if (isAlignChar(text[index])) {
+      spec.align = text[index];
+      ++index;
+    }
+  }
+  if (index < text.size() && (text[index] == '+' || text[index] == '-' || text[index] == ' ')) {
+    spec.sign = text[index];
+    ++index;
+  }
+  if (index < text.size() && text[index] == '#') {
+    spec.alternate = true;
+    ++index;
+  }
+  if (index < text.size() && text[index] == '0') {
+    spec.zeroPad = true;
+    ++index;
+  }
+  std::size_t digits = index;
+  long long width = 0;
+  while (index < text.size() && std::isdigit(static_cast<unsigned char>(text[index])) != 0) {
+    width = width * 10 + (text[index] - '0');
+    ++index;
+  }
+  if (index > digits) {
+    if (width > 100000) {
+      error = "format width is too large";
+      return false;
+    }
+    spec.width = static_cast<int>(width);
+  }
+  if (index < text.size() && text[index] == ',') {
+    spec.comma = true;
+    ++index;
+  }
+  if (index < text.size() && text[index] == '.') {
+    ++index;
+    digits = index;
+    long long precision = 0;
+    while (index < text.size() && std::isdigit(static_cast<unsigned char>(text[index])) != 0) {
+      precision = precision * 10 + (text[index] - '0');
+      ++index;
+    }
+    if (index == digits) {
+      error = "format spec needs digits after '.'";
+      return false;
+    }
+    if (precision > 100000) {
+      error = "format precision is too large";
+      return false;
+    }
+    spec.precision = static_cast<int>(precision);
+  }
+  if (index < text.size()) {
+    spec.type = text[index];
+    ++index;
+  }
+  if (index != text.size()) {
+    error = "unexpected characters in format spec";
+    return false;
+  }
+  return true;
+}
+
+/// Rejects format specs that the interpolated value's type cannot honour.
+[[nodiscard]] bool validateFormatSpec(const FormatSpec& spec,
+                                      const Type* type,
+                                      std::string& error) {
+  if (type->isNamed("str")) {
+    if (spec.type != '\0' && spec.type != 's') {
+      error = "'" + std::string(1, spec.type) + "' cannot format a str";
+      return false;
+    }
+    if (spec.sign != '\0' || spec.alternate || spec.comma || spec.zeroPad) {
+      error = "sign, '#', ',', and '0' do not apply to a str";
+      return false;
+    }
+    return true;
+  }
+  if (type->isInteger() || type->isIntEnum() || type->isNamed("bool") || type->isFloat()) {
+    static constexpr std::string_view kNumericTypes = "dboxXceEfFgG%";
+    if (spec.type != '\0' && kNumericTypes.find(spec.type) == std::string_view::npos) {
+      error = "unknown format type '" + std::string(1, spec.type) + "'";
+      return false;
+    }
+    if (spec.alternate &&
+        (spec.type == '\0' ||
+         std::string_view("boxX").find(spec.type) == std::string_view::npos)) {
+      error = "'#' needs a 'b', 'o', 'x', or 'X' format type";
+      return false;
+    }
+    if (spec.comma && (spec.type == 'b' || spec.type == 'o' || spec.type == 'x' ||
+                       spec.type == 'X' || spec.type == 'c')) {
+      error = "',' grouping needs a decimal format type";
+      return false;
+    }
+    return true;
+  }
+  // Anything else is formatted through its string form, so only the fields that
+  // shape text are meaningful.
+  if (spec.type != '\0' || spec.sign != '\0' || spec.alternate || spec.comma || spec.zeroPad) {
+    error = "format spec for " + type->display() +
+            " supports only fill, alignment, width, and precision";
+    return false;
+  }
+  return true;
+}
+
 /// True when a value of this type has a textual form, so `s + value` can
 /// concatenate it implicitly (mirroring interpolated-string conversion).
 [[nodiscard]] bool isStringifiable(const Type* type) {
@@ -4106,6 +4260,17 @@ const Type* TypeChecker::checkInterpolated(InterpolatedStringExpr& expr) {
     if (!isPrintable(partType)) {
       diagnostics_->error(part.value->range(),
                           "f-string interpolation cannot print " + quoteType(partType));
+      return nullptr;
+    }
+    if (part.spec.empty()) {
+      continue;
+    }
+    FormatSpec spec;
+    std::string error;
+    if (!parseFormatSpec(part.spec, spec, error) ||
+        !validateFormatSpec(spec, partType->valueType(), error)) {
+      diagnostics_->error(part.value->range(),
+                          error + " (in format spec ':" + part.spec + "')");
       return nullptr;
     }
   }

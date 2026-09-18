@@ -155,6 +155,9 @@ private:
 struct StringPart {
   std::string literal;
   std::unique_ptr<Expr> value;
+  /// Format spec written after `:` in an interpolation (`f"{x:>8.2f}"`), kept
+  /// verbatim. Empty means the value is rendered with its plain string form.
+  std::string spec;
 };
 
 class InterpolatedStringExpr final : public Expr {

@@ -114,6 +114,9 @@ private:
   llvm::Value* emitListConcat(llvm::IRBuilder<>& builder, llvm::Value* left, llvm::Value* right);
   llvm::Value* emitListRepeat(llvm::IRBuilder<>& builder, llvm::Value* list, llvm::Value* count);
   llvm::Value* emitToStr(llvm::IRBuilder<>& builder, const Expr& expr);
+  /// Renders `value` for an f-string interpolation carrying a format spec.
+  llvm::Value*
+  emitFormatted(llvm::IRBuilder<>& builder, const Expr& value, const std::string& spec);
   llvm::Value* emitScalarToStr(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* type);
   llvm::Value* emitValueRepr(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* type);
   llvm::Value* emitBuiltinExpr(llvm::IRBuilder<>& builder, const Expr& expr);
