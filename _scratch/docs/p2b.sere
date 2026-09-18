@@ -1,0 +1,6 @@
+def main() -> i32:
+    d = {"a": 1, "b": 2}
+    print(d["a"])
+    for i, k in [(0, "a")]:
+        print(i, k)
+    return 0

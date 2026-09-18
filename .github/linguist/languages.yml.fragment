@@ -1,0 +1,15 @@
+# Snippet to insert into github-linguist/linguist `lib/linguist/languages.yml`.
+# Keep the alphabetical position: the entry belongs between `Self` and the
+# first entry that sorts after `Sere` (byte order, uppercase before lowercase).
+#
+# `language_id` is intentionally absent: Linguist assigns it with
+# `script/update-ids` once the pull request is opened.
+Sere:
+  type: programming
+  color: "#d66a62"
+  extensions:
+  - ".sere"
+  tm_scope: source.sere
+  ace_mode: python
+  codemirror_mode: python
+  codemirror_mime_type: text/x-python

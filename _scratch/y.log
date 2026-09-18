@@ -1,0 +1,37 @@
+﻿===== v9 =====
+sere.exe : warning: overriding the module target triple with 
+x86_64-pc-windows-msvc19.44.35228 [-Woverride-module]
+At C:\Users\jackw\OneDrive\Desktop\git-projects\sere\_scratch\va
+riants4.ps1:9 char:3
++   & $sere "_scratch\$n.sere" -o "_scratch\$n.exe" 2>&1 | 
+Out-File -Ap ...
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (warning: overri... 
+   verride-module]:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+1 warning generated.
+wrote _scratch\v9.exe
+EXIT=0
+str
+i32
+str
+RUN=0
+===== v10 =====
+sere.exe : warning: overriding the module target triple with 
+x86_64-pc-windows-msvc19.44.35228 [-Woverride-module]
+At C:\Users\jackw\OneDrive\Desktop\git-projects\sere\_scratch\va
+riants4.ps1:9 char:3
++   & $sere "_scratch\$n.sere" -o "_scratch\$n.exe" 2>&1 | 
+Out-File -Ap ...
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (warning: overri... 
+   verride-module]:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+1 warning generated.
+wrote _scratch\v10.exe
+EXIT=0
+['a', 'b', 'c']
+RUN=0
+DONE

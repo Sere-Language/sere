@@ -470,10 +470,9 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
   if (match(TokenKind::String)) {
     const Token& token = previous();
     const DecodedString decoded = decodeStringToken(token.spelling());
-    if (isSingleQuotedLiteral(token.spelling()) && decoded.value.size() == 1) {
-      const auto byte = static_cast<unsigned char>(decoded.value[0]);
-      return std::make_unique<IntegerLiteral>(token.range(), static_cast<std::int64_t>(byte), true);
-    }
+    // Single quotes are strings, exactly like double quotes: `'a'` is the one
+    // character string "a". It used to become a byte value, which silently
+    // broke every str method call taking a literal separator (`s.split('.')`).
     return std::make_unique<StringLiteral>(token.range(), decoded.value, false);
   }
   if (match(TokenKind::Regex)) {

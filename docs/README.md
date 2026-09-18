@@ -4,6 +4,10 @@ This folder holds two kinds of docs:
 
 - **[language.md](language.md)** — the language as the compiler implements it
   (syntax, types, macros, stdlib). Start there to *write Sere*.
+- **[reference/](reference/README.md)** — one page per subject (strings, lists,
+  dicts, numbers, formatting, bytes, operators, control flow, classes, enums,
+  functions, generics, exceptions, modules, memory, async, macros) with the
+  exact methods, rules, and edge cases.
 - The rest of this handbook — how source becomes an executable, where each
   subsystem lives, and how to extend the compiler without guessing.
 
@@ -23,6 +27,7 @@ The compiler is `sere` (`tools/sere`). The same binary also speaks LSP
 | Work with numeric lists and matrices | [arrays.md](arrays.md) |
 | Wrap functions or classes with `@name` / `@name(...)` | **[decorators.md](decorators.md)** |
 | Learn or look up the language | **[language.md](language.md)** |
+| Go deep on one subject (strings, lists, classes, memory, …) | **[reference/](reference/README.md)** |
 | See the whole pipeline | [architecture.md](architecture.md) |
 | Add a keyword, type, operator, intrinsic, stdlib module, native lib, GC, or LSP feature | **[extending.md](extending.md)** |
 | Understand lex / parse / AST / macros / types | [frontend.md](frontend.md) |

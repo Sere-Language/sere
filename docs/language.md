@@ -4,6 +4,11 @@ This is the user-facing description of Sere **as the compiler implements it toda
 It is not a roadmap. Features that are tokenized but not implemented are called
 out at the end.
 
+> Looking for the details of one subject — every `str` or `list` method, the
+> format mini-language, operator rules, pointers, or the exact dunder names?
+> See **[reference/](reference/README.md)** for one page per topic. This file is
+> the whole language at a glance; the reference pages are the deep dives.
+
 Sere is a **statically typed Python-superset**. Indentation is significant.
 Programs compile to native code through LLVM 22. `print` is a language intrinsic
 (also used from the prelude); it is not a statement.
@@ -499,6 +504,10 @@ bare `Box` cannot silently select `Any`.
 See [generic_constraints.sere](../examples/generic_constraints.sere) for an
 executable example with functions, classes, methods, and enum payloads.
 
+More on parameters, defaults, varargs, lambdas, and closures:
+[reference/functions.md](reference/functions.md). Generic parameters and
+constraints: [reference/generics.md](reference/generics.md).
+
 ---
 
 ## Decorators
@@ -710,6 +719,10 @@ If a type defines these, the corresponding syntax uses them:
 | `__enter__` / `__exit__` | `with x as name:` |
 | `__add__` / `__radd__` and other arithmetic | `+ - * / // % **` and comparisons |
 
+See [reference/classes.md](reference/classes.md) for the complete dunder and
+operator-overloading tables, and [reference/enums.md](reference/enums.md) for
+payloads and `@flags`.
+
 ---
 
 ## Modules and imports
@@ -818,6 +831,9 @@ stack: Ptr[i32] = &local
 | `&x` | `Ptr[T]` for an addressable lvalue |
 | `*p` | load `T`; `*p = v` stores |
 
+Details, including the collector API and `import heap`:
+[reference/memory.md](reference/memory.md).
+
 ### Output parameters
 
 Use `Ptr[T]` for a function that writes into a caller's variable. Pass its address
@@ -883,6 +899,11 @@ assert hello * 2 == "HelloHello"
 `xs.append(v)` and `append(xs, v)` both add to a list.
 
 Dicts: `ages["ada"] = 37`. Empty: `dict[str, i32]()`.
+
+Details: [strings.md](reference/strings.md), [lists.md](reference/lists.md),
+[dicts.md](reference/dicts.md), [numbers.md](reference/numbers.md),
+[formatting.md](reference/formatting.md), [bytes.md](reference/bytes.md),
+[operators.md](reference/operators.md).
 
 ---
 
@@ -967,6 +988,9 @@ unreachable!()
 dbg!(total)          # prints and yields total
 ```
 
+Which failures are catchable and which are fatal at runtime:
+[reference/exceptions.md](reference/exceptions.md).
+
 ---
 
 ## Macros
@@ -1034,6 +1058,10 @@ Invocations:
 - indent `name:` (statement, or initializer after `=`)
 
 Import macros like any name: `from html_lang import html, Html`.
+
+More on quote/splice, token-tree matching, and macro properties:
+[reference/macros.md](reference/macros.md). Modules and import search order:
+[reference/modules.md](reference/modules.md).
 
 ---
 
@@ -1237,6 +1265,9 @@ async def main(argv: list[str]) -> i32:
     print(await combine())
     return 0
 ```
+
+See [reference/async.md](reference/async.md) for `Task[T]`, `await` placement, and
+the list of unimplemented constructs.
 
 The runtime lowering uses LLVM switched-resume coroutines (the `coro-early`,
 `coro-split`, and `coro-cleanup` passes). Calling an `async def` spawns the

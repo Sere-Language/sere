@@ -1,0 +1,42 @@
+enum Color:
+    Red
+    Green = 2
+    Blue
+
+enum Message:
+    Quit
+    Move(x: i32, y: i32)
+    Write(str)
+
+    def is_quit(self) -> bool:
+        match self:
+            case Message.Quit:
+                return True
+            case _:
+                return False
+
+@flags
+enum Perm:
+    Read = 1
+    Write = 2
+    Exec = 4
+
+def main() -> i32:
+    print(Color.Green.name, Color.Green.value)
+    print(Color.variants())
+    tone = Color.Blue
+    print(tone is Color.Blue, tone == Color.Blue)
+    n: i32 = Color.Red
+    print(n + 1)
+    m = Message.Move(1, 2)
+    match m:
+        case Message.Move(x, y):
+            print("move", x, y)
+        case Message.Write(text):
+            print("write", text)
+        case Message.Quit:
+            print("quit")
+    print(m.is_quit())
+    p = Perm.Read | Perm.Write
+    print(Perm.Read in p, Perm.Exec in p, i32(p))
+    return 0

@@ -1,0 +1,6 @@
+def main() -> i32:
+    s = "a.b.c"
+    sep = "."
+    parts = s.split(sep)
+    print(parts)
+    return 0

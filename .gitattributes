@@ -1,3 +1,4 @@
+# Line endings and binary payloads.
 * text=auto eol=lf
 *.ps1 text eol=lf
 *.png binary
@@ -5,4 +6,22 @@
 *.lib binary
 *.dll binary
 *.exe binary
-*.sere linguist-language=Python
+
+# ---------------------------------------------------------------------------
+# GitHub language detection (github-linguist)
+# ---------------------------------------------------------------------------
+# Every Sere source file is the Sere language. `linguist-language` pins the
+# answer for this repository and is what `sere init` writes into new projects;
+# it takes effect once `Sere` exists in Linguist (see docs/linguist.md and
+# .github/linguist/ for the upstream payload).
+*.sere linguist-language=Sere linguist-detectable text eol=lf
+
+# Vendored third-party trees and release payloads are not Sere sources and must
+# not dominate the language bar.
+third_party/** linguist-vendored
+releases/** linguist-vendored
+packaging/** linguist-vendored
+
+# Generated bindings (for example stdlib wrappers produced by tools/) are not
+# hand-written Sere; add a pattern here when a generator starts emitting code.
+#   stdlib/<generated>.sere linguist-generated=true

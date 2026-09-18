@@ -1,0 +1,5 @@
+def main() -> i32:
+    xs = [1, 2, 3]
+    del xs[0]
+    print(xs)
+    return 0

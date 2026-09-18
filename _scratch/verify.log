@@ -1,0 +1,37 @@
+﻿BUILD EXIT=0
+===== v9 =====
+1 warning generated.
+wrote _scratch\v9.exe
+COMPILE=0
+str
+str
+str
+RUN=0
+===== v4 =====
+1 warning generated.
+wrote _scratch\v4.exe
+COMPILE=0
+['a', 'b', 'c']
+RUN=0
+===== v2 =====
+1 warning generated.
+wrote _scratch\v2.exe
+COMPILE=0
+['x']
+x
+RUN=0
+===== v3 =====
+1 warning generated.
+wrote _scratch\v3.exe
+COMPILE=0
+['a', 'b']
+a.b
+RUN=0
+===== print_repro =====
+1 warning generated.
+wrote _scratch\print_repro.exe
+COMPILE=0
+['LDA']
+LDA
+RUN=0
+DONE

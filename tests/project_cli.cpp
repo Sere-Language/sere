@@ -357,6 +357,9 @@ int main() {
       !std::filesystem::exists(project / "src" / "main.sere")) {
     return fail("init did not write expected files");
   }
+  if (readAll(project / ".gitattributes").find("linguist-language=Sere") == std::string::npos) {
+    return fail("init must write .gitattributes so GitHub detects .sere as Sere");
+  }
   sere::copyProjectToolchain(temp, project);
   if (!std::filesystem::exists(project / "venv/stdlib/prelude.sere") ||
       !std::filesystem::exists(project / "venv/stdlib/package/module.sere") ||
@@ -412,6 +415,10 @@ int main() {
       !std::filesystem::exists(library / "sere.toml")) {
     std::filesystem::remove_all(temp, fsError);
     return fail("init-lib did not write expected files");
+  }
+  if (readAll(library / ".gitattributes").find("linguist-language=Sere") == std::string::npos) {
+    std::filesystem::remove_all(temp, fsError);
+    return fail("init-lib must write .gitattributes so GitHub detects .sere as Sere");
   }
   sere::ProjectManifest libManifest;
   if (!sere::loadProjectManifest(library, libManifest, error)) {

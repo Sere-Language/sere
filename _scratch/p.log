@@ -1,0 +1,9 @@
+BUILD EXIT=0
+error[TypeError]: no LLVM function for 'print'
+ --> _scratch\print_repro.sere:6:9
+   |
+ 6 |         print(mode.split('.'))
+   |         ^^^^^^^^^^^^^^^^^^^^^^
+System.Management.Automation.RemoteException
+COMPILE EXIT=1
+RUN EXIT=1

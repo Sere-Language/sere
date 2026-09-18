@@ -1,0 +1,16 @@
+def main() -> i32:
+    v: i32 = 255
+    b: u8 = 7
+    big: i64 = 48879
+    print(f"{v:08x}")
+    print(f"{v:#08x}")
+    print(f"{v:X}")
+    print(f"{v:>8x}|")
+    print(f"{v:08b}")
+    print(f"{b:#04x}")
+    print(f"{big:#x}")
+    print(f"{v:.2f}")
+    print(f"{v:d}")
+    print(f"{v:c}")
+    print("plain: " + f"{v:08x}" + " end")
+    return 0

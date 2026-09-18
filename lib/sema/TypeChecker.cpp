@@ -3774,7 +3774,18 @@ TypeChecker::checkBuiltinMethod(CallExpr& expr, const Type* objectType, const st
     const Type* str = types_->strType();
     auto strArg = [&](std::size_t index) -> bool {
       const Type* type = checkExpr(*expr.arguments()[index]);
-      return type != nullptr && isAssignable(type, str);
+      if (type == nullptr) {
+        return false;
+      }
+      if (!isAssignable(type, str)) {
+        // Report here instead of returning false silently: an unreported failure
+        // leaves the enclosing call untyped and resurfaces later as a confusing
+        // codegen error pointing at an unrelated function.
+        diagnostics_->error(expr.arguments()[index]->range(),
+                            quoteType(type) + " is not a str");
+        return false;
+      }
+      return true;
     };
     if (name == "upper" || name == "lower" || name == "strip" || name == "lstrip" ||
         name == "rstrip" || name == "capitalize" || name == "title") {

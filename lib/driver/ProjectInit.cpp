@@ -25,6 +25,16 @@
 namespace sere {
 namespace {
 
+/// Directives every Sere project gets so GitHub counts .sere files as Sere.
+/// See docs/linguist.md; `Sere` is registered upstream in github-linguist.
+constexpr const char* kGitAttributes =
+    "# GitHub language detection for Sere sources (see docs/linguist.md).\n"
+    "*.sere linguist-language=Sere linguist-detectable text eol=lf\n"
+    "*.slib binary\n"
+    "*.lib binary\n"
+    "*.dll binary\n"
+    "*.exe binary\n";
+
 [[nodiscard]] bool writeText(const std::filesystem::path& path, std::string_view text) {
   std::ofstream output(path, std::ios::binary);
   if (!output) {
@@ -665,7 +675,9 @@ namespace {
          writeText(root / "libs" / "native" / "CMakeLists.txt", nativeCmake) &&
          writeText(root / "libs" / "native.sere", nativeSere) &&
          writeText(root / "sere.toml", tomlText(name)) &&
-         writeText(root / ".gitignore", gitignore) && writeText(root / "README.txt", readme) &&
+         writeText(root / ".gitignore", gitignore) &&
+         writeText(root / ".gitattributes", kGitAttributes) &&
+         writeText(root / "README.txt", readme) &&
          writeActivateScripts(root) && writePathScripts(root);
 }
 
@@ -823,7 +835,9 @@ void copyToolchain(const std::filesystem::path& compilerDir, const std::filesyst
          writeText(root / "libs" / "native" / "CMakeLists.txt", nativeCmake) &&
          writeText(root / "libs" / "native.sere", nativeSere) &&
          writeText(root / "sere.toml", libraryTomlText(name)) &&
-         writeText(root / ".gitignore", gitignore) && writeText(root / "README.md", readme);
+         writeText(root / ".gitignore", gitignore) &&
+         writeText(root / ".gitattributes", kGitAttributes) &&
+         writeText(root / "README.md", readme);
 }
 
 } // namespace

@@ -1,0 +1,7 @@
+# Snippet that `script/add-grammar https://github.com/Sere-Language/sere`
+# writes into github-linguist/linguist `grammars.yml`.
+#
+# The grammar is editors/vscode/syntaxes/sere.tmLanguage.json (scope
+# `source.sere`, MIT licensed, same grammar the VS Code extension ships).
+Sere-Language/sere:
+- source.sere

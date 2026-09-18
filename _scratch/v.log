@@ -1,0 +1,68 @@
+﻿===== v1 =====
+sere.exe : warning: overriding the module target triple with 
+x86_64-pc-windows-msvc19.44.35228 [-Woverride-module]
+At C:\Users\jackw\OneDrive\Desktop\git-projects\sere\_scratch\va
+riants.ps1:9 char:3
++   & $sere "_scratch\$n.sere" -o "_scratch\$n.exe" 2>&1 | 
+Out-File -Ap ...
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (warning: overri... 
+   verride-module]:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+1 warning generated.
+wrote _scratch\v1.exe
+EXIT=0
+===== v2 =====
+sere.exe : error[NameError]: unknown name 'parts'
+At C:\Users\jackw\OneDrive\Desktop\git-projects\sere\_scratch\va
+riants.ps1:9 char:3
++   & $sere "_scratch\$n.sere" -o "_scratch\$n.exe" 2>&1 | 
+Out-File -Ap ...
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (error[NameError]:  
+   unknown name 'parts':String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+ --> _scratch\v2.sere:6:15
+   |
+ 6 |         print(parts)
+   |               ^^^^^
+ = help: did you mean 'parse'?
+
+EXIT=1
+===== v3 =====
+sere.exe : error[TypeError]: no LLVM function for 'print'
+At C:\Users\jackw\OneDrive\Desktop\git-projects\sere\_scratch\va
+riants.ps1:9 char:3
++   & $sere "_scratch\$n.sere" -o "_scratch\$n.exe" 2>&1 | 
+Out-File -Ap ...
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (error[TypeError... 
+   ion for 'print':String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+ --> _scratch\v3.sere:3:5
+   |
+ 3 |     print(mode.split('.'))
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+
+EXIT=1
+===== print_repro =====
+sere.exe : error[TypeError]: no LLVM function for 'print'
+At C:\Users\jackw\OneDrive\Desktop\git-projects\sere\_scratch\va
+riants.ps1:9 char:3
++   & $sere "_scratch\$n.sere" -o "_scratch\$n.exe" 2>&1 | 
+Out-File -Ap ...
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (error[TypeError... 
+   ion for 'print':String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+ --> _scratch\print_repro.sere:6:9
+   |
+ 6 |         print(mode.split('.'))
+   |         ^^^^^^^^^^^^^^^^^^^^^^
+
+EXIT=1
+VARIANT RUN DONE
