@@ -383,8 +383,7 @@ std::unique_ptr<Expr> substOne(const Expr& tmpl, const MacroBindings& env, Sourc
     const auto& interpolated = static_cast<const InterpolatedStringExpr&>(tmpl);
     std::vector<StringPart> parts;
     for (const StringPart& part : interpolated.parts()) {
-      StringPart copy;
-      copy.literal = part.literal;
+      StringPart copy = cloneStringPart(part);
       if (part.value != nullptr) {
         copy.value = substOne(*part.value, env, callSite);
       }
@@ -540,8 +539,7 @@ std::unique_ptr<Expr> cloneExpr(const Expr& expr) {
     const auto& interpolated = static_cast<const InterpolatedStringExpr&>(expr);
     std::vector<StringPart> parts;
     for (const StringPart& part : interpolated.parts()) {
-      StringPart copy;
-      copy.literal = part.literal;
+      StringPart copy = cloneStringPart(part);
       if (part.value != nullptr) {
         copy.value = cloneExpr(*part.value);
       }

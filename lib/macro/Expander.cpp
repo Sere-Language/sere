@@ -652,8 +652,7 @@ std::unique_ptr<Expr> MacroExpander::expandExpr(const Expr& expr) {
     const auto& interpolated = static_cast<const InterpolatedStringExpr&>(expr);
     std::vector<StringPart> parts;
     for (const StringPart& part : interpolated.parts()) {
-      StringPart copy;
-      copy.literal = part.literal;
+      StringPart copy = cloneStringPart(part);
       if (part.value != nullptr) {
         copy.value = expandExpr(*part.value);
       }

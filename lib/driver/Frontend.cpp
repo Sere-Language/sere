@@ -368,6 +368,9 @@ void bindPreludeExports(TypeChecker& checker, Module& prelude) {
       continue;
     }
     Symbol symbol;
+    // Names bound from the prelude are shadowable: a module that defines its own
+    // `hex`, `min`, ... replaces the prelude helper instead of erroring.
+    symbol.fromPrelude = true;
     if (item->kind() == NodeKind::ClassDef) {
       auto& classDef = static_cast<ClassDef&>(*item);
       symbol.kind = SymbolKind::Class;

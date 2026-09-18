@@ -160,6 +160,15 @@ struct StringPart {
   std::string spec;
 };
 
+/// Copies a part's non-expression fields. Passes that rebuild interpolated
+/// strings use this so a newly added field cannot be silently dropped.
+[[nodiscard]] inline StringPart cloneStringPart(const StringPart& part) {
+  StringPart copy;
+  copy.literal = part.literal;
+  copy.spec = part.spec;
+  return copy;
+}
+
 class InterpolatedStringExpr final : public Expr {
 public:
   InterpolatedStringExpr(SourceRange range, std::vector<StringPart> parts);

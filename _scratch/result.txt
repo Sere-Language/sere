@@ -1,0 +1,27 @@
+﻿BUILD EXIT=0
+ninja: no work to do.
+===== fmt_repro =====
+warning: overriding the module target triple with x86_64-pc-windows-msvc19.44.35228 [-Woverride-module]
+1 warning generated.
+wrote _scratch\fmt_repro.exe
+COMPILE EXIT=0
+0x48879
+255
+255
+48879
+255|
+255
+0.1234
+0.1234
+1234567
+255|
+255|
+RUN EXIT=0
+===== argcount_repro =====
+warning: overriding the module target triple with x86_64-pc-windows-msvc19.44.35228 [-Woverride-module]
+1 warning generated.
+wrote _scratch\argcount_repro.exe
+COMPILE EXIT=0
+0x
+RUN EXIT=0
+ALL DONE

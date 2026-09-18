@@ -5361,6 +5361,7 @@ bool TypeChecker::collectAliases(Module& module) {
     Symbol symbol;
     symbol.kind = SymbolKind::Type;
     symbol.type = type;
+    symbol.fromPrelude = alias.fromPrelude();
     if (!declare(alias.name(), symbol, alias.range().start, !alias.fromPrelude())) {
       return false;
     }
@@ -5541,7 +5542,9 @@ bool TypeChecker::collectFunctions(Module& module) {
     symbol.kind = SymbolKind::Function;
     symbol.type = fnType;
     symbol.function = &function;
+    symbol.fromPrelude = function.fromPrelude();
     if (!declare(function.name(), symbol, function.range().start, !function.fromPrelude())) {
+      ok = false;
     }
   }
   (void)ok;
@@ -5559,12 +5562,14 @@ bool TypeChecker::collectMacros(Module& module) {
     symbol.paramNames = def.params();
     symbol.typeDisplay = formatMacro(def);
     symbol.snippet = macroSnippet(def);
+    symbol.fromPrelude = def.fromPrelude();
     const SourceLocation location = def.nameRange().end.offset > def.nameRange().start.offset
                                         ? def.nameRange().start
                                         : def.range().start;
     if (!declare(def.name(), symbol, location, !def.fromPrelude())) {
       return false;
     }
+  }
   return true;
 }
 
