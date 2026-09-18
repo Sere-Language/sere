@@ -3,7 +3,7 @@
 
 cmake_minimum_required(VERSION 3.28)
 project(sere
-  VERSION 0.1.8
+  VERSION 0.1.9
   DESCRIPTION "Sere compiled language toolchain (Python-superset frontend, LLVM backend)"
   LANGUAGES C CXX
 )
@@ -21,6 +21,13 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(CTest)
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SereWarnings.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SereLLVM.cmake")
+
+# MSVC 14.5x's <xutility> enables vectorized algorithms that lower to
+# `__std_replace_copy_*` helpers clang-cl cannot emit, so linking fails with an
+# undefined symbol. The STL honours this override, so pin it off for clang-cl.
+if(MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_definitions(_USE_STD_VECTOR_ALGORITHMS=0)
+endif()
 
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/include/sere/Version.h.in"

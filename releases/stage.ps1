@@ -26,7 +26,23 @@ if (-not $PortableOnly -and -not $Iscc) {
 if (-not $SkipBuild) {
   $env:SERE_LLVM_DIR = $LlvmRoot
   . "$repo\scripts\env.ps1"
-  & cmake -S $repo -B $BuildDir -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl "-DLLVM_DIR=$LlvmRoot/lib/cmake/llvm"
+  # env.ps1 rejects a toolchain that cannot build (an inherited SERE_LLVM_DIR may
+  # point at a trimmed runtime-only install) and selects a complete one instead.
+  $LlvmRoot = $env:SERE_LLVM_DIR
+  $clangCl = (Join-Path $LlvmRoot 'bin\clang-cl.exe') -replace '\\', '/'
+  if (-not (Test-Path -LiteralPath $clangCl)) {
+    throw "clang-cl is missing from the LLVM toolchain at $LlvmRoot"
+  }
+  # A cache written against a different toolchain makes CMake refuse to
+  # reconfigure, so start clean whenever the recorded compiler no longer matches.
+  $cache = Join-Path $BuildDir 'CMakeCache.txt'
+  if ((Test-Path -LiteralPath $cache) -and
+    ((Get-Content -LiteralPath $cache -Raw) -notmatch [regex]::Escape($clangCl))) {
+    Write-Host "Dropping stale CMake cache in $BuildDir (compiler path changed)"
+    Remove-Item -LiteralPath $BuildDir -Recurse -Force
+  }
+  Write-Host "Building with LLVM at $LlvmRoot"
+  & cmake -S $repo -B $BuildDir -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_C_COMPILER=$clangCl" "-DCMAKE_CXX_COMPILER=$clangCl" "-DLLVM_DIR=$LlvmRoot/lib/cmake/llvm"
   if ($LASTEXITCODE) { throw 'CMake configure failed' }
   & cmake --build $BuildDir --config Release
   if ($LASTEXITCODE) { throw 'Build failed' }

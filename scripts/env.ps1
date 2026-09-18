@@ -4,15 +4,33 @@
 
 $ErrorActionPreference = "Stop"
 
+function Test-SereLlvmDir([string]$dir) {
+  if (-not $dir) { return $false }
+  # A directory is only usable for building when it has the clang-cl driver and
+  # the LLVM CMake package. Installed layouts also ship a trimmed runtime-only
+  # toolchain (clang.exe, no clang-cl.exe) that must not be selected here.
+  return (Test-Path (Join-Path $dir "bin\clang-cl.exe")) -and
+         (Test-Path (Join-Path $dir "lib\cmake\llvm"))
+}
+
 function Get-SereLlvmDir {
-  if ($env:SERE_LLVM_DIR -and (Test-Path (Join-Path $env:SERE_LLVM_DIR "bin\clang.exe"))) {
+  if (Test-SereLlvmDir $env:SERE_LLVM_DIR) {
     return $env:SERE_LLVM_DIR
   }
-  $defaultDir = Join-Path $env:LOCALAPPDATA "sere\toolchains\llvm-22.1.8"
-  if (Test-Path (Join-Path $defaultDir "bin\clang.exe")) {
-    return $defaultDir
+  $candidates = @(
+    (Join-Path $env:LOCALAPPDATA "sere\toolchains\llvm-22.1.8"),
+    (Join-Path $env:LOCALAPPDATA "Programs\Sere\toolchains\llvm-22.1.8")
+  )
+  foreach ($candidate in $candidates) {
+    if (Test-SereLlvmDir $candidate) {
+      return $candidate
+    }
   }
-  throw "LLVM 22.1.8 is not installed. Run scripts/bootstrap.ps1 first."
+  $found = $env:SERE_LLVM_DIR
+  if ($found) {
+    throw "LLVM 22.1.8 at '$found' cannot build Sere (clang-cl.exe or the LLVM CMake package is missing). Run scripts\bootstrap.ps1."
+  }
+  throw "LLVM 22.1.8 is not installed. Run scripts\bootstrap.ps1 first."
 }
 
 function Import-VcVars64 {
@@ -41,8 +59,10 @@ Import-VcVars64
 $llvmDir = Get-SereLlvmDir
 $env:SERE_LLVM_DIR = ($llvmDir -replace '\\', '/')
 $env:PATH = "$(Join-Path $llvmDir 'bin');$env:PATH"
-$env:CC = "clang-cl"
-$env:CXX = "clang-cl"
+# Point CC/CXX at the full path. A bare name is resolved against PATH and then
+# cached by CMake, which breaks as soon as another clang-cl appears on PATH.
+$env:CC = (Join-Path $llvmDir 'bin\clang-cl.exe')
+$env:CXX = $env:CC
 if (-not $env:SERE_STDLIB) {
   $env:SERE_STDLIB = (Resolve-Path (Join-Path $PSScriptRoot "..\stdlib")).Path
 }
@@ -50,6 +70,6 @@ if (-not $env:SERE_STDLIB) {
 Write-Host "Sere environment ready."
 Write-Host "  SERE_LLVM_DIR=$env:SERE_LLVM_DIR"
 Write-Host "  clang     = $(& clang --version | Select-Object -First 1)+"
-Write-Host "  clang-cl  = $(& clang-cl --version | Select-Object -First 1)"
+Write-Host "  clang-cl  = $(& $env:CC --version | Select-Object -First 1)"
 Write-Host "  cmake     = $(cmake --version | Select-Object -First 1)"
 Write-Host "  ninja     = ninja $(ninja --version)"

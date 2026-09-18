@@ -18,6 +18,8 @@
       "cacheVariables": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "LLVM_DIR": "$env{SERE_LLVM_DIR}/lib/cmake/llvm",
+        "CMAKE_C_COMPILER": "$env{SERE_LLVM_DIR}/bin/clang-cl.exe",
+        "CMAKE_CXX_COMPILER": "$env{SERE_LLVM_DIR}/bin/clang-cl.exe",
         "CMAKE_AR": "$env{SERE_LLVM_DIR}/bin/llvm-lib.exe",
         "CMAKE_LINKER": "$env{SERE_LLVM_DIR}/bin/lld-link.exe",
         "CMAKE_RANLIB": "$env{SERE_LLVM_DIR}/bin/llvm-ranlib.exe"
@@ -38,9 +40,7 @@
       "inherits": "windows-base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "CMAKE_C_COMPILER": "clang-cl",
-        "CMAKE_CXX_COMPILER": "clang-cl",
-        "CMAKE_LINKER": "lld-link"
+        "CMAKE_LINKER": "$env{SERE_LLVM_DIR}/bin/lld-link.exe"
       }
     },
     {
@@ -49,9 +49,7 @@
       "inherits": "windows-base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_C_COMPILER": "clang-cl",
-        "CMAKE_CXX_COMPILER": "clang-cl",
-        "CMAKE_LINKER": "lld-link"
+        "CMAKE_LINKER": "$env{SERE_LLVM_DIR}/bin/lld-link.exe"
       }
     },
     {
