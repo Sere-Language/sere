@@ -22,6 +22,9 @@ void printUsage(std::string& error) {
       "  run [-- <args>]     Build and run the project executable\n"
       "  clean               Remove bin/ and dist/ artifacts\n"
       "  shell               Enter the Sere project shell\n"
+      "  login [token]       Sign in to the Sere registry (no token: show status)\n"
+      "  logout              Forget the saved registry token\n"
+      "  publish             Pack this library project and upload it to the registry\n"
       "  refresh-bin         Copy this compiler into ./bin (stdlib and runtime too)\n"
       "  update              Install the latest GitHub portable release or refreshed asset\n"
       "  update-local        Copy this compiler into %LOCALAPPDATA%\\Programs\\Sere if it differs, "
@@ -55,6 +58,9 @@ void printUsage(std::string& error) {
       "  --lib               With init: create a library project\n"
       "  --pack [file]       Same as pack\n"
       "  --build-lib [file]  Same as pack\n"
+      "  --publish           Same as publish\n"
+      "  --token <token>     Registry token for this command (sere login, publish)\n"
+      "  --dry-run           With publish: list the upload and send nothing\n"
       "  --host <shell>      Shell to nest: powershell, cmd, bash (shell command)\n"
       "  --link <lib>        Link an extra native C/C++ library into the program\n"
       "  --color=<mode>      Color diagnostics: auto, always, never\n"
@@ -97,6 +103,18 @@ void printUsage(std::string& error) {
   }
   if (argument == "shell" || argument == "activate") {
     command = ProjectCommand::Shell;
+    return true;
+  }
+  if (argument == "login") {
+    command = ProjectCommand::Login;
+    return true;
+  }
+  if (argument == "logout") {
+    command = ProjectCommand::Logout;
+    return true;
+  }
+  if (argument == "publish") {
+    command = ProjectCommand::Publish;
     return true;
   }
   if (argument == "build-installer") {
@@ -221,6 +239,27 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
       }
       continue;
     }
+    if (argument == "--publish") {
+      options.projectCommand = ProjectCommand::Publish;
+      continue;
+    }
+    if (argument == "--token") {
+      if (index + 1 >= argc) {
+        error = "missing token after --token";
+        return false;
+      }
+      ++index;
+      options.authToken = argv[index];
+      continue;
+    }
+    if (argument.starts_with("--token=")) {
+      options.authToken = std::string(argument.substr(8));
+      continue;
+    }
+    if (argument == "--dry-run") {
+      options.dryRun = true;
+      continue;
+    }
     if (argument == "--host") {
       if (index + 1 >= argc) {
         error = "missing shell name after --host";
@@ -324,6 +363,10 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
         ++index;
         options.inputPath = argv[index];
       }
+      if (command == ProjectCommand::Login && index + 1 < argc && argv[index + 1][0] != '-') {
+        ++index;
+        options.authToken = argv[index];
+      }
       continue;
     }
     if (options.projectCommand == ProjectCommand::Run) {
@@ -338,6 +381,10 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
     }
     if (options.projectCommand == ProjectCommand::Pack && options.inputPath.empty()) {
       options.inputPath = std::string(argument);
+      continue;
+    }
+    if (options.projectCommand == ProjectCommand::Login && options.authToken.empty()) {
+      options.authToken = std::string(argument);
       continue;
     }
     if (options.projectCommand != ProjectCommand::None) {

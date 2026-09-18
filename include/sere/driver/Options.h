@@ -25,6 +25,9 @@ enum class ProjectCommand {
   RefreshBin,
   Update,
   UpdateLocal,
+  Login,
+  Logout,
+  Publish,
 };
 
 struct CompilerOptions {
@@ -46,6 +49,10 @@ struct CompilerOptions {
   std::filesystem::path initName;
   bool initLibrary = false;
   std::string shellHost;
+  /// Registry publish token: `sere login <token>` or `--token`.
+  std::string authToken;
+  /// `sere publish --dry-run`: describe the upload without sending it.
+  bool dryRun = false;
   std::vector<std::string> programArgs;
   std::vector<std::filesystem::path> linkLibraries;
   ColorMode colorMode = ColorMode::Auto;

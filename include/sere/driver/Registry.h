@@ -17,16 +17,16 @@
 namespace sere {
 
 /// Environment variable that replaces the stored token.
-inline constexpr std::string_view RegistryTokenEnv = "SERE_TOKEN";
+inline constexpr const char* RegistryTokenEnv = "SERE_TOKEN";
 
 /// Environment variable that replaces the stored credentials file (tests, CI).
-inline constexpr std::string_view RegistryCredentialsEnv = "SERE_CREDENTIALS";
+inline constexpr const char* RegistryCredentialsEnv = "SERE_CREDENTIALS";
 
 /// Environment variable that replaces the registry base URL (tests, self-hosting).
-inline constexpr std::string_view RegistryUrlEnv = "SERE_REGISTRY_URL";
+inline constexpr const char* RegistryUrlEnv = "SERE_REGISTRY_URL";
 
 /// Default registry base URL, without a trailing slash.
-inline constexpr std::string_view DefaultRegistryUrl = "https://sere-lang.com";
+inline constexpr const char* DefaultRegistryUrl = "https://sere-lang.com";
 
 /// Per-user credentials file: `%LOCALAPPDATA%\sere\credentials.toml` on Windows,
 /// `$XDG_CONFIG_HOME/sere/credentials.toml` (or `~/.config/...`) elsewhere.

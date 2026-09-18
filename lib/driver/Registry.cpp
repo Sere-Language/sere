@@ -577,7 +577,7 @@ struct MultipartPart {
 
 /// Server-provided detail (`error`, `message`, or `detail`), or the raw body.
 [[nodiscard]] std::string publishFailureDetail(const std::string& body) {
-  const llvm::Expected<llvm::json::Value> parsed = llvm::json::parse(body);
+  llvm::Expected<llvm::json::Value> parsed = llvm::json::parse(body);
   if (parsed) {
     if (const llvm::json::Object* object = parsed->getAsObject()) {
       const std::string detail = firstJsonString(*object, {"error", "message", "detail"});

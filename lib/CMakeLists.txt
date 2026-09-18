@@ -72,6 +72,7 @@ add_library(sere_driver
   driver/Prelude.cpp
   driver/Project.cpp
   driver/ProjectInit.cpp
+  driver/Registry.cpp
   driver/Library.cpp
   driver/ProjectShell.cpp
   driver/Frontend.cpp
@@ -85,6 +86,10 @@ add_library(sere_driver
 )
 target_link_libraries(sere_driver PUBLIC sere_sema sere_codegen)
 sere_configure_llvm_target(sere_driver)
+if(WIN32)
+  # `sere publish` speaks HTTPS through WinHTTP.
+  target_link_libraries(sere_driver PRIVATE winhttp)
+endif()
 if(UNIX AND NOT APPLE)
   target_link_libraries(sere_driver PUBLIC pthread ${CMAKE_DL_LIBS} m)
 endif()

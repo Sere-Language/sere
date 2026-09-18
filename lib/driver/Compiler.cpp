@@ -695,6 +695,15 @@ int Compiler::run(const CompilerOptions& options) {
   if (options.projectCommand == ProjectCommand::Shell) {
     return enterProjectShell(options);
   }
+  if (options.projectCommand == ProjectCommand::Login) {
+    return loginCommand(options);
+  }
+  if (options.projectCommand == ProjectCommand::Logout) {
+    return logoutCommand();
+  }
+  if (options.projectCommand == ProjectCommand::Publish) {
+    return publishCommand(options);
+  }
   if (options.projectCommand == ProjectCommand::BuildInstaller) {
     return buildInstaller(options);
   }
