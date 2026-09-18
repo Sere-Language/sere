@@ -36,7 +36,7 @@ def main() -> i32:
 
     greet2 = greet("Jessica")
     greet2_str = greet2.try_unwrap()
-    print(greet2_str))
+    print(greet2_str)
 
     greet2.unwrap()
 

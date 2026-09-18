@@ -1,0 +1,23 @@
+enum Result[T]:
+    Ok(T)
+    Err(str)
+
+    def unwrap(self) -> T:
+        match self:
+            case Result.Ok(value):
+                return value
+            case Result.Err(message):
+                raise Exception(message)
+
+    def is_ok(self) -> bool:
+        match self:
+            case Result.Ok(_):
+                return True
+            case Result.Err(_):
+                return False
+
+def main() -> i32:
+    r: Result[str] = Result.Ok("hi")
+    print(r.is_ok())
+    print(r.unwrap())
+    return 0

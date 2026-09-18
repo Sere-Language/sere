@@ -1256,7 +1256,7 @@ llvm::Value* IRGenerator::emitAddress(llvm::IRBuilder<>& builder, const Expr& ex
     if (local != locals_.end()) {
       const Type* type = resolveType(expr.resolvedType());
       const auto* slot = llvm::dyn_cast<llvm::AllocaInst>(local->second);
-      if (type != nullptr && type->isRecord() && !type->isEnum() && slot != nullptr &&
+      if (type != nullptr && type->isRecord() && slot != nullptr &&
           slot->getAllocatedType()->isPointerTy()) {
         return builder.CreateLoad(builder.getPtrTy(), local->second);
       }

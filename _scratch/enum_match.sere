@@ -1,0 +1,12 @@
+enum Result[T]:
+    Ok(T)
+    Err(str)
+
+def main() -> i32:
+    r: Result[str] = Result.Ok("hi")
+    match r:
+        case Result.Ok(v):
+            print("ok", v)
+        case Result.Err(m):
+            print("err", m)
+    return 0
