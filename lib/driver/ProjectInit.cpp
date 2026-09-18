@@ -783,36 +783,47 @@ void copyToolchain(const std::filesystem::path& compilerDir, const std::filesyst
                           "*.obj\n"
                           "*.ll\n";
   const std::string readme =
-      std::string("Sere library: ") + name +
+      "# " + name +
       "\n"
-      "====================\n"
-      "src/lib.sere   public API (no main)\n"
-      "libs/          extra Sere modules and optional native C++\n"
-      "dist/          packed .slib after `sere pack`\n"
       "\n"
-      "Build a single file that another Sere program can import:\n"
-      "  sere pack\n"
-      "  sere pack -o dist/" +
+      "A Sere library. `sere publish` uploads this file with the package.\n"
+      "\n"
+      "## Layout\n"
+      "\n"
+      "- `src/lib.sere` - public API (no `main`)\n"
+      "- `libs/` - extra Sere modules and optional native C++\n"
+      "- `dist/` - packed `.slib` after `sere pack`\n"
+      "\n"
+      "## Pack it\n"
+      "\n"
+      "```sh\n"
+      "sere pack\n"
+      "sere pack -o dist/" +
       name +
       ".slib\n"
+      "```\n"
       "\n"
-      "Drop the file into a project:\n"
-      "  copy dist/" +
+      "## Use it from another project\n"
+      "\n"
+      "```sh\n"
+      "copy dist/" +
       name +
       ".slib  other-app/libs/\n"
+      "```\n"
       "\n"
-      "Then in that program:\n"
-      "  import " +
+      "```sere\n"
+      "import " +
       name +
       "\n"
+      "```\n"
       "\n"
-      "Set native = true in sere.toml to compile libs/native into the .slib.\n";
+      "Set `native = true` in `sere.toml` to compile `libs/native` into the `.slib`.\n";
   return writeText(root / "src" / "lib.sere", libSere) &&
          writeText(root / "libs" / "native" / "example.cpp", nativeCpp) &&
          writeText(root / "libs" / "native" / "CMakeLists.txt", nativeCmake) &&
          writeText(root / "libs" / "native.sere", nativeSere) &&
          writeText(root / "sere.toml", libraryTomlText(name)) &&
-         writeText(root / ".gitignore", gitignore) && writeText(root / "README.txt", readme);
+         writeText(root / ".gitignore", gitignore) && writeText(root / "README.md", readme);
 }
 
 } // namespace

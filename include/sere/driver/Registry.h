@@ -72,6 +72,8 @@ struct RegistryResponse {
 
 /// `sere publish [--dry-run]`: pack this library project and POST it to the
 /// registry. Applications are rejected; only `kind = "lib"` projects publish.
+/// The project README (`README.md`, else `README.txt`) is uploaded next to the
+/// manifest and the packed library so the registry can render the package page.
 [[nodiscard]] int publishCommand(const CompilerOptions& options);
 
 } // namespace sere

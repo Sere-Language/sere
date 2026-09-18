@@ -592,6 +592,70 @@ struct MultipartPart {
   return body;
 }
 
+/// Locates the README that ships with a published library.
+///
+/// Scaffolds and hand-written projects disagree on the file name, so the stem is
+/// matched case-insensitively and Markdown (`README.md`) wins over plain text
+/// (`README.txt`) when a project carries both.
+[[nodiscard]] std::optional<std::filesystem::path>
+findReadmeFile(const std::filesystem::path& root) {
+  std::error_code fsError;
+  std::filesystem::directory_iterator iterator(root, fsError);
+  if (fsError) {
+    return std::nullopt;
+  }
+  const std::filesystem::directory_iterator end;
+  std::vector<std::filesystem::path> markdown;
+  std::vector<std::filesystem::path> plain;
+  for (; iterator != end; iterator.increment(fsError)) {
+    if (fsError) {
+      break;
+    }
+    const std::filesystem::path& entry = iterator->path();
+    std::error_code entryError;
+    if (!std::filesystem::is_regular_file(entry, entryError) || entryError) {
+      continue;
+    }
+    std::string stem = entry.stem().string();
+    std::string extension = entry.extension().string();
+    for (char& ch : stem) {
+      ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    for (char& ch : extension) {
+      ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    if (stem != "readme") {
+      continue;
+    }
+    if (extension == ".md" || extension == ".markdown") {
+      markdown.push_back(entry);
+    } else {
+      plain.push_back(entry);
+    }
+  }
+  const auto byName = [](const std::filesystem::path& left, const std::filesystem::path& right) {
+    return left.filename().string() < right.filename().string();
+  };
+  std::sort(markdown.begin(), markdown.end(), byName);
+  std::sort(plain.begin(), plain.end(), byName);
+  if (!markdown.empty()) {
+    return markdown.front();
+  }
+  if (!plain.empty()) {
+    return plain.front();
+  }
+  return std::nullopt;
+}
+
+/// Multipart content type for a README, so Markdown renders on the package page.
+[[nodiscard]] std::string readmeContentType(const std::filesystem::path& path) {
+  std::string extension = path.extension().string();
+  for (char& ch : extension) {
+    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  }
+  return extension == ".md" || extension == ".markdown" ? "text/markdown" : "text/plain";
+}
+
 // ---------------------------------------------------------------- json replies
 
 [[nodiscard]] std::string jsonStringField(const llvm::json::Object& object,
@@ -829,9 +893,13 @@ int publishCommand(const CompilerOptions& options) {
   if (std::filesystem::is_regular_file(manifestFile, fsError)) {
     parts.push_back(filePart("manifest", manifestFile, "application/toml"));
   }
-  const std::filesystem::path readmeFile = manifest.root / "README.md";
-  if (std::filesystem::is_regular_file(readmeFile, fsError)) {
-    parts.push_back(filePart("readme", readmeFile, "text/markdown"));
+  const std::optional<std::filesystem::path> readmeFile = findReadmeFile(manifest.root);
+  if (readmeFile.has_value()) {
+    parts.push_back(filePart("readme", *readmeFile, readmeContentType(*readmeFile)));
+  } else {
+    llvm::errs() << "warning: no README.md in '" << manifest.root.string()
+                 << "'; publishing without one\n";
+    llvm::errs() << "note: the README is shown on the package page\n";
   }
   parts.push_back(filePart("tarball", archive, "application/octet-stream"));
   const std::string boundary = "----SereFormBoundary" + uniqueSuffix();
@@ -849,7 +917,11 @@ int publishCommand(const CompilerOptions& options) {
     return 0;
   }
   std::cout << "sere publish " << manifest.name << " " << manifest.version << " (" << archiveBytes
-            << " bytes) -> " << url << '\n';
+            << " bytes";
+  if (readmeFile.has_value()) {
+    std::cout << ", readme " << readmeFile->filename().string();
+  }
+  std::cout << ") -> " << url << '\n';
   HttpRequest request;
   request.method = "POST";
   request.url = url;
