@@ -4,5 +4,6 @@ import hello
 type Number = i32 | i64
 
 def main() -> i32:
+    hello.hello_world()
     hello.greet("Alice")
     return 0

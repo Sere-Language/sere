@@ -2204,6 +2204,50 @@ IRGenerator::emitStrConcat(llvm::IRBuilder<>& builder, llvm::Value* left, llvm::
   return str;
 }
 
+llvm::Value*
+IRGenerator::emitStrRepeat(llvm::IRBuilder<>& builder, llvm::Value* str, llvm::Value* count) {
+  if (!count->getType()->isIntegerTy(64)) {
+    count = builder.CreateSExt(count, builder.getInt64Ty());
+  }
+  llvm::Function* fn = runtimeDecl("sere_str_repeat",
+                                   builder.getVoidTy(),
+                                   {builder.getPtrTy(),
+                                    builder.getInt64Ty(),
+                                    builder.getInt64Ty(),
+                                    builder.getPtrTy(),
+                                    builder.getPtrTy()});
+  llvm::Value* dataSlot = builder.CreateAlloca(builder.getPtrTy(), nullptr, "rep.data");
+  llvm::Value* lenSlot = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "rep.len");
+  builder.CreateCall(fn,
+                     {builder.CreateExtractValue(str, {0}),
+                      builder.CreateExtractValue(str, {1}),
+                      count,
+                      dataSlot,
+                      lenSlot});
+  return packStr(builder,
+                 builder.CreateLoad(builder.getPtrTy(), dataSlot),
+                 builder.CreateLoad(builder.getInt64Ty(), lenSlot));
+}
+
+llvm::Value* IRGenerator::emitListConcat(llvm::IRBuilder<>& builder,
+                                         llvm::Value* left,
+                                         llvm::Value* right) {
+  llvm::Function* fn =
+      runtimeDecl("sere_list_concat", builder.getPtrTy(), {builder.getPtrTy(), builder.getPtrTy()});
+  return builder.CreateCall(fn, {left, right});
+}
+
+llvm::Value* IRGenerator::emitListRepeat(llvm::IRBuilder<>& builder,
+                                         llvm::Value* list,
+                                         llvm::Value* count) {
+  if (!count->getType()->isIntegerTy(64)) {
+    count = builder.CreateSExt(count, builder.getInt64Ty());
+  }
+  llvm::Function* fn = runtimeDecl(
+      "sere_list_repeat", builder.getPtrTy(), {builder.getPtrTy(), builder.getInt64Ty()});
+  return builder.CreateCall(fn, {list, count});
+}
+
 llvm::Value* IRGenerator::emitRecordStr(llvm::IRBuilder<>& builder, const Expr& object) {
   const Type* record =
       resolveType(object.resolvedType());
@@ -3398,6 +3442,13 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
       return expr.op() == BinaryOp::Is ? match : builder.CreateNot(match);
     }
   }
+  // Operator overloading and the built-in string operators are lowered before
+  // the numeric path, which cannot represent either of them.
+  bool overloaded = false;
+  llvm::Value* overloadResult = emitBinaryOverload(builder, expr, overloaded);
+  if (overloaded) {
+    return overloadResult;
+  }
   llvm::Value* left = emitExpr(builder, expr.left());
   llvm::Value* right = emitExpr(builder, expr.right());
   if (left == nullptr || right == nullptr) {
@@ -3442,42 +3493,21 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
     // this, and they cannot dereference a missing operand.
     return builder.getInt1(false);
   }
-  if (expr.op() == BinaryOp::Add && leftType != nullptr && leftType->isNamed("str") &&
-      rightType != nullptr && rightType->isNamed("str")) {
-    return emitStrConcat(builder, left, right);
-  }
   if (expr.op() == BinaryOp::Mul && leftType != nullptr && rightType != nullptr &&
       ((leftType->isNamed("str") && rightType->isInteger()) ||
        (leftType->isInteger() && rightType->isNamed("str")))) {
-    llvm::Value* str = leftType->isNamed("str") ? left : right;
-    llvm::Value* count = leftType->isNamed("str") ? right : left;
-    if (!count->getType()->isIntegerTy(64)) {
-      count = builder.CreateSExt(count, builder.getInt64Ty());
-    }
-    llvm::Function* fn = runtimeDecl("sere_str_repeat",
-                                     builder.getVoidTy(),
-                                     {builder.getPtrTy(),
-                                      builder.getInt64Ty(),
-                                      builder.getInt64Ty(),
-                                      builder.getPtrTy(),
-                                      builder.getPtrTy()});
-    llvm::Value* dataSlot = builder.CreateAlloca(builder.getPtrTy(), nullptr, "rep.data");
-    llvm::Value* lenSlot = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "rep.len");
-    builder.CreateCall(fn,
-                       {builder.CreateExtractValue(str, {0}),
-                        builder.CreateExtractValue(str, {1}),
-                        count,
-                        dataSlot,
-                        lenSlot});
-    return packStr(builder,
-                   builder.CreateLoad(builder.getPtrTy(), dataSlot),
-                   builder.CreateLoad(builder.getInt64Ty(), lenSlot));
+    return leftType->isNamed("str") ? emitStrRepeat(builder, left, right)
+                                    : emitStrRepeat(builder, right, left);
+  }
+  if (expr.op() == BinaryOp::Mul && leftType != nullptr && rightType != nullptr &&
+      ((leftType->isList() && rightType->isInteger()) ||
+       (leftType->isInteger() && rightType->isList()))) {
+    return leftType->isList() ? emitListRepeat(builder, left, right)
+                              : emitListRepeat(builder, right, left);
   }
   if (expr.op() == BinaryOp::Add && leftType != nullptr && leftType->isList() &&
       rightType != nullptr && rightType->isList()) {
-    llvm::Function* fn = runtimeDecl(
-        "sere_list_concat", builder.getPtrTy(), {builder.getPtrTy(), builder.getPtrTy()});
-    return builder.CreateCall(fn, {left, right});
+    return emitListConcat(builder, left, right);
   }
   if ((expr.op() == BinaryOp::Eq || expr.op() == BinaryOp::Ne || expr.op() == BinaryOp::Lt ||
        expr.op() == BinaryOp::Le || expr.op() == BinaryOp::Gt || expr.op() == BinaryOp::Ge ||
@@ -3644,6 +3674,239 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
     return nullptr;
   }
   return nullptr;
+}
+
+llvm::Value*
+IRGenerator::emitBinaryOverload(llvm::IRBuilder<>& builder, const BinaryExpr& expr, bool& handled) {
+  handled = false;
+  // Sema resolved which operand's class owns the operator; mirror that choice
+  // rather than re-deriving it, since the built-in paths below must not fire.
+  if (expr.overload() != BinaryOverload::None) {
+    handled = true;
+    return emitDunderBinary(builder, expr, expr.overload());
+  }
+  if (expr.op() != BinaryOp::Add) {
+    return nullptr;
+  }
+  const Type* leftType = resolveType(expr.left().resolvedType());
+  const Type* rightType = resolveType(expr.right().resolvedType());
+  const Type* leftValue = leftType == nullptr ? nullptr : leftType->valueType();
+  const Type* rightValue = rightType == nullptr ? nullptr : rightType->valueType();
+  const bool leftStr = leftValue != nullptr && leftValue->isNamed("str");
+  const bool rightStr = rightValue != nullptr && rightValue->isNamed("str");
+  if (!leftStr && !rightStr) {
+    return nullptr;
+  }
+  // `str + value` concatenates, converting the other operand to text so that
+  // `s + "Num: " + 5` works without an explicit conversion.
+  handled = true;
+  llvm::Value* left = emitToStr(builder, expr.left());
+  llvm::Value* right = emitToStr(builder, expr.right());
+  if (left == nullptr || right == nullptr) {
+    return nullptr;
+  }
+  return emitStrConcat(builder, left, right);
+}
+
+llvm::Value* IRGenerator::emitDunderBinary(llvm::IRBuilder<>& builder,
+                                           const BinaryExpr& expr,
+                                           BinaryOverload overload) {
+  const BinaryDunderNames dunder = binaryDunderNames(expr.op());
+  const Type* record = nullptr;
+  const Expr* selfExpr = nullptr;
+  const Expr* argumentExpr = nullptr;
+  const char* method = nullptr;
+  switch (overload) {
+  case BinaryOverload::Left:
+    record = resolveType(expr.left().resolvedType());
+    selfExpr = &expr.left();
+    argumentExpr = &expr.right();
+    method = dunder.method;
+    break;
+  case BinaryOverload::Right:
+    record = resolveType(expr.right().resolvedType());
+    selfExpr = &expr.right();
+    argumentExpr = &expr.left();
+    method = dunder.reflected;
+    break;
+  case BinaryOverload::EqFallback: {
+    const Type* leftType = resolveType(expr.left().resolvedType());
+    const bool leftIsEq =
+        leftType != nullptr && leftType->isRecord() && leftType->methodIndex("__eq__") >= 0;
+    record = leftIsEq ? leftType : resolveType(expr.right().resolvedType());
+    selfExpr = leftIsEq ? &expr.left() : &expr.right();
+    argumentExpr = leftIsEq ? &expr.right() : &expr.left();
+    method = "__eq__";
+    break;
+  }
+  case BinaryOverload::None:
+    return nullptr;
+  }
+  if (record == nullptr || selfExpr == nullptr || argumentExpr == nullptr || method == nullptr) {
+    return nullptr;
+  }
+  const int index = record->methodIndex(method);
+  if (index < 0) {
+    return nullptr;
+  }
+  // A method receives the receiver by address, so reuse the operand's storage
+  // when it is addressable and materialise a temporary otherwise.
+  llvm::Value* self = emitAddress(builder, *selfExpr, false);
+  if (self == nullptr) {
+    llvm::Value* value = emitExpr(builder, *selfExpr);
+    if (value == nullptr) {
+      return nullptr;
+    }
+    self = builder.CreateAlloca(lower(record), nullptr, "dunder.self");
+    builder.CreateStore(value, self);
+  }
+  llvm::Value* argument = emitExpr(builder, *argumentExpr);
+  if (argument == nullptr) {
+    return nullptr;
+  }
+  llvm::Value* result =
+      emitDunderRecordCall(builder, record, index, self, argument, argumentExpr->resolvedType());
+  if (result != nullptr && overload == BinaryOverload::EqFallback &&
+      result->getType()->isIntegerTy(1)) {
+    result = builder.CreateNot(result);
+  }
+  return result;
+}
+
+llvm::Value* IRGenerator::emitDunderRecordCall(llvm::IRBuilder<>& builder,
+                                               const Type* record,
+                                               int methodIndex,
+                                               llvm::Value* self,
+                                               llvm::Value* argument,
+                                               const Type* argumentType) {
+  if (record == nullptr || self == nullptr) {
+    return nullptr;
+  }
+  const RecordMethod& method = record->methods()[static_cast<std::size_t>(methodIndex)];
+  const auto found = functions_.find(method.llvmName);
+  if (found == functions_.end()) {
+    return nullptr;
+  }
+  const Type* signature = method.type;
+  if (signature != nullptr && signature->paramTypes().size() >= 2) {
+    argument = emitCoerce(builder, argument, argumentType, signature->paramTypes()[1]);
+  }
+  if (argument == nullptr) {
+    return nullptr;
+  }
+  std::vector<llvm::Value*> args{self, argument};
+  matchCallArgs(builder, found->second, args);
+  if (found->second->getReturnType()->isVoidTy()) {
+    builder.CreateCall(found->second, args);
+    emitErrorCheck(builder);
+    return nullptr;
+  }
+  llvm::Value* result = builder.CreateCall(found->second, args);
+  emitErrorCheck(builder);
+  return result;
+}
+
+llvm::Value* IRGenerator::emitCompoundAssign(llvm::IRBuilder<>& builder,
+                                             const AssignStmt& assign,
+                                             llvm::Value* address,
+                                             llvm::Value* current,
+                                             llvm::Value* value,
+                                             const Type* targetType,
+                                             const Type* valueType) {
+  if (targetType == nullptr) {
+    return nullptr;
+  }
+  // `s += x` concatenates; the right-hand side already arrived as text.
+  if (assign.op() == AssignOp::Add && targetType->isNamed("str")) {
+    return emitStrConcat(builder, current, value);
+  }
+  if (assign.op() == AssignOp::Mul && targetType->isNamed("str") &&
+      value->getType()->isIntegerTy()) {
+    return emitStrRepeat(builder, current, value);
+  }
+  // `items += more` and `items *= n` mirror the matching binary operators.
+  if (assign.op() == AssignOp::Add && targetType->isList() && valueType != nullptr &&
+      valueType->isList()) {
+    return emitListConcat(builder, current, value);
+  }
+  if (assign.op() == AssignOp::Mul && targetType->isList() && value->getType()->isIntegerTy()) {
+    return emitListRepeat(builder, current, value);
+  }
+  // `obj += other` routes through the class's operator method.
+  if (targetType->isRecord()) {
+    BinaryOp binaryOp = BinaryOp::Add;
+    if (!binaryOpForAssign(assign.op(), binaryOp)) {
+      return nullptr;
+    }
+    const BinaryDunderNames names = binaryDunderNames(binaryOp);
+    const int index = names.method == nullptr ? -1 : targetType->methodIndex(names.method);
+    if (index < 0) {
+      return nullptr;
+    }
+    return emitDunderRecordCall(builder, targetType, index, address, value, valueType);
+  }
+  return nullptr;
+}
+
+llvm::Value* IRGenerator::emitNumericCompound(llvm::IRBuilder<>& builder,
+                                              AssignOp op,
+                                              llvm::Value* current,
+                                              llvm::Value* value) {
+  const bool isFloat = current->getType()->isFloatingPointTy();
+  switch (op) {
+  case AssignOp::Add:
+    return isFloat ? builder.CreateFAdd(current, value) : builder.CreateAdd(current, value);
+  case AssignOp::Sub:
+    return isFloat ? builder.CreateFSub(current, value) : builder.CreateSub(current, value);
+  case AssignOp::Mul:
+    return isFloat ? builder.CreateFMul(current, value) : builder.CreateMul(current, value);
+  case AssignOp::Div:
+    return isFloat ? builder.CreateFDiv(current, value) : builder.CreateSDiv(current, value);
+  case AssignOp::Mod:
+    return isFloat ? builder.CreateFRem(current, value) : builder.CreateSRem(current, value);
+  case AssignOp::BitAnd:
+    return builder.CreateAnd(current, value);
+  case AssignOp::BitOr:
+    return builder.CreateOr(current, value);
+  case AssignOp::BitXor:
+    return builder.CreateXor(current, value);
+  case AssignOp::Shl:
+    return builder.CreateShl(current, value);
+  case AssignOp::Shr:
+    return builder.CreateAShr(current, value);
+  case AssignOp::FloorDiv:
+    if (isFloat) {
+      llvm::Value* quotient = builder.CreateFDiv(current, value);
+      llvm::Function* floorFn = llvm::Intrinsic::getOrInsertDeclaration(
+          module_, llvm::Intrinsic::floor, {quotient->getType()});
+      return builder.CreateCall(floorFn, {quotient});
+    }
+    return builder.CreateSDiv(current, value);
+  case AssignOp::Pow: {
+    llvm::Function* powFn = runtimeDecl(
+        "sere_math_pow", builder.getDoubleTy(), {builder.getDoubleTy(), builder.getDoubleTy()});
+    auto toDouble = [&](llvm::Value* operand) -> llvm::Value* {
+      if (operand->getType()->isDoubleTy()) {
+        return operand;
+      }
+      if (operand->getType()->isFloatingPointTy()) {
+        return builder.CreateFPExt(operand, builder.getDoubleTy());
+      }
+      return builder.CreateSIToFP(operand, builder.getDoubleTy());
+    };
+    llvm::Value* result = builder.CreateCall(powFn, {toDouble(current), toDouble(value)});
+    if (current->getType()->isIntegerTy()) {
+      return builder.CreateFPToSI(result, current->getType());
+    }
+    if (current->getType()->isFloatTy()) {
+      return builder.CreateFPTrunc(result, current->getType());
+    }
+    return result;
+  }
+  case AssignOp::Assign:
+    break;
+  }
+  return value;
 }
 
 llvm::Value* IRGenerator::emitUnary(llvm::IRBuilder<>& builder, const UnaryExpr& expr) {
@@ -4514,84 +4777,25 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
       }
       address = emitAddress(builder, assign.target());
     }
-    llvm::Value* value = emitExpr(builder, assign.value());
+    const Type* targetType = resolveType(assign.target().resolvedType());
+    const Type* rhsType = resolveType(assign.value().resolvedType());
+    const bool strConcatAssign =
+        assign.op() == AssignOp::Add && targetType != nullptr && targetType->isNamed("str");
+    llvm::Value* value =
+        strConcatAssign ? emitToStr(builder, assign.value()) : emitExpr(builder, assign.value());
     if (address == nullptr || value == nullptr || value->getType()->isVoidTy()) {
       return false;
     }
     if (assign.op() != AssignOp::Assign) {
       llvm::Value* current = builder.CreateLoad(lower(assign.target().resolvedType()), address);
-      widenIntegerPair(
-          builder, current, value, assign.target().resolvedType(), assign.value().resolvedType());
-      switch (assign.op()) {
-      case AssignOp::Add:
-        value = current->getType()->isFloatingPointTy() ? builder.CreateFAdd(current, value)
-                                                        : builder.CreateAdd(current, value);
-        break;
-      case AssignOp::Sub:
-        value = current->getType()->isFloatingPointTy() ? builder.CreateFSub(current, value)
-                                                        : builder.CreateSub(current, value);
-        break;
-      case AssignOp::Mul:
-        value = current->getType()->isFloatingPointTy() ? builder.CreateFMul(current, value)
-                                                        : builder.CreateMul(current, value);
-        break;
-      case AssignOp::Div:
-        value = current->getType()->isFloatingPointTy() ? builder.CreateFDiv(current, value)
-                                                        : builder.CreateSDiv(current, value);
-        break;
-      case AssignOp::Mod:
-        value = current->getType()->isFloatingPointTy() ? builder.CreateFRem(current, value)
-                                                        : builder.CreateSRem(current, value);
-        break;
-      case AssignOp::BitAnd:
-        value = builder.CreateAnd(current, value);
-        break;
-      case AssignOp::BitOr:
-        value = builder.CreateOr(current, value);
-        break;
-      case AssignOp::BitXor:
-        value = builder.CreateXor(current, value);
-        break;
-      case AssignOp::Shl:
-        value = builder.CreateShl(current, value);
-        break;
-      case AssignOp::Shr:
-        value = builder.CreateAShr(current, value);
-        break;
-      case AssignOp::FloorDiv:
-        if (current->getType()->isFloatingPointTy()) {
-          llvm::Value* quotient = builder.CreateFDiv(current, value);
-          llvm::Function* floorFn = llvm::Intrinsic::getOrInsertDeclaration(
-              module_, llvm::Intrinsic::floor, {quotient->getType()});
-          value = builder.CreateCall(floorFn, {quotient});
-        } else {
-          value = builder.CreateSDiv(current, value);
-        }
-        break;
-      case AssignOp::Pow: {
-        llvm::Function* powFn = runtimeDecl(
-            "sere_math_pow", builder.getDoubleTy(), {builder.getDoubleTy(), builder.getDoubleTy()});
-        auto toDouble = [&](llvm::Value* operand) -> llvm::Value* {
-          if (operand->getType()->isDoubleTy()) {
-            return operand;
-          }
-          if (operand->getType()->isFloatingPointTy()) {
-            return builder.CreateFPExt(operand, builder.getDoubleTy());
-          }
-          return builder.CreateSIToFP(operand, builder.getDoubleTy());
-        };
-        llvm::Value* result = builder.CreateCall(powFn, {toDouble(current), toDouble(value)});
-        if (current->getType()->isIntegerTy()) {
-          value = builder.CreateFPToSI(result, current->getType());
-        } else if (current->getType()->isFloatTy()) {
-          value = builder.CreateFPTrunc(result, current->getType());
-        } else {
-          value = result;
-        }
-        break;
-      }
-      case AssignOp::Assign:
-        break;
+      llvm::Value* combined =
+          emitCompoundAssign(builder, assign, address, current, value, targetType, rhsType);
+      if (combined != nullptr) {
+        value = combined;
+      } else {
+        widenIntegerPair(
+            builder, current, value, assign.target().resolvedType(), assign.value().resolvedType());
+        value = emitNumericCompound(builder, assign.op(), current, value);
       }
     }
     const Type* from = assign.value().resolvedType();

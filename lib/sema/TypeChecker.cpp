@@ -279,6 +279,20 @@ resolvedConstraints(const std::vector<std::unique_ptr<TypeExpr>>& expressions) {
   return !sawCode;
 }
 
+/// True when a value of this type has a textual form, so `s + value` can
+/// concatenate it implicitly (mirroring interpolated-string conversion).
+[[nodiscard]] bool isStringifiable(const Type* type) {
+  if (type == nullptr) {
+    return false;
+  }
+  type = type->canonical();
+  if (type->isVoidLike() || type->isTypeParam() || type->isModule() || type->isTypeObject() ||
+      type->isParamList() || type->isEllipsis() || type->isNever() || type->isSizeLiteral()) {
+    return false;
+  }
+  return type->kind() != TypeKind::Function && !type->isCallableConstraint();
+}
+
 [[nodiscard]] bool isAssignableTarget(const Expr& expr) {
   switch (expr.kind()) {
   case NodeKind::NameExpr:
@@ -2202,98 +2216,61 @@ bool TypeChecker::bindCollectionInit(Expr& init, const Type* dest) {
 
 const Type*
 TypeChecker::rewriteDunderBinary(BinaryExpr& expr, const Type* left, const Type* right) {
-  const char* name = nullptr;
-  const char* reflected = nullptr;
-  switch (expr.op()) {
-  case BinaryOp::Add:
-    name = "__add__";
-    reflected = "__radd__";
-    break;
-  case BinaryOp::Sub:
-    name = "__sub__";
-    reflected = "__rsub__";
-    break;
-  case BinaryOp::Mul:
-    name = "__mul__";
-    reflected = "__rmul__";
-    break;
-  case BinaryOp::Div:
-    name = "__truediv__";
-    reflected = "__rtruediv__";
-    break;
-  case BinaryOp::FloorDiv:
-    name = "__floordiv__";
-    reflected = "__rfloordiv__";
-    break;
-  case BinaryOp::Mod:
-    name = "__mod__";
-    reflected = "__rmod__";
-    break;
-  case BinaryOp::Pow:
-    name = "__pow__";
-    reflected = "__rpow__";
-    break;
-  case BinaryOp::Eq:
-    name = "__eq__";
-    break;
-  case BinaryOp::Ne:
-    name = "__ne__";
-    break;
-  case BinaryOp::Lt:
-    name = "__lt__";
-    break;
-  case BinaryOp::Le:
-    name = "__le__";
-    break;
-  case BinaryOp::Gt:
-    name = "__gt__";
-    break;
-  case BinaryOp::Ge:
-    name = "__ge__";
-    break;
-  case BinaryOp::BitAnd:
-    name = "__and__";
-    reflected = "__rand__";
-    break;
-  case BinaryOp::BitOr:
-    name = "__or__";
-    reflected = "__ror__";
-    break;
-  case BinaryOp::BitXor:
-    name = "__xor__";
-    reflected = "__rxor__";
-    break;
-  case BinaryOp::Shl:
-    name = "__lshift__";
-    reflected = "__rlshift__";
-    break;
-  case BinaryOp::Shr:
-    name = "__rshift__";
-    reflected = "__rrshift__";
-    break;
-  default:
-    break;
-  }
+  expr.setOverload(BinaryOverload::None);
+  const BinaryDunderNames names = binaryDunderNames(expr.op());
+  const char* name = names.method;
+  const char* reflected = names.reflected;
   if (name == nullptr) {
     return nullptr;
   }
-  if (left->isRecord() && left->methodIndex(name) >= 0) {
-    const Type* result = left->dunderReturn(name);
+  const Type* leftRecord =
+      left != nullptr && left->canonical()->isRecord() ? left->canonical() : nullptr;
+  const Type* rightRecord =
+      right != nullptr && right->canonical()->isRecord() ? right->canonical() : nullptr;
+  // Only dispatch to a dunder that actually accepts the other operand; a
+  // mismatch would otherwise surface much later as invalid LLVM IR.
+  const auto accepts = [&](const Type* record, const char* method, const Type* other) {
+    const int index = record->methodIndex(method);
+    if (index < 0) {
+      return false;
+    }
+    const Type* signature = record->methods()[static_cast<std::size_t>(index)].type;
+    if (signature == nullptr || signature->paramTypes().size() < 2 ||
+        signature->returnType() == nullptr || signature->returnType()->isVoidLike()) {
+      return false;
+    }
+    const Type* parameter = signature->paramTypes()[1];
+    return other == nullptr || parameter == nullptr || parameter->isAny() ||
+           parameter->isTypeParam() || isAssignable(other, parameter);
+  };
+  if (leftRecord != nullptr && accepts(leftRecord, name, right)) {
+    const Type* result = leftRecord->dunderReturn(name);
     if (result != nullptr) {
+      expr.setOverload(BinaryOverload::Left);
       expr.setResolvedType(result);
       return result;
     }
   }
-  if (reflected != nullptr && right->isRecord() && right->methodIndex(reflected) >= 0) {
-    const Type* result = right->dunderReturn(reflected);
+  if (reflected != nullptr && rightRecord != nullptr && accepts(rightRecord, reflected, left)) {
+    const Type* result = rightRecord->dunderReturn(reflected);
     if (result != nullptr) {
+      expr.setOverload(BinaryOverload::Right);
       expr.setResolvedType(result);
       return result;
     }
   }
-  if (expr.op() == BinaryOp::Ne && left->isRecord() && left->methodIndex("__eq__") >= 0) {
-    expr.setResolvedType(types_->boolType());
-    return types_->boolType();
+  // `a != b` is the negation of `a == b` when the class defines no `__ne__`.
+  if (expr.op() == BinaryOp::Ne) {
+    if (leftRecord != nullptr && accepts(leftRecord, "__eq__", right)) {
+      expr.setOverload(BinaryOverload::EqFallback);
+      expr.setResolvedType(types_->boolType());
+      return types_->boolType();
+    }
+    if (rightRecord != nullptr && accepts(rightRecord, "__eq__", left)) {
+      expr.setOverload(BinaryOverload::EqFallback);
+      expr.setResolvedType(types_->boolType());
+      return types_->boolType();
+    }
   }
   return nullptr;
 }
@@ -2347,15 +2324,25 @@ const Type* TypeChecker::checkBinary(BinaryExpr& expr) {
   }
   left = left->valueType();
   right = right->valueType();
-  if (op == BinaryOp::Add && left->isNamed("str") && right->isNamed("str")) {
+  const bool leftStr = left->isNamed("str");
+  const bool rightStr = right->isNamed("str");
+  // `str + value` concatenates, converting the other operand implicitly so that
+  // `s + "Num: " + 5` works without an explicit conversion.
+  if (op == BinaryOp::Add && (leftStr || rightStr)) {
+    const Type* other = leftStr ? right : left;
+    if (!isStringifiable(other)) {
+      diagnostics_->error(expr.range(),
+                          "cannot concatenate " + quoteType(other) + " onto a str");
+      return nullptr;
+    }
     expr.setResolvedType(types_->strType());
     return types_->strType();
   }
-  if (op == BinaryOp::Mul && left->isNamed("str") && right->isInteger()) {
+  if (op == BinaryOp::Mul && leftStr && right->isInteger()) {
     expr.setResolvedType(types_->strType());
     return types_->strType();
   }
-  if (op == BinaryOp::Mul && left->isInteger() && right->isNamed("str")) {
+  if (op == BinaryOp::Mul && left->isInteger() && rightStr) {
     expr.setResolvedType(types_->strType());
     return types_->strType();
   }
@@ -2363,6 +2350,15 @@ const Type* TypeChecker::checkBinary(BinaryExpr& expr) {
       left->elementType() == right->elementType()) {
     expr.setResolvedType(left);
     return left;
+  }
+  // `list * n` repeats the sequence (and `n * list` mirrors it).
+  if (op == BinaryOp::Mul && left->isList() && right->isInteger()) {
+    expr.setResolvedType(left);
+    return left;
+  }
+  if (op == BinaryOp::Mul && left->isInteger() && right->isList()) {
+    expr.setResolvedType(right);
+    return right;
   }
   if (op == BinaryOp::Eq || op == BinaryOp::Ne || op == BinaryOp::Lt || op == BinaryOp::Le ||
       op == BinaryOp::Gt || op == BinaryOp::Ge) {
@@ -4326,11 +4322,47 @@ bool TypeChecker::checkAssign(AssignStmt& statement) {
     return false;
   }
   if (statement.op() != AssignOp::Assign) {
-    if (!(target->isInteger() || target->isFloat()) || !(value->isInteger() || value->isFloat())) {
-      diagnostics_->error(statement.range(), "compound assignment requires numeric operands");
-      return false;
+    if ((target->isInteger() || target->isFloat()) && (value->isInteger() || value->isFloat())) {
+      return true;
     }
-    return true;
+    // `s += x` concatenates strings, converting the other operand implicitly.
+    if (statement.op() == AssignOp::Add && target->isNamed("str")) {
+      if (!isStringifiable(value)) {
+        diagnostics_->error(
+            statement.range(), "cannot concatenate " + quoteType(value) + " onto a str");
+        return false;
+      }
+      return true;
+    }
+    if (statement.op() == AssignOp::Add && target->isList() && value->isList() &&
+        value->elementType() == target->elementType()) {
+      return true;
+    }
+    if (statement.op() == AssignOp::Mul && target->isNamed("str") && value->isInteger()) {
+      return true;
+    }
+    if (statement.op() == AssignOp::Mul && target->isList() && value->isInteger()) {
+      return true;
+    }
+    // `obj += other` routes through the matching dunder method.
+    if (target->isRecord()) {
+      BinaryOp binaryOp = BinaryOp::Add;
+      if (binaryOpForAssign(statement.op(), binaryOp)) {
+        const BinaryDunderNames names = binaryDunderNames(binaryOp);
+        const int index = names.method == nullptr ? -1 : target->methodIndex(names.method);
+        const Type* signature =
+            index < 0 ? nullptr : target->methods()[static_cast<std::size_t>(index)].type;
+        const Type* parameter = signature != nullptr && signature->paramTypes().size() >= 2
+                                    ? signature->paramTypes()[1]
+                                    : nullptr;
+        if (parameter != nullptr &&
+            (parameter->isAny() || parameter->isTypeParam() || isAssignable(value, parameter))) {
+          return true;
+        }
+      }
+    }
+    diagnostics_->error(statement.range(), "compound assignment requires numeric operands");
+    return false;
   }
   if (!isAssignable(value, target) &&
       !(statement.value().kind() == NodeKind::NoneLiteral && target->isPointerLike())) {

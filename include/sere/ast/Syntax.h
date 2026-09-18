@@ -344,6 +344,121 @@ enum class AssignOp {
   Shr,
 };
 
+/// Dunder method names that implement a binary operator.
+///
+/// `method` is the member looked up on the left operand's class. `reflected` is
+/// consulted when only the right operand's class defines the operation: Python's
+/// `__radd__`, or `__gt__` when evaluating `a < b`. `method` is null for
+/// operators that cannot be overloaded (`and`, `or`, `is`, `in`, ...).
+struct BinaryDunderNames {
+  const char* method = nullptr;
+  const char* reflected = nullptr;
+};
+
+[[nodiscard]] constexpr BinaryDunderNames binaryDunderNames(BinaryOp op) {
+  switch (op) {
+  case BinaryOp::Add:
+    return {"__add__", "__radd__"};
+  case BinaryOp::Sub:
+    return {"__sub__", "__rsub__"};
+  case BinaryOp::Mul:
+    return {"__mul__", "__rmul__"};
+  case BinaryOp::Div:
+    return {"__truediv__", "__rtruediv__"};
+  case BinaryOp::FloorDiv:
+    return {"__floordiv__", "__rfloordiv__"};
+  case BinaryOp::Mod:
+    return {"__mod__", "__rmod__"};
+  case BinaryOp::Pow:
+    return {"__pow__", "__rpow__"};
+  case BinaryOp::Eq:
+    return {"__eq__", "__eq__"};
+  case BinaryOp::Ne:
+    return {"__ne__", "__ne__"};
+  case BinaryOp::Lt:
+    return {"__lt__", "__gt__"};
+  case BinaryOp::Le:
+    return {"__le__", "__ge__"};
+  case BinaryOp::Gt:
+    return {"__gt__", "__lt__"};
+  case BinaryOp::Ge:
+    return {"__ge__", "__le__"};
+  case BinaryOp::BitAnd:
+    return {"__and__", "__rand__"};
+  case BinaryOp::BitOr:
+    return {"__or__", "__ror__"};
+  case BinaryOp::BitXor:
+    return {"__xor__", "__rxor__"};
+  case BinaryOp::Shl:
+    return {"__lshift__", "__rlshift__"};
+  case BinaryOp::Shr:
+    return {"__rshift__", "__rrshift__"};
+  case BinaryOp::And:
+  case BinaryOp::Or:
+  case BinaryOp::Is:
+  case BinaryOp::IsNot:
+  case BinaryOp::In:
+  case BinaryOp::NotIn:
+    break;
+  }
+  return {};
+}
+
+/// `BinaryOp` implementing a compound assignment operator. Returns false for
+/// plain `=`, which has no operator semantics.
+[[nodiscard]] constexpr bool binaryOpForAssign(AssignOp op, BinaryOp& out) {
+  switch (op) {
+  case AssignOp::Add:
+    out = BinaryOp::Add;
+    return true;
+  case AssignOp::Sub:
+    out = BinaryOp::Sub;
+    return true;
+  case AssignOp::Mul:
+    out = BinaryOp::Mul;
+    return true;
+  case AssignOp::Div:
+    out = BinaryOp::Div;
+    return true;
+  case AssignOp::FloorDiv:
+    out = BinaryOp::FloorDiv;
+    return true;
+  case AssignOp::Mod:
+    out = BinaryOp::Mod;
+    return true;
+  case AssignOp::Pow:
+    out = BinaryOp::Pow;
+    return true;
+  case AssignOp::BitAnd:
+    out = BinaryOp::BitAnd;
+    return true;
+  case AssignOp::BitOr:
+    out = BinaryOp::BitOr;
+    return true;
+  case AssignOp::BitXor:
+    out = BinaryOp::BitXor;
+    return true;
+  case AssignOp::Shl:
+    out = BinaryOp::Shl;
+    return true;
+  case AssignOp::Shr:
+    out = BinaryOp::Shr;
+    return true;
+  case AssignOp::Assign:
+    break;
+  }
+  return false;
+}
+
+/// Which operand owns a binary operator, as resolved by sema. Codegen uses this
+/// to route the operator to a class method instead of the built-in lowering.
+enum class BinaryOverload {
+  None,       ///< Built-in operator (numeric, string, or sequence).
+  Left,       ///< Left operand's class implements `BinaryDunderNames::method`.
+  Right,      ///< Right operand's class implements the reflected method.
+  EqFallback, ///< `!=` lowered to `!(a == b)` because no `__ne__` is defined.
+};
+
 class BinaryExpr final : public Expr {
 public:
   BinaryExpr(SourceRange range,
@@ -355,11 +470,14 @@ public:
   [[nodiscard]] Expr& left();
   [[nodiscard]] const Expr& right() const;
   [[nodiscard]] Expr& right();
+  [[nodiscard]] BinaryOverload overload() const;
+  void setOverload(BinaryOverload overload);
 
 private:
   BinaryOp op_;
   std::unique_ptr<Expr> left_;
   std::unique_ptr<Expr> right_;
+  BinaryOverload overload_ = BinaryOverload::None;
 };
 
 class UnaryExpr final : public Expr {

@@ -404,6 +404,14 @@ Expr& BinaryExpr::right() {
   return *right_;
 }
 
+BinaryOverload BinaryExpr::overload() const {
+  return overload_;
+}
+
+void BinaryExpr::setOverload(BinaryOverload overload) {
+  overload_ = overload;
+}
+
 UnaryExpr::UnaryExpr(SourceRange range, UnaryOp op, std::unique_ptr<Expr> operand)
     : Expr(NodeKind::UnaryExpr, range), op_(op), operand_(std::move(operand)) {
 }

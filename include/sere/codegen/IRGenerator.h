@@ -104,6 +104,9 @@ private:
   llvm::Value* emitStrLiteral(llvm::IRBuilder<>& builder, std::string_view text);
   llvm::Value* emitStrFromC(llvm::IRBuilder<>& builder, const char* fnName, llvm::Value* value);
   llvm::Value* emitStrConcat(llvm::IRBuilder<>& builder, llvm::Value* left, llvm::Value* right);
+  llvm::Value* emitStrRepeat(llvm::IRBuilder<>& builder, llvm::Value* str, llvm::Value* count);
+  llvm::Value* emitListConcat(llvm::IRBuilder<>& builder, llvm::Value* left, llvm::Value* right);
+  llvm::Value* emitListRepeat(llvm::IRBuilder<>& builder, llvm::Value* list, llvm::Value* count);
   llvm::Value* emitToStr(llvm::IRBuilder<>& builder, const Expr& expr);
   llvm::Value* emitScalarToStr(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* type);
   llvm::Value* emitValueRepr(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* type);
@@ -120,6 +123,31 @@ private:
   llvm::Value* emitInterpolated(llvm::IRBuilder<>& builder, const InterpolatedStringExpr& expr);
   llvm::Value* emitLogical(llvm::IRBuilder<>& builder, const BinaryExpr& expr);
   llvm::Value* emitBinary(llvm::IRBuilder<>& builder, const BinaryExpr& expr);
+  /// Lowers operator overloading and the built-in string operators, which the
+  /// numeric path in emitBinary cannot handle. Sets `handled` when the
+  /// expression was recognised, even if lowering reported an error.
+  llvm::Value*
+  emitBinaryOverload(llvm::IRBuilder<>& builder, const BinaryExpr& expr, bool& handled);
+  llvm::Value* emitDunderBinary(llvm::IRBuilder<>& builder,
+                                const BinaryExpr& expr,
+                                BinaryOverload overload);
+  llvm::Value* emitDunderRecordCall(llvm::IRBuilder<>& builder,
+                                    const Type* record,
+                                    int methodIndex,
+                                    llvm::Value* self,
+                                    llvm::Value* argument,
+                                    const Type* argumentType);
+  llvm::Value* emitCompoundAssign(llvm::IRBuilder<>& builder,
+                                  const AssignStmt& assign,
+                                  llvm::Value* address,
+                                  llvm::Value* current,
+                                  llvm::Value* value,
+                                  const Type* targetType,
+                                  const Type* valueType);
+  llvm::Value* emitNumericCompound(llvm::IRBuilder<>& builder,
+                                   AssignOp op,
+                                   llvm::Value* current,
+                                   llvm::Value* value);
   llvm::Value* emitUnary(llvm::IRBuilder<>& builder, const UnaryExpr& expr);
   bool emitIf(llvm::IRBuilder<>& builder, const IfStmt& statement, const Type* returnType);
   bool emitWhile(llvm::IRBuilder<>& builder, const WhileStmt& statement, const Type* returnType);
