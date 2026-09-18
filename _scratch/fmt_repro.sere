@@ -1,0 +1,16 @@
+def main() -> i32:
+    addr: i64 = 48879
+    small: i32 = 255
+    ratio: f64 = 0.1234
+    print(f"0x{addr:}")
+    print(f"{small:#06x}")
+    print(f"{small:X}")
+    print(f"{addr:#x}")
+    print(f"{small:>8x}|")
+    print(f"{small:08b}")
+    print(f"{ratio:.2f}")
+    print(f"{ratio:.1%}")
+    print(f"{1234567:,d}")
+    print(f"{small:<8}|")
+    print(f"{small:*^8}|")
+    return 0

@@ -1163,12 +1163,19 @@ void IRGenerator::appendBoundCallArgs(llvm::IRBuilder<>& builder,
   };
   const auto appendArgument = [&](const Expr* argument, const Type* toType) {
     llvm::Value* value = emitArgument(argument, toType);
-    if (value == nullptr) {
-      return;
-    }
     const Type* layout =
         toType != nullptr ? toType : (argument == nullptr ? nullptr : argument->resolvedType());
-    if (function.isExtern() && layout != nullptr && layout->isStrLayout()) {
+    if (value == nullptr) {
+      // The argument could not be lowered (a `None` default, or an expression
+      // with no value). It must still occupy its slot: dropping it silently
+      // emits a call with the wrong arity and LLVM then rejects the module.
+      value = layout == nullptr ? nullptr : emitDefault(layout);
+      if (value == nullptr) {
+        value = llvm::ConstantPointerNull::get(builder.getPtrTy());
+      }
+    }
+    if (function.isExtern() && layout != nullptr && layout->isStrLayout() &&
+        value->getType()->isStructTy()) {
       args.push_back(builder.CreateExtractValue(value, {0}));
       args.push_back(builder.CreateExtractValue(value, {1}));
       return;

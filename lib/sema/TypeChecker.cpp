@@ -751,11 +751,18 @@ bool TypeChecker::declare(const std::string& name,
                           SourceLocation location,
                           bool navigable) {
   auto& scope = scopes_.back();
-  if (scope.contains(name)) {
-    diagnostics_->error(SourceRange{location, location}, "redeclaration of '" + name + "'");
-    diagnostics_->note(scope.at(name).declarationLocation,
-                       "'" + name + "' previously declared here");
-    return false;
+  const auto existing = scope.find(name);
+  if (existing != scope.end()) {
+    // The prelude behaves like an implicit import, so a module may shadow a
+    // prelude helper with its own definition. Anything else is a genuine
+    // redeclaration.
+    if (!existing->second.fromPrelude || symbol.fromPrelude) {
+      diagnostics_->error(SourceRange{location, location}, "redeclaration of '" + name + "'");
+      diagnostics_->note(scope.at(name).declarationLocation,
+                         "'" + name + "' previously declared here");
+      return false;
+    }
+    scope.erase(existing);
   }
   SemanticSymbol collected;
   collected.name = name;
@@ -5238,6 +5245,7 @@ bool TypeChecker::collectClassNames(Module& module) {
     Symbol symbol;
     symbol.kind = SymbolKind::Class;
     symbol.type = record;
+    symbol.fromPrelude = classDef.fromPrelude();
     if (!declare(classDef.name(), symbol, classDef.range().start, !classDef.fromPrelude())) {
       return false;
     }
@@ -5266,6 +5274,7 @@ bool TypeChecker::collectEnumNames(Module& module) {
     Symbol symbol;
     symbol.kind = SymbolKind::Class;
     symbol.type = record;
+    symbol.fromPrelude = enumDef.fromPrelude();
     if (!declare(enumDef.name(), symbol, enumDef.range().start, !enumDef.fromPrelude())) {
       return false;
     }
@@ -5533,7 +5542,6 @@ bool TypeChecker::collectFunctions(Module& module) {
     symbol.type = fnType;
     symbol.function = &function;
     if (!declare(function.name(), symbol, function.range().start, !function.fromPrelude())) {
-      ok = false;
     }
   }
   (void)ok;
@@ -5557,7 +5565,6 @@ bool TypeChecker::collectMacros(Module& module) {
     if (!declare(def.name(), symbol, location, !def.fromPrelude())) {
       return false;
     }
-  }
   return true;
 }
 

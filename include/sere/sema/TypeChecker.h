@@ -36,6 +36,9 @@ struct Symbol {
   const FunctionDef* function = nullptr;
   bool readonly = false;
   bool staticStorage = false;
+  /// Declared by the prelude. A user module may shadow such a name (the prelude
+  /// acts as an implicit import) instead of hitting a redeclaration error.
+  bool fromPrelude = false;
   std::string compileTimeText{};
   bool hasCompileTimeBool = false;
   bool compileTimeBool = false;
