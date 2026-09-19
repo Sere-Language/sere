@@ -21,6 +21,11 @@ target_link_libraries(sere_smoke_llvm PRIVATE sere_codegen)
 sere_apply_warnings(sere_smoke_llvm)
 add_test(NAME sere.smoke.llvm COMMAND sere_smoke_llvm)
 
+add_executable(sere_smoke_serem smoke_serem.cpp)
+target_link_libraries(sere_smoke_serem PRIVATE sere_codegen)
+sere_apply_warnings(sere_smoke_serem)
+add_test(NAME sere.smoke.serem COMMAND sere_smoke_serem)
+
 add_executable(sere_test_lex lex_basic.cpp)
 target_link_libraries(sere_test_lex PRIVATE sere_lex)
 sere_apply_warnings(sere_test_lex)

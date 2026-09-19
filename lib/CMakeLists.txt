@@ -61,6 +61,7 @@ sere_apply_warnings(sere_sema)
 add_library(sere_codegen
   codegen/IRGenerator.cpp
   codegen/OptPipeline.cpp
+  codegen/Serem.cpp
 )
 target_link_libraries(sere_codegen PUBLIC sere_ast sere_types)
 sere_configure_llvm_target(sere_codegen)
