@@ -95,6 +95,7 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
       if (!prefix.empty()) functionNames_[&function] = prefix + "_" + function.name();
       if (!function.decorators().empty()) {
         decorators_[functionName(function)] = function.decorators().front();
+        decorators_[function.name()] = function.decorators().front();
       }
       const Type* type = functionType(function);
       if (type != nullptr) functions_.insert_or_assign(functionName(function), lowerType(type));
