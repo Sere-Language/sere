@@ -36,6 +36,8 @@ struct CompilerOptions {
   std::filesystem::path outputPath;
   bool emitLlvm = false;
   bool emitAsm = false;
+  bool emitSerem = false;
+  bool emitSeremBytecode = false;
   bool dumpTokens = false;
   bool dumpAst = false;
   bool dumpSymbols = false;

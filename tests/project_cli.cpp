@@ -209,6 +209,30 @@ int main() {
     return fail("expected --emit-llvm and --emit-asm together to fail");
   }
 
+  sere::CompilerOptions seremOptions;
+  if (!parseArgs({"sere", "--emit-serem", "main.sere"}, seremOptions, error)) {
+    return fail("failed to parse --emit-serem");
+  }
+  if (!seremOptions.emitSerem || seremOptions.emitSeremBytecode) {
+    return fail("expected plain Serem output mode");
+  }
+  sere::CompilerOptions bytecodeOptions;
+  if (!parseArgs({"sere", "--backend=serem", "main.sere"}, bytecodeOptions, error)) {
+    return fail("failed to parse --backend=serem");
+  }
+  if (!bytecodeOptions.emitSerem) {
+    return fail("expected Serem backend selection");
+  }
+    sere::CompilerOptions bytecodeTextOptions;
+    if (!parseArgs({"sere", "--emit-serem-bytecode", "main.sere"}, bytecodeTextOptions, error) ||
+      !bytecodeTextOptions.emitSeremBytecode) {
+    return fail("expected Serem bytecode output mode");
+  }
+  if (parseArgs({"sere", "--emit-serem", "--emit-llvm", "main.sere"}, bytecodeOptions,
+                error)) {
+    return fail("expected Serem and LLVM output modes to conflict");
+  }
+
   sere::CompilerOptions dumpAst;
   if (!parseArgs({"sere", "--dump-ast", "main.sere"}, dumpAst, error)) {
     return fail("failed to parse --dump-ast");

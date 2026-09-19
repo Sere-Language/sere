@@ -6,6 +6,7 @@
 #include "sere/Version.h"
 #include "sere/codegen/IRGenerator.h"
 #include "sere/codegen/OptPipeline.h"
+#include "sere/codegen/Serem.h"
 #include "sere/diag/DiagnosticEngine.h"
 #include "sere/driver/Frontend.h"
 #include "sere/driver/Installer.h"
@@ -76,6 +77,9 @@ void dumpTokens(const std::vector<Token>& tokens) {
   if (options.emitAsm) {
     return output.replace_extension(".s");
   }
+  if (options.emitSeremBytecode || options.emitSerem) {
+    return output.replace_extension(".serem");
+  }
 #ifdef _WIN32
   return output.replace_extension(".exe");
 #else
@@ -115,6 +119,46 @@ writeIr(const llvm::Module& module, const std::filesystem::path& path, std::stri
     return false;
   }
   return true;
+}
+
+[[nodiscard]] bool writeSerem(std::string_view text,
+                              const std::filesystem::path& path,
+                              std::string& error) {
+  const std::filesystem::path tempPath = std::filesystem::path(path.string() + ".tmp");
+  std::ofstream output(tempPath, std::ios::binary);
+  if (!output) {
+    error = "cannot write Serem IR to '" + path.string() + "'";
+    return false;
+  }
+  output << text;
+  output.close();
+  if (!output) {
+    error = "cannot write Serem IR to '" + path.string() + "'";
+    return false;
+  }
+  std::error_code errorCode;
+  std::filesystem::rename(tempPath, path, errorCode);
+  if (!errorCode) return true;
+  std::filesystem::copy_file(tempPath, path, std::filesystem::copy_options::overwrite_existing,
+                             errorCode);
+  std::filesystem::remove(tempPath);
+  if (errorCode) {
+    error = "cannot write Serem IR to '" + path.string() + "': " + errorCode.message();
+    return false;
+  }
+  return true;
+}
+
+[[nodiscard]] std::string buildSeremModule(const std::filesystem::path& inputPath) {
+  serem::IRModule module(inputPath.stem().string());
+  auto function = std::make_unique<serem::IRFunction>(
+      "__sere_frontend_pending", std::vector<serem::IRType>{}, serem::IRType::voidType());
+  serem::IRFunction& entry = module.addFunction(std::move(function));
+  serem::IRBuilder builder(entry);
+  (void)builder.operation("sere.frontend.pending", serem::IRType::voidType(), {},
+                          {{"source", inputPath.string()}});
+  builder.retVoid();
+  return module.display();
 }
 
 [[nodiscard]] bool importsModule(const std::vector<std::string>& names, std::string_view want) {
@@ -532,6 +576,19 @@ int compileInput(const CompilerOptions& options) {
       frontend.source() == nullptr) {
     frontend.diagnostics().printAll();
     return 1;
+  }
+
+  if (options.emitSerem) {
+    const std::filesystem::path outputPath = defaultOutput(options);
+    const std::string seremText = buildSeremModule(options.inputPath);
+    std::string writeError;
+    if (!writeSerem(seremText, outputPath, writeError)) {
+      frontend.diagnostics().error(writeError);
+      frontend.diagnostics().printAll();
+      return 1;
+    }
+    llvm::outs() << "wrote " << outputPath.string() << '\n';
+    return 0;
   }
 
   llvm::LLVMContext context;

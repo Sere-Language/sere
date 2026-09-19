@@ -32,6 +32,19 @@ internal “this should be unreachable” failures.
 at `--opt=` levels `O0`…`O3`, `Os`, `Oz`. `--passes=` injects a custom pipeline
 string. Default for a normal compile is `O0` unless the driver overrides it.
 
+## Serem
+
+Serem is the optional target-independent SSA backend foundation. Its public
+model is in `include/sere/codegen/Serem.h`: every constant, argument, function
+reference, and instruction is a `Value`, while `IRBuilder` owns insertion into
+function blocks and `IRModule` owns functions. The generic `operation()` API
+also permits dialect-specific operations without changing the core hierarchy.
+
+Use `sere --emit-serem file.sere` or `sere --emit-serem-bytecode file.sere` to
+write the current stable Serem text format. The frontend validation is shared
+with LLVM; AST-to-Serem lowering is intentionally the next stage and the
+current output records that pending boundary in the module scaffold.
+
 ## Linking
 
 `compileInput` writes a temp `.ll`, then invokes the pinned `clang` with

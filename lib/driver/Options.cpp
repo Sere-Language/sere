@@ -45,6 +45,9 @@ void printUsage(std::string& error) {
       "  --print-env         Print compiler, stdlib, and toolchain paths as JSON\n"
       "  --emit-llvm         Write LLVM IR instead of linking an executable\n"
       "  --emit-asm, -S      Write native assembly instead of linking an executable\n"
+      "  --emit-serem        Write the target-independent Serem IR text\n"
+      "  --emit-serem-bytecode  Write Serem bytecode text (same stable .serem format)\n"
+      "  --backend=serem     Select Serem as the output backend\n"
       "  --dump-tokens       Print lexer tokens\n"
       "  --dump-ast          Print the parsed AST as JSON and stop\n"
       "  --dump-symbols      Print the semantic symbol table as JSON and stop\n"
@@ -175,6 +178,22 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
     }
     if (argument == "--emit-asm" || argument == "-S") {
       options.emitAsm = true;
+      continue;
+    }
+    if (argument == "--emit-serem") {
+      options.emitSerem = true;
+      continue;
+    }
+    if (argument == "--emit-serem-bytecode") {
+      options.emitSerem = true;
+      options.emitSeremBytecode = true;
+      continue;
+    }
+    if (argument == "--backend=serem") {
+      options.emitSerem = true;
+      continue;
+    }
+    if (argument == "--backend=llvm") {
       continue;
     }
     if (argument == "--dump-tokens") {
@@ -424,8 +443,10 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
     options.initName =
         options.projectCommand == ProjectCommand::InitLib ? "sere-lib" : "sere-project";
   }
-  if (options.emitLlvm && options.emitAsm) {
-    error = "cannot combine --emit-llvm and --emit-asm";
+  const int outputModes = static_cast<int>(options.emitLlvm) + static_cast<int>(options.emitAsm) +
+                          static_cast<int>(options.emitSerem);
+  if (outputModes > 1) {
+    error = "cannot combine LLVM, assembly, and Serem output modes";
     return false;
   }
   if (!options.help && !options.version && !options.printEnv && !options.lsp &&
