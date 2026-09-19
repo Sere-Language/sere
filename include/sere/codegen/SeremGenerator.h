@@ -55,6 +55,7 @@ private:
   std::unordered_map<std::string, serem::ValuePtr> locals_;
   std::unordered_map<std::string, serem::IRType> functions_;
   std::unordered_map<const FunctionDef*, std::string> functionNames_;
+  std::unordered_map<std::string, std::string> decorators_;
   std::vector<serem::BasicBlock*> breakTargets_;
   std::vector<serem::BasicBlock*> continueTargets_;
   serem::ValuePtr coroutineToken_;

@@ -16,7 +16,6 @@
 
 #include <cstdint>
 #include <charconv>
-#include <iostream>
 #include <string_view>
 #include <utility>
 
@@ -136,7 +135,6 @@ llvm::Value* SeremLLVMBackend::lowerValue(const serem::ValuePtr& value) {
 }
 
 llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation) {
-  std::cerr << "op " << operation.opcode() << "\n";
   const auto operands = operation.operands();
   auto operand = [&](std::size_t index) -> llvm::Value* {
     return index < operands.size() ? lowerValue(operands[index]) : nullptr;
@@ -315,7 +313,6 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     }
   }
   else if (opcode == "call" || opcode == "invoke") {
-    std::cerr << "serem llvm call begin\n";
     llvm::Function* function = nullptr;
     if (!operands.empty() && operands[0] != nullptr &&
         operands[0]->valueKind() == serem::ValueKind::FunctionRef) {
@@ -340,7 +337,6 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     } else {
       report("Serem call lowering requires a callable");
     }
-    std::cerr << "serem llvm call end\n";
   } else if (opcode == "return") {
     if (operands.empty()) builder_->builder.CreateRetVoid();
     else builder_->builder.CreateRet(operand(0));
@@ -359,6 +355,25 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     result = operand(0);
   } else if (opcode == "coro.begin") {
     result = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(type));
+  }
+  else if (opcode == "decorated.call") {
+    if (operands.size() >= 2) {
+      llvm::Value* decorator = lowerValue(operands[0]);
+      llvm::Value* target = lowerValue(operands[1]);
+      std::vector<llvm::Value*> decoratorArgs{target};
+      llvm::FunctionType* decoratorType = llvm::FunctionType::get(
+          llvm::PointerType::getUnqual(*context_),
+          {llvm::PointerType::getUnqual(*context_)}, false);
+      llvm::Value* wrapped = builder_->builder.CreateCall(decoratorType, decorator, decoratorArgs);
+      std::vector<llvm::Value*> arguments;
+      for (std::size_t index = 2; index < operands.size(); ++index) {
+        arguments.push_back(lowerValue(operands[index]));
+      }
+      std::vector<llvm::Type*> parameterTypes;
+      for (llvm::Value* argument : arguments) parameterTypes.push_back(argument->getType());
+      llvm::FunctionType* wrappedType = llvm::FunctionType::get(type, parameterTypes, false);
+      result = builder_->builder.CreateCall(wrappedType, wrapped, arguments);
+    }
   }
   if (result == nullptr && !operation.type().isVoid()) result = llvm::UndefValue::get(type);
   if (!operation.resultName().empty()) values_[&operation] = result;

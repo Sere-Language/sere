@@ -78,6 +78,7 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
                                                        const std::vector<std::string>* importedNames) {
   module_ = std::make_unique<serem::IRModule>(std::move(moduleName));
   functions_.clear();
+  decorators_.clear();
   functionNames_.clear();
   std::vector<const Module*> modules{&module};
   if (imported != nullptr) modules.insert(modules.end(), imported->begin(), imported->end());
@@ -92,6 +93,9 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
     if (statement != nullptr && statement->kind() == NodeKind::FunctionDef) {
       const auto& function = static_cast<const FunctionDef&>(*statement);
       if (!prefix.empty()) functionNames_[&function] = prefix + "_" + function.name();
+      if (!function.decorators().empty()) {
+        decorators_[functionName(function)] = function.decorators().front();
+      }
       const Type* type = functionType(function);
       if (type != nullptr) functions_.insert_or_assign(functionName(function), lowerType(type));
     } else if (statement != nullptr && statement->kind() == NodeKind::ClassDef) {
@@ -155,7 +159,9 @@ void SeremGenerator::declareEnum(const EnumDef& enumDef) {
   if (enumDef.isFlags()) attributes.push_back("flags");
   for (const EnumVariant& variant : enumDef.variants()) attributes.push_back("variant=" + variant.name);
   (void)module_->addType(std::make_unique<serem::TypeDef>(
-      enumDef.name(), serem::IRType::structType(enumDef.name(), {}), std::move(attributes)));
+      enumDef.name(), serem::IRType::structType(
+        enumDef.name(), {serem::IRType::i32(), serem::IRType::ptr(serem::IRType::i8())}),
+      std::move(attributes)));
 }
 
 bool SeremGenerator::emitFunction(const FunctionDef& function) {
@@ -279,11 +285,12 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
     for (std::size_t index = 0; index < match.arms().size(); ++index) {
       const MatchArm& arm = match.arms()[index];
       serem::BasicBlock* next = index + 1 < arms.size() ? arms[index + 1] : merge;
+      serem::BasicBlock* body = &function_->addBlock("match.body" + std::to_string(index));
       auto patternTag = std::make_shared<serem::ConstantInt>(static_cast<std::int64_t>(index),
                           serem::IRType::i32());
       auto condition = builder_->compare("eq", tag, patternTag);
-      (void)builder_->conditionalBranch(condition, *arms[index], *next);
-      builder_->setInsertBlock(*arms[index]);
+      (void)builder_->conditionalBranch(condition, *body, *next);
+      builder_->setInsertBlock(*body);
       if (arm.pattern->kind() == NodeKind::CallExpr) {
         const auto& call = static_cast<const CallExpr&>(*arm.pattern);
         for (std::size_t argument = 0; argument < call.arguments().size(); ++argument) {
@@ -591,6 +598,23 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
     return builder_->operation("runtime.print", serem::IRType::voidType(), std::move(args));
   }
   std::vector<serem::ValuePtr> args;
+  if (expression.callee().kind() == NodeKind::NameExpr) {
+    const std::string& name = static_cast<const NameExpr&>(expression.callee()).name();
+    const auto decorated = decorators_.find(name);
+    if (decorated != decorators_.end()) {
+      std::vector<serem::ValuePtr> decoratedArgs;
+      decoratedArgs.push_back(std::make_shared<serem::FunctionRef>(
+          decorated->second, serem::IRType::function(serem::IRType::ptr(serem::IRType::i8()),
+                                                       {serem::IRType::ptr(serem::IRType::i8())})));
+      decoratedArgs.push_back(std::make_shared<serem::FunctionRef>(
+          name, serem::IRType::function(lowerType(expression.resolvedType()), {})));
+      for (const std::unique_ptr<Expr>& argument : expression.arguments()) {
+        decoratedArgs.push_back(emitExpression(*argument));
+      }
+      return builder_->operation("decorated.call", lowerType(expression.resolvedType()),
+                                std::move(decoratedArgs));
+    }
+  }
   if (expression.isConstructor()) {
     for (const Expr* argument : expression.boundArguments()) {
       if (argument != nullptr) args.push_back(emitExpression(*argument));
