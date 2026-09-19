@@ -5,7 +5,6 @@
 
 #include <iomanip>
 #include <sstream>
-#include <stdexcept>
 
 namespace sere::serem {
 
@@ -13,8 +12,14 @@ IRType::IRType(Kind kind) : kind_(kind) {}
 
 IRType IRType::voidType() { return IRType(Kind::Void); }
 IRType IRType::boolType() { return IRType(Kind::Bool); }
+IRType IRType::i8() { return IRType(Kind::I8); }
+IRType IRType::i16() { return IRType(Kind::I16); }
 IRType IRType::i32() { return IRType(Kind::I32); }
 IRType IRType::i64() { return IRType(Kind::I64); }
+IRType IRType::u8() { return IRType(Kind::U8); }
+IRType IRType::u16() { return IRType(Kind::U16); }
+IRType IRType::u32() { return IRType(Kind::U32); }
+IRType IRType::u64() { return IRType(Kind::U64); }
 IRType IRType::f32() { return IRType(Kind::F32); }
 IRType IRType::f64() { return IRType(Kind::F64); }
 
@@ -173,7 +178,7 @@ const std::vector<IRType>& IRFunction::parameters() const { return parameters_; 
 const IRType& IRFunction::resultType() const { return result_; }
 const std::vector<std::shared_ptr<Argument>>& IRFunction::arguments() const { return arguments_; }
 std::shared_ptr<Argument> IRFunction::argument(std::size_t index) const {
-  if (index >= arguments_.size()) throw std::out_of_range("Serem function argument index");
+  if (index >= arguments_.size()) return nullptr;
   return arguments_[index];
 }
 BasicBlock& IRFunction::addBlock(std::string label) {
@@ -232,11 +237,67 @@ std::shared_ptr<Operation> IRBuilder::sub(ValuePtr lhs, ValuePtr rhs, IRType typ
 std::shared_ptr<Operation> IRBuilder::mul(ValuePtr lhs, ValuePtr rhs, IRType type) {
   return operation("mul", std::move(type), {std::move(lhs), std::move(rhs)});
 }
+std::shared_ptr<Operation> IRBuilder::div(ValuePtr lhs, ValuePtr rhs, IRType type) {
+  return operation("div", std::move(type), {std::move(lhs), std::move(rhs)});
+}
+std::shared_ptr<Operation> IRBuilder::rem(ValuePtr lhs, ValuePtr rhs, IRType type) {
+  return operation("rem", std::move(type), {std::move(lhs), std::move(rhs)});
+}
+std::shared_ptr<Operation> IRBuilder::fadd(ValuePtr lhs, ValuePtr rhs, IRType type) {
+  return operation("fadd", std::move(type), {std::move(lhs), std::move(rhs)});
+}
+std::shared_ptr<Operation> IRBuilder::fsub(ValuePtr lhs, ValuePtr rhs, IRType type) {
+  return operation("fsub", std::move(type), {std::move(lhs), std::move(rhs)});
+}
+std::shared_ptr<Operation> IRBuilder::fmul(ValuePtr lhs, ValuePtr rhs, IRType type) {
+  return operation("fmul", std::move(type), {std::move(lhs), std::move(rhs)});
+}
+std::shared_ptr<Operation> IRBuilder::fdiv(ValuePtr lhs, ValuePtr rhs, IRType type) {
+  return operation("fdiv", std::move(type), {std::move(lhs), std::move(rhs)});
+}
+std::shared_ptr<Operation> IRBuilder::bitAnd(ValuePtr lhs, ValuePtr rhs, IRType type) {
+  return operation("and", std::move(type), {std::move(lhs), std::move(rhs)});
+}
+std::shared_ptr<Operation> IRBuilder::bitOr(ValuePtr lhs, ValuePtr rhs, IRType type) {
+  return operation("or", std::move(type), {std::move(lhs), std::move(rhs)});
+}
+std::shared_ptr<Operation> IRBuilder::bitXor(ValuePtr lhs, ValuePtr rhs, IRType type) {
+  return operation("xor", std::move(type), {std::move(lhs), std::move(rhs)});
+}
+std::shared_ptr<Operation> IRBuilder::shiftLeft(ValuePtr value, ValuePtr amount, IRType type) {
+  return operation("shl", std::move(type), {std::move(value), std::move(amount)});
+}
+std::shared_ptr<Operation> IRBuilder::shiftRight(ValuePtr value, ValuePtr amount, IRType type) {
+  return operation("shr", std::move(type), {std::move(value), std::move(amount)});
+}
+std::shared_ptr<Operation> IRBuilder::compare(std::string predicate, ValuePtr lhs, ValuePtr rhs) {
+  return operation("cmp." + std::move(predicate), IRType::boolType(),
+                   {std::move(lhs), std::move(rhs)});
+}
+std::shared_ptr<Operation> IRBuilder::cast(std::string kind, ValuePtr value, IRType type) {
+  return operation("cast." + std::move(kind), std::move(type), {std::move(value)});
+}
 std::shared_ptr<Operation> IRBuilder::load(ValuePtr pointer, IRType type) {
   return operation("load", std::move(type), {std::move(pointer)});
 }
 std::shared_ptr<Operation> IRBuilder::alloca(IRType type) {
   return operation("alloca", IRType::ptr(type));
+}
+std::shared_ptr<Operation> IRBuilder::getElement(ValuePtr aggregate,
+                                                  ValuePtr index,
+                                                  IRType type) {
+  return operation("get_element", IRType::ptr(type), {std::move(aggregate), std::move(index)});
+}
+std::shared_ptr<Operation> IRBuilder::extract(ValuePtr aggregate, std::size_t index, IRType type) {
+  return operation("extract", std::move(type), {std::move(aggregate)},
+                   {{"index", std::to_string(index)}});
+}
+std::shared_ptr<Operation> IRBuilder::insert(ValuePtr aggregate,
+                                             ValuePtr value,
+                                             std::size_t index,
+                                             IRType type) {
+  return operation("insert", std::move(type), {std::move(aggregate), std::move(value)},
+                   {{"index", std::to_string(index)}});
 }
 std::shared_ptr<Operation> IRBuilder::call(ValuePtr callee,
                                            std::vector<ValuePtr> arguments,
@@ -245,6 +306,34 @@ std::shared_ptr<Operation> IRBuilder::call(ValuePtr callee,
   operands.push_back(std::move(callee));
   for (auto& argument : arguments) operands.push_back(std::move(argument));
   return operation("call", std::move(resultType), std::move(operands));
+}
+std::shared_ptr<Operation> IRBuilder::phi(IRType type, std::vector<ValuePtr> incoming) {
+  return operation("phi", std::move(type), std::move(incoming));
+}
+std::shared_ptr<Operation> IRBuilder::select(ValuePtr condition,
+                                             ValuePtr ifTrue,
+                                             ValuePtr ifFalse,
+                                             IRType type) {
+  return operation("select", std::move(type),
+                   {std::move(condition), std::move(ifTrue), std::move(ifFalse)});
+}
+std::shared_ptr<Operation> IRBuilder::branch(BasicBlock& target) {
+  auto result = operation("branch", IRType::voidType(), {}, {{"target", target.label()}});
+  block_->setTerminated();
+  return result;
+}
+std::shared_ptr<Operation> IRBuilder::conditionalBranch(ValuePtr condition,
+                                                         BasicBlock& ifTrue,
+                                                         BasicBlock& ifFalse) {
+  auto result = operation("cond_branch", IRType::voidType(), {std::move(condition)},
+                          {{"true", ifTrue.label()}, {"false", ifFalse.label()}});
+  block_->setTerminated();
+  return result;
+}
+std::shared_ptr<Operation> IRBuilder::unreachable() {
+  auto result = operation("unreachable", IRType::voidType());
+  block_->setTerminated();
+  return result;
 }
 void IRBuilder::store(ValuePtr value, ValuePtr pointer) {
   (void)operation("store", IRType::voidType(), {std::move(value), std::move(pointer)});
@@ -255,6 +344,24 @@ void IRBuilder::ret(ValuePtr value) {
 }
 void IRBuilder::retVoid() {
   (void)operation("return", IRType::voidType());
+  block_->setTerminated();
+}
+std::shared_ptr<Operation> IRBuilder::await(ValuePtr value, IRType type) {
+  return operation("await", std::move(type), {std::move(value)});
+}
+void IRBuilder::yield(ValuePtr value) {
+  (void)operation("yield", IRType::voidType(), {std::move(value)});
+}
+std::shared_ptr<Operation> IRBuilder::invoke(ValuePtr callee,
+                                             std::vector<ValuePtr> arguments,
+                                             IRType resultType) {
+  std::vector<ValuePtr> operands;
+  operands.push_back(std::move(callee));
+  for (auto& argument : arguments) operands.push_back(std::move(argument));
+  return operation("invoke", std::move(resultType), std::move(operands));
+}
+void IRBuilder::throwValue(ValuePtr value) {
+  (void)operation("throw", IRType::voidType(), {std::move(value)});
   block_->setTerminated();
 }
 

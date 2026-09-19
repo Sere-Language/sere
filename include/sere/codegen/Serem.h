@@ -38,8 +38,14 @@ public:
 
   static IRType voidType();
   static IRType boolType();
+  static IRType i8();
+  static IRType i16();
   static IRType i32();
   static IRType i64();
+  static IRType u8();
+  static IRType u16();
+  static IRType u32();
+  static IRType u64();
   static IRType f32();
   static IRType f64();
   static IRType ptr(IRType pointee);
@@ -223,13 +229,51 @@ public:
   [[nodiscard]] std::shared_ptr<Operation> add(ValuePtr lhs, ValuePtr rhs, IRType type);
   [[nodiscard]] std::shared_ptr<Operation> sub(ValuePtr lhs, ValuePtr rhs, IRType type);
   [[nodiscard]] std::shared_ptr<Operation> mul(ValuePtr lhs, ValuePtr rhs, IRType type);
+  [[nodiscard]] std::shared_ptr<Operation> div(ValuePtr lhs, ValuePtr rhs, IRType type);
+  [[nodiscard]] std::shared_ptr<Operation> rem(ValuePtr lhs, ValuePtr rhs, IRType type);
+  [[nodiscard]] std::shared_ptr<Operation> fadd(ValuePtr lhs, ValuePtr rhs, IRType type);
+  [[nodiscard]] std::shared_ptr<Operation> fsub(ValuePtr lhs, ValuePtr rhs, IRType type);
+  [[nodiscard]] std::shared_ptr<Operation> fmul(ValuePtr lhs, ValuePtr rhs, IRType type);
+  [[nodiscard]] std::shared_ptr<Operation> fdiv(ValuePtr lhs, ValuePtr rhs, IRType type);
+  [[nodiscard]] std::shared_ptr<Operation> bitAnd(ValuePtr lhs, ValuePtr rhs, IRType type);
+  [[nodiscard]] std::shared_ptr<Operation> bitOr(ValuePtr lhs, ValuePtr rhs, IRType type);
+  [[nodiscard]] std::shared_ptr<Operation> bitXor(ValuePtr lhs, ValuePtr rhs, IRType type);
+  [[nodiscard]] std::shared_ptr<Operation> shiftLeft(ValuePtr value, ValuePtr amount, IRType type);
+  [[nodiscard]] std::shared_ptr<Operation> shiftRight(ValuePtr value, ValuePtr amount, IRType type);
+  [[nodiscard]] std::shared_ptr<Operation> compare(std::string predicate,
+                                                   ValuePtr lhs,
+                                                   ValuePtr rhs);
+  [[nodiscard]] std::shared_ptr<Operation> cast(std::string kind, ValuePtr value, IRType type);
   [[nodiscard]] std::shared_ptr<Operation> load(ValuePtr pointer, IRType type);
   [[nodiscard]] std::shared_ptr<Operation> alloca(IRType type);
+  [[nodiscard]] std::shared_ptr<Operation> getElement(ValuePtr aggregate,
+                                                       ValuePtr index,
+                                                       IRType type);
+  [[nodiscard]] std::shared_ptr<Operation> extract(ValuePtr aggregate,
+                                                    std::size_t index,
+                                                    IRType type);
+  [[nodiscard]] std::shared_ptr<Operation> insert(ValuePtr aggregate,
+                                                   ValuePtr value,
+                                                   std::size_t index,
+                                                   IRType type);
   [[nodiscard]] std::shared_ptr<Operation>
   call(ValuePtr callee, std::vector<ValuePtr> arguments, IRType resultType);
+  [[nodiscard]] std::shared_ptr<Operation> phi(IRType type, std::vector<ValuePtr> incoming);
+  [[nodiscard]] std::shared_ptr<Operation>
+  select(ValuePtr condition, ValuePtr ifTrue, ValuePtr ifFalse, IRType type);
+  [[nodiscard]] std::shared_ptr<Operation> branch(BasicBlock& target);
+  [[nodiscard]] std::shared_ptr<Operation>
+  conditionalBranch(ValuePtr condition, BasicBlock& ifTrue, BasicBlock& ifFalse);
+  [[nodiscard]] std::shared_ptr<Operation> unreachable();
   void store(ValuePtr value, ValuePtr pointer);
   void ret(ValuePtr value);
   void retVoid();
+  [[nodiscard]] std::shared_ptr<Operation> await(ValuePtr value, IRType type);
+  void yield(ValuePtr value);
+  [[nodiscard]] std::shared_ptr<Operation> invoke(ValuePtr callee,
+                                                   std::vector<ValuePtr> arguments,
+                                                   IRType resultType);
+  void throwValue(ValuePtr value);
 
 private:
   IRFunction* function_;
