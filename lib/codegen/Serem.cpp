@@ -93,13 +93,16 @@ std::string IRType::display() const {
 
 Value::Value(IRType type) : type_(std::move(type)) {}
 const IRType& Value::type() const { return type_; }
+std::string Value::reference() const { return display(); }
 
 ConstantInt::ConstantInt(std::int64_t value, IRType type) : Value(std::move(type)), value_(value) {}
 std::int64_t ConstantInt::value() const { return value_; }
+ValueKind ConstantInt::valueKind() const { return ValueKind::ConstantInt; }
 std::string ConstantInt::display() const { return std::to_string(value_); }
 
 ConstantFloat::ConstantFloat(double value, IRType type) : Value(std::move(type)), value_(value) {}
 double ConstantFloat::value() const { return value_; }
+ValueKind ConstantFloat::valueKind() const { return ValueKind::ConstantFloat; }
 std::string ConstantFloat::display() const {
   std::ostringstream stream;
   stream << std::setprecision(17) << value_;
@@ -108,14 +111,17 @@ std::string ConstantFloat::display() const {
 
 ConstantString::ConstantString(std::string value) : Value(IRType::stringType()), value_(std::move(value)) {}
 const std::string& ConstantString::value() const { return value_; }
+ValueKind ConstantString::valueKind() const { return ValueKind::ConstantString; }
 std::string ConstantString::display() const { return "\"" + value_ + "\""; }
 
 Argument::Argument(std::string name, IRType type) : Value(std::move(type)), name_(std::move(name)) {}
 const std::string& Argument::name() const { return name_; }
+ValueKind Argument::valueKind() const { return ValueKind::Argument; }
 std::string Argument::display() const { return "%" + name_; }
 
 FunctionRef::FunctionRef(std::string name, IRType type) : Value(std::move(type)), name_(std::move(name)) {}
 const std::string& FunctionRef::name() const { return name_; }
+ValueKind FunctionRef::valueKind() const { return ValueKind::FunctionRef; }
 std::string FunctionRef::display() const { return "@" + name_; }
 
 Operation::Operation(std::string opcode,
@@ -129,6 +135,7 @@ const std::string& Operation::opcode() const { return opcode_; }
 const std::string& Operation::resultName() const { return resultName_; }
 const std::vector<ValuePtr>& Operation::operands() const { return operands_; }
 const std::unordered_map<std::string, std::string>& Operation::attributes() const { return attributes_; }
+ValueKind Operation::valueKind() const { return ValueKind::Operation; }
 
 std::string Operation::display() const {
   std::string text;
@@ -139,7 +146,7 @@ std::string Operation::display() const {
     text += " ";
     for (std::size_t index = 0; index < operands_.size(); ++index) {
       if (index != 0) text += ", ";
-      text += operands_[index] == nullptr ? "<null>" : operands_[index]->display();
+      text += operands_[index] == nullptr ? "<null>" : operands_[index]->reference();
     }
   }
   if (!attributes_.empty()) {
@@ -153,6 +160,10 @@ std::string Operation::display() const {
     text += "}";
   }
   return text;
+}
+
+std::string Operation::reference() const {
+  return resultName_.empty() ? display() : "%" + resultName_;
 }
 
 BasicBlock::BasicBlock(std::string label) : label_(std::move(label)) {}

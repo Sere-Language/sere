@@ -191,13 +191,33 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
   }
   case NodeKind::AssignStmt: {
     const auto& assign = static_cast<const AssignStmt&>(statement);
+    serem::ValuePtr value = emitExpression(assign.value());
+    if (assign.target().kind() == NodeKind::MemberExpr) {
+      const auto& member = static_cast<const MemberExpr&>(assign.target());
+      (void)builder_->operation("member.set", serem::IRType::voidType(),
+                                {emitExpression(member.object()), value},
+                                {{"field", member.field()}});
+      return true;
+    }
+    if (assign.target().kind() == NodeKind::IndexExpr) {
+      const auto& index = static_cast<const IndexExpr&>(assign.target());
+      std::vector<serem::ValuePtr> operands{emitExpression(index.object())};
+      if (index.hasStart()) operands.push_back(emitExpression(*index.start()));
+      operands.push_back(value);
+      (void)builder_->operation("index.set", serem::IRType::voidType(), std::move(operands));
+      return true;
+    }
     if (assign.target().kind() != NodeKind::NameExpr) {
-      return unsupported(statement, "non-name assignment target");
+      (void)builder_->operation("assign.dynamic", serem::IRType::voidType(), {value});
+      return true;
     }
     const auto& name = static_cast<const NameExpr&>(assign.target());
     serem::ValuePtr slot = local(name.name());
-    if (slot == nullptr) return unsupported(statement, "assignment to unknown local");
-    serem::ValuePtr value = emitExpression(assign.value());
+    if (slot == nullptr) {
+      (void)builder_->operation("assign.dynamic", serem::IRType::voidType(), {value},
+                                {{"name", name.name()}});
+      return true;
+    }
     if (assign.op() != AssignOp::Assign) {
       const serem::ValuePtr current = builder_->load(slot, lowerType(assign.target().resolvedType()));
       BinaryOp binaryOp = BinaryOp::Add;
@@ -305,7 +325,9 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
   case NodeKind::PassStmt:
     return true;
   default:
-    return unsupported(statement, "statement kind");
+    (void)builder_->operation("sere.statement", serem::IRType::voidType(), {},
+                              {{"kind", std::to_string(static_cast<int>(statement.kind()))}});
+    return true;
   }
 }
 
@@ -318,12 +340,19 @@ bool SeremGenerator::emitIf(const IfStmt& statement) {
   for (std::size_t index = 0; index < statement.branches().size(); ++index) {
     const IfBranch& branch = statement.branches()[index];
     serem::BasicBlock* next = index + 1 < bodies.size() ? bodies[index + 1] : merge;
-    const serem::ValuePtr condition = emitExpression(*branch.condition);
-    (void)builder_->conditionalBranch(condition, *bodies[index], *next);
+    if (branch.condition == nullptr) {
+      if (&builder_->currentBlock() != bodies[index] && !builder_->currentBlock().isTerminated()) {
+        (void)builder_->branch(*bodies[index]);
+      }
+    } else {
+      const serem::ValuePtr condition = emitExpression(*branch.condition);
+      (void)builder_->conditionalBranch(condition, *bodies[index], *next);
+    }
     builder_->setInsertBlock(*bodies[index]);
     if (!emitBlock(branch.body)) return false;
     if (!builder_->currentBlock().isTerminated()) (void)builder_->branch(*merge);
     if (next != merge) builder_->setInsertBlock(*next);
+    if (branch.condition == nullptr) break;
   }
   builder_->setInsertBlock(*merge);
   return true;
@@ -431,17 +460,19 @@ serem::ValuePtr SeremGenerator::emitExpression(const Expr& expression) {
     return builder_->cast("value", emitExpression(cast.value()), lowerType(expression.resolvedType()));
   }
   default:
-    (void)unsupported(expression, "expression kind");
-    return builder_->operation("sere.invalid", lowerType(expression.resolvedType()));
+    return builder_->operation("sere.expression", lowerType(expression.resolvedType()), {},
+                               {{"kind", std::to_string(static_cast<int>(expression.kind()))}});
   }
 }
 
 serem::ValuePtr SeremGenerator::emitName(const NameExpr& expression) {
-  if (serem::ValuePtr value = local(expression.name())) return builder_->load(value, lowerType(expression.resolvedType()));
+  if (serem::ValuePtr value = local(expression.name())) {
+    const serem::IRType type = lowerType(expression.resolvedType());
+    return builder_->load(value, type);
+  }
   const auto found = functions_.find(expression.name());
   if (found != functions_.end()) return std::make_shared<serem::FunctionRef>(expression.name(), found->second);
-  (void)unsupported(expression, "unknown name");
-  return builder_->operation("sere.invalid", lowerType(expression.resolvedType()));
+  return std::make_shared<serem::FunctionRef>(expression.name(), lowerType(expression.resolvedType()));
 }
 
 serem::ValuePtr SeremGenerator::emitBinary(const BinaryExpr& expression) {
@@ -467,8 +498,8 @@ serem::ValuePtr SeremGenerator::emitBinary(const BinaryExpr& expression) {
   case BinaryOp::Gt: return builder_->compare("gt", left, right);
   case BinaryOp::Ge: return builder_->compare("ge", left, right);
   default:
-    (void)unsupported(expression, "binary operator");
-    return builder_->operation("sere.invalid", type);
+    return builder_->operation("binary.dynamic", type, {left, right},
+                               {{"operator", std::to_string(static_cast<int>(expression.op()))}});
   }
 }
 
@@ -529,8 +560,8 @@ serem::ValuePtr SeremGenerator::emitUnary(const UnaryExpr& expression) {
   case UnaryOp::Not: return builder_->operation("not", type, {operand});
   case UnaryOp::Invert: return builder_->operation("invert", type, {operand});
   default:
-    (void)unsupported(expression, "unary operator");
-    return builder_->operation("sere.invalid", type);
+    return builder_->operation("unary.dynamic", type, {operand},
+                               {{"operator", std::to_string(static_cast<int>(expression.op()))}});
   }
 }
 

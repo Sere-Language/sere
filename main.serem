@@ -1,0 +1,104 @@
+module @main
+type @Exception = %Exception [class]
+type @SyntaxError = %SyntaxError [class]
+type @IndentationError = %IndentationError [class]
+type @NameError = %NameError [class]
+type @AttributeError = %AttributeError [class]
+type @TypeError = %TypeError [class]
+type @IndexError = %IndexError [class]
+type @ImportError = %ImportError [class]
+type @ValueError = %ValueError [class]
+type @AssertionError = %AssertionError [class]
+type @PermissionError = %PermissionError [class]
+type @RuntimeError = %RuntimeError [class]
+type @RecursionError = %RecursionError [class]
+type @NotImplementedError = %NotImplementedError [class]
+type @Person = %Person [struct]
+func @input(%arg0: str) -> str {
+entry:
+  unreachable
+}
+func @abs(%arg0: i32) -> i32 {
+entry:
+  %0 = load i32 %arg0
+  %1 = cmp.lt i1 %0, 0
+  cond_branch %1 {true = if.body0, false = if.end}
+if.end:
+  %4 = load i32 %arg0
+  return %4
+if.body0:
+  %2 = load i32 %arg0
+  %3 = neg i32 %2
+  return %3
+}
+func @min(%arg0: i32, %arg1: i32) -> i32 {
+entry:
+  %0 = load i32 %arg0
+  %1 = load i32 %arg1
+  %2 = cmp.lt i1 %0, %1
+  cond_branch %2 {true = if.body0, false = if.body1}
+if.end:
+  unreachable
+if.body0:
+  %3 = load i32 %arg0
+  return %3
+if.body1:
+  %4 = load i32 %arg1
+  return %4
+}
+func @max(%arg0: i32, %arg1: i32) -> i32 {
+entry:
+  %0 = load i32 %arg0
+  %1 = load i32 %arg1
+  %2 = cmp.gt i1 %0, %1
+  cond_branch %2 {true = if.body0, false = if.body1}
+if.end:
+  unreachable
+if.body0:
+  %3 = load i32 %arg0
+  return %3
+if.body1:
+  %4 = load i32 %arg1
+  return %4
+}
+func @clamp(%arg0: i32, %arg1: i32, %arg2: i32) -> i32 {
+entry:
+  %0 = load i32 %arg0
+  %1 = load i32 %arg1
+  %2 = call i32 @max, %0, %1
+  %3 = load i32 %arg2
+  %4 = call i32 @min, %2, %3
+  return %4
+}
+func @sign(%arg0: i32) -> i32 {
+entry:
+  %0 = load i32 %arg0
+  %1 = cmp.gt i1 %0, 0
+  cond_branch %1 {true = if.body0, false = if.body1}
+if.end:
+  return 0
+if.body0:
+  return 1
+if.body1:
+  %2 = load i32 %arg0
+  %3 = cmp.lt i1 %2, 0
+  cond_branch %3 {true = if.body1, false = if.end}
+  %4 = neg i32 1
+  return %4
+}
+func @prelude.__init__(%arg0: %Exception, %arg1: str) -> void {
+entry:
+  %0 = load str %arg1
+  %1 = load %Exception %arg0
+  member.set %1, %0 {field = message}
+  return
+}
+func @main() -> i32 {
+entry:
+  %0 = call %Person @Person
+  assign.dynamic %0 {name = person}
+  %1 = member.get (Ptr[i8]) -> Ptr[i8] @test {field = greet}
+  %2 = member.get str @person {field = name}
+  %3 = call Ptr[i8] %1, %2
+  return 0
+}

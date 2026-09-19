@@ -75,13 +75,24 @@ private:
   std::int64_t length_ = 0;
 };
 
+enum class ValueKind {
+  ConstantInt,
+  ConstantFloat,
+  ConstantString,
+  Argument,
+  FunctionRef,
+  Operation,
+};
+
 class Value {
 public:
   explicit Value(IRType type);
   virtual ~Value() = default;
 
   [[nodiscard]] const IRType& type() const;
+  [[nodiscard]] virtual ValueKind valueKind() const = 0;
   [[nodiscard]] virtual std::string display() const = 0;
+  [[nodiscard]] virtual std::string reference() const;
 
 private:
   IRType type_;
@@ -93,6 +104,7 @@ class ConstantInt final : public Value {
 public:
   ConstantInt(std::int64_t value, IRType type = IRType::i64());
   [[nodiscard]] std::int64_t value() const;
+  [[nodiscard]] ValueKind valueKind() const override;
   [[nodiscard]] std::string display() const override;
 
 private:
@@ -103,6 +115,7 @@ class ConstantFloat final : public Value {
 public:
   ConstantFloat(double value, IRType type = IRType::f64());
   [[nodiscard]] double value() const;
+  [[nodiscard]] ValueKind valueKind() const override;
   [[nodiscard]] std::string display() const override;
 
 private:
@@ -113,6 +126,7 @@ class ConstantString final : public Value {
 public:
   explicit ConstantString(std::string value);
   [[nodiscard]] const std::string& value() const;
+  [[nodiscard]] ValueKind valueKind() const override;
   [[nodiscard]] std::string display() const override;
 
 private:
@@ -123,6 +137,7 @@ class Argument final : public Value {
 public:
   Argument(std::string name, IRType type);
   [[nodiscard]] const std::string& name() const;
+  [[nodiscard]] ValueKind valueKind() const override;
   [[nodiscard]] std::string display() const override;
 
 private:
@@ -133,6 +148,7 @@ class FunctionRef final : public Value {
 public:
   FunctionRef(std::string name, IRType type);
   [[nodiscard]] const std::string& name() const;
+  [[nodiscard]] ValueKind valueKind() const override;
   [[nodiscard]] std::string display() const override;
 
 private:
@@ -151,7 +167,9 @@ public:
   [[nodiscard]] const std::string& resultName() const;
   [[nodiscard]] const std::vector<ValuePtr>& operands() const;
   [[nodiscard]] const std::unordered_map<std::string, std::string>& attributes() const;
+  [[nodiscard]] ValueKind valueKind() const override;
   [[nodiscard]] std::string display() const override;
+  [[nodiscard]] std::string reference() const override;
 
 private:
   std::string opcode_;
