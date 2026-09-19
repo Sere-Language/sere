@@ -187,6 +187,9 @@ std::optional<std::filesystem::path> findNativeLibrary(std::string_view stem) {
       parent / "runtime" / (name + ".a"),
       parent / "runtime" / ("lib" + name + ".a"),
   };
+  candidates.push_back(parent / (name + ".lib"));
+  candidates.push_back(parent / (name + ".a"));
+  candidates.push_back(parent / ("lib" + name + ".a"));
   if (const char* home = std::getenv("SERE_HOME")) {
     const std::filesystem::path homeDir(home);
     candidates.push_back(homeDir / (name + ".lib"));

@@ -15,6 +15,7 @@
 #include <llvm/IR/Type.h>
 
 #include <cstdint>
+#include <charconv>
 #include <string_view>
 #include <utility>
 
@@ -29,6 +30,8 @@ public:
 SeremLLVMBackend::SeremLLVMBackend(llvm::LLVMContext& context, DiagnosticEngine& diagnostics)
     : context_(&context), diagnostics_(&diagnostics), builder_(std::make_unique<IRBuilderHolder>(context)) {
 }
+
+SeremLLVMBackend::~SeremLLVMBackend() = default;
 
 void SeremLLVMBackend::report(std::string message) {
   diagnostics_->error(std::move(message));
@@ -117,7 +120,8 @@ llvm::Value* SeremLLVMBackend::lowerValue(const serem::ValuePtr& value) {
   }
   case serem::ValueKind::ConstantString: {
     const auto* constant = static_cast<const serem::ConstantString*>(value.get());
-    return builder_->builder.CreateGlobalStringPtr(constant->value());
+    llvm::GlobalVariable* global = builder_->builder.CreateGlobalString(constant->value());
+    return builder_->builder.CreatePointerCast(global, llvm::PointerType::getUnqual(*context_));
   }
   case serem::ValueKind::Argument:
     report("Serem argument was not attached to an LLVM function");
@@ -170,6 +174,20 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
   else if (opcode == "load") result = builder_->builder.CreateLoad(type, operand(0));
   else if (opcode == "store") builder_->builder.CreateStore(operand(0), operand(1));
   else if (opcode == "select") result = builder_->builder.CreateSelect(operand(0), operand(1), operand(2));
+  else if (opcode == "construct") {
+    result = llvm::UndefValue::get(type);
+    for (std::size_t index = 0; index < operands.size(); ++index) {
+      result = builder_->builder.CreateInsertValue(result, operand(index), {static_cast<unsigned>(index)});
+    }
+  } else if (opcode == "member.get") {
+    unsigned index = 0;
+    const std::string indexText = attribute(operation, "index");
+    (void)std::from_chars(indexText.data(), indexText.data() + indexText.size(), index);
+    result = builder_->builder.CreateExtractValue(operand(0), {index});
+  } else if (opcode == "member.set") {
+    // Value aggregates are immutable in SSA; mutable object lowering will add
+    // an address-producing member operation in the next dialect revision.
+  }
   else if (opcode == "call" || opcode == "invoke") {
     llvm::Function* function = nullptr;
     if (!operands.empty() && operands[0] != nullptr &&
@@ -224,11 +242,13 @@ std::unique_ptr<llvm::Module> SeremLLVMBackend::emit(const serem::IRModule& modu
   for (const auto& function : module.functions()) {
     currentFunctionName_ = function->name();
     llvm::Function* llvmFunction = functions_[function->name()];
+    for (std::size_t index = 0; index < function->arguments().size(); ++index) {
+      values_[function->arguments()[index].get()] = llvmFunction->getArg(index);
+    }
     for (std::size_t index = 0; index < function->blocks().size(); ++index) {
       llvm::BasicBlock* block = llvm::BasicBlock::Create(
           *context_, function->blocks()[index]->label(), llvmFunction);
       blocks_.insert_or_assign(function->name() + ":" + function->blocks()[index]->label(), block);
-      if (index < function->arguments().size()) values_[function->arguments()[index].get()] = llvmFunction->getArg(index);
     }
     for (const auto& block : function->blocks()) {
       builder_->builder.SetInsertPoint(blockFor(function->name() + ":" + block->label()));

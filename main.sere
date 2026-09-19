@@ -7,4 +7,10 @@ struct Person:
 def main() -> i32:
     person = Person(name="Alice", age=30)
     test.greet(person.name)
+
+    if person.age < 18:
+        raise RuntimeError("Person is a minor.")
+        print(f"{person.name} is a minor.")
+    else:
+        print(f"{person.name} is an adult.")
     return 0

@@ -38,6 +38,7 @@ struct CompilerOptions {
   bool emitAsm = false;
   bool emitSerem = false;
   bool emitSeremBytecode = false;
+  bool seremBackend = false;
   bool dumpTokens = false;
   bool dumpAst = false;
   bool dumpSymbols = false;

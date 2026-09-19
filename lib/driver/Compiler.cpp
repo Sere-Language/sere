@@ -8,6 +8,7 @@
 #include "sere/codegen/OptPipeline.h"
 #include "sere/codegen/Serem.h"
 #include "sere/codegen/SeremGenerator.h"
+#include "sere/codegen/backends/SeremLLVMBackend.h"
 #include "sere/diag/DiagnosticEngine.h"
 #include "sere/driver/Frontend.h"
 #include "sere/driver/Installer.h"
@@ -80,6 +81,14 @@ void dumpTokens(const std::vector<Token>& tokens) {
   }
   if (options.emitSeremBytecode || options.emitSerem) {
     return output.replace_extension(".serem");
+  }
+  if (options.seremBackend) {
+#ifdef _WIN32
+    return output.replace_extension(".exe");
+#else
+    if (output.extension() == ".sere") output.replace_extension();
+    return output;
+#endif
   }
 #ifdef _WIN32
   return output.replace_extension(".exe");
@@ -588,7 +597,6 @@ int compileInput(const CompilerOptions& options) {
   }
 
   llvm::LLVMContext context;
-  IRGenerator generator(context, frontend.diagnostics(), *frontend.types());
   std::vector<const Module*> imported;
   for (const std::unique_ptr<Module>& extra : frontend.importedModules()) {
     imported.push_back(extra.get());
@@ -606,9 +614,20 @@ int compileInput(const CompilerOptions& options) {
       moduleSources[importedModules[index].get()] = importedSources[index].get();
     }
   }
-  generator.setModuleSources(std::move(moduleSources));
-  std::unique_ptr<llvm::Module> module =
-      generator.emit(*frontend.module(), options.inputPath.string(), &imported);
+  std::unique_ptr<llvm::Module> module;
+  if (options.seremBackend) {
+    SeremGenerator seremGenerator(frontend.diagnostics(), *frontend.types());
+    std::unique_ptr<serem::IRModule> seremModule =
+        seremGenerator.emit(*frontend.module(), options.inputPath.stem().string(), &imported);
+    if (seremModule != nullptr && !frontend.diagnostics().hasErrors()) {
+      SeremLLVMBackend backend(context, frontend.diagnostics());
+      module = backend.emit(*seremModule, options.inputPath.string());
+    }
+  } else {
+    IRGenerator generator(context, frontend.diagnostics(), *frontend.types());
+    generator.setModuleSources(std::move(moduleSources));
+    module = generator.emit(*frontend.module(), options.inputPath.string(), &imported);
+  }
   if (module == nullptr || frontend.diagnostics().hasErrors()) {
     frontend.diagnostics().printAll();
     return 1;

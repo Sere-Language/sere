@@ -97,8 +97,21 @@ func @main() -> i32 {
 entry:
   %0 = call %Person @Person
   assign.dynamic %0 {name = person}
-  %1 = member.get (Ptr[i8]) -> Ptr[i8] @test {field = greet}
+  %1 = member.get (str) -> void @test {field = greet}
   %2 = member.get str @person {field = name}
-  %3 = call Ptr[i8] %1, %2
+  call %1, %2
+  %3 = member.get i32 @person {field = age}
+  %4 = cmp.lt i1 %3, 18
+  cond_branch %4 {true = if.body0, false = if.body1}
+if.end:
   return 0
+if.body0:
+  %5 = call %RuntimeError @RuntimeError, "Person is a minor."
+  throw %5
+  %6 = sere.expression str {kind = 4}
+  call @print, %6
+if.body1:
+  %7 = sere.expression str {kind = 4}
+  call @print, %7
+  branch {target = if.end}
 }

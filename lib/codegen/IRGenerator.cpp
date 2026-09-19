@@ -2934,6 +2934,9 @@ llvm::Value* IRGenerator::emitInterpolated(llvm::IRBuilder<>& builder,
     llvm::Value* piece = nullptr;
     if (part.value == nullptr) {
       piece = emitStrLiteral(builder, part.literal);
+    } else if (part.spec.empty() && part.value->resolvedType() != nullptr &&
+               part.value->resolvedType()->isAny()) {
+      piece = emitAnyToStr(builder, emitExpr(builder, *part.value));
     } else if (part.spec.empty()) {
       piece = emitToStr(builder, *part.value);
     } else {
@@ -2945,6 +2948,11 @@ llvm::Value* IRGenerator::emitInterpolated(llvm::IRBuilder<>& builder,
     result = result == nullptr ? piece : emitStrConcat(builder, result, piece);
   }
   return result == nullptr ? emitStrLiteral(builder, "") : result;
+}
+
+llvm::Value* IRGenerator::emitAnyToStr(llvm::IRBuilder<>& builder, llvm::Value* value) {
+  if (value == nullptr) return emitStrLiteral(builder, "?");
+  return emitValueRepr(builder, value, types_->anyType());
 }
 
 llvm::Value* IRGenerator::emitFormatted(llvm::IRBuilder<>& builder,

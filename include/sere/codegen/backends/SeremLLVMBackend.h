@@ -11,6 +11,7 @@
 
 namespace llvm {
 class BasicBlock;
+class Function;
 class LLVMContext;
 class Module;
 class StructType;
@@ -25,6 +26,7 @@ class DiagnosticEngine;
 class SeremLLVMBackend {
 public:
   SeremLLVMBackend(llvm::LLVMContext& context, DiagnosticEngine& diagnostics);
+  ~SeremLLVMBackend();
 
   [[nodiscard]] std::unique_ptr<llvm::Module>
   emit(const serem::IRModule& module, const std::string& moduleName);

@@ -122,6 +122,7 @@ private:
   llvm::Value* emitBuiltinExpr(llvm::IRBuilder<>& builder, const Expr& expr);
   llvm::Value* emitBuiltinDefault(llvm::IRBuilder<>& builder, const Type* type);
   void emitAnyRepr();
+  llvm::Value* emitAnyToStr(llvm::IRBuilder<>& builder, llvm::Value* value);
   llvm::Value* emitUnionStr(llvm::IRBuilder<>& builder, const Expr& expr);
   llvm::Value* emitRecordStr(llvm::IRBuilder<>& builder, const Expr& object);
   llvm::Value* emitEnumStr(llvm::IRBuilder<>& builder, const Expr& expr);

@@ -20,7 +20,8 @@ public:
   SeremGenerator(DiagnosticEngine& diagnostics, TypeContext& types);
 
   [[nodiscard]] std::unique_ptr<serem::IRModule> emit(const Module& module,
-                                                      std::string moduleName);
+                                                      std::string moduleName,
+                                                      const std::vector<const Module*>* imported = nullptr);
 
 private:
   [[nodiscard]] serem::IRType lowerType(const Type* type) const;

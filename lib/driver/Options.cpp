@@ -190,7 +190,7 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
       continue;
     }
     if (argument == "--backend=serem") {
-      options.emitSerem = true;
+      options.seremBackend = true;
       continue;
     }
     if (argument == "--backend=llvm") {
@@ -447,6 +447,10 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
                           static_cast<int>(options.emitSerem);
   if (outputModes > 1) {
     error = "cannot combine LLVM, assembly, and Serem output modes";
+    return false;
+  }
+  if (options.emitSerem && options.seremBackend) {
+    error = "cannot combine Serem text output with the Serem native backend";
     return false;
   }
   if (!options.help && !options.version && !options.printEnv && !options.lsp &&
