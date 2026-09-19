@@ -1,3 +1,4 @@
 
-def greet(name: str) -> None:
-    print(f"Hello, {name}!")
+def main() -> i32:
+    print("Hello, world!")
+    return 0

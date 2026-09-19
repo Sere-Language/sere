@@ -54,12 +54,18 @@ serem::IRType SeremGenerator::lowerType(const Type* type) const {
     }
     return serem::IRType::structType(type->name(), std::move(fields));
   }
+  if (type->isEnum()) {
+    return serem::IRType::structType(type->name(),
+                                     {serem::IRType::i32(), serem::IRType::ptr(serem::IRType::i8())});
+  }
   if (type->isUnion()) return serem::IRType::structType("union", {});
   return serem::IRType::ptr(serem::IRType::i8());
 }
 
 std::string SeremGenerator::functionName(const FunctionDef& function) const {
-  if (!function.modulePrefix().empty()) return function.modulePrefix() + "." + function.name();
+  const auto known = functionNames_.find(&function);
+  if (known != functionNames_.end()) return known->second;
+  if (!function.modulePrefix().empty()) return function.modulePrefix() + "_" + function.name();
   if (function.isMethod() && !function.ownerClass().empty()) {
     return function.ownerClass() + "." + function.name();
   }
@@ -68,23 +74,34 @@ std::string SeremGenerator::functionName(const FunctionDef& function) const {
 
 std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
                                                        std::string moduleName,
-                                                       const std::vector<const Module*>* imported) {
+                                                       const std::vector<const Module*>* imported,
+                                                       const std::vector<std::string>* importedNames) {
   module_ = std::make_unique<serem::IRModule>(std::move(moduleName));
   functions_.clear();
+  functionNames_.clear();
   std::vector<const Module*> modules{&module};
   if (imported != nullptr) modules.insert(modules.end(), imported->begin(), imported->end());
   for (const Module* current : modules) declareTypes(*current);
-  for (const Module* current : modules) for (const std::unique_ptr<Stmt>& statement : current->statements()) {
+  for (std::size_t moduleIndex = 0; moduleIndex < modules.size(); ++moduleIndex) {
+    const Module* current = modules[moduleIndex];
+    const std::string prefix = moduleIndex == 0 || importedNames == nullptr ||
+                                       moduleIndex - 1 >= importedNames->size()
+                                   ? std::string{}
+                                   : (*importedNames)[moduleIndex - 1];
+    for (const std::unique_ptr<Stmt>& statement : current->statements()) {
     if (statement != nullptr && statement->kind() == NodeKind::FunctionDef) {
       const auto& function = static_cast<const FunctionDef&>(*statement);
+      if (!prefix.empty()) functionNames_[&function] = prefix + "_" + function.name();
       const Type* type = functionType(function);
       if (type != nullptr) functions_.insert_or_assign(functionName(function), lowerType(type));
     } else if (statement != nullptr && statement->kind() == NodeKind::ClassDef) {
       const auto& classDef = static_cast<const ClassDef&>(*statement);
       for (const std::unique_ptr<FunctionDef>& method : classDef.methods()) {
+        if (!prefix.empty()) functionNames_[method.get()] = prefix + "_" + functionName(*method);
         const Type* type = functionType(*method);
         if (type != nullptr) functions_.insert_or_assign(functionName(*method), lowerType(type));
       }
+    }
     }
   }
   for (const Module* current : modules) for (const std::unique_ptr<Stmt>& statement : current->statements()) {
@@ -116,12 +133,16 @@ void SeremGenerator::declareTypes(const Module& module) {
 
 void SeremGenerator::declareClass(const ClassDef& classDef) {
   std::vector<serem::IRType> fields;
-  for (const FieldDecl& field : classDef.fields()) {
-    if (!field.isStatic) fields.push_back(lowerType(field.type == nullptr ? nullptr
-                                                                  : field.type->resolvedType()));
-  }
   std::vector<std::string> attributes;
   attributes.push_back(classDef.isStruct() ? "struct" : "class");
+  std::size_t fieldIndex = 0;
+  for (const FieldDecl& field : classDef.fields()) {
+    if (!field.isStatic) {
+      fields.push_back(lowerType(field.type == nullptr ? nullptr : field.type->resolvedType()));
+      attributes.push_back("field=" + field.name + ":" + std::to_string(fieldIndex));
+      ++fieldIndex;
+    }
+  }
   for (const std::string& decorator : classDef.decorators()) attributes.push_back("decorator=" + decorator);
   (void)module_->addType(std::make_unique<serem::TypeDef>(
       classDef.name(), serem::IRType::structType(classDef.name(), std::move(fields)),
@@ -246,6 +267,44 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
   }
   case NodeKind::IfStmt:
     return emitIf(static_cast<const IfStmt&>(statement));
+  case NodeKind::MatchStmt: {
+    const auto& match = static_cast<const MatchStmt&>(statement);
+    const serem::ValuePtr subject = emitExpression(match.subject());
+    const auto tag = builder_->operation("enum.tag", serem::IRType::i32(), {subject});
+    serem::BasicBlock* merge = &function_->addBlock("match.end");
+    std::vector<serem::BasicBlock*> arms;
+    for (std::size_t index = 0; index < match.arms().size(); ++index) {
+      arms.push_back(&function_->addBlock("match.arm" + std::to_string(index)));
+    }
+    for (std::size_t index = 0; index < match.arms().size(); ++index) {
+      const MatchArm& arm = match.arms()[index];
+      serem::BasicBlock* next = index + 1 < arms.size() ? arms[index + 1] : merge;
+      auto patternTag = std::make_shared<serem::ConstantInt>(static_cast<std::int64_t>(index),
+                          serem::IRType::i32());
+      auto condition = builder_->compare("eq", tag, patternTag);
+      (void)builder_->conditionalBranch(condition, *arms[index], *next);
+      builder_->setInsertBlock(*arms[index]);
+      if (arm.pattern->kind() == NodeKind::CallExpr) {
+        const auto& call = static_cast<const CallExpr&>(*arm.pattern);
+        for (std::size_t argument = 0; argument < call.arguments().size(); ++argument) {
+          if (call.arguments()[argument]->kind() == NodeKind::NameExpr) {
+            const auto& name = static_cast<const NameExpr&>(*call.arguments()[argument]);
+            auto payload = builder_->operation("enum.payload", lowerType(name.resolvedType()),
+                                               {subject}, {{"index", std::to_string(argument)}});
+            auto slot = builder_->alloca(payload->type());
+            builder_->store(payload, slot);
+            (void)bindLocal(name.name(), slot);
+          }
+        }
+      }
+      if (!emitBlock(arm.body)) return false;
+      if (!builder_->currentBlock().isTerminated()) (void)builder_->branch(*merge);
+      if (next == merge) break;
+      builder_->setInsertBlock(*next);
+    }
+    builder_->setInsertBlock(*merge);
+    return true;
+  }
   case NodeKind::WhileStmt:
     return emitWhile(static_cast<const WhileStmt&>(statement));
   case NodeKind::ForStmt:
@@ -417,8 +476,23 @@ serem::ValuePtr SeremGenerator::emitExpression(const Expr& expression) {
     const auto& literal = static_cast<const FloatLiteral&>(expression);
     return std::make_shared<serem::ConstantFloat>(literal.value(), lowerType(expression.resolvedType()));
   }
-  case NodeKind::StringLiteral:
-    return std::make_shared<serem::ConstantString>(static_cast<const StringLiteral&>(expression).value());
+  case NodeKind::StringLiteral: {
+    const std::string& value = static_cast<const StringLiteral&>(expression).value();
+    const std::string name = "str." + std::to_string(module_->globals().size());
+    (void)module_->addGlobal(std::make_unique<serem::GlobalConstant>(
+        name, serem::IRType::stringType(), serem::ConstantString(value).display()));
+    return std::make_shared<serem::ConstantString>(value);
+  }
+  case NodeKind::InterpolatedStringExpr: {
+    const auto& interpolated = static_cast<const InterpolatedStringExpr&>(expression);
+    std::vector<serem::ValuePtr> parts;
+    for (const StringPart& part : interpolated.parts()) {
+      if (!part.literal.empty()) parts.push_back(std::make_shared<serem::ConstantString>(part.literal));
+      if (part.value != nullptr) parts.push_back(emitExpression(*part.value));
+    }
+    if (parts.empty()) return std::make_shared<serem::ConstantString>("");
+    return builder_->operation("string.concat", serem::IRType::stringType(), std::move(parts));
+  }
   case NodeKind::BooleanLiteral:
     return std::make_shared<serem::ConstantInt>(static_cast<const BooleanLiteral&>(expression).value() ? 1 : 0,
                                                 serem::IRType::boolType());
@@ -536,8 +610,12 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
       expression.callee().resolvedType()->kind() == TypeKind::Function) {
     const auto& member = static_cast<const MemberExpr&>(expression.callee());
     if (member.object().kind() == NodeKind::NameExpr) {
+      const auto& object = static_cast<const NameExpr&>(member.object());
+      const std::string symbol = functions_.contains(object.name() + "_" + member.field())
+                                     ? object.name() + "_" + member.field()
+                                     : member.field();
       serem::ValuePtr callee = std::make_shared<serem::FunctionRef>(
-          member.field(), lowerType(expression.callee().resolvedType()));
+          symbol, lowerType(expression.callee().resolvedType()));
       for (const Expr* argument : expression.boundArguments()) {
         if (argument != nullptr) args.push_back(emitExpression(*argument));
       }
@@ -555,6 +633,19 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
 }
 
 serem::ValuePtr SeremGenerator::emitMember(const MemberExpr& expression) {
+  if (expression.object().kind() == NodeKind::NameExpr &&
+      functions_.contains(expression.field())) {
+    return std::make_shared<serem::FunctionRef>(
+        expression.field(), lowerType(expression.resolvedType()));
+  }
+  if (expression.object().kind() == NodeKind::NameExpr) {
+    const auto& object = static_cast<const NameExpr&>(expression.object());
+    const std::string qualified = object.name() + "_" + expression.field();
+    if (functions_.contains(qualified)) {
+      return std::make_shared<serem::FunctionRef>(qualified,
+                                                  lowerType(expression.resolvedType()));
+    }
+  }
   if (expression.resolvedType() != nullptr && expression.resolvedType()->kind() == TypeKind::Function &&
       expression.object().kind() == NodeKind::NameExpr) {
     return std::make_shared<serem::FunctionRef>(expression.field(),

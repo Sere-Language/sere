@@ -220,8 +220,8 @@ int main() {
   if (!parseArgs({"sere", "--backend=serem", "main.sere"}, bytecodeOptions, error)) {
     return fail("failed to parse --backend=serem");
   }
-  if (!bytecodeOptions.emitSerem) {
-    return fail("expected Serem backend selection");
+  if (!bytecodeOptions.seremBackend || bytecodeOptions.emitSerem) {
+    return fail("expected native Serem backend selection");
   }
     sere::CompilerOptions bytecodeTextOptions;
     if (!parseArgs({"sere", "--emit-serem-bytecode", "main.sere"}, bytecodeTextOptions, error) ||
@@ -231,6 +231,11 @@ int main() {
   if (parseArgs({"sere", "--emit-serem", "--emit-llvm", "main.sere"}, bytecodeOptions,
                 error)) {
     return fail("expected Serem and LLVM output modes to conflict");
+  }
+  sere::CompilerOptions nativeSerem;
+  if (!parseArgs({"sere", "--backend=serem", "main.sere"}, nativeSerem, error) ||
+      !nativeSerem.seremBackend || nativeSerem.emitSerem) {
+    return fail("expected native Serem backend mode");
   }
 
   sere::CompilerOptions dumpAst;

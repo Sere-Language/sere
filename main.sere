@@ -1,16 +1,22 @@
-﻿import test
+﻿
+enum Animal:
+    Dog(name: str)
+    Cat(name: str)
 
-struct Person:
-    name: str
-    age: i32
+def print_output(func: Callable[[], str]) -> Callable[[], str]:
+    result = func()
+    print(result)
+    return func
 
+@print_output
+def foo() -> str:
+    return "Bar"
 def main() -> i32:
-    person = Person(name="Alice", age=30)
-    test.greet(person.name)
-
-    if person.age < 18:
-        raise RuntimeError("Person is a minor.")
-        print(f"{person.name} is a minor.")
-    else:
-        print(f"{person.name} is an adult.")
+    foo()
+    pet = Animal.Dog("Buddy")
+    match pet:
+        case Animal.Dog(name):
+            print(f"This is a dog named {name}.")
+        case Animal.Cat(name):
+            print(f"This is a cat named {name}.")
     return 0

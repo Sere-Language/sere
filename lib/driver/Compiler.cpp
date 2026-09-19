@@ -79,9 +79,6 @@ void dumpTokens(const std::vector<Token>& tokens) {
   if (options.emitAsm) {
     return output.replace_extension(".s");
   }
-  if (options.emitSeremBytecode || options.emitSerem) {
-    return output.replace_extension(".serem");
-  }
   if (options.seremBackend) {
 #ifdef _WIN32
     return output.replace_extension(".exe");
@@ -89,6 +86,9 @@ void dumpTokens(const std::vector<Token>& tokens) {
     if (output.extension() == ".sere") output.replace_extension();
     return output;
 #endif
+  }
+  if (options.emitSeremBytecode || options.emitSerem) {
+    return output.replace_extension(".serem");
   }
 #ifdef _WIN32
   return output.replace_extension(".exe");
@@ -579,8 +579,14 @@ int compileInput(const CompilerOptions& options) {
   if (options.emitSerem) {
     const std::filesystem::path outputPath = defaultOutput(options);
     SeremGenerator generator(frontend.diagnostics(), *frontend.types());
+    std::vector<const Module*> imported;
+    for (const std::unique_ptr<Module>& extra : frontend.importedModules()) {
+      imported.push_back(extra.get());
+    }
+    const std::vector<std::string> importedNames = frontend.importedModuleNames();
     std::unique_ptr<serem::IRModule> seremModule =
-        generator.emit(*frontend.module(), options.inputPath.stem().string());
+        generator.emit(*frontend.module(), options.inputPath.stem().string(), &imported,
+                       &importedNames);
     if (seremModule == nullptr || frontend.diagnostics().hasErrors()) {
       frontend.diagnostics().printAll();
       return 1;
@@ -617,8 +623,10 @@ int compileInput(const CompilerOptions& options) {
   std::unique_ptr<llvm::Module> module;
   if (options.seremBackend) {
     SeremGenerator seremGenerator(frontend.diagnostics(), *frontend.types());
+    const std::vector<std::string> importedNames = frontend.importedModuleNames();
     std::unique_ptr<serem::IRModule> seremModule =
-        seremGenerator.emit(*frontend.module(), options.inputPath.stem().string(), &imported);
+      seremGenerator.emit(*frontend.module(), options.inputPath.stem().string(), &imported,
+                            &importedNames);
     if (seremModule != nullptr && !frontend.diagnostics().hasErrors()) {
       SeremLLVMBackend backend(context, frontend.diagnostics());
       module = backend.emit(*seremModule, options.inputPath.string());

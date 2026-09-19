@@ -244,11 +244,25 @@ std::string TypeDef::display() const {
   return text + "\n";
 }
 
+GlobalConstant::GlobalConstant(std::string name, IRType type, std::string value)
+    : name_(std::move(name)), type_(std::move(type)), value_(std::move(value)) {}
+const std::string& GlobalConstant::name() const { return name_; }
+const IRType& GlobalConstant::type() const { return type_; }
+const std::string& GlobalConstant::value() const { return value_; }
+std::string GlobalConstant::display() const {
+  return "global @" + name_ + " = " + type_.display() + " " + value_ + "\n";
+}
+
 IRModule::IRModule(std::string name) : name_(std::move(name)) {}
 const std::string& IRModule::name() const { return name_; }
 TypeDef& IRModule::addType(std::unique_ptr<TypeDef> type) {
   TypeDef& result = *type;
   types_.push_back(std::move(type));
+  return result;
+}
+GlobalConstant& IRModule::addGlobal(std::unique_ptr<GlobalConstant> global) {
+  GlobalConstant& result = *global;
+  globals_.push_back(std::move(global));
   return result;
 }
 IRFunction& IRModule::addFunction(std::unique_ptr<IRFunction> function) {
@@ -261,10 +275,12 @@ IRFunction* IRModule::findFunction(std::string_view name) const {
   return nullptr;
 }
 const std::vector<std::unique_ptr<TypeDef>>& IRModule::types() const { return types_; }
+const std::vector<std::unique_ptr<GlobalConstant>>& IRModule::globals() const { return globals_; }
 const std::vector<std::unique_ptr<IRFunction>>& IRModule::functions() const { return functions_; }
 std::string IRModule::display() const {
   std::string text = "module @" + name_ + "\n";
   for (const auto& type : types_) text += type->display();
+  for (const auto& global : globals_) text += global->display();
   for (const auto& function : functions_) text += function->display();
   return text;
 }

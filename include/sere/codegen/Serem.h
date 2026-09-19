@@ -239,21 +239,38 @@ private:
   std::vector<std::string> attributes_;
 };
 
+class GlobalConstant {
+public:
+  GlobalConstant(std::string name, IRType type, std::string value);
+  [[nodiscard]] const std::string& name() const;
+  [[nodiscard]] const IRType& type() const;
+  [[nodiscard]] const std::string& value() const;
+  [[nodiscard]] std::string display() const;
+
+private:
+  std::string name_;
+  IRType type_;
+  std::string value_;
+};
+
 class IRModule {
 public:
   explicit IRModule(std::string name);
 
   [[nodiscard]] const std::string& name() const;
   TypeDef& addType(std::unique_ptr<TypeDef> type);
+  GlobalConstant& addGlobal(std::unique_ptr<GlobalConstant> global);
   IRFunction& addFunction(std::unique_ptr<IRFunction> function);
   [[nodiscard]] IRFunction* findFunction(std::string_view name) const;
   [[nodiscard]] const std::vector<std::unique_ptr<TypeDef>>& types() const;
+  [[nodiscard]] const std::vector<std::unique_ptr<GlobalConstant>>& globals() const;
   [[nodiscard]] const std::vector<std::unique_ptr<IRFunction>>& functions() const;
   [[nodiscard]] std::string display() const;
 
 private:
   std::string name_;
   std::vector<std::unique_ptr<TypeDef>> types_;
+  std::vector<std::unique_ptr<GlobalConstant>> globals_;
   std::vector<std::unique_ptr<IRFunction>> functions_;
 };
 

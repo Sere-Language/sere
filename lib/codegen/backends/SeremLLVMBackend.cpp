@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <charconv>
+#include <iostream>
 #include <string_view>
 #include <utility>
 
@@ -135,6 +136,7 @@ llvm::Value* SeremLLVMBackend::lowerValue(const serem::ValuePtr& value) {
 }
 
 llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation) {
+  std::cerr << "op " << operation.opcode() << "\n";
   const auto operands = operation.operands();
   auto operand = [&](std::size_t index) -> llvm::Value* {
     return index < operands.size() ? lowerValue(operands[index]) : nullptr;
@@ -174,21 +176,146 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
   else if (opcode == "load") result = builder_->builder.CreateLoad(type, operand(0));
   else if (opcode == "store") builder_->builder.CreateStore(operand(0), operand(1));
   else if (opcode == "select") result = builder_->builder.CreateSelect(operand(0), operand(1), operand(2));
-  else if (opcode == "construct") {
-    result = llvm::UndefValue::get(type);
+  else if (opcode == "runtime.print") {
+    llvm::Function* print = module_->getFunction("sere_print_str");
+    if (print == nullptr) {
+      llvm::FunctionType* printType = llvm::FunctionType::get(
+          llvm::Type::getVoidTy(*context_),
+          {llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_)}, false);
+      print = llvm::Function::Create(printType, llvm::Function::ExternalLinkage,
+                                     "sere_print_str", module_.get());
+    }
+    llvm::Function* length = module_->getFunction("strlen");
+    if (length == nullptr) {
+      llvm::FunctionType* lengthType = llvm::FunctionType::get(
+          llvm::Type::getInt64Ty(*context_), {llvm::PointerType::getUnqual(*context_)}, false);
+      length = llvm::Function::Create(lengthType, llvm::Function::ExternalLinkage,
+                                      "strlen", module_.get());
+    }
+    bool stringPrinted = false;
     for (std::size_t index = 0; index < operands.size(); ++index) {
-      result = builder_->builder.CreateInsertValue(result, operand(index), {static_cast<unsigned>(index)});
+      llvm::Value* value = operand(index);
+      if (value == nullptr) continue;
+      if (value->getType()->isPointerTy()) {
+        builder_->builder.CreateCall(print, {value, builder_->builder.CreateCall(length, {value})});
+        stringPrinted = true;
+      } else if (value->getType()->isIntegerTy(32)) {
+        llvm::Function* write = module_->getFunction("sere_write_i32");
+        if (write == nullptr) {
+          llvm::FunctionType* writeType = llvm::FunctionType::get(
+              llvm::Type::getVoidTy(*context_), {llvm::Type::getInt32Ty(*context_)}, false);
+          write = llvm::Function::Create(writeType, llvm::Function::ExternalLinkage,
+                                         "sere_write_i32", module_.get());
+        }
+        builder_->builder.CreateCall(write, {value});
+      }
+    }
+    if (!stringPrinted) {
+      if (llvm::Function* newline = module_->getFunction("sere_write_nl")) {
+        builder_->builder.CreateCall(newline);
+      } else {
+        llvm::FunctionType* newlineType = llvm::FunctionType::get(
+            llvm::Type::getVoidTy(*context_), false);
+        llvm::Function* newlineFn = llvm::Function::Create(
+            newlineType, llvm::Function::ExternalLinkage, "sere_write_nl", module_.get());
+        builder_->builder.CreateCall(newlineFn);
+      }
+    }
+  }
+  else if (opcode == "string.concat") {
+    llvm::Function* concat = module_->getFunction("sere_str_concat_data");
+    if (concat == nullptr) {
+      llvm::FunctionType* concatType = llvm::FunctionType::get(
+          llvm::PointerType::getUnqual(*context_),
+          {llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_),
+           llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_),
+           llvm::PointerType::getUnqual(*context_)}, false);
+      concat = llvm::Function::Create(concatType, llvm::Function::ExternalLinkage,
+                                      "sere_str_concat_data", module_.get());
+    }
+    llvm::Function* length = module_->getFunction("strlen");
+    if (length == nullptr) {
+      llvm::FunctionType* lengthType = llvm::FunctionType::get(
+          llvm::Type::getInt64Ty(*context_), {llvm::PointerType::getUnqual(*context_)}, false);
+      length = llvm::Function::Create(lengthType, llvm::Function::ExternalLinkage,
+                                      "strlen", module_.get());
+    }
+    llvm::Value* current = nullptr;
+    llvm::Value* currentLength = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context_), 0);
+    for (std::size_t index = 0; index < operands.size(); ++index) {
+      llvm::Value* value = operand(index);
+      if (value == nullptr) continue;
+      llvm::Value* valueLength = builder_->builder.CreateCall(length, {value});
+      if (current == nullptr) {
+        current = value;
+        currentLength = valueLength;
+      } else {
+        llvm::AllocaInst* outLength = builder_->builder.CreateAlloca(llvm::Type::getInt64Ty(*context_));
+        current = builder_->builder.CreateCall(concat,
+                                               {current, currentLength, value, valueLength, outLength});
+        currentLength = builder_->builder.CreateLoad(llvm::Type::getInt64Ty(*context_), outLength);
+      }
+    }
+    result = current;
+  }
+  else if (opcode == "construct") {
+    if (type->isStructTy()) {
+      result = llvm::UndefValue::get(type);
+      unsigned field = 0;
+      if (type->getStructNumElements() == 2 && operands.size() == 1) {
+        result = builder_->builder.CreateInsertValue(
+            result, llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_), 0), {0});
+        field = 1;
+      }
+      for (std::size_t index = 0; index < operands.size(); ++index) {
+        result = builder_->builder.CreateInsertValue(result, operand(index),
+                                                     {field + static_cast<unsigned>(index)});
+      }
+    } else if (!operands.empty()) {
+      result = operand(0);
     }
   } else if (opcode == "member.get") {
     unsigned index = 0;
     const std::string indexText = attribute(operation, "index");
     (void)std::from_chars(indexText.data(), indexText.data() + indexText.size(), index);
-    result = builder_->builder.CreateExtractValue(operand(0), {index});
+    if (indexText == "-1") {
+      const std::string field = attribute(operation, "field");
+      if (field == "name") {
+        result = operand(0);
+      } else {
+        llvm::GlobalVariable* global = builder_->builder.CreateGlobalString(field);
+        result = builder_->builder.CreatePointerCast(
+          global, llvm::PointerType::getUnqual(*context_));
+      }
+    } else {
+      llvm::Value* object = operand(0);
+      if (object != nullptr && object->getType()->isStructTy()) {
+        result = builder_->builder.CreateExtractValue(object, {index});
+      } else {
+        result = object;
+      }
+    }
   } else if (opcode == "member.set") {
     // Value aggregates are immutable in SSA; mutable object lowering will add
     // an address-producing member operation in the next dialect revision.
   }
+  else if (opcode == "enum.tag") {
+    llvm::Value* object = operand(0);
+    if (object != nullptr && object->getType()->isStructTy()) {
+      result = builder_->builder.CreateExtractValue(object, {0});
+    } else {
+      result = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_), 0);
+    }
+  } else if (opcode == "enum.payload") {
+    llvm::Value* object = operand(0);
+    if (object != nullptr && object->getType()->isStructTy()) {
+      result = builder_->builder.CreateExtractValue(object, {1});
+    } else {
+      result = operand(0);
+    }
+  }
   else if (opcode == "call" || opcode == "invoke") {
+    std::cerr << "serem llvm call begin\n";
     llvm::Function* function = nullptr;
     if (!operands.empty() && operands[0] != nullptr &&
         operands[0]->valueKind() == serem::ValueKind::FunctionRef) {
@@ -198,8 +325,22 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     for (std::size_t index = 1; index < operands.size(); ++index) {
       arguments.push_back(lowerValue(operands[index]));
     }
-    if (function != nullptr) result = builder_->builder.CreateCall(function, arguments);
-    else report("Serem call lowering requires a function reference");
+    if (function != nullptr) {
+      result = builder_->builder.CreateCall(function, arguments);
+    } else if (!operands.empty()) {
+      llvm::Value* callee = lowerValue(operands[0]);
+      if (callee != nullptr && callee->getType()->isPointerTy()) {
+        std::vector<llvm::Type*> parameterTypes;
+        for (llvm::Value* argument : arguments) parameterTypes.push_back(argument->getType());
+        llvm::FunctionType* indirectType = llvm::FunctionType::get(type, parameterTypes, false);
+        result = builder_->builder.CreateCall(indirectType, callee, arguments);
+      } else {
+        report("Serem call lowering requires a direct or indirect callable");
+      }
+    } else {
+      report("Serem call lowering requires a callable");
+    }
+    std::cerr << "serem llvm call end\n";
   } else if (opcode == "return") {
     if (operands.empty()) builder_->builder.CreateRetVoid();
     else builder_->builder.CreateRet(operand(0));
@@ -253,7 +394,9 @@ std::unique_ptr<llvm::Module> SeremLLVMBackend::emit(const serem::IRModule& modu
     for (const auto& block : function->blocks()) {
       builder_->builder.SetInsertPoint(blockFor(function->name() + ":" + block->label()));
       for (const auto& operation : block->operations()) (void)lowerOperation(*operation);
-      if (!block->isTerminated()) {
+      if (builder_->builder.GetInsertBlock()->getTerminator() == nullptr && block->isTerminated()) {
+        builder_->builder.CreateUnreachable();
+      } else if (builder_->builder.GetInsertBlock()->getTerminator() == nullptr) {
         if (function->resultType().isVoid()) builder_->builder.CreateRetVoid();
         else builder_->builder.CreateRet(llvm::UndefValue::get(lowerType(function->resultType())));
       }

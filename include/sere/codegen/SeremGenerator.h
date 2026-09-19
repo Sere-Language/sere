@@ -21,7 +21,8 @@ public:
 
   [[nodiscard]] std::unique_ptr<serem::IRModule> emit(const Module& module,
                                                       std::string moduleName,
-                                                      const std::vector<const Module*>* imported = nullptr);
+                                                      const std::vector<const Module*>* imported = nullptr,
+                                                      const std::vector<std::string>* importedNames = nullptr);
 
 private:
   [[nodiscard]] serem::IRType lowerType(const Type* type) const;
@@ -53,6 +54,7 @@ private:
   std::unique_ptr<serem::IRBuilder> builder_;
   std::unordered_map<std::string, serem::ValuePtr> locals_;
   std::unordered_map<std::string, serem::IRType> functions_;
+  std::unordered_map<const FunctionDef*, std::string> functionNames_;
   std::vector<serem::BasicBlock*> breakTargets_;
   std::vector<serem::BasicBlock*> continueTargets_;
   serem::ValuePtr coroutineToken_;
