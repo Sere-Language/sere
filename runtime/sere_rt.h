@@ -162,6 +162,15 @@ int32_t sere_fs_is_dir(const char* path, int64_t path_len);
 int32_t sere_fs_remove(const char* path, int64_t path_len);
 int32_t sere_fs_mkdir(const char* path, int64_t path_len);
 
+// File handle I/O
+void* sere_fs_open(const char* path, int64_t path_len, const char* mode, int64_t mode_len);
+int32_t sere_fs_close(void* handle);
+void sere_fs_read_all(void* handle, const char** out_data, int64_t* out_len);
+int32_t sere_fs_write_all(void* handle, const char* data, int64_t data_len);
+int32_t sere_fs_read_bytes(void* handle, char* buffer, int64_t buffer_len);
+int32_t sere_fs_write_bytes(void* handle, const char* data, int64_t data_len);
+void sere_fs_seek(void* handle, int64_t offset, int32_t whence);
+
 void sere_path_join(const char* left,
                     int64_t left_len,
                     const char* right,

@@ -293,6 +293,103 @@ int32_t sere_fs_mkdir(const char* path, int64_t path_len) {
   return ok;
 }
 
+// File handle I/O operations (Python-like)
+void* sere_fs_open(const char* path, int64_t path_len, const char* mode, int64_t mode_len) {
+  char* cpath = toCString(path, path_len);
+  if (cpath == NULL) {
+    return NULL;
+  }
+  char* cmode = toCString(mode, mode_len);
+  if (cmode == NULL) {
+    free(cpath);
+    return NULL;
+  }
+  FILE* file = fopen(cpath, cmode);
+  free(cpath);
+  free(cmode);
+  return (void*)file;
+}
+
+int32_t sere_fs_close(void* handle) {
+  if (handle == NULL) {
+    return 0;
+  }
+  FILE* file = (FILE*)handle;
+  return fclose(file) == 0 ? 1 : 0;
+}
+
+void sere_fs_read_all(void* handle, const char** out_data, int64_t* out_len) {
+  if (handle == NULL) {
+    outStr(emptyStr(), out_data, out_len);
+    return;
+  }
+  FILE* file = (FILE*)handle;
+
+  // Seek to end to get size
+  if (fseek(file, 0, SEEK_END) != 0) {
+    outStr(emptyStr(), out_data, out_len);
+    return;
+  }
+
+  const long size = ftell(file);
+  if (size < 0 || size > kMaxTextBytes) {
+    outStr(emptyStr(), out_data, out_len);
+    return;
+  }
+
+  if (fseek(file, 0, SEEK_SET) != 0) {
+    outStr(emptyStr(), out_data, out_len);
+    return;
+  }
+
+  char* buf = (char*)malloc((size_t)size + 1);
+  if (buf == NULL) {
+    outStr(emptyStr(), out_data, out_len);
+    return;
+  }
+
+  const size_t n = fread(buf, 1, (size_t)size, file);
+  buf[n] = '\0';
+  outStr(ownBytes(buf, (int64_t)n), out_data, out_len);
+}
+
+int32_t sere_fs_write_all(void* handle, const char* data, int64_t data_len) {
+  if (handle == NULL) {
+    return 0;
+  }
+  FILE* file = (FILE*)handle;
+  const size_t want = data == NULL || data_len <= 0 ? 0 : (size_t)data_len;
+  const size_t wrote = want == 0 ? 0 : fwrite(data, 1, want, file);
+  return wrote == want ? 1 : 0;
+}
+
+int32_t sere_fs_read_bytes(void* handle, char* buffer, int64_t buffer_len) {
+  if (handle == NULL || buffer == NULL || buffer_len <= 0) {
+    return -1;
+  }
+  FILE* file = (FILE*)handle;
+  const size_t n = fread(buffer, 1, (size_t)buffer_len, file);
+  return (int32_t)n;
+}
+
+int32_t sere_fs_write_bytes(void* handle, const char* data, int64_t data_len) {
+  if (handle == NULL) {
+    return 0;
+  }
+  FILE* file = (FILE*)handle;
+  const size_t want = data == NULL || data_len <= 0 ? 0 : (size_t)data_len;
+  const size_t wrote = want == 0 ? 0 : fwrite(data, 1, want, file);
+  return wrote == want ? 1 : 0;
+}
+
+void sere_fs_seek(void* handle, int64_t offset, int32_t whence) {
+  if (handle == NULL) {
+    return;
+  }
+  FILE* file = (FILE*)handle;
+  fseek(file, (long)offset, whence);
+}
+
 static SereStr pathJoinImpl(const char* left, int64_t left_len, const char* right, int64_t right_len) {
   if (right == NULL) {
     right = "";

@@ -22,6 +22,140 @@ def _remove(path: str) -> i32
 extern "C" "sere_fs_mkdir"
 def _mkdir(path: str) -> i32
 
+# File handle I/O (new Python-like API)
+extern "C" "sere_fs_open"
+def _fs_open(path: str, mode: str) -> Ptr[i8]
+
+extern "C" "sere_fs_close"
+def _fs_close(handle: Ptr[i8]) -> i32
+
+extern "C" "sere_fs_read_all"
+def _fs_read_all(handle: Ptr[i8]) -> str
+
+extern "C" "sere_fs_write_all"
+def _fs_write_all(handle: Ptr[i8], data: str) -> i32
+
+extern "C" "sere_fs_read_bytes"
+def _fs_read_bytes(handle: Ptr[i8], buffer: Ptr[i8], buffer_len: i64) -> i32
+
+extern "C" "sere_fs_write_bytes"
+def _fs_write_bytes(handle: Ptr[i8], data: Ptr[i8], data_len: i64) -> i32
+
+extern "C" "sere_fs_seek"
+def _fs_seek(handle: Ptr[i8], offset: i64, whence: i32) -> void
+
+
+class File:
+    _handle: Ptr[i8]
+    _mode: str
+    _path: str
+
+    def __init__(self, path: str, mode: str):
+        self._path = path
+        self._mode = mode
+        self._handle = _fs_open(path, mode)
+
+    def read(self) -> str:
+        """Read the entire file content as a string."""
+        if self._handle is None:
+            return ""
+        return _fs_read_all(self._handle)
+
+    def write(self, data: str) -> bool:
+        """Write string data to the file."""
+        if self._handle is None:
+            return False
+        result = _fs_write_all(self._handle, data)
+        return result as bool
+
+    def read_bytes(self, buffer_size: i64 = 4096) -> list[i8]:
+        """Read bytes from the file into a list."""
+        if self._handle is None:
+            return []
+        # Allocate buffer
+        buffer: array[i8] = array[i8](buffer_size)
+        bytes_read = _fs_read_bytes(self._handle, &buffer[0], buffer_size)
+
+        # Return list of read bytes
+        result: list[i8] = []
+        if bytes_read > 0:
+            for i in range(bytes_read):
+                result.append(buffer[i])
+        return result
+
+    def write_bytes(self, data: list[i8]) -> bool:
+        """Write bytes to the file."""
+        if self._handle is None or len(data) == 0:
+            return False
+        result = _fs_write_bytes(self._handle, &data[0], len(data) as i64)
+        return result as bool
+
+    def seek(self, offset: i64, whence: i32 = 0) -> void:
+        """Seek to a position in the file.
+        whence: 0 = SEEK_SET (beginning), 1 = SEEK_CUR (current), 2 = SEEK_END (end)
+        """
+        if self._handle is not None:
+            _fs_seek(self._handle, offset, whence)
+
+    def close(self) -> bool:
+        """Close the file."""
+        if self._handle is None:
+            return False
+        result = _fs_close(self._handle) as bool
+        if result:
+            self._handle = None
+        return result
+
+    def __enter__(self) -> File:
+        """Context manager entry."""
+        return self
+
+    def __exit__(self) -> void:
+        """Context manager exit - closes the file."""
+        self.close()
+
+    def __repr__(self) -> str:
+        """String representation of the File object."""
+        if self._handle is None:
+            return f"<closed file '{self._path}' mode '{self._mode}'>"
+        return f"<open file '{self._path}' mode '{self._mode}'>"
+
+
+def open(path: str, mode: str = "r") -> File:
+    """Open a file and return a File object.
+
+    Modes (like Python):
+    - 'r'   : read text (default)
+    - 'w'   : write text (truncate)
+    - 'a'   : append text
+    - 'r+'  : read and write text
+    - 'w+'  : write and read text (truncate)
+    - 'a+'  : append and read text
+    - 'rb'  : read binary
+    - 'wb'  : write binary (truncate)
+    - 'ab'  : append binary
+    - 'rb+' : read and write binary
+    - 'wb+' : write and read binary (truncate)
+    - 'ab+' : append and read binary
+
+    Usage:
+    ```
+    # Simple read
+    with open("file.txt") as f:
+        content = f.read()
+
+    # Write
+    with open("file.txt", "w") as f:
+        f.write("hello world")
+
+    # Append
+    with open("file.txt", "a") as f:
+        f.write("more content")
+    ```
+    """
+    return File(path, mode)
+
+# Legacy simple API (backward compatible)
 def write_text(path: str, data: str) -> bool:
     return _write_text(path, data) as bool
 
