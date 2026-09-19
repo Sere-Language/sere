@@ -1,0 +1,96 @@
+
+== pr
+{"additions":252,"changedFiles":4,"deletions":0,"state":"OPEN","title":"Add Sere programming language","url":"https://github.com/github-linguist/linguist/pull/8209"}
+== files
+gh : accepts at most 1 arg(s), received 2
+At C:\Users\jackw\OneDrive\Desktop\git-projects\sere\_scratch\verify_pr.ps1:11 
+char:7
++ Log ((gh pr view 8209 --repo github-linguist/linguist --json files -- ...
++       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (accepts at most 1 arg(s), receive 
+   d 2:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+== languages.yml diff
+@@ -7445,6 +7445,14 @@ Self:
+     tm_scope: none
+     ace_mode: text
+     language_id: 345
+> +Sere:
+  +  type: programming
+  +  color: "#6f42c1"
+  +  extensions:
+> +    - ".sere"
+> +  tm_scope: "source.sere"
+  +  ace_mode: "text"
+  +
+   ShaderLab:
+     type: programming
+     color: "#222c37"
+> diff --git a/samples/Sere/gc_and_native.sere 
+b/samples/Sere/gc_and_native.sere
+  new file mode 100644
+  index 0000000000..7fbd6f25e9
+  --- /dev/null
+> +++ b/samples/Sere/gc_and_native.sere
+  @@ -0,0 +1,74 @@
+  +# Garbage collectors, raw pointers, arenas, and C interop with `extern "C"`.
+> +# Source: https://github.com/Sere-Language/sere (examples/gc_mem.sere, 
+examples/native_add.sere)
+> +# License: MIT (Copyright (c) 2026 Sere Language)
+  +
+  +import gc
+  +import heap
+  +from heap import Arena, Pool
+  +    vm: VM = VM(MEMORY_SIZE)
+  +    vm.load([0xA9, regs.a])
+  +    print(text, regs.x, regs.sp, op.name, op.cycles, vm.read(0))
+  +    return 0
+> diff --git a/samples/Sere/language_tour.sere 
+b/samples/Sere/language_tour.sere
+  new file mode 100644
+  index 0000000000..57380cf623
+  --- /dev/null
+> +++ b/samples/Sere/language_tour.sere
+  @@ -0,0 +1,125 @@
+> +# A tour of Sere: types, enums with payloads, generics, classes, callables,
+  +# error handling, async/await, and macros.
+> +# Source: https://github.com/Sere-Language/sere (examples/, stdlib/)
+> +# License: MIT (Copyright (c) 2026 Sere Language)
+  +
+  +import math
+  +import time
+  +
+  +
+  +    scale: f64 = identity(math.radians(180.0))
+  +    scores: list[f64] = [1.5, 2.0, 3.5]
+  +    names: list[str] = [name for name in ["ada", "linus"]]
+> +    tail: str = "sere-language"[0:4]
+  +    counts: dict[str, i32] = classify([1, "two", 3.5, True])
+  +
+  +    work: i32 = timed(identity(41) + 1)
+  +    recovered: i32 = retry(lambda (): i32: scale as i32, MAX_ATTEMPTS)
+  +
+  +    print(tail, scale, len(scores), names[0], counts["other"], work, 
+recovered, last_error)
+  +    return 0
+> diff --git a/samples/Sere/wsgi_server.sere b/samples/Sere/wsgi_server.sere
+  new file mode 100644
+  index 0000000000..8df7716c4f
+  --- /dev/null
+> +++ b/samples/Sere/wsgi_server.sere
+  @@ -0,0 +1,45 @@
+> +# Sere WSGI server: routing, query parameters, classes, and static files.
+> +# Source: https://github.com/Sere-Language/sere (examples/wsgi.sere)
+> +# License: MIT (Copyright (c) 2026 Sere Language)
+  +
+  +import wsgi
+  +
+  +def home(environ: wsgi.Environ) -> wsgi.Response:
+> +    return wsgi.html("<h1>Hello from Sere</h1>")
+  +
+  +def greet(environ: wsgi.Environ) -> wsgi.Response:
+  +    return wsgi.text("Hello, " + environ.param("name", "world") + "!")
+  +
+== cleanup
+clone removed: True
+done

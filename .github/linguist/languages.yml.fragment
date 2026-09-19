@@ -6,10 +6,8 @@
 # `script/update-ids` once the pull request is opened.
 Sere:
   type: programming
-  color: "#d66a62"
+  color: "#6f42c1"
   extensions:
   - ".sere"
-  tm_scope: source.sere
-  ace_mode: python
-  codemirror_mode: python
-  codemirror_mime_type: text/x-python
+  tm_scope: "source.sere"
+  ace_mode: "text"

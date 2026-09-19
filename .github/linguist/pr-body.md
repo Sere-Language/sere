@@ -30,10 +30,8 @@ highlighting.
   - [x] I have included a syntax highlighting grammar: https://github.com/Sere-Language/sere
     - `script/add-grammar https://github.com/Sere-Language/sere`
   - [x] I have added a color
-    - Hex value: `#d66a62`
-    - Rationale: the keyword accent of the syntax theme on sere-lang.com
-      (`--tok-keyword` in the docs' highlighter). The site's theme colour,
-      `#0b0b0d`, is a background and would not read as a swatch.
+    - Hex value: `#6f42c1`
+    - Rationale: violet, Sere's brand accent, matching the sere-lang.com palette.
   - [ ] I have updated the heuristics to distinguish my language from others using the same extension.
     - Not applicable. `.sere` is not claimed by any other language in
       `languages.yml`, so no disambiguation is needed. Sere is a superset of

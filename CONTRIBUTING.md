@@ -41,6 +41,17 @@ A compiler change without a test will regress. See [docs/testing.md](docs/testin
 At minimum: a unit test that fails before your patch, or an `examples/*.sere`
 `--emit-llvm` test for user-facing syntax.
 
+## GitHub language detection
+
+`.sere` is detected as `Sere` through the `linguist-language` attribute in
+`.gitattributes`, which `sere init` writes into new projects. GitHub only counts
+the extension once `Sere` exists upstream in
+[github-linguist](https://github.com/github-linguist/linguist); the ready-to-send
+payload lives in `.github/linguist/` and `scripts/linguist-pr.ps1` validates and
+stages it. See [docs/linguist.md](docs/linguist.md) before changing the grammar
+in `editors/vscode/syntaxes/sere.tmLanguage.json` — its scope name is the
+`tm_scope` GitHub uses.
+
 ## Editor
 
 If you change `sere`, restart the language server. The workspace compiler path

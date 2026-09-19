@@ -36,6 +36,7 @@ The compiler is `sere` (`tools/sere`). The same binary also speaks LSP
 | Add or change `stdlib/*.sere` | [stdlib.md](stdlib.md) |
 | Add a test or example | [testing.md](testing.md) |
 | Package a zip install or the Windows wizard | [packaging.md](packaging.md) |
+| Get Sere counted as a language on GitHub | [linguist.md](linguist.md) |
 | Send a patch | [../CONTRIBUTING.md](../CONTRIBUTING.md) |
 
 ## Mental model
