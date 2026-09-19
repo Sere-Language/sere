@@ -7,6 +7,7 @@
 #include "sere/codegen/IRGenerator.h"
 #include "sere/codegen/OptPipeline.h"
 #include "sere/codegen/Serem.h"
+#include "sere/codegen/SeremGenerator.h"
 #include "sere/diag/DiagnosticEngine.h"
 #include "sere/driver/Frontend.h"
 #include "sere/driver/Installer.h"
@@ -147,18 +148,6 @@ writeIr(const llvm::Module& module, const std::filesystem::path& path, std::stri
     return false;
   }
   return true;
-}
-
-[[nodiscard]] std::string buildSeremModule(const std::filesystem::path& inputPath) {
-  serem::IRModule module(inputPath.stem().string());
-  auto function = std::make_unique<serem::IRFunction>(
-      "__sere_frontend_pending", std::vector<serem::IRType>{}, serem::IRType::voidType());
-  serem::IRFunction& entry = module.addFunction(std::move(function));
-  serem::IRBuilder builder(entry);
-  (void)builder.operation("sere.frontend.pending", serem::IRType::voidType(), {},
-                          {{"source", inputPath.string()}});
-  builder.retVoid();
-  return module.display();
 }
 
 [[nodiscard]] bool importsModule(const std::vector<std::string>& names, std::string_view want) {
@@ -580,7 +569,14 @@ int compileInput(const CompilerOptions& options) {
 
   if (options.emitSerem) {
     const std::filesystem::path outputPath = defaultOutput(options);
-    const std::string seremText = buildSeremModule(options.inputPath);
+    SeremGenerator generator(frontend.diagnostics(), *frontend.types());
+    std::unique_ptr<serem::IRModule> seremModule =
+        generator.emit(*frontend.module(), options.inputPath.stem().string());
+    if (seremModule == nullptr || frontend.diagnostics().hasErrors()) {
+      frontend.diagnostics().printAll();
+      return 1;
+    }
+    const std::string seremText = seremModule->display();
     std::string writeError;
     if (!writeSerem(seremText, outputPath, writeError)) {
       frontend.diagnostics().error(writeError);

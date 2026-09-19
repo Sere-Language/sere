@@ -139,7 +139,7 @@ std::string Operation::display() const {
     text += " ";
     for (std::size_t index = 0; index < operands_.size(); ++index) {
       if (index != 0) text += ", ";
-      text += operands_[index]->display();
+      text += operands_[index] == nullptr ? "<null>" : operands_[index]->display();
     }
   }
   if (!attributes_.empty()) {
@@ -177,6 +177,7 @@ const std::string& IRFunction::name() const { return name_; }
 const std::vector<IRType>& IRFunction::parameters() const { return parameters_; }
 const IRType& IRFunction::resultType() const { return result_; }
 const std::vector<std::shared_ptr<Argument>>& IRFunction::arguments() const { return arguments_; }
+const std::vector<std::unique_ptr<BasicBlock>>& IRFunction::blocks() const { return blocks_; }
 std::shared_ptr<Argument> IRFunction::argument(std::size_t index) const {
   if (index >= arguments_.size()) return nullptr;
   return arguments_[index];
@@ -186,19 +187,59 @@ BasicBlock& IRFunction::addBlock(std::string label) {
   return *blocks_.back();
 }
 std::string IRFunction::nextValueName() { return std::to_string(nextValue_++); }
+void IRFunction::setAsync(bool value) { async_ = value; }
+void IRFunction::setGenerator(bool value) { generator_ = value; }
+void IRFunction::setAttribute(std::string name, std::string value) {
+  attributes_.insert_or_assign(std::move(name), std::move(value));
+}
 std::string IRFunction::display() const {
-  std::string text = "func @" + name_ + "(";
+  std::string text = (async_ ? "async " : "") + std::string(generator_ ? "generator " : "") +
+                     "func @" + name_ + "(";
   for (std::size_t index = 0; index < arguments_.size(); ++index) {
     if (index != 0) text += ", ";
     text += arguments_[index]->display() + ": " + arguments_[index]->type().display();
   }
-  text += ") -> " + result_.display() + " {\n";
+  text += ") -> " + result_.display();
+  if (!attributes_.empty()) {
+    text += " [";
+    bool first = true;
+    for (const auto& [key, value] : attributes_) {
+      if (!first) text += ", ";
+      text += key + " = " + value;
+      first = false;
+    }
+    text += "]";
+  }
+  text += " {\n";
   for (const auto& block : blocks_) text += block->display();
   return text + "}\n";
 }
 
+TypeDef::TypeDef(std::string name, IRType type, std::vector<std::string> attributes)
+    : name_(std::move(name)), type_(std::move(type)), attributes_(std::move(attributes)) {}
+const std::string& TypeDef::name() const { return name_; }
+const IRType& TypeDef::type() const { return type_; }
+const std::vector<std::string>& TypeDef::attributes() const { return attributes_; }
+std::string TypeDef::display() const {
+  std::string text = "type @" + name_ + " = " + type_.display();
+  if (!attributes_.empty()) {
+    text += " [";
+    for (std::size_t index = 0; index < attributes_.size(); ++index) {
+      if (index != 0) text += ", ";
+      text += attributes_[index];
+    }
+    text += "]";
+  }
+  return text + "\n";
+}
+
 IRModule::IRModule(std::string name) : name_(std::move(name)) {}
 const std::string& IRModule::name() const { return name_; }
+TypeDef& IRModule::addType(std::unique_ptr<TypeDef> type) {
+  TypeDef& result = *type;
+  types_.push_back(std::move(type));
+  return result;
+}
 IRFunction& IRModule::addFunction(std::unique_ptr<IRFunction> function) {
   IRFunction& result = *function;
   functions_.push_back(std::move(function));
@@ -208,9 +249,11 @@ IRFunction* IRModule::findFunction(std::string_view name) const {
   for (const auto& function : functions_) if (function->name() == name) return function.get();
   return nullptr;
 }
+const std::vector<std::unique_ptr<TypeDef>>& IRModule::types() const { return types_; }
 const std::vector<std::unique_ptr<IRFunction>>& IRModule::functions() const { return functions_; }
 std::string IRModule::display() const {
   std::string text = "module @" + name_ + "\n";
+  for (const auto& type : types_) text += type->display();
   for (const auto& function : functions_) text += function->display();
   return text;
 }
@@ -348,6 +391,29 @@ void IRBuilder::retVoid() {
 }
 std::shared_ptr<Operation> IRBuilder::await(ValuePtr value, IRType type) {
   return operation("await", std::move(type), {std::move(value)});
+}
+std::shared_ptr<Operation> IRBuilder::coroBegin() {
+  return operation("coro.begin", IRType::ptr(IRType::i8()));
+}
+void IRBuilder::coroSuspend(ValuePtr token) {
+  (void)operation("coro.suspend", IRType::voidType(), {std::move(token)});
+}
+void IRBuilder::coroEnd() {
+  (void)operation("coro.end", IRType::voidType());
+}
+std::shared_ptr<Operation> IRBuilder::asyncCreate(ValuePtr function,
+                                                   std::vector<ValuePtr> arguments,
+                                                   IRType type) {
+  std::vector<ValuePtr> operands;
+  operands.push_back(std::move(function));
+  for (auto& argument : arguments) operands.push_back(std::move(argument));
+  return operation("async.create", std::move(type), std::move(operands));
+}
+void IRBuilder::asyncResume(ValuePtr task) {
+  (void)operation("async.resume", IRType::voidType(), {std::move(task)});
+}
+void IRBuilder::asyncDestroy(ValuePtr task) {
+  (void)operation("async.destroy", IRType::voidType(), {std::move(task)});
 }
 void IRBuilder::yield(ValuePtr value) {
   (void)operation("yield", IRType::voidType(), {std::move(value)});

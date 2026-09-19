@@ -189,6 +189,9 @@ public:
   [[nodiscard]] std::shared_ptr<Argument> argument(std::size_t index) const;
   [[nodiscard]] BasicBlock& addBlock(std::string label);
   [[nodiscard]] std::string nextValueName();
+  void setAsync(bool value);
+  void setGenerator(bool value);
+  void setAttribute(std::string name, std::string value);
   [[nodiscard]] std::string display() const;
 
 private:
@@ -197,7 +200,25 @@ private:
   IRType result_;
   std::vector<std::shared_ptr<Argument>> arguments_;
   std::vector<std::unique_ptr<BasicBlock>> blocks_;
+  std::unordered_map<std::string, std::string> attributes_;
   std::size_t nextValue_ = 0;
+  bool async_ = false;
+  bool generator_ = false;
+};
+
+class TypeDef {
+public:
+  TypeDef(std::string name, IRType type, std::vector<std::string> attributes = {});
+
+  [[nodiscard]] const std::string& name() const;
+  [[nodiscard]] const IRType& type() const;
+  [[nodiscard]] const std::vector<std::string>& attributes() const;
+  [[nodiscard]] std::string display() const;
+
+private:
+  std::string name_;
+  IRType type_;
+  std::vector<std::string> attributes_;
 };
 
 class IRModule {
@@ -205,13 +226,16 @@ public:
   explicit IRModule(std::string name);
 
   [[nodiscard]] const std::string& name() const;
+  TypeDef& addType(std::unique_ptr<TypeDef> type);
   IRFunction& addFunction(std::unique_ptr<IRFunction> function);
   [[nodiscard]] IRFunction* findFunction(std::string_view name) const;
+  [[nodiscard]] const std::vector<std::unique_ptr<TypeDef>>& types() const;
   [[nodiscard]] const std::vector<std::unique_ptr<IRFunction>>& functions() const;
   [[nodiscard]] std::string display() const;
 
 private:
   std::string name_;
+  std::vector<std::unique_ptr<TypeDef>> types_;
   std::vector<std::unique_ptr<IRFunction>> functions_;
 };
 
@@ -269,6 +293,14 @@ public:
   void ret(ValuePtr value);
   void retVoid();
   [[nodiscard]] std::shared_ptr<Operation> await(ValuePtr value, IRType type);
+  [[nodiscard]] std::shared_ptr<Operation> coroBegin();
+  void coroSuspend(ValuePtr token);
+  void coroEnd();
+  [[nodiscard]] std::shared_ptr<Operation> asyncCreate(ValuePtr function,
+                                                         std::vector<ValuePtr> arguments,
+                                                         IRType type);
+  void asyncResume(ValuePtr task);
+  void asyncDestroy(ValuePtr task);
   void yield(ValuePtr value);
   [[nodiscard]] std::shared_ptr<Operation> invoke(ValuePtr callee,
                                                    std::vector<ValuePtr> arguments,

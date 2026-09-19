@@ -1,6 +1,0 @@
-module @main
-func @__sere_frontend_pending() -> void {
-entry:
-  sere.frontend.pending {source = main.sere}
-  return
-}
