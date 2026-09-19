@@ -22,6 +22,10 @@ third_party/** linguist-vendored
 releases/** linguist-vendored
 packaging/** linguist-vendored
 
+# Project-local virtual environments are generated copies of toolchain/stdlib
+# content and should not affect repository language statistics.
+test-project/venv/** linguist-generated=true linguist-vendored
+
 # Generated bindings (for example stdlib wrappers produced by tools/) are not
 # hand-written Sere; add a pattern here when a generator starts emitting code.
 #   stdlib/<generated>.sere linguist-generated=true
