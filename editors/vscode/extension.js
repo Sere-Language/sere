@@ -853,6 +853,9 @@ class SereLanguageClient {
     const timer = setTimeout(() => {
       this.changeTimers.delete(uri);
       this.syncDocument(document, false);
+      // Fresh analysis is available now, so re-request semantic tokens: the
+      // highlighting otherwise keeps describing the pre-edit document.
+      this.semanticTokensEmitter.fire();
     }, 250);
     this.changeTimers.set(uri, timer);
   }
@@ -1191,6 +1194,11 @@ function activate(context) {
             .request("textDocument/completion", documentPosition(document, position))
             .then((result) => {
               const items = Array.isArray(result) ? result : [];
+              if (items.length === 0) {
+                // Returning nothing lets the editor fall back to its own
+                // suggestions instead of showing an empty list.
+                return undefined;
+              }
               return new vscode.CompletionList(
                 items.map((item) => toCompletion(item, document, position)),
                 false,
@@ -1260,6 +1268,10 @@ function activate(context) {
       {
         onDidChangeSemanticTokens: session.onDidChangeSemanticTokens,
         provideDocumentSemanticTokens(document) {
+          // Make sure the server is looking at what the editor shows before it
+          // answers: tokens for a stale revision are dropped or misplaced,
+          // which leaves the file without semantic highlighting.
+          session.syncDocument(document, true);
           return session
             .request("textDocument/semanticTokens/full", {
               textDocument: { uri: document.uri.toString() },

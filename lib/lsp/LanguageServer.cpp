@@ -857,7 +857,6 @@ public:
 
 private:
   void publishDiagnostics(const std::string& uri, const DiagnosticEngine& diagnostics);
-  void analyzeDocument(const std::string& uri);
   void handleInitialize(const llvm::json::Value* id, const llvm::json::Object* params);
   void captureWorkspaceRoot(const llvm::json::Object& params);
   void applyLanguageContext(const std::filesystem::path& start);
@@ -1415,6 +1414,7 @@ void LanguageSession::handleDidClose(const llvm::json::Object& params) {
   const bool library = isLibraryFile(file);
   documents_.erase(uri->str());
   frontends_.erase(uri->str());
+  analyzedText_.erase(uri->str());
   writeMessage(llvm::json::Object{
       {"jsonrpc", "2.0"},
       {"method", "textDocument/publishDiagnostics"},
@@ -1494,7 +1494,7 @@ void LanguageSession::handleHover(const llvm::json::Value* id, const llvm::json:
     writeNullResult(id);
     return;
   }
-  Frontend* frontend = analyzeCached(located->first);
+  Frontend* frontend = freshFrontend(located->first);
   if (frontend == nullptr || frontend->module() == nullptr) {
     writeNullResult(id);
     return;
@@ -1571,7 +1571,7 @@ void LanguageSession::handleCompletion(const llvm::json::Value* id,
     }
   }
   analyzeDocument(located->first);
-  Frontend* frontend = analyzeCached(located->first);
+  Frontend* frontend = freshFrontend(located->first);
   // The typed AST resolves receivers the textual scan cannot type, such as the
   // result of a call (`add(5, 4).`) or an index (`xs[0].`).
   const AstMemberAccess astAccess = resolveMemberAccessFromAst(frontend, text, located->second);
@@ -1633,7 +1633,7 @@ void LanguageSession::handleDefinition(const llvm::json::Value* id,
     writeNullResult(id);
     return;
   }
-  Frontend* frontend = analyzeCached(located->first);
+  Frontend* frontend = freshFrontend(located->first);
   if (frontend == nullptr || frontend->module() == nullptr || frontend->checker() == nullptr) {
     writeNullResult(id);
     return;
@@ -1717,7 +1717,7 @@ void LanguageSession::handleDocumentSymbol(const llvm::json::Value* id,
     writeResult(id, std::move(symbols));
     return;
   }
-  Frontend* frontend = analyzeCached(uri->str());
+  Frontend* frontend = freshFrontend(uri->str());
   if (frontend == nullptr || frontend->module() == nullptr) {
     writeResult(id, std::move(symbols));
     return;
@@ -1807,7 +1807,7 @@ void LanguageSession::handleSignatureHelp(const llvm::json::Value* id,
     writeNullResult(id);
     return;
   }
-  Frontend* frontend = analyzeCached(located->first);
+  Frontend* frontend = freshFrontend(located->first);
   if (frontend == nullptr) {
     writeNullResult(id);
     return;
@@ -1985,7 +1985,7 @@ void LanguageSession::handleInlayHint(const llvm::json::Value* id,
     writeResult(id, std::move(hints));
     return;
   }
-  Frontend* frontend = analyzeCached(uri->str());
+  Frontend* frontend = freshFrontend(uri->str());
   if (frontend == nullptr || frontend->module() == nullptr) {
     writeResult(id, std::move(hints));
     return;
@@ -2055,7 +2055,7 @@ void LanguageSession::handleReferences(const llvm::json::Value* id,
     writeResult(id, llvm::json::Array{});
     return;
   }
-  Frontend* frontend = analyzeCached(located->first);
+  Frontend* frontend = freshFrontend(located->first);
   if (frontend == nullptr || frontend->module() == nullptr) {
     writeResult(id, llvm::json::Array{});
     return;
@@ -2113,7 +2113,7 @@ void LanguageSession::handleCodeLens(const llvm::json::Value* id,
     writeResult(id, std::move(lenses));
     return;
   }
-  Frontend* frontend = analyzeCached(uri->str());
+  Frontend* frontend = freshFrontend(uri->str());
   if (frontend == nullptr || frontend->module() == nullptr) {
     writeResult(id, std::move(lenses));
     return;
@@ -2173,7 +2173,7 @@ void LanguageSession::handlePrepareRename(const llvm::json::Value* id,
     writeNullResult(id);
     return;
   }
-  Frontend* frontend = analyzeCached(located->first);
+  Frontend* frontend = freshFrontend(located->first);
   if (frontend == nullptr || frontend->module() == nullptr) {
     writeNullResult(id);
     return;
@@ -2207,7 +2207,7 @@ void LanguageSession::handleRename(const llvm::json::Value* id, const llvm::json
     writeNullResult(id);
     return;
   }
-  Frontend* frontend = analyzeCached(located->first);
+  Frontend* frontend = freshFrontend(located->first);
   if (frontend == nullptr || frontend->module() == nullptr) {
     writeNullResult(id);
     return;
@@ -2257,7 +2257,7 @@ void LanguageSession::handleDocumentHighlight(const llvm::json::Value* id,
     writeResult(id, std::move(highlights));
     return;
   }
-  Frontend* frontend = analyzeCached(located->first);
+  Frontend* frontend = freshFrontend(located->first);
   if (frontend == nullptr || frontend->module() == nullptr) {
     writeResult(id, std::move(highlights));
     return;
@@ -2349,7 +2349,7 @@ void LanguageSession::handleSemanticTokens(const llvm::json::Value* id,
     writeResult(id, llvm::json::Object{{"data", std::move(data)}});
     return;
   }
-  Frontend* frontend = analyzeCached(uri->str());
+  Frontend* frontend = freshFrontend(uri->str());
   if (frontend == nullptr || frontend->source() == nullptr) {
     writeResult(id, llvm::json::Object{{"data", std::move(data)}});
     return;
@@ -2377,7 +2377,7 @@ void LanguageSession::handleFoldingRange(const llvm::json::Value* id,
     writeResult(id, std::move(ranges));
     return;
   }
-  Frontend* frontend = analyzeCached(uri->str());
+  Frontend* frontend = freshFrontend(uri->str());
   if (frontend == nullptr || frontend->module() == nullptr) {
     writeResult(id, std::move(ranges));
     return;
@@ -2445,7 +2445,7 @@ void LanguageSession::handleCodeAction(const llvm::json::Value* id,
     writeResult(id, std::move(actions));
     return;
   }
-  Frontend* frontend = analyzeCached(uri->str());
+  Frontend* frontend = freshFrontend(uri->str());
   if (frontend == nullptr) {
     writeResult(id, std::move(actions));
     return;
