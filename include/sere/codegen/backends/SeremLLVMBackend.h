@@ -46,6 +46,10 @@ private:
   [[nodiscard]] std::string attribute(const serem::Operation& operation,
                                       std::string_view name) const;
   void report(std::string message);
+  /// Fetches an LLVM coroutine intrinsic by ID, caching it for the module.
+  [[nodiscard]] llvm::Function* coroutineIntrinsic(unsigned id);
+  /// Clears the per-function coroutine state before lowering a new function.
+  void resetCoroutine();
 
   llvm::LLVMContext* context_;
   DiagnosticEngine* diagnostics_;
@@ -58,6 +62,15 @@ private:
   std::string currentFunctionName_;
   class IRBuilderHolder;
   std::unique_ptr<IRBuilderHolder> builder_;
+
+  // Coroutine lowering state for the function currently being emitted.
+  llvm::Value* coroPromise_ = nullptr;
+  llvm::Value* coroId_ = nullptr;
+  llvm::Value* coroHdl_ = nullptr;
+  llvm::Value* coroMem_ = nullptr;
+  llvm::Value* coroIterator_ = nullptr;
+  llvm::BasicBlock* coroCleanup_ = nullptr;
+  llvm::BasicBlock* coroSuspendBlock_ = nullptr;
 };
 
 } // namespace sere

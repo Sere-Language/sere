@@ -388,7 +388,7 @@ public:
   void ret(ValuePtr value);
   void retVoid();
   [[nodiscard]] std::shared_ptr<Operation> await(ValuePtr value, IRType type);
-  [[nodiscard]] std::shared_ptr<Operation> coroBegin();
+  [[nodiscard]] std::shared_ptr<Operation> coroBegin(IRType element, bool generator = false);
   void coroSuspend(ValuePtr token);
   void coroEnd();
   [[nodiscard]] std::shared_ptr<Operation> asyncCreate(ValuePtr function,

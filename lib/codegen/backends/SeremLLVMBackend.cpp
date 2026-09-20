@@ -88,6 +88,21 @@ void SeremLLVMBackend::report(std::string message) {
   diagnostics_->error(std::move(message));
 }
 
+llvm::Function* SeremLLVMBackend::coroutineIntrinsic(unsigned id) {
+  return llvm::Intrinsic::getOrInsertDeclaration(
+      module_.get(), static_cast<llvm::Intrinsic::ID>(id));
+}
+
+void SeremLLVMBackend::resetCoroutine() {
+  coroPromise_ = nullptr;
+  coroId_ = nullptr;
+  coroHdl_ = nullptr;
+  coroMem_ = nullptr;
+  coroIterator_ = nullptr;
+  coroCleanup_ = nullptr;
+  coroSuspendBlock_ = nullptr;
+}
+
 llvm::Type* SeremLLVMBackend::lowerType(const serem::IRType& type) {
   switch (type.kind()) {
   case serem::IRType::Kind::Void: return llvm::Type::getVoidTy(*context_);
@@ -1388,7 +1403,138 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
   } else if (opcode == "await") {
     result = operand(0);
   } else if (opcode == "coro.begin") {
-    result = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(type));
+    if (attribute(operation, "generator") == "true") {
+      // A generator coroutine: a typed promise, a lazy initial suspend, and an
+      // iterator slot that `for-in` resumes through the coroutine intrinsics.
+      llvm::Function* function = ir.GetInsertBlock()->getParent();
+      llvm::Type* elementType = operation.type().pointee() != nullptr
+                                    ? lowerType(*operation.type().pointee())
+                                    : nullptr;
+      if (elementType == nullptr || elementType->isVoidTy()) {
+        elementType = llvm::Type::getInt32Ty(*context_);
+      }
+      llvm::PointerType* ptrTy = ir.getPtrTy();
+      coroPromise_ = ir.CreateAlloca(elementType, nullptr, "coro.promise");
+      coroId_ = ir.CreateCall(coroutineIntrinsic(llvm::Intrinsic::coro_id),
+                              {ir.getInt32(0), coroPromise_,
+                               llvm::ConstantPointerNull::get(ptrTy),
+                               llvm::ConstantPointerNull::get(ptrTy)},
+                              "coro.id");
+      llvm::Function* sizeFn = llvm::Intrinsic::getOrInsertDeclaration(
+          module_.get(), llvm::Intrinsic::coro_size, {ir.getInt64Ty()});
+      llvm::Value* size = ir.CreateCall(sizeFn, {}, "coro.size");
+      llvm::Function* alloc = module_->getFunction("sere_alloc");
+      if (alloc == nullptr) {
+        alloc = llvm::Function::Create(
+            llvm::FunctionType::get(ptrTy, {ir.getInt64Ty()}, false),
+            llvm::Function::ExternalLinkage, "sere_alloc", module_.get());
+      }
+      coroMem_ = ir.CreateCall(alloc, {size}, "coro.alloc");
+      coroHdl_ = ir.CreateCall(coroutineIntrinsic(llvm::Intrinsic::coro_begin),
+                               {coroId_, coroMem_}, "coro.hdl");
+      coroIterator_ = ir.CreateCall(alloc, {ir.getInt64(8)}, "iterator");
+      ir.CreateStore(coroHdl_, coroIterator_);
+
+      // The cleanup and suspend blocks only need values available here, so they
+      // can be filled in before the body is lowered.
+      coroCleanup_ = llvm::BasicBlock::Create(*context_, "coro.cleanup", function);
+      coroSuspendBlock_ = llvm::BasicBlock::Create(*context_, "coro.suspend", function);
+      {
+        llvm::IRBuilder<> cb(coroCleanup_);
+        llvm::Value* freeMem = cb.CreateCall(coroutineIntrinsic(llvm::Intrinsic::coro_free),
+                                             {coroId_, coroHdl_}, "coro.free");
+        llvm::Function* freeFn = module_->getFunction("sere_free");
+        if (freeFn == nullptr) {
+          freeFn = llvm::Function::Create(
+              llvm::FunctionType::get(cb.getVoidTy(), {ptrTy}, false),
+              llvm::Function::ExternalLinkage, "sere_free", module_.get());
+        }
+        cb.CreateCall(freeFn, {freeMem});
+        cb.CreateBr(coroSuspendBlock_);
+      }
+      {
+        llvm::IRBuilder<> sb(coroSuspendBlock_);
+        sb.CreateCall(coroutineIntrinsic(llvm::Intrinsic::coro_end),
+                      {coroHdl_, sb.getFalse(), llvm::ConstantTokenNone::get(*context_)});
+        sb.CreateRet(coroIterator_);
+      }
+
+      // The ramp suspends immediately, so the first resume runs the body.
+      llvm::BasicBlock* body = llvm::BasicBlock::Create(*context_, "coro.body", function);
+      llvm::Value* initSuspend = ir.CreateCall(
+          coroutineIntrinsic(llvm::Intrinsic::coro_suspend),
+          {llvm::ConstantTokenNone::get(*context_), ir.getFalse()}, "coro.init.suspend");
+      llvm::SwitchInst* initSwitch = ir.CreateSwitch(initSuspend, coroSuspendBlock_, 2);
+      initSwitch->addCase(ir.getInt8(0), body);
+      initSwitch->addCase(ir.getInt8(1), coroCleanup_);
+      ir.SetInsertPoint(body);
+      function->addFnAttr(llvm::Attribute::PresplitCoroutine);
+      result = coroIterator_;
+    } else {
+      // Async functions run to completion: `await` is a no-op and the body
+      // lowers linearly, so the token is never dereferenced.
+      result = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(type));
+    }
+  }
+  else if (opcode == "yield") {
+    if (coroPromise_ != nullptr && operand(0) != nullptr) {
+      llvm::Value* value = operand(0);
+      llvm::Type* elementType = llvm::cast<llvm::AllocaInst>(coroPromise_)->getAllocatedType();
+      if (value->getType() != elementType) {
+        value = convert(value, elementType);
+      }
+      ir.CreateStore(value, coroPromise_);
+    }
+  }
+  else if (opcode == "coro.suspend") {
+    if (coroHdl_ != nullptr && coroCleanup_ != nullptr && coroSuspendBlock_ != nullptr) {
+      llvm::Value* suspended = ir.CreateCall(
+          coroutineIntrinsic(llvm::Intrinsic::coro_suspend),
+          {llvm::ConstantTokenNone::get(*context_), ir.getFalse()}, "coro.suspend");
+      llvm::BasicBlock* resume = llvm::BasicBlock::Create(
+          *context_, "coro.resume", ir.GetInsertBlock()->getParent());
+      llvm::SwitchInst* sw = ir.CreateSwitch(suspended, coroSuspendBlock_, 2);
+      sw->addCase(ir.getInt8(0), resume);
+      sw->addCase(ir.getInt8(1), coroCleanup_);
+      ir.SetInsertPoint(resume);
+    }
+  }
+  else if (opcode == "coro.end") {
+    if (coroHdl_ != nullptr && coroCleanup_ != nullptr && coroSuspendBlock_ != nullptr) {
+      llvm::Value* suspended = ir.CreateCall(
+          coroutineIntrinsic(llvm::Intrinsic::coro_suspend),
+          {llvm::ConstantTokenNone::get(*context_), ir.getTrue()}, "coro.final.suspend");
+      llvm::BasicBlock* trap = llvm::BasicBlock::Create(
+          *context_, "coro.trap", ir.GetInsertBlock()->getParent());
+      llvm::SwitchInst* sw = ir.CreateSwitch(suspended, coroSuspendBlock_, 2);
+      sw->addCase(ir.getInt8(0), trap);
+      sw->addCase(ir.getInt8(1), coroCleanup_);
+      llvm::IRBuilder<> tb(trap);
+      tb.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(module_.get(), llvm::Intrinsic::trap));
+      tb.CreateUnreachable();
+    }
+  }
+  else if (opcode == "coro.resume" || opcode == "coro.done" || opcode == "coro.destroy" ||
+           opcode == "coro.promise") {
+    llvm::Function* resumeFn = coroutineIntrinsic(llvm::Intrinsic::coro_resume);
+    llvm::Function* doneFn = coroutineIntrinsic(llvm::Intrinsic::coro_done);
+    llvm::Function* promiseFn = coroutineIntrinsic(llvm::Intrinsic::coro_promise);
+    llvm::Function* destroyFn = coroutineIntrinsic(llvm::Intrinsic::coro_destroy);
+    llvm::Value* handle = ir.CreateLoad(ir.getPtrTy(), operand(0));
+    if (opcode == "coro.resume") {
+      ir.CreateCall(resumeFn, {handle});
+    } else if (opcode == "coro.done") {
+      result = ir.CreateCall(doneFn, {handle});
+    } else if (opcode == "coro.destroy") {
+      ir.CreateCall(destroyFn, {handle});
+    } else {
+      llvm::Type* elementType = operation.type().pointee() != nullptr
+                                    ? lowerType(*operation.type().pointee())
+                                    : llvm::Type::getInt32Ty(*context_);
+      const unsigned align =
+          module_->getDataLayout().getABITypeAlign(elementType).value();
+      result = ir.CreateCall(promiseFn, {handle, ir.getInt32(align), ir.getFalse()});
+    }
   }
   else if (opcode == "decorated.call") {
     if (operands.size() >= 2) {
@@ -1506,6 +1652,7 @@ std::unique_ptr<llvm::Module> SeremLLVMBackend::emit(const serem::IRModule& modu
   for (const auto& function : module.functions()) {
     if (function->isExternal()) continue;
     currentFunctionName_ = function->name();
+    resetCoroutine();
     llvm::Function* llvmFunction = functions_[function->name()];
     for (std::size_t index = 0; index < function->arguments().size(); ++index) {
       values_[function->arguments()[index].get()] = llvmFunction->getArg(index);

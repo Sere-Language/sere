@@ -418,7 +418,15 @@ bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbo
   tryHandlers_.clear();
   returnType_ = type->returnType();
   coroutineToken_.reset();
-  if (function.isAsync() || function.isGenerator()) coroutineToken_ = builder_->coroBegin();
+  if (function.isAsync() || function.isGenerator()) {
+    // A generator coroutine's promise holds the yielded element type, so the
+    // backend can size the frame and the iterator can read it back.
+    const Type* element = type->returnType();
+    if (function.isGenerator() && element != nullptr && element->isGenericCtor("Iterator")) {
+      element = element->genericArg(0);
+    }
+    coroutineToken_ = builder_->coroBegin(lowerType(element), function.isGenerator());
+  }
   for (std::size_t index = 0; index < function.params().size(); ++index) {
     if (index < function_->arguments().size()) {
       locals_[function.params()[index].name] = function_->argument(index);
@@ -426,15 +434,22 @@ bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbo
     }
   }
   if (!emitBlock(function.body())) return false;
-  if (!builder_->currentBlock().isTerminated()) {
+  if (coroutineToken_ != nullptr && function.isGenerator()) {
+    // A generator body falls through to its final suspend; there is no return
+    // statement to emit.
+    if (!builder_->currentBlock().isTerminated()) {
+      emitDeferred();
+      builder_->coroEnd();
+    }
+  } else if (!builder_->currentBlock().isTerminated()) {
     emitDeferred();
     if (type->returnType() != nullptr && type->returnType()->isVoidLike()) {
       builder_->retVoid();
     } else {
       (void)builder_->unreachable();
     }
+    if (coroutineToken_ != nullptr) builder_->coroEnd();
   }
-  if (coroutineToken_ != nullptr) builder_->coroEnd();
   builder_.reset();
   function_ = nullptr;
   currentOwnerClass_.clear();
@@ -835,11 +850,44 @@ bool SeremGenerator::emitFor(const ForStmt& statement) {
   if (custom != nullptr && custom->isRecord() && custom->methodIndex("__iter__") >= 0) {
     return unsupported(statement, "for-in over a class __iter__");
   }
-  // A generator function call is a coroutine too, and its element type cannot be
-  // derived from the list/array layout the iterator operations assume. Reject it
-  // here instead of emitting an iterator over an unknown element kind.
+  // A generator function call produces values through a coroutine: resume it,
+  // read the promise while it is suspended, and stop once it is done.
   if (iterable != nullptr && iterable->isGenericCtor("Iterator")) {
-    return unsupported(statement, "for-in over a generator");
+    const Type* elementType = iterable->genericArg(0);
+    const serem::ValuePtr iterator = emitExpression(statement.iterable());
+    const std::unordered_map<std::string, std::string> attributes{
+        {"element", elementType == nullptr ? std::string{} : elementType->display()}};
+    const serem::IRType loweredElement = lowerType(elementType);
+    serem::BasicBlock* condition = &function_->addBlock("for.cond");
+    serem::BasicBlock* body = &function_->addBlock("for.body");
+    serem::BasicBlock* finish = &function_->addBlock("for.finish");
+    serem::BasicBlock* exit = &function_->addBlock("for.end");
+    if (!builder_->currentBlock().isTerminated()) (void)builder_->branch(*condition);
+    builder_->setInsertBlock(*condition);
+    (void)builder_->operation("coro.resume", serem::IRType::voidType(), {iterator}, attributes);
+    auto done =
+        builder_->operation("coro.done", serem::IRType::boolType(), {iterator}, attributes);
+    (void)builder_->conditionalBranch(done, *finish, *body);
+    builder_->setInsertBlock(*body);
+    auto promise = builder_->operation("coro.promise", serem::IRType::ptr(loweredElement),
+                                       {iterator}, attributes);
+    auto value = builder_->load(promise, loweredElement);
+    auto slot = builder_->alloca(value->type());
+    builder_->store(value, slot);
+    locals_[statement.name()] = slot;
+    localTypes_[statement.name()] = elementType;
+    breakTargets_.push_back(exit);
+    continueTargets_.push_back(condition);
+    const bool ok = emitBlock(statement.body());
+    continueTargets_.pop_back();
+    breakTargets_.pop_back();
+    if (!ok) return false;
+    if (!builder_->currentBlock().isTerminated()) (void)builder_->branch(*condition);
+    builder_->setInsertBlock(*finish);
+    (void)builder_->operation("coro.destroy", serem::IRType::voidType(), {iterator}, attributes);
+    (void)builder_->branch(*exit);
+    builder_->setInsertBlock(*exit);
+    return true;
   }
   const serem::ValuePtr source = emitExpression(statement.iterable());
   const Type* iterableType = statement.iterable().resolvedType();

@@ -471,8 +471,9 @@ void IRBuilder::retVoid() {
 std::shared_ptr<Operation> IRBuilder::await(ValuePtr value, IRType type) {
   return operation("await", std::move(type), {std::move(value)});
 }
-std::shared_ptr<Operation> IRBuilder::coroBegin() {
-  return operation("coro.begin", IRType::ptr(IRType::i8()));
+std::shared_ptr<Operation> IRBuilder::coroBegin(IRType element, bool generator) {
+  return operation("coro.begin", IRType::ptr(std::move(element)), {},
+                   {{"generator", generator ? "true" : "false"}});
 }
 void IRBuilder::coroSuspend(ValuePtr token) {
   (void)operation("coro.suspend", IRType::voidType(), {std::move(token)});
