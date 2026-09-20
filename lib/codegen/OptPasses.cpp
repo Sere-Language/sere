@@ -49,14 +49,14 @@ constexpr std::uint64_t kDefaultStackAllocMax = 1u << 20;
   return kDefaultStackAllocMax;
 }
 
-/// Allocating declarations return fresh memory: the pointer is never null and
-/// never aliases anything else the program can already name.
-///
-/// Accessors that read an existing object are not here: their result aliases
-/// the argument, so `noalias` would be a lie.
-[[nodiscard]] bool isFreshAllocation(std::string_view name) {
-  return isAllocatingDeclaration(name) &&
-         !inSet(name, {"sere_list_item", "sere_list_from_argv", "sere_pool_alloc"});
+/// True when `name` is one of `names`.
+[[nodiscard]] bool inSet(std::string_view name, std::initializer_list<std::string_view> names) {
+  for (const std::string_view candidate : names) {
+    if (name == candidate) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /// Declarations whose result the runtime may return as null, so `nonnull` must
@@ -91,26 +91,6 @@ constexpr std::uint64_t kDefaultStackAllocMax = 1u << 20;
   return false;
 }
 
-/// True when `name` is one of `names`.
-[[nodiscard]] bool inSet(std::string_view name, std::initializer_list<std::string_view> names) {
-  for (const std::string_view candidate : names) {
-    if (name == candidate) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/// Runtime accessors the release-mode `--no-bounds-checks` promise extends to:
-/// out-of-range access no longer unwinds, so the calls can be hoisted, CSEd,
-/// and vectorized like a raw load.
-[[nodiscard]] bool isBoundsCheckedAccessor(std::string_view name) {
-  return inSet(name,
-               {"sere_list_item", "sere_list_pop_at", "sere_list_insert", "sere_list_remove",
-                "sere_str_index", "sere_str_slice", "sere_list_slice", "sere_dict_get",
-                "sere_dict_set", "sere_dict_del"});
-}
-
 /// Pure readers: the whole call is a function of its arguments.
 [[nodiscard]] bool isPureReader(std::string_view name) {
   return inSet(name,
@@ -120,6 +100,14 @@ constexpr std::uint64_t kDefaultStackAllocMax = 1u << 20;
                 "sere_gc_collections", "sere_async_now_ms"});
 }
 
+/// Runtime accessors an out-of-range argument would have panicked on.
+[[nodiscard]] bool isBoundsCheckedAccessor(std::string_view name) {
+  return inSet(name,
+               {"sere_list_item", "sere_list_pop_at", "sere_list_insert", "sere_list_remove",
+                "sere_str_index", "sere_str_slice", "sere_list_slice", "sere_dict_get",
+                "sere_dict_set", "sere_dict_del"});
+}
+
 [[nodiscard]] bool isAllocatingDeclaration(std::string_view name) {
   return inSet(name,
                {"sere_alloc", "sere_gc_alloc", "sere_arena_alloc", "sere_pool_alloc",
@@ -127,6 +115,16 @@ constexpr std::uint64_t kDefaultStackAllocMax = 1u << 20;
                 "sere_list_copy", "sere_list_slice", "sere_list_item", "sere_dict_copy",
                 "sere_arena_new", "sere_pool_new"});
 }
+
+/// Allocating declarations return fresh memory: the pointer is never null and
+/// never aliases anything else the program can already name. An accessor that
+/// reads an existing object is not here, because its result aliases its
+/// argument and `noalias` would be a lie.
+[[nodiscard]] bool isFreshAllocation(std::string_view name) {
+  return isAllocatingDeclaration(name) &&
+         !inSet(name, {"sere_list_item", "sere_list_from_argv", "sere_pool_alloc"});
+}
+
 /// The global a string literal pointer refers to, or null when the pointer is
 /// not a literal.
 [[nodiscard]] const llvm::GlobalVariable* literalGlobal(const llvm::Value* value) {

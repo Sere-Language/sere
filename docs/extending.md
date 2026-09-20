@@ -193,6 +193,49 @@ See [testing.md](testing.md). Minimum for a language change:
 
 ---
 
+## 13. Add an optimization pass
+
+Three layers can host a rewrite. Pick the one that matches what the pass needs
+to see:
+
+**A pass over the generated LLVM module** (`lib/codegen/OptPasses.cpp`, declared
+in `include/sere/codegen/OptPasses.h`).
+
+1. Write `std::uint32_t yourPass(llvm::Module& module, …)` in the anonymous
+   namespace, iterate `module`, return how many sites changed.
+2. Call it from `runPrePipelinePasses` in the order its dependencies require,
+   and add a counter to `OptRewriteReport` so `SERE_OPT_REPORT=1` reports it.
+3. Gate it on an `OptimizationOptions` field if it is optional.
+
+**A pass over the Serem IR** (`lib/codegen/SeremTransform.cpp`).
+
+1. Write a `TransformPass` subclass with `name()` and
+   `bool run(IRModule& module)`.
+2. Build a replacement map of `const Value*` → `ValuePtr` and hand it to
+   `applyReplacements`, which rewrites every operand and drops the replaced
+   operations. Never mutate a block without doing both.
+3. Add a `makeYourPass()` factory, register it in `transformPasses()` (or
+   `defaultTransformPasses()` if it should always run), and declare the factory
+   in `include/sere/codegen/SeremTransform.h`.
+
+**An LLVM pass** — prefer composing existing ones.
+
+1. Add the pass name to `buildFlagPipeline` in `lib/codegen/OptPipeline.cpp`
+   under the switch that should enable it.
+2. Verify the name: an unknown pass fails the compile with
+   `cannot build pipeline '…': unknown function pass '…'`, which names the
+   offender.
+
+Finish with:
+
+1. A switch in `parseOptimizationFlag` plus a field and preset entry when the
+   pass is user-visible.
+2. A check in `tests/opt_options.cpp` for the parse and the rewrite.
+3. A CLI test in `tests/CMakeLists.txt` when the pass changes emitted IR.
+4. A row in [optimization.md](optimization.md) or [serem.md](serem.md).
+
+---
+
 ## Common pitfalls
 
 - **Keyword not highlighting** — enumerator placed after `KeywordWith`, or

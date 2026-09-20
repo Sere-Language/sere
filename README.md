@@ -275,8 +275,10 @@ You do not need a project to compile a file.
 
 ```powershell
 sere examples\hello.sere -o hello.exe      # link an executable
+sere -O3 --release examples\hello.sere      # optimized release build
 sere --emit-llvm examples\hello.sere -o hello.ll
 sere --emit-asm examples\hello.sere -o hello.s
+sere --emit-serem examples\hello.sere       # the target-independent IR
 sere --analyze examples\hello.sere         # JSON diagnostics, no codegen
 ```
 
@@ -286,16 +288,28 @@ sere --analyze examples\hello.sere         # JSON diagnostics, no codegen
 | --- | --- |
 | `--emit-llvm` | Write LLVM IR instead of linking |
 | `--emit-asm`, `-S` | Write native assembly instead of linking |
+| `--emit-serem` | Write the target-independent Serem IR text |
+| `--backend=serem` | Compile through the Serem IR |
 | `--dump-tokens` | Print lexer tokens |
 | `--dump-ast` | Print the parsed AST as JSON and stop |
 | `--dump-symbols` | Print the semantic symbol table as JSON and stop |
 | `--dump-llvm-ir-raw` | Write pre-optimization IR to `sere-raw-before-pipeline.ll` |
 | `--analyze` | Print JSON diagnostics and stop |
-| `--opt=<level>` | `O0`, `O1`, `O2`, `O3`, `Os`, `Oz` |
+| `-O0`…`-O3`, `-Os`, `-Oz` | Optimization level (also `--opt=<level>`) |
+| `--release` | `-O3` with every runtime check off and stack allocation |
+| `--debug` | `-O0` with every check on |
+| `--inline`, `--inline-all`, `--const-fold`, `--dead-code`, `--peephole`, `--cse`, `--strength-reduce`, `--loop-unroll`, `--loop-invariant-hoist`, `--tailcalls`, `--fast-math`, `--vectorize`, `--branch-opt`, `--lto` | Turn one pass on (each has a `--no-…` inverse) |
+| `--no-runtime-checks`, `--no-bounds-checks`, `--no-null-checks` | Remove the checks the compiler inserts |
+| `--stack-alloc`, `--arena-alloc` | Allocation strategy for release builds |
 | `--passes=<pipeline>` | Custom LLVM pass pipeline (PassBuilder syntax) |
 | `--link <lib>` | Link an extra native C/C++ library into the program |
 | `--color=<mode>`, `--no-color` | `auto`, `always`, or `never` |
 | `--lsp` | Run the language server on stdin/stdout |
+
+The optimization switches apply before the IR is printed, so
+`sere --emit-llvm --no-runtime-checks app.sere` shows exactly what a release
+build would not check. [docs/optimization.md](docs/optimization.md) documents
+every switch, and [docs/serem.md](docs/serem.md) documents the Serem IR.
 
 ## Diagnostics
 
@@ -423,6 +437,8 @@ releases/       packaging scripts and versioned release artifacts
 - [Decorators](docs/decorators.md): `@name` and `@name(...)` on functions and classes.
 - [Standard library](docs/stdlib.md): what ships and how to add to it.
 - [Compiler handbook](docs/README.md): the pipeline, the library map, and how to extend the compiler.
+- [Optimization](docs/optimization.md): every optimization switch, the pipeline it builds, and what it changes in the emitted IR.
+- [Serem IR](docs/serem.md): the target-independent SSA IR, its text format, its instruction set, and its passes.
 - [Extending the compiler](docs/extending.md): where to add a keyword, type, intrinsic, module, or LSP feature.
 - [Packaging](docs/packaging.md): release and installer internals.
 - [Editor support](docs/lsp.md): how the language server is put together.

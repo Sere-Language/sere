@@ -12,14 +12,21 @@ Compiler::run
  ├── --lsp            → runLanguageServer()
  ├── init/init-lib/build/pack/run/clean
  └── compileInput()
-      ├── Frontend::analyze()     lex, parse, import, prelude, macros, sema
-      ├── IRGenerator::emit()     typed AST → LLVM module
-      ├── runOptPipeline()
-      └── clang/lld + sere_rt     unless --emit-llvm or --emit-asm
+      ├── Frontend::analyze()        lex, parse, import, prelude, macros, sema
+      ├── IRGenerator::emit()        typed AST → llvm::Module
+      │   └── or SeremGenerator      typed AST → Serem IR → SeremTransform
+      │                              → SeremLLVMBackend → llvm::Module
+      ├── runOptPipeline()           Sere IR rewrites + the composed LLVM pipeline
+      └── clang/lld + sere_rt        unless --emit-llvm, --emit-asm, or --emit-serem
 ```
 
 `--analyze` runs `Frontend` and prints JSON diagnostics. It never touches LLVM.
 That is the same path the LSP uses for `textDocument/publishDiagnostics`.
+
+Both backends produce the same `llvm::Module`, so the optimizer, the emit modes,
+and the linker are shared. [backend.md](backend.md) covers lowering and linking,
+[optimization.md](optimization.md) the switches, and [serem.md](serem.md) the
+Serem IR.
 
 ## Frontend pipeline
 

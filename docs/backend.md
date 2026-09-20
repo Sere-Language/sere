@@ -28,22 +28,57 @@ internal “this should be unreachable” failures.
 
 ## Optimization
 
-`runOptPipeline` (`include/sere/codegen/OptPipeline.h`) runs LLVM’s PassBuilder
-at `--opt=` levels `O0`…`O3`, `Os`, `Oz`. `--passes=` injects a custom pipeline
-string. Default for a normal compile is `O0` unless the driver overrides it.
+Sere composes its own LLVM pipeline rather than calling LLVM's level defaults,
+so every switch in `OptimizationOptions` selects a real pass.
+
+| File | Responsibility |
+| --- | --- |
+| `include/sere/codegen/OptPipeline.h` | `OptimizationOptions`, the level presets, the flag parser, `runOptPipeline`, `clangCodegenFlags` |
+| `lib/codegen/OptPipeline.cpp` | The composed pipeline, the presets, the report |
+| `include/sere/codegen/OptPasses.h` | The rewrites over the generated module |
+| `lib/codegen/OptPasses.cpp` | Runtime annotations, null-check folding, check-block and error-state removal, stack promotion, free elision, fast-math and tail-call attributes |
+| `lib/codegen/SeremTransform.cpp` | The same switches applied to the Serem IR |
+
+`runOptPipeline(module, options, error)` runs, in order:
+
+1. `runPrePipelinePasses` — the Sere IR rewrites (`OptPasses.cpp`).
+2. The coroutine pipeline, `coro-early,coro-split,coro-cleanup`.
+3. The composed module pipeline, repeated function rounds included.
+
+The default level is `O0`, so a plain `sere build` stays a debugging build until
+the project manifest sets `opt = "O2"` or the command line passes `-O2`,
+`--release`, or an individual switch.
+
+[docs/optimization.md](optimization.md) is the full reference: every flag, what
+it adds to the pipeline, what it changes in the emitted IR, and what it passes to
+`clang`. [docs/serem.md](serem.md) covers the Serem side.
 
 ## Serem
 
-Serem is the optional target-independent SSA backend foundation. Its public
-model is in `include/sere/codegen/Serem.h`: every constant, argument, function
-reference, and instruction is a `Value`, while `IRBuilder` owns insertion into
-function blocks and `IRModule` owns functions. The generic `operation()` API
-also permits dialect-specific operations without changing the core hierarchy.
+Serem is the target-independent SSA IR behind `--emit-serem`, `--emit-serem-bytecode`,
+and `--backend=serem`. Its model is in `include/sere/codegen/Serem.h`: every
+constant, argument, function reference, and instruction is a `Value`, `IRBuilder`
+owns insertion into function blocks, and `IRModule` owns types, globals, and
+functions. The generic `operation()` API accepts dialect-specific opcodes, which
+is how the generator emits language features the core hierarchy does not name.
 
-Use `sere --emit-serem file.sere` or `sere --emit-serem-bytecode file.sere` to
-write the current stable Serem text format. The frontend validation is shared
-with LLVM; AST-to-Serem lowering is intentionally the next stage and the
-current output records that pending boundary in the module scaffold.
+The pipeline is:
+
+```
+typed Module ─► SeremGenerator ─► Serem IR ─► SeremTransform ─┬─► .serem text
+                                                              └─► SeremLLVMBackend ─► llvm::Module
+```
+
+`SeremTransform.h` exposes `TransformPass`; the passes are constant folding,
+dead code, unreachable blocks, unused globals, strength reduction, common
+subexpression elimination, and runtime-check removal. The driver runs the set
+the optimization switches select, iterating to a fixed point.
+
+The LLVM path and the Serem path meet at the same `llvm::Module` optimization
+pipeline, so `--backend=serem` honors every switch `--emit-llvm` does.
+
+[docs/serem.md](serem.md) documents the text format, the type model, and the full
+instruction set.
 
 ## Linking
 

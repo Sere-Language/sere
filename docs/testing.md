@@ -35,7 +35,29 @@ ctest --preset windows-clang-cl-relwithdebinfo -R sere.test.sema --output-on-fai
 | `sere init/build` | `tests/project_cli.cpp` |
 | `.slib` pack / import | `tests/library_pack.cpp` |
 | `@private` exports | `tests/import_private.cpp` |
+| An optimization switch or an IR rewrite | `tests/opt_options.cpp` |
+| An optimization switch end to end | `add_test(NAME sere.opt.your …)` with `--emit-llvm` and the flags |
+| A Serem pass | `tests/smoke_serem.cpp` or a new case in `tests/opt_options.cpp` |
 | End-to-end language feature | `examples/your.sere` + `add_test(NAME sere.example.your …)` |
+
+## Optimization tests
+
+`tests/opt_options.cpp` links `sere_codegen` and exercises both halves of the
+optimizer:
+
+- flag parsing: levels, per-pass switches, the `--no-…` inverses, `--release`,
+  `--debug`, and the clang flags derived from them;
+- the IR rewrites: null-check folding, panic-block removal, stack promotion,
+  free elision, plus `llvm::verifyModule` after each rewrite so a pass that
+  produces invalid IR fails the test;
+- the pipelines themselves: `runOptPipeline` must parse and run for a level, a
+  flag-composed pipeline, and the LTO pipeline. A pass name that LLVM does not
+  know fails here rather than in a user's build.
+
+Sere's own flags are also covered end to end in `tests/CMakeLists.txt`
+(`sere.opt.release`, `sere.opt.pass_flags`, `sere.opt.custom_pipeline`,
+`sere.opt.checks_off`, `sere.opt.size`), which is what catches a switch that
+parses but breaks emission.
 
 Example tests only require `--emit-llvm` success (typecheck + IR). That is
 enough to catch most frontend/backend mismatches without running the `.exe`.

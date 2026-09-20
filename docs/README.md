@@ -32,6 +32,8 @@ The compiler is `sere` (`tools/sere`). The same binary also speaks LSP
 | Add a keyword, type, operator, intrinsic, stdlib module, native lib, GC, or LSP feature | **[extending.md](extending.md)** |
 | Understand lex / parse / AST / macros / types | [frontend.md](frontend.md) |
 | Understand LLVM lowering, linking, and the C runtime | [backend.md](backend.md) |
+| Tune a build, or see what a switch changes in the emitted IR | **[optimization.md](optimization.md)** |
+| Work with the target-independent SSA IR | **[serem.md](serem.md)** |
 | Work on hover, completion, or highlighting | [lsp.md](lsp.md) |
 | Add or change `stdlib/*.sere` | [stdlib.md](stdlib.md) |
 | Add a test or example | [testing.md](testing.md) |
@@ -47,11 +49,17 @@ The compiler is `sere` (`tools/sere`). The same binary also speaks LSP
     ▼
  Lexer  →  Parser  →  imports + prelude  →  macros  →  TypeChecker
     │
-    ▼
- IRGenerator  →  opt pipeline  →  .ll
-    │
-    ▼
- clang + lld + sere_rt  →  .exe
+    ├─ IRGenerator ────────────────────────► llvm::Module ─┐
+    │                                                      │
+    └─ SeremGenerator ─► Serem IR ─► SeremTransform ─┬────►┤
+                                    (--emit-serem)   │     │
+                                                     └─ SeremLLVMBackend
+                                                           │
+                                                           ▼
+                     opt pipeline (Sere rewrites + LLVM)  →  .ll
+                                                           │
+                                                           ▼
+                                     clang + lld + sere_rt  →  .exe
 ```
 
 `Frontend::analyze` is the shared front half. The compiler, the language server,
@@ -93,13 +101,17 @@ sere [options] <file.sere>
 | `--build-installer` | Package a Windows setup exe (compiler, LLVM, stdlib, editor) |
 | `--emit-llvm` | Stop after writing `.ll` |
 | `--emit-asm`, `-S` | Stop after writing native assembly (`.s`) |
+| `--emit-serem` | Stop after writing the Serem IR text |
+| `--backend=serem` | Compile through Serem instead of lowering straight to LLVM |
 | `--dump-tokens` | Print lexer output |
 | `--analyze` | JSON diagnostics, no codegen |
 | `--lsp` | Language server on stdin/stdout |
 | `--link <lib>` | Extra native library at link time |
-| `--opt=O0..O3,Os,Oz` | LLVM optimization level |
+| `-O0`…`-O3`, `-Os`, `-Oz` | Optimization level, and the `--release` / `--debug` bundles |
+| `--<pass>` / `--no-<pass>` | One optimization switch, such as `--cse` or `--no-runtime-checks` |
 | `--passes=<pipeline>` | Custom LLVM pass pipeline |
 | `-o <path>` | Output path |
 
 Parsing lives in `lib/driver/Options.cpp`. Orchestration lives in
-`lib/driver/Compiler.cpp`.
+`lib/driver/Compiler.cpp`. [optimization.md](optimization.md) lists every switch
+and what it changes.

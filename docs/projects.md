@@ -15,11 +15,17 @@ deactivate
 
 `build` compiles the configured entry, and takes the compiler options
 (`--backend=serem`, `--no-transformers`, `--emit-llvm`, `--emit-asm`, `--opt=O2`,
-`-o <path>`, …) the same way a direct `sere <file.sere>` build does.
+`-O3`, `--release`, `-o <path>`, …) the same way a direct `sere <file.sere>`
+build does.
 `run` builds the executable and then executes it: **every argument after `run`
 is passed to the program**, including arguments that look like compiler flags.
 Write compiler options before the command word (`sere --opt=O2 run first second`)
 when you need them. Dot-source activation to use the current terminal.
+
+Build settings come from three places, in this order: the command line, then the
+manifest, then the `O0` default. A command-line switch always wins, so
+`sere build -O3 --release` overrides `opt` in `sere.toml` for that build. See
+[optimization.md](optimization.md) for every switch.
 
 | Path | Purpose |
 | --- | --- |
