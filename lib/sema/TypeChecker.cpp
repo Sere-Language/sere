@@ -2774,54 +2774,90 @@ std::optional<bool> TypeChecker::constBool(const Expr& expr) const {
 bool TypeChecker::checkIf(IfStmt& statement, const Type* expectedReturn) {
   bool ok = true;
   bool taken = false;
-  const BinaryExpr* previousTypeTest = nullptr;
-  const auto narrowTypeTest = [&](const BinaryExpr* test) {
-    if (test == nullptr) return;
-    const auto* name = test->left().kind() == NodeKind::NameExpr
-                           ? &static_cast<const NameExpr&>(test->left())
+  // Every preceding `is` test in the chain, not just the closest one: the `else`
+  // of `if x is str: ... elif x is Mayor: ... else:` only runs when *both* tests
+  // failed, so the false branch has to exclude all of them.
+  std::vector<const BinaryExpr*> previousTypeTests;
+  /// Narrows the tested variable to the types a value can still hold after a
+  /// chain of `is` tests. `negate` selects the branch where the tests all
+  /// failed, which drops the members that are always instances of a tested type
+  /// while keeping the ones that only might be.
+  const auto narrowTypeTest = [&](const std::vector<const BinaryExpr*>& tests, bool negate) {
+    if (tests.empty()) return;
+    const auto* name = tests.front()->left().kind() == NodeKind::NameExpr
+                           ? &static_cast<const NameExpr&>(tests.front()->left())
                            : nullptr;
-    const Type* tested = resolveTypeFromExpr(const_cast<Expr&>(test->right()), false);
-    if (tested != nullptr && tested->isTypeObject() && tested->typeObjectInstance() != nullptr) {
-      tested = tested->typeObjectInstance();
-    }
-    if (name == nullptr || tested == nullptr) return;
+    if (name == nullptr) return;
     Symbol* original = lookup(name->name());
-    if (original == nullptr || original->type == nullptr || !original->type->isUnion()) return;
-    std::vector<const Type*> remaining;
-    if (test->op() == BinaryOp::Is) {
-      // When the tested type fits inside a member, the value *is* that type, so
-      // `person is Mayor` on a `Person | str` narrows to `Mayor`. Matching
-      // canonical member names alone misses every class that is not written out
-      // verbatim, which left the union untouched and un-callable.
-      for (const Type* member : original->type->args()) {
-        if (isAssignable(tested, member)) {
-          Symbol narrowed = *original;
-          narrowed.type = tested;
-          scopes_.back()[name->name()] = std::move(narrowed);
-          return;
-        }
+    if (original == nullptr || original->type == nullptr) return;
+    for (const BinaryExpr* test : tests) {
+      // Mixing variables in one chain would narrow the wrong symbol.
+      if (test->left().kind() != NodeKind::NameExpr ||
+          static_cast<const NameExpr&>(test->left()).name() != name->name()) {
+        return;
       }
-      // Otherwise the test can still succeed through members that derive from
-      // the tested type; that is all `is Person` promises for a `Mayor | str`.
+    }
+    // A single non-union type behaves like a one-member union, so `Person | str`
+    // narrowed to `Person` by an earlier test keeps narrowing.
+    std::vector<const Type*> members;
+    if (original->type->isUnion()) {
       for (const Type* member : original->type->args()) {
-        if (isAssignable(member, tested)) {
-          remaining.push_back(member);
-        }
+        if (member != nullptr) members.push_back(member);
       }
     } else {
-      // A member that already is an instance of the tested type can never reach
-      // the negative branch, so drop it and keep the rest.
-      for (const Type* member : original->type->args()) {
-        if (!isAssignable(member, tested)) {
-          remaining.push_back(member);
+      members.push_back(original->type);
+    }
+    for (const BinaryExpr* test : tests) {
+      const Type* tested = resolveTypeFromExpr(const_cast<Expr&>(test->right()), false);
+      if (tested != nullptr && tested->isTypeObject() && tested->typeObjectInstance() != nullptr) {
+        tested = tested->typeObjectInstance();
+      }
+      if (tested == nullptr) return;
+      const bool positive = (test->op() == BinaryOp::Is) != negate;
+      std::vector<const Type*> remaining;
+      if (positive) {
+        // When the tested type fits inside a member, the value *is* that type,
+        // so `person is Mayor` on a `Person | str` narrows to `Mayor`. Matching
+        // canonical member names alone misses every class that is not written
+        // out verbatim, which left the union untouched and un-callable.
+        for (const Type* member : members) {
+          if (isAssignable(tested, member)) {
+            Symbol narrowed = *original;
+            narrowed.type = tested;
+            scopes_.back()[name->name()] = std::move(narrowed);
+            return;
+          }
+        }
+        // Otherwise the test can still succeed through members that derive from
+        // the tested type; that is all `is Person` promises for a `Mayor | str`.
+        for (const Type* member : members) {
+          if (isAssignable(member, tested)) {
+            remaining.push_back(member);
+          }
+        }
+      } else {
+        // A member whose values are always instances of the tested type can
+        // never reach the negative branch, so drop it and keep the rest. A
+        // member that merely *contains* the tested type (`Person` against
+        // `Mayor`) still holds values the test never matched, so it stays.
+        for (const Type* member : members) {
+          if (!isAssignable(member, tested)) {
+            remaining.push_back(member);
+          }
         }
       }
+      if (remaining.empty()) {
+        return;
+      }
+      members = std::move(remaining);
     }
-    if (remaining.empty()) {
+    const Type* narrowedType =
+        members.size() == 1 ? members.front() : types_->unionType(members);
+    if (narrowedType == original->type) {
       return;
     }
     Symbol narrowed = *original;
-    narrowed.type = remaining.size() == 1 ? remaining.front() : types_->unionType(remaining);
+    narrowed.type = narrowedType;
     scopes_.back()[name->name()] = std::move(narrowed);
   };
   for (IfBranch& branch : statement.branches()) {
@@ -2850,19 +2886,24 @@ bool TypeChecker::checkIf(IfStmt& statement, const Type* expectedReturn) {
     pushScope(branch.range);
     if (branch.condition != nullptr && branch.condition->kind() == NodeKind::BinaryExpr) {
       const auto& test = static_cast<const BinaryExpr&>(*branch.condition);
-      if (test.op() == BinaryOp::Is || test.op() == BinaryOp::IsNot) narrowTypeTest(&test);
-    } else if (branch.condition == nullptr && previousTypeTest != nullptr) {
-      BinaryExpr inverse(previousTypeTest->range(),
-                         previousTypeTest->op() == BinaryOp::Is ? BinaryOp::IsNot : BinaryOp::Is,
-                         std::make_unique<NameExpr>(previousTypeTest->left().range(),
-                                                     static_cast<const NameExpr&>(previousTypeTest->left()).name()),
-                         std::make_unique<NameExpr>(previousTypeTest->right().range(),
-                                                     static_cast<const NameExpr&>(previousTypeTest->right()).name()));
-      narrowTypeTest(&inverse);
+      if (test.op() == BinaryOp::Is || test.op() == BinaryOp::IsNot) {
+        narrowTypeTest({&test}, false);
+      }
+    } else if (branch.condition == nullptr) {
+      // The final `else` runs only when every earlier test failed, so apply the
+      // whole chain negated.
+      narrowTypeTest(previousTypeTests, true);
     }
-    previousTypeTest = branch.condition != nullptr && branch.condition->kind() == NodeKind::BinaryExpr
-                           ? static_cast<const BinaryExpr*>(branch.condition.get())
-                           : nullptr;
+    if (branch.condition != nullptr && branch.condition->kind() == NodeKind::BinaryExpr) {
+      const auto& test = static_cast<const BinaryExpr&>(*branch.condition);
+      if (test.op() == BinaryOp::Is || test.op() == BinaryOp::IsNot) {
+        previousTypeTests.push_back(&test);
+      } else {
+        previousTypeTests.clear();
+      }
+    } else if (branch.condition != nullptr) {
+      previousTypeTests.clear();
+    }
     for (std::unique_ptr<Stmt>& bodyStmt : branch.body) {
       ok = checkStatement(*bodyStmt, expectedReturn) && ok;
     }

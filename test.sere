@@ -16,6 +16,7 @@ def main() -> i32:
     for c in in_list:
         if c in vowels:
             found.append(c)
+
     print(f"Found {len(found)} vowels")
     print(f"Vowels found: {found}")
     with fs.open("output.txt", "w") as f:
