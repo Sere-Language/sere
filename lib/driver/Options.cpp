@@ -48,6 +48,7 @@ void printUsage(std::string& error) {
       "  --emit-serem        Write the target-independent Serem IR text\n"
       "  --emit-serem-bytecode  Write Serem bytecode text (same stable .serem format)\n"
       "  --backend=serem     Select Serem as the output backend\n"
+      "  --no-transformers   Skip the Serem IR rewrite passes\n"
       "  --dump-tokens       Print lexer tokens\n"
       "  --dump-ast          Print the parsed AST as JSON and stop\n"
       "  --dump-symbols      Print the semantic symbol table as JSON and stop\n"
@@ -194,6 +195,10 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
       continue;
     }
     if (argument == "--backend=llvm") {
+      continue;
+    }
+    if (argument == "--no-transformers") {
+      options.transformers = false;
       continue;
     }
     if (argument == "--dump-tokens") {

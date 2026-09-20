@@ -47,6 +47,7 @@ def print_name(person: Person | str) -> None:
 
 def main(argv: list[str]) -> None:
     print([1, 2, 3])
+    print(1 + 1)
     print(argv)
     person = Person("Alice", 25)
     introduction = person.introduce()

@@ -63,6 +63,7 @@ add_library(sere_codegen
   codegen/OptPipeline.cpp
   codegen/Serem.cpp
   codegen/SeremGenerator.cpp
+  codegen/SeremTransform.cpp
   codegen/backends/SeremLLVMBackend.cpp
 )
 target_link_libraries(sere_codegen PUBLIC sere_ast sere_types)

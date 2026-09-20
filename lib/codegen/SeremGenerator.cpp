@@ -50,6 +50,64 @@ namespace {
   return std::to_string(static_cast<std::int32_t>(listElementKindOf(type)));
 }
 
+/// Whether a record carries its concrete type in the first word of its storage.
+/// Enums keep a variant tag of their own and structs are plain values, so only
+/// classes get the header.
+[[nodiscard]] bool recordHasTypeId(const Type* type) {
+  return type != nullptr && type->isRecord() && !type->isEnum() && !type->isStruct();
+}
+
+/// Physical slot of a field inside a record. The type-id header occupies slot
+/// zero, so every semantic field index shifts by one.
+[[nodiscard]] int fieldSlot(const Type* record, int index) {
+  if (index < 0 || !recordHasTypeId(record)) {
+    return index;
+  }
+  return index + 1;
+}
+
+/// Tag a value of `type` is stored under inside `unionType`, mirroring the
+/// boxing side: a class the union does not list verbatim takes the tag of the
+/// member it derives from.
+[[nodiscard]] int unionMemberFor(const Type* unionType, const Type* type) {
+  if (unionType == nullptr || type == nullptr || !unionType->isUnion()) {
+    return -1;
+  }
+  const int exact = unionType->unionMemberIndex(type);
+  if (exact >= 0) {
+    return exact;
+  }
+  const Type* canonical = type->canonical();
+  const std::vector<const Type*>& members = unionType->args();
+  for (std::size_t index = 0; index < members.size(); ++index) {
+    if (members[index] != nullptr && canonical->isSubtypeOf(members[index]->canonical())) {
+      return static_cast<int>(index);
+    }
+  }
+  return -1;
+}
+
+/// Tags of the union members that are themselves instances of `type`, so
+/// `is Base` on a `Sub | Other` union matches through `Sub`'s tag.
+[[nodiscard]] std::string unionMemberTagsDerivedFrom(const Type* unionType, const Type* type) {
+  if (unionType == nullptr || type == nullptr || !unionType->isUnion()) {
+    return {};
+  }
+  const Type* canonical = type->canonical();
+  std::string tags;
+  const std::vector<const Type*>& members = unionType->args();
+  for (std::size_t index = 0; index < members.size(); ++index) {
+    if (members[index] == nullptr || !members[index]->canonical()->isSubtypeOf(canonical)) {
+      continue;
+    }
+    if (!tags.empty()) {
+      tags += ',';
+    }
+    tags += std::to_string(index);
+  }
+  return tags;
+}
+
 } // namespace
 
 SeremGenerator::SeremGenerator(DiagnosticEngine& diagnostics, TypeContext& types)
@@ -184,6 +242,12 @@ void SeremGenerator::declareClass(const ClassDef& classDef) {
   std::vector<serem::IRType> fields;
   std::vector<std::string> attributes;
   attributes.push_back(classDef.isStruct() ? "struct" : "class");
+  // The first word of a class is its type id, so a value boxed into a union can
+  // still be recognised as the subclass it really is. A derived class reuses the
+  // base header instead of adding a second one.
+  if (!classDef.isStruct()) {
+    fields.push_back(serem::IRType::i32());
+  }
   if (!classDef.bases().empty()) {
     const auto base = classFields_.find(classDef.bases().front());
     if (base != classFields_.end()) fields = base->second;
@@ -308,7 +372,9 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
       (void)builder_->operation("member.set", serem::IRType::voidType(),
                                 {emitExpression(member.object()), value},
                                 {{"field", member.field()},
-                                 {"index", std::to_string(member.object().resolvedType()->fieldIndex(member.field()))}});
+                                 {"index", std::to_string(fieldSlot(
+                                               member.object().resolvedType(),
+                                               member.object().resolvedType()->fieldIndex(member.field())))}});
       return true;
     }
     if (assign.target().kind() == NodeKind::IndexExpr) {
@@ -517,27 +583,45 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
 }
 
 bool SeremGenerator::emitIf(const IfStmt& statement) {
+  const std::vector<IfBranch>& branches = statement.branches();
   serem::BasicBlock* merge = &function_->addBlock("if.end");
+  // Each `elif` needs a test block of its own: evaluating the condition inside
+  // the body of its own branch makes the true edge point back at the block it
+  // was emitted in, which lowers to an endless loop.
+  std::vector<serem::BasicBlock*> tests(branches.size(), nullptr);
   std::vector<serem::BasicBlock*> bodies;
-  for (std::size_t index = 0; index < statement.branches().size(); ++index) {
+  bodies.reserve(branches.size());
+  for (std::size_t index = 0; index < branches.size(); ++index) {
+    if (index > 0 && branches[index].condition != nullptr) {
+      tests[index] = &function_->addBlock("if.test" + std::to_string(index));
+    }
     bodies.push_back(&function_->addBlock("if.body" + std::to_string(index)));
   }
-  for (std::size_t index = 0; index < statement.branches().size(); ++index) {
-    const IfBranch& branch = statement.branches()[index];
-    serem::BasicBlock* next = index + 1 < bodies.size() ? bodies[index + 1] : merge;
+  for (std::size_t index = 0; index < branches.size(); ++index) {
+    const IfBranch& branch = branches[index];
+    // Where control goes when this branch does not match: the next test, the
+    // `else` body, or past the whole statement.
+    serem::BasicBlock* fallthrough = merge;
+    if (index + 1 < branches.size()) {
+      fallthrough =
+          branches[index + 1].condition != nullptr ? tests[index + 1] : bodies[index + 1];
+    }
     if (branch.condition == nullptr) {
-      if (&builder_->currentBlock() != bodies[index] && !builder_->currentBlock().isTerminated()) {
+      // The `else` body is already the fallthrough of the last test, so jumping
+      // to it would branch the block onto itself.
+      if (&builder_->currentBlock() != bodies[index] &&
+          !builder_->currentBlock().isTerminated()) {
         (void)builder_->branch(*bodies[index]);
       }
     } else {
       const serem::ValuePtr condition = emitExpression(*branch.condition);
-      (void)builder_->conditionalBranch(condition, *bodies[index], *next);
+      (void)builder_->conditionalBranch(condition, *bodies[index], *fallthrough);
     }
     builder_->setInsertBlock(*bodies[index]);
     if (!emitBlock(branch.body)) return false;
     if (!builder_->currentBlock().isTerminated()) (void)builder_->branch(*merge);
-    if (next != merge) builder_->setInsertBlock(*next);
     if (branch.condition == nullptr) break;
+    builder_->setInsertBlock(*fallthrough);
   }
   builder_->setInsertBlock(*merge);
   return true;
@@ -908,9 +992,31 @@ serem::ValuePtr SeremGenerator::emitBinary(const BinaryExpr& expression) {
     }
     const Type* source = expression.left().resolvedType();
     if (source != nullptr && source->isUnion()) {
+      std::unordered_map<std::string, std::string> attributes{
+          {"negated", expression.op() == BinaryOp::IsNot ? "true" : "false"}};
+      const int member = tested == nullptr ? -1 : source->unionMemberIndex(tested);
+      if (member >= 0) {
+        attributes["tag"] = std::to_string(member);
+      } else {
+        // A class the union does not list verbatim is boxed under the member it
+        // derives from, so the tag only settles which member was stored and the
+        // header word has to confirm the concrete class.
+        const int base = unionMemberFor(source, tested);
+        attributes["tag"] = std::to_string(base);
+        if (base >= 0 && recordHasTypeId(tested)) {
+          attributes["type.id"] =
+              std::to_string(static_cast<std::int32_t>(serem::recordTypeId(tested->name())));
+        } else if (base < 0 && tested != nullptr) {
+          // The tested type can be a base of one or more stored members, and
+          // every one of their tags matches.
+          const std::string tags = unionMemberTagsDerivedFrom(source, tested);
+          if (!tags.empty()) {
+            attributes["tags"] = tags;
+          }
+        }
+      }
       return builder_->operation("union.is", serem::IRType::boolType(), {left},
-          {{"tag", std::to_string(source->unionMemberIndex(tested))},
-           {"negated", expression.op() == BinaryOp::IsNot ? "true" : "false"}});
+                                 std::move(attributes));
     }
     bool matches = source != nullptr && tested != nullptr && source->isSubtypeOf(tested);
     if (expression.op() == BinaryOp::IsNot) matches = !matches;
@@ -1066,6 +1172,11 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
                                {{"type", expression.resolvedType() == nullptr
                                              ? std::string{}
                                              : expression.resolvedType()->name()},
+                                {"type.id", recordHasTypeId(expression.resolvedType())
+                                                ? std::to_string(static_cast<std::int32_t>(
+                                                      serem::recordTypeId(
+                                                          expression.resolvedType()->name())))
+                                                : std::string{}},
                                 {"init", methodSymbol(expression.resolvedType(), "__init__")}});
   }
   if (expression.callee().kind() == NodeKind::MemberExpr && !expression.isMethod()) {
@@ -1167,7 +1278,8 @@ serem::ValuePtr SeremGenerator::emitMember(const MemberExpr& expression) {
   std::unordered_map<std::string, std::string> attributes{{"field", expression.field()}};
   if (expression.object().resolvedType() != nullptr) {
     attributes["index"] = std::to_string(
-        expression.object().resolvedType()->fieldIndex(expression.field()));
+        fieldSlot(expression.object().resolvedType(),
+                  expression.object().resolvedType()->fieldIndex(expression.field())));
   }
   return builder_->operation("member.get", lowerType(expression.resolvedType()),
                              {emitExpression(expression.object())},

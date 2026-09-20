@@ -1,5 +1,5 @@
 module @main
-type @Exception = %Exception [class, field=message:0]
+type @Exception = %Exception [class, field=message:1]
 type @SyntaxError = %SyntaxError [class]
 type @IndentationError = %IndentationError [class]
 type @NameError = %NameError [class]
@@ -13,20 +13,33 @@ type @PermissionError = %PermissionError [class]
 type @RuntimeError = %RuntimeError [class]
 type @RecursionError = %RecursionError [class]
 type @NotImplementedError = %NotImplementedError [class]
-type @Person = %Person [class, field=name:0, field=age:1]
-type @Mayor = %Mayor [class, field=city:2]
+type @Person = %Person [class, field=name:1, field=age:2]
+type @Mayor = %Mayor [class, field=city:3]
+type @File = %File [class, field=_handle:1, field=_mode:2, field=_path:3]
 global @str.0 = str "Hello, my name is "
 global @str.1 = str ", I am "
 global @str.2 = str " years old."
-global @str.3 = str "Hello, my name is "
-global @str.4 = str ", I am "
-global @str.5 = str " years old, and I am the mayor of "
-global @str.6 = str "."
-global @str.7 = str "__main__.Person | str"
-global @str.8 = str "Alice"
-global @str.9 = str "Bob"
-global @str.10 = str "Springfield"
-global @str.11 = str "Bob"
+global @str.3 = str "Person(name="
+global @str.4 = str ", age="
+global @str.5 = str ")"
+global @str.6 = str "Hello, my name is "
+global @str.7 = str ", I am "
+global @str.8 = str " years old, and I am the mayor of "
+global @str.9 = str "."
+global @str.10 = str "This is the mayor!"
+global @str.11 = str "This is a person!"
+global @str.12 = str "Alice"
+global @str.13 = str "Bob"
+global @str.14 = str "Springfield"
+global @str.15 = str "len: "
+global @str.16 = str "Bob"
+global @str.17 = str ""
+global @str.18 = str "<closed file '"
+global @str.19 = str "' mode '"
+global @str.20 = str "'>"
+global @str.21 = str "<open file '"
+global @str.22 = str "' mode '"
+global @str.23 = str "'>"
 extern func @sere_input(%arg0: str) -> str
 func @abs(%arg0: i32) -> i32 {
 entry:
@@ -69,74 +82,97 @@ entry:
 func @sign(%arg0: i32) -> i32 {
 entry:
   %0 = cmp.gt i1 %arg0, 0
-  cond_branch %0 {true = if.body0, false = if.body1}
+  cond_branch %0 {true = if.body0, false = if.test1}
 if.end:
   return 0
 if.body0:
   return 1
-if.body1:
+if.test1:
   %1 = cmp.lt i1 %arg0, 0
   cond_branch %1 {true = if.body1, false = if.end}
+if.body1:
   %2 = neg i32 1
   return %2
 }
-func @prelude___init__(%arg0: %Exception, %arg1: str) -> void {
+func @prelude___init__(%arg0: Ptr[%Exception], %arg1: str) -> void {
 entry:
-  member.set %arg0, %arg1 {field = message}
+  member.set %arg0, %arg1 {field = message, index = 1}
   return
 }
-func @Person.__init__(%arg0: %Person, %arg1: str, %arg2: i32) -> void {
+func @Person.__init__(%arg0: Ptr[%Person], %arg1: str, %arg2: i32) -> void {
 entry:
-  member.set %arg0, %arg1 {field = name}
-  member.set %arg0, %arg2 {field = age}
+  member.set %arg0, %arg1 {field = name, index = 1}
+  member.set %arg0, %arg2 {field = age, index = 2}
   return
 }
-func @Person.get_name(%arg0: %Person) -> str {
+func @Person.get_name(%arg0: Ptr[%Person]) -> str {
 entry:
-  %0 = member.get str %arg0 {field = name, index = 0}
+  %0 = member.get str %arg0 {field = name, index = 1}
   return %0
 }
-func @Person.get_age(%arg0: %Person) -> i32 {
+func @Person.get_age(%arg0: Ptr[%Person]) -> i32 {
 entry:
-  %0 = member.get i32 %arg0 {field = age, index = 1}
+  %0 = member.get i32 %arg0 {field = age, index = 2}
   return %0
 }
-func @Person.introduce(%arg0: %Person) -> str {
+func @Person.__len__(%arg0: Ptr[%Person]) -> i64 {
 entry:
-  %0 = member.get str %arg0 {field = name, index = 0}
-  %1 = member.get i32 %arg0 {field = age, index = 1}
+  %0 = member.get i32 %arg0 {field = age, index = 2}
+  %1 = cast.value i64 %0 {unsigned = false}
+  return %1
+}
+func @Person.introduce(%arg0: Ptr[%Person]) -> str {
+entry:
+  %0 = member.get str %arg0 {field = name, index = 1}
+  %1 = member.get i32 %arg0 {field = age, index = 2}
   %2 = string.concat str @str.0, %0, @str.1, %1, @str.2
   return %2
 }
-func @Mayor.__init__(%arg0: %Mayor, %arg1: str, %arg2: i32, %arg3: str) -> void {
+func @Person.__str__(%arg0: Ptr[%Person]) -> str {
+entry:
+  %0 = member.get str %arg0 {field = name, index = 1}
+  %1 = member.get i32 %arg0 {field = age, index = 2}
+  %2 = string.concat str @str.3, %0, @str.4, %1, @str.5
+  return %2
+}
+func @Mayor.__init__(%arg0: Ptr[%Mayor], %arg1: str, %arg2: i32, %arg3: str) -> void {
 entry:
   call @Person.__init__, %arg0, %arg1, %arg2
-  member.set %arg0, %arg3 {field = city}
+  member.set %arg0, %arg3 {field = city, index = 3}
   return
 }
-func @Mayor.introduce(%arg0: %Mayor) -> str {
+func @Mayor.introduce(%arg0: Ptr[%Mayor]) -> str {
 entry:
-  %0 = member.get str %arg0 {field = name, index = 0}
-  %1 = member.get i32 %arg0 {field = age, index = 1}
-  %2 = member.get str %arg0 {field = city, index = 2}
-  %3 = string.concat str @str.3, %0, @str.4, %1, @str.5, %2, @str.6
+  %0 = member.get str %arg0 {field = name, index = 1}
+  %1 = member.get i32 %arg0 {field = age, index = 2}
+  %2 = member.get str %arg0 {field = city, index = 3}
+  %3 = string.concat str @str.6, %0, @str.7, %1, @str.8, %2, @str.9
   return %3
 }
 func @print_name(%arg0: %union) -> void {
 entry:
-  runtime.print @str.7
-  %0 = type.is i1 %arg0 {negated = false, type = str}
-  cond_branch %0 {true = if.body0, false = if.body1}
+  %0 = union.is i1 %arg0 {negated = false, tag = 1}
+  cond_branch %0 {true = if.body0, false = if.test1}
 if.end:
   return
 if.body0:
-  %1 = union.extract str %arg0 {type = str}
+  %1 = union.extract str %arg0
   runtime.print %1
   branch {target = if.end}
+if.test1:
+  %2 = union.is i1 %arg0 {negated = false, tag = 0, type.id = -1035724581}
+  cond_branch %2 {true = if.body1, false = if.body2}
 if.body1:
-  %2 = union.extract %Person %arg0 {type = __main__.Person}
-  %3 = call str @Person.get_name, %2
-  runtime.print %3
+  runtime.print @str.10
+  %3 = union.extract Ptr[%Mayor] %arg0
+  %4 = call str @Person.get_name, %3
+  runtime.print %4
+  branch {target = if.end}
+if.body2:
+  runtime.print @str.11
+  %5 = union.extract Ptr[%Person] %arg0
+  %6 = call str @Person.get_name, %5
+  runtime.print %6
   branch {target = if.end}
 }
 func @main(%arg0: Ptr[i8]) -> void {
@@ -144,28 +180,280 @@ entry:
   %0 = aggregate.list Ptr[i8] 1, 2, 3 {element = i32, element.kind = 1}
   %1 = value.repr str %0 {kind = list, element.kind = 1}
   runtime.print %1
-  %2 = construct %Person @str.8, 25 {type = Person}
-  %3 = alloca Ptr[%Person]
-  store %2, %3
-  %4 = load %Person %3
-  %5 = call str @Person.introduce, %4
-  %6 = alloca Ptr[str]
-  store %5, %6
-  %7 = load str %6
-  runtime.print %7
-  %8 = construct %Mayor @str.9, 45, @str.10 {type = Mayor}
-  %9 = alloca Ptr[%Mayor]
-  store %8, %9
-  %10 = load %Mayor %9
-  %11 = call str @Mayor.introduce, %10
-  %12 = alloca Ptr[str]
-  store %11, %12
-  %13 = load str %12
-  runtime.print %13
-  %14 = load %Mayor %9
-  call @print_name, %14
-  %15 = load %Person %3
-  call @print_name, %15
-  call @print_name, @str.11
+  %2 = add i32 1, 1
+  runtime.print %2
+  %3 = value.repr str %arg0 {kind = list, element.kind = 0}
+  runtime.print %3
+  %4 = construct Ptr[%Person] @str.12, 25 {type = Person, type.id = -1016140896, init = Person.__init__}
+  %5 = alloca Ptr[Ptr[%Person]]
+  store %4, %5
+  %6 = load Ptr[%Person] %5
+  %7 = call str @Person.introduce, %6
+  %8 = alloca Ptr[str]
+  store %7, %8
+  %9 = load str %8
+  runtime.print %9
+  %10 = construct Ptr[%Mayor] @str.13, 45, @str.14 {type = Mayor, type.id = -1035724581, init = Mayor.__init__}
+  %11 = alloca Ptr[Ptr[%Mayor]]
+  store %10, %11
+  %12 = load Ptr[%Mayor] %11
+  %13 = call str @Mayor.introduce, %12
+  %14 = alloca Ptr[str]
+  store %13, %14
+  %15 = load str %14
+  runtime.print %15
+  %16 = load Ptr[%Person] %5
+  %17 = call i64 @Person.__len__, %16
+  %18 = string.concat str @str.15, %17
+  runtime.print %18
+  %19 = load Ptr[%Mayor] %11
+  %20 = cast.value Ptr[%Person] %19 {unsigned = false}
+  %21 = union.pack %union %20 {tag = 0}
+  call @print_name, %21
+  %22 = load Ptr[%Person] %5
+  %23 = union.pack %union %22 {tag = 0}
+  call @print_name, %23
+  %24 = union.pack %union @str.16 {tag = 1}
+  call @print_name, %24
+  %25 = load Ptr[%Person] %5
+  %26 = load Ptr[%Mayor] %11
+  %27 = aggregate.list Ptr[i8] %25, %26 {element = __main__.Person, element.kind = 6}
+  %28 = value.repr str %27 {kind = list, element.kind = 6, element.name = Person, element.repr = Person.__str__}
+  runtime.print %28
+  %29 = load Ptr[%Person] %5
+  %30 = load Ptr[%Mayor] %11
+  %31 = aggregate.list Ptr[i8] %29, %30 {element = __main__.Person, element.kind = 6}
+  %32 = alloca Ptr[Ptr[i8]]
+  store %31, %32
+  %33 = load Ptr[i8] %32
+  %34 = value.repr str %33 {kind = list, element.kind = 6, element.name = Person, element.repr = Person.__str__}
+  runtime.print %34
   return
+}
+extern func @sere_fs_read_text(%arg0: str) -> str
+extern func @sere_fs_write_text(%arg0: str, %arg1: str) -> i32
+extern func @sere_fs_exists(%arg0: str) -> i32
+extern func @sere_fs_is_file(%arg0: str) -> i32
+extern func @sere_fs_is_dir(%arg0: str) -> i32
+extern func @sere_fs_remove(%arg0: str) -> i32
+extern func @sere_fs_mkdir(%arg0: str) -> i32
+extern func @sere_fs_open(%arg0: str, %arg1: str) -> Ptr[i8]
+extern func @sere_fs_close(%arg0: Ptr[i8]) -> i32
+extern func @sere_fs_read_all(%arg0: Ptr[i8]) -> str
+extern func @sere_fs_write_all(%arg0: Ptr[i8], %arg1: str) -> i32
+extern func @sere_fs_read_bytes(%arg0: Ptr[i8], %arg1: Ptr[i8], %arg2: i64) -> i32
+extern func @sere_fs_write_bytes(%arg0: Ptr[i8], %arg1: Ptr[i8], %arg2: i64) -> i32
+extern func @sere_fs_seek(%arg0: Ptr[i8], %arg1: i64, %arg2: i32) -> void
+func @fs_fs___init__(%arg0: Ptr[%File], %arg1: str, %arg2: str) -> void {
+entry:
+  member.set %arg0, %arg1 {field = _path, index = 3}
+  member.set %arg0, %arg2 {field = _mode, index = 2}
+  %0 = call Ptr[i8] @sere_fs_open, %arg1, %arg2
+  member.set %arg0, %0 {field = _handle, index = 1}
+  return
+}
+func @fs_fs_read(%arg0: Ptr[%File]) -> str {
+entry:
+  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
+  %1 = pointer.is_null i1 %0 {negated = false}
+  cond_branch %1 {true = if.body0, false = if.end}
+if.end:
+  %2 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
+  %3 = call str @sere_fs_read_all, %2
+  return %3
+if.body0:
+  return @str.17
+}
+func @fs_fs_write(%arg0: Ptr[%File], %arg1: str) -> i1 {
+entry:
+  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
+  %1 = pointer.is_null i1 %0 {negated = false}
+  cond_branch %1 {true = if.body0, false = if.end}
+if.end:
+  %2 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
+  %3 = call i32 @sere_fs_write_all, %2, %arg1
+  %4 = alloca Ptr[i32]
+  store %3, %4
+  %5 = load i32 %4
+  %6 = cast.value i1 %5 {unsigned = false}
+  return %6
+if.body0:
+  return 0
+}
+func @fs_fs_read_bytes(%arg0: Ptr[%File], %arg1: i64) -> Ptr[i8] {
+entry:
+  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
+  %1 = pointer.is_null i1 %0 {negated = false}
+  cond_branch %1 {true = if.body0, false = if.end}
+if.end:
+  %3 = alloca Ptr[Ptr[i8]]
+  %4 = aggregate.array Ptr[i8] %arg1 {element.kind = 7}
+  store %4, %3
+  %5 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
+  %6 = load Ptr[i8] %3
+  %7 = index.address Ptr[i8] %6, 0
+  %8 = call i32 @sere_fs_read_bytes, %5, %7, %arg1
+  %9 = alloca Ptr[i32]
+  store %8, %9
+  %10 = alloca Ptr[Ptr[i8]]
+  %11 = aggregate.list Ptr[i8] {element = i8, element.kind = 7}
+  store %11, %10
+  %12 = load i32 %9
+  %13 = cmp.gt i1 %12, 0
+  cond_branch %13 {true = if.body0.1, false = if.end.1}
+if.body0:
+  %2 = aggregate.list Ptr[i8] {element = i8, element.kind = 7}
+  return %2
+if.end.1:
+  %24 = load Ptr[i8] %10
+  return %24
+if.body0.1:
+  %14 = load i32 %9
+  %15 = aggregate.range Ptr[i8] %14 {element.kind = 1}
+  %16 = iter.begin Ptr[i64] %15 {element = i32}
+  branch {target = for.cond}
+for.cond:
+  %17 = iter.has_next i1 %15, %16 {element = i32}
+  cond_branch %17 {true = for.body, false = for.end}
+for.body:
+  %18 = iter.next i32 %15, %16 {element = i32}
+  %19 = alloca Ptr[i32]
+  store %18, %19
+  %20 = load Ptr[i8] %10
+  %21 = load Ptr[i8] %3
+  %22 = load i32 %19
+  %23 = index i8 %21, %22
+  builtin.method %20, %23 {name = list.append, element = i8}
+  branch {target = for.cond}
+for.end:
+  branch {target = if.end.1}
+}
+func @fs_fs_write_bytes(%arg0: Ptr[%File], %arg1: Ptr[i8]) -> i1 {
+entry:
+  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
+  %1 = pointer.is_null i1 %0 {negated = false}
+  %2 = alloca Ptr[i1]
+  store %1, %2
+  cond_branch %1 {true = logic.end, false = logic.rhs}
+if.end:
+  %6 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
+  %7 = index.address Ptr[i8] %arg1, 0
+  %8 = runtime.len i64 %arg1 {kind = list[i8]}
+  %9 = call i32 @sere_fs_write_bytes, %6, %7, %8
+  %10 = alloca Ptr[i32]
+  store %9, %10
+  %11 = load i32 %10
+  %12 = cast.value i1 %11 {unsigned = false}
+  return %12
+if.body0:
+  return 0
+logic.rhs:
+  %3 = runtime.len i64 %arg1 {kind = list[i8]}
+  %4 = cmp.eq i1 %3, 0
+  store %4, %2
+  branch {target = logic.end}
+logic.end:
+  %5 = load i1 %2
+  cond_branch %5 {true = if.body0, false = if.end}
+}
+func @fs_fs_seek(%arg0: Ptr[%File], %arg1: i64, %arg2: i32) -> void {
+entry:
+  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
+  %1 = pointer.is_null i1 %0 {negated = true}
+  cond_branch %1 {true = if.body0, false = if.end}
+if.end:
+  return
+if.body0:
+  %2 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
+  call @sere_fs_seek, %2, %arg1, %arg2
+  branch {target = if.end}
+}
+func @fs_fs_close(%arg0: Ptr[%File]) -> i1 {
+entry:
+  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
+  %1 = pointer.is_null i1 %0 {negated = false}
+  cond_branch %1 {true = if.body0, false = if.end}
+if.end:
+  %2 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
+  %3 = call i32 @sere_fs_close, %2
+  %4 = cast.value i1 %3 {unsigned = false}
+  %5 = alloca Ptr[i1]
+  store %4, %5
+  %6 = load i1 %5
+  cond_branch %6 {true = if.body0.1, false = if.end.1}
+if.body0:
+  return 0
+if.end.1:
+  %8 = load i1 %5
+  return %8
+if.body0.1:
+  %7 = pointer.null Ptr[i8]
+  member.set %arg0, %7 {field = _handle, index = 1}
+  branch {target = if.end.1}
+}
+func @fs_fs___enter__(%arg0: Ptr[%File]) -> Ptr[%File] {
+entry:
+  return %arg0
+}
+func @fs_fs___exit__(%arg0: Ptr[%File]) -> void {
+entry:
+  %0 = call i1 @fs_fs_close, %arg0
+  return
+}
+func @fs_fs___repr__(%arg0: Ptr[%File]) -> str {
+entry:
+  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
+  %1 = pointer.is_null i1 %0 {negated = false}
+  cond_branch %1 {true = if.body0, false = if.end}
+if.end:
+  %5 = member.get str %arg0 {field = _path, index = 3}
+  %6 = member.get str %arg0 {field = _mode, index = 2}
+  %7 = string.concat str @str.21, %5, @str.22, %6, @str.23
+  return %7
+if.body0:
+  %2 = member.get str %arg0 {field = _path, index = 3}
+  %3 = member.get str %arg0 {field = _mode, index = 2}
+  %4 = string.concat str @str.18, %2, @str.19, %3, @str.20
+  return %4
+}
+func @fs_open(%arg0: str, %arg1: str) -> Ptr[%File] {
+entry:
+  %0 = construct Ptr[%File] %arg0, %arg1 {type = File, type.id = 723007075, init = fs_fs___init__}
+  return %0
+}
+func @fs_write_text(%arg0: str, %arg1: str) -> i1 {
+entry:
+  %0 = call i32 @sere_fs_write_text, %arg0, %arg1
+  %1 = cast.value i1 %0 {unsigned = false}
+  return %1
+}
+func @fs_exists(%arg0: str) -> i1 {
+entry:
+  %0 = call i32 @sere_fs_exists, %arg0
+  %1 = cast.value i1 %0 {unsigned = false}
+  return %1
+}
+func @fs_is_file(%arg0: str) -> i1 {
+entry:
+  %0 = call i32 @sere_fs_is_file, %arg0
+  %1 = cast.value i1 %0 {unsigned = false}
+  return %1
+}
+func @fs_is_dir(%arg0: str) -> i1 {
+entry:
+  %0 = call i32 @sere_fs_is_dir, %arg0
+  %1 = cast.value i1 %0 {unsigned = false}
+  return %1
+}
+func @fs_remove(%arg0: str) -> i1 {
+entry:
+  %0 = call i32 @sere_fs_remove, %arg0
+  %1 = cast.value i1 %0 {unsigned = false}
+  return %1
+}
+func @fs_mkdir(%arg0: str) -> i1 {
+entry:
+  %0 = call i32 @sere_fs_mkdir, %arg0
+  %1 = cast.value i1 %0 {unsigned = false}
+  return %1
 }

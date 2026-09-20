@@ -946,6 +946,17 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       auto alloc = module_->getOrInsertFunction("sere_alloc", ir.getPtrTy(), ir.getInt64Ty());
       result = ir.CreateCall(alloc, {llvm::ConstantExpr::getSizeOf(record)});
       ir.CreateStore(llvm::Constant::getNullValue(record), result);
+      // A class records its concrete type in the first word, which is what a
+      // runtime `is` test against a subclass reads back.
+      const std::string typeIdText = attribute(operation, "type.id");
+      if (!typeIdText.empty() && record->getStructNumElements() > 0 &&
+          record->getStructElementType(0)->isIntegerTy(32)) {
+        std::int32_t typeId = 0;
+        (void)std::from_chars(typeIdText.data(), typeIdText.data() + typeIdText.size(), typeId);
+        ir.CreateStore(
+            llvm::ConstantInt::get(record->getStructElementType(0), typeId),
+            ir.CreateStructGEP(record, result, 0));
+      }
       const auto init = functions_.find(attribute(operation, "init"));
       if (init != functions_.end()) {
         std::vector<llvm::Value*> args{result};
@@ -1112,10 +1123,45 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
           ir.getIntNTy(type->getPrimitiveSizeInBits())), type);
     } else result = ir.CreateLoad(type, ir.CreateIntToPtr(payload, ir.getPtrTy()));
   } else if (opcode == "union.is") {
-    int tag = -1;
-    const std::string text = attribute(operation, "tag");
-    (void)std::from_chars(text.data(), text.data() + text.size(), tag);
-    result = ir.CreateICmpEQ(ir.CreateExtractValue(operand(0), {0}), ir.getInt32(tag));
+    auto parseTag = [](const std::string& text) {
+      int tag = -1;
+      if (text.empty()) return tag;
+      (void)std::from_chars(text.data(), text.data() + text.size(), tag);
+      return tag;
+    };
+    llvm::Value* stored = ir.CreateExtractValue(operand(0), {0});
+    // `tags` lists several acceptable members; `tag` is the single-member form.
+    const std::string tags = attribute(operation, "tags");
+    llvm::Value* result_ = nullptr;
+    if (!tags.empty()) {
+      std::string current;
+      for (std::size_t index = 0; index <= tags.size(); ++index) {
+        const char character = index == tags.size() ? ',' : tags[index];
+        if (character != ',') {
+          current.push_back(character);
+          continue;
+        }
+        llvm::Value* test = ir.CreateICmpEQ(stored, ir.getInt32(parseTag(current)));
+        result_ = result_ == nullptr ? test : ir.CreateOr(result_, test);
+        current.clear();
+      }
+    }
+    if (result_ == nullptr) {
+      result_ = ir.CreateICmpEQ(stored, ir.getInt32(parseTag(attribute(operation, "tag"))));
+    }
+    // A class the union does not list is stored under the member it derives
+    // from, so the tag has to be confirmed by the record's own type id.
+    const std::string typeIdText = attribute(operation, "type.id");
+    if (!typeIdText.empty() && stored->getType()->isIntegerTy(32)) {
+      std::int32_t typeId = 0;
+      (void)std::from_chars(typeIdText.data(), typeIdText.data() + typeIdText.size(), typeId);
+      llvm::Value* boxed = ir.CreateIntToPtr(ir.CreateExtractValue(operand(0), {1}),
+                                             llvm::PointerType::getUnqual(*context_));
+      result_ = ir.CreateAnd(
+          result_, ir.CreateICmpEQ(ir.CreateLoad(llvm::Type::getInt32Ty(*context_), boxed),
+                                   ir.getInt32(typeId)));
+    }
+    result = result_;
     if (attribute(operation, "negated") == "true") result = ir.CreateNot(result);
   } else if (opcode == "await") {
     result = operand(0);

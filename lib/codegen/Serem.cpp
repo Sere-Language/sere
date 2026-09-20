@@ -113,6 +113,7 @@ ConstantString::ConstantString(std::string value) : Value(IRType::stringType()),
 ConstantString::ConstantString(std::string value, std::string globalName)
     : Value(IRType::stringType()), value_(std::move(value)), globalName_(std::move(globalName)) {}
 const std::string& ConstantString::value() const { return value_; }
+const std::string& ConstantString::globalName() const { return globalName_; }
 ValueKind ConstantString::valueKind() const { return ValueKind::ConstantString; }
 std::string ConstantString::display() const { return "\"" + value_ + "\""; }
 std::string ConstantString::reference() const {
@@ -140,6 +141,7 @@ const std::string& Operation::opcode() const { return opcode_; }
 const std::string& Operation::resultName() const { return resultName_; }
 const std::vector<ValuePtr>& Operation::operands() const { return operands_; }
 const std::unordered_map<std::string, std::string>& Operation::attributes() const { return attributes_; }
+void Operation::setOperands(std::vector<ValuePtr> operands) { operands_ = std::move(operands); }
 ValueKind Operation::valueKind() const { return ValueKind::Operation; }
 
 std::string Operation::display() const {
@@ -176,6 +178,9 @@ const std::string& BasicBlock::label() const { return label_; }
 const std::vector<std::shared_ptr<Operation>>& BasicBlock::operations() const { return operations_; }
 bool BasicBlock::isTerminated() const { return terminated_; }
 void BasicBlock::append(std::shared_ptr<Operation> operation) { operations_.push_back(std::move(operation)); }
+void BasicBlock::setOperations(std::vector<std::shared_ptr<Operation>> operations) {
+  operations_ = std::move(operations);
+}
 void BasicBlock::setTerminated() { terminated_ = true; }
 std::string BasicBlock::display() const {
   std::string text = label_ + ":\n";
@@ -293,6 +298,24 @@ IRFunction& IRModule::addFunction(std::unique_ptr<IRFunction> function) {
 IRFunction* IRModule::findFunction(std::string_view name) const {
   for (const auto& function : functions_) if (function->name() == name) return function.get();
   return nullptr;
+}
+bool IRModule::removeFunction(std::string_view name) {
+  for (auto iterator = functions_.begin(); iterator != functions_.end(); ++iterator) {
+    if ((*iterator)->name() == name) {
+      functions_.erase(iterator);
+      return true;
+    }
+  }
+  return false;
+}
+bool IRModule::removeGlobal(std::string_view name) {
+  for (auto iterator = globals_.begin(); iterator != globals_.end(); ++iterator) {
+    if ((*iterator)->name() == name) {
+      globals_.erase(iterator);
+      return true;
+    }
+  }
+  return false;
 }
 const std::vector<std::unique_ptr<TypeDef>>& IRModule::types() const { return types_; }
 const std::vector<std::unique_ptr<GlobalConstant>>& IRModule::globals() const { return globals_; }

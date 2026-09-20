@@ -8,6 +8,7 @@
 #include "sere/codegen/OptPipeline.h"
 #include "sere/codegen/Serem.h"
 #include "sere/codegen/SeremGenerator.h"
+#include "sere/codegen/SeremTransform.h"
 #include "sere/codegen/backends/SeremLLVMBackend.h"
 #include "sere/diag/DiagnosticEngine.h"
 #include "sere/driver/Frontend.h"
@@ -591,6 +592,9 @@ int compileInput(const CompilerOptions& options) {
       frontend.diagnostics().printAll();
       return 1;
     }
+    if (options.transformers) {
+      (void)serem::runTransformers(*seremModule);
+    }
     const std::string seremText = seremModule->display();
     std::string writeError;
     if (!writeSerem(seremText, outputPath, writeError)) {
@@ -628,6 +632,11 @@ int compileInput(const CompilerOptions& options) {
       seremGenerator.emit(*frontend.module(), options.inputPath.stem().string(), &imported,
                             &importedNames);
     if (seremModule != nullptr && !frontend.diagnostics().hasErrors()) {
+      // The same passes `--emit-serem` shows, so the printed IR is what the
+      // backend lowers.
+      if (options.transformers) {
+        (void)serem::runTransformers(*seremModule);
+      }
       SeremLLVMBackend backend(context, frontend.diagnostics());
       module = backend.emit(*seremModule, options.inputPath.string());
     }

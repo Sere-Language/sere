@@ -69,6 +69,47 @@ namespace {
   return hash;
 }
 
+/// Index of the tag a value of `type` is stored under inside `unionType`.
+///
+/// A class the union does not list verbatim is still boxed into the member it
+/// derives from, so a `Mayor` inside `Person | str` takes the `Person` tag. An
+/// `is` test has to compare against that same index, which is why both boxing
+/// and testing go through here rather than `unionMemberIndex` alone.
+[[nodiscard]] int unionMemberFor(const Type* unionType, const Type* type) {
+  if (unionType == nullptr || type == nullptr || !unionType->isUnion()) {
+    return -1;
+  }
+  const int exact = unionType->unionMemberIndex(type);
+  if (exact >= 0) {
+    return exact;
+  }
+  const Type* canonical = type->canonical();
+  const std::vector<const Type*>& members = unionType->args();
+  for (std::size_t index = 0; index < members.size(); ++index) {
+    if (members[index] != nullptr && canonical->isSubtypeOf(members[index]->canonical())) {
+      return static_cast<int>(index);
+    }
+  }
+  return -1;
+}
+
+/// Indices of the union members that are themselves instances of `type`, so
+/// `is Base` on a `Sub | Other` union matches through `Sub`'s tag.
+[[nodiscard]] std::vector<int> unionMembersDerivedFrom(const Type* unionType, const Type* type) {
+  std::vector<int> indices;
+  if (unionType == nullptr || type == nullptr || !unionType->isUnion()) {
+    return indices;
+  }
+  const Type* canonical = type->canonical();
+  const std::vector<const Type*>& members = unionType->args();
+  for (std::size_t index = 0; index < members.size(); ++index) {
+    if (members[index] != nullptr && members[index]->canonical()->isSubtypeOf(canonical)) {
+      indices.push_back(static_cast<int>(index));
+    }
+  }
+  return indices;
+}
+
 [[nodiscard]] unsigned llvmFieldIndex(const Type* type, int semanticIndex) {
   unsigned llvm = recordHasTypeId(type) ? 1u : 0u;
   if (type == nullptr) {
@@ -1084,16 +1125,9 @@ llvm::Value* IRGenerator::emitCoerce(llvm::IRBuilder<>& builder,
     if (fromTy == toTy) {
       return value;
     }
-    int tag = to->unionMemberIndex(from);
-    if (tag < 0) {
-      for (std::size_t index = 0; index < to->args().size(); ++index) {
-        const Type* member = to->args()[index];
-        if (member != nullptr && member->canonical() == from) {
-          tag = static_cast<int>(index);
-          break;
-        }
-      }
-    }
+    // A subclass the union does not list takes the tag of the member it derives
+    // from, which is what an `is` test against that subclass compares with.
+    const int tag = unionMemberFor(to, from);
     llvm::Value* packed = llvm::UndefValue::get(toTy);
     packed = builder.CreateInsertValue(packed, builder.getInt32(tag < 0 ? 0 : tag), {0});
     packed = builder.CreateInsertValue(packed, bitsFromValue(builder, value, from), {1});
@@ -3684,11 +3718,43 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
       return builder.getInt1(expr.op() == BinaryOp::Is ? match : !match);
     }
     if (target != nullptr && valueType != nullptr && valueType->isUnion()) {
+      // A member the union lists verbatim is answered by the tag alone.
       const int member = valueType->unionMemberIndex(target);
-      if (member >= 0) {
+      // A class the union does not list is boxed under the member it derives
+      // from, so the tag only narrows the answer down to that member and the
+      // boxed record's own type id has to confirm the test.
+      const int base = member >= 0 ? -1 : unionMemberFor(valueType, target);
+      if (member >= 0 || (base >= 0 && recordHasTypeId(target))) {
         llvm::Value* packed = emitExpr(builder, expr.left());
+        if (packed == nullptr) {
+          return nullptr;
+        }
         llvm::Value* tag = builder.CreateExtractValue(packed, {0});
-        llvm::Value* match = builder.CreateICmpEQ(tag, builder.getInt32(member));
+        llvm::Value* match =
+            builder.CreateICmpEQ(tag, builder.getInt32(member >= 0 ? member : base));
+        if (base >= 0) {
+          llvm::Value* boxed = builder.CreateIntToPtr(builder.CreateExtractValue(packed, {1}),
+                                                      builder.getPtrTy());
+          match = builder.CreateAnd(
+              match, builder.CreateICmpEQ(builder.CreateLoad(builder.getInt32Ty(), boxed),
+                                          builder.getInt32(recordTypeId(target))));
+        }
+        return expr.op() == BinaryOp::Is ? match : builder.CreateNot(match);
+      }
+      // The tested type can also be a base of one or more members, in which case
+      // every one of their tags matches.
+      const std::vector<int> derived = unionMembersDerivedFrom(valueType, target);
+      if (!derived.empty()) {
+        llvm::Value* packed = emitExpr(builder, expr.left());
+        if (packed == nullptr) {
+          return nullptr;
+        }
+        llvm::Value* tag = builder.CreateExtractValue(packed, {0});
+        llvm::Value* match = nullptr;
+        for (const int index : derived) {
+          llvm::Value* current = builder.CreateICmpEQ(tag, builder.getInt32(index));
+          match = match == nullptr ? current : builder.CreateOr(match, current);
+        }
         return expr.op() == BinaryOp::Is ? match : builder.CreateNot(match);
       }
       return builder.getInt1(expr.op() == BinaryOp::IsNot);

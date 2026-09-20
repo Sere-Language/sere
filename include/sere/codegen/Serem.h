@@ -34,6 +34,22 @@ enum class ListElementKind : std::int32_t {
   UInt16 = 10,
 };
 
+/// Identity of a record type, stored in the first word of every class value.
+///
+/// A union can only tag the members it lists, so a `Mayor` boxed into a
+/// `Person | str` parameter carries the `Person` tag and the tag alone cannot
+/// answer `person is Mayor`. The header word supplies that missing precision,
+/// and deriving it from the type name keeps the generator and the backend in
+/// agreement without exchanging anything out of band.
+[[nodiscard]] inline std::uint32_t recordTypeId(std::string_view name) {
+  std::uint32_t hash = 2166136261u;
+  for (const char character : name) {
+    hash ^= static_cast<unsigned char>(character);
+    hash *= 16777619u;
+  }
+  return hash;
+}
+
 class IRType {
 public:
   enum class Kind {
@@ -148,6 +164,9 @@ public:
   explicit ConstantString(std::string value);
   ConstantString(std::string value, std::string globalName);
   [[nodiscard]] const std::string& value() const;
+  /// Name of the module global that holds this literal, empty when the literal
+  /// is inline. Transformers use it to find the globals still in use.
+  [[nodiscard]] const std::string& globalName() const;
   [[nodiscard]] ValueKind valueKind() const override;
   [[nodiscard]] std::string display() const override;
   [[nodiscard]] std::string reference() const override;
@@ -191,6 +210,9 @@ public:
   [[nodiscard]] const std::string& resultName() const;
   [[nodiscard]] const std::vector<ValuePtr>& operands() const;
   [[nodiscard]] const std::unordered_map<std::string, std::string>& attributes() const;
+  /// Replaces every operand. A transformer rewrites a folded value's uses here
+  /// so the replacements are visible to the printer and the backends.
+  void setOperands(std::vector<ValuePtr> operands);
   [[nodiscard]] ValueKind valueKind() const override;
   [[nodiscard]] std::string display() const override;
   [[nodiscard]] std::string reference() const override;
@@ -210,6 +232,9 @@ public:
   [[nodiscard]] const std::vector<std::shared_ptr<Operation>>& operations() const;
   [[nodiscard]] bool isTerminated() const;
   void append(std::shared_ptr<Operation> operation);
+  /// Replaces the instruction list. Transformers drop folded operations this
+  /// way instead of leaving them behind in the printed IR.
+  void setOperations(std::vector<std::shared_ptr<Operation>> operations);
   void setTerminated();
   [[nodiscard]] std::string display() const;
 
@@ -289,6 +314,11 @@ public:
   GlobalConstant& addGlobal(std::unique_ptr<GlobalConstant> global);
   IRFunction& addFunction(std::unique_ptr<IRFunction> function);
   [[nodiscard]] IRFunction* findFunction(std::string_view name) const;
+  /// Drops the named function, reporting whether anything was removed. The dead
+  /// code pass collects the names first, so removal cannot invalidate a walk.
+  bool removeFunction(std::string_view name);
+  /// Drops the named global, reporting whether anything was removed.
+  bool removeGlobal(std::string_view name);
   [[nodiscard]] const std::vector<std::unique_ptr<TypeDef>>& types() const;
   [[nodiscard]] const std::vector<std::unique_ptr<GlobalConstant>>& globals() const;
   [[nodiscard]] const std::vector<std::unique_ptr<IRFunction>>& functions() const;
