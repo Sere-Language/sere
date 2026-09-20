@@ -726,6 +726,185 @@ bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbo
   return true;
 }
 
+void SeremGenerator::pushFunctionState() {
+  FunctionState state;
+  state.builder = std::move(builder_);
+  state.function = function_;
+  state.locals = std::move(locals_);
+  state.localTypes = std::move(localTypes_);
+  state.statics = std::move(functionStatics_);
+  state.staticTypes = std::move(staticTypes_);
+  state.returnType = returnType_;
+  state.ownerClass = std::move(currentOwnerClass_);
+  state.tryHandlers = std::move(tryHandlers_);
+  state.defers = std::move(defers_);
+  state.breakTargets = std::move(breakTargets_);
+  state.continueTargets = std::move(continueTargets_);
+  state.coroutine = std::move(coroutineToken_);
+  state.captures = std::move(captureSymbols_);
+  savedStates_.push_back(std::move(state));
+  builder_.reset();
+  function_ = nullptr;
+  locals_.clear();
+  localTypes_.clear();
+  functionStatics_.clear();
+  staticTypes_.clear();
+  returnType_ = nullptr;
+  currentOwnerClass_.clear();
+  tryHandlers_.clear();
+  defers_.clear();
+  breakTargets_.clear();
+  continueTargets_.clear();
+  coroutineToken_.reset();
+  captureSymbols_.clear();
+}
+
+void SeremGenerator::popFunctionState() {
+  if (savedStates_.empty())
+    return;
+  FunctionState state = std::move(savedStates_.back());
+  savedStates_.pop_back();
+  builder_ = std::move(state.builder);
+  function_ = state.function;
+  locals_ = std::move(state.locals);
+  localTypes_ = std::move(state.localTypes);
+  functionStatics_ = std::move(state.statics);
+  staticTypes_ = std::move(state.staticTypes);
+  returnType_ = state.returnType;
+  currentOwnerClass_ = std::move(state.ownerClass);
+  tryHandlers_ = std::move(state.tryHandlers);
+  defers_ = std::move(state.defers);
+  breakTargets_ = std::move(state.breakTargets);
+  continueTargets_ = std::move(state.continueTargets);
+  coroutineToken_ = std::move(state.coroutine);
+  captureSymbols_ = std::move(state.captures);
+}
+
+bool SeremGenerator::emitLambdaFunction(const LambdaExpr& expression) {
+  const Type* type = expression.resolvedType();
+  if (type == nullptr || expression.llvmName().empty()) {
+    return unsupported(expression, "lambda without a resolved signature");
+  }
+  pushFunctionState();
+  std::vector<serem::IRType> params;
+  for (const Type* param : type->paramTypes())
+    params.push_back(lowerType(param));
+  auto irFunction = std::make_unique<serem::IRFunction>(
+      expression.llvmName(), std::move(params), lowerType(type->returnType()));
+  function_ = &module_->addFunction(std::move(irFunction));
+  builder_ = std::make_unique<serem::IRBuilder>(*function_);
+  returnType_ = type->returnType();
+  for (std::size_t index = 0; index < expression.params().size(); ++index) {
+    if (index >= function_->arguments().size())
+      break;
+    locals_[expression.params()[index].name] = function_->argument(index);
+    localTypes_[expression.params()[index].name] =
+        index < type->paramTypes().size() ? type->paramTypes()[index] : nullptr;
+  }
+  serem::ValuePtr result = emitExpression(expression.body());
+  if (!builder_->currentBlock().isTerminated()) {
+    if (result == nullptr) {
+      builder_->retVoid();
+    } else {
+      builder_->ret(
+          coerce(std::move(result), expression.body().resolvedType(), type->returnType()));
+    }
+  }
+  popFunctionState();
+  functions_.insert_or_assign(expression.llvmName(), lowerType(type));
+  return true;
+}
+
+bool SeremGenerator::emitNestedFunction(const FunctionDef& function) {
+  const Type* type = functionType(function);
+  if (type == nullptr)
+    return unsupported(function, "nested function without a resolved type");
+  const std::string symbol = function.name();
+  // A nested body reaches an outer local through a module global, which is what
+  // a function value passed between them can carry in this ABI.
+  std::unordered_map<std::string, std::string> captures;
+  for (const FunctionDef::Capture& capture : function.captures()) {
+    const std::string slot = "sere.capture." + symbol + "." + capture.name;
+    const auto known = localTypes_.find(capture.name);
+    const Type* stored = known == localTypes_.end() ? capture.type : known->second;
+    const serem::IRType irType = lowerType(stored);
+    serem::ValuePtr value = local(capture.name);
+    if (value != nullptr && value->valueKind() != serem::ValueKind::Argument) {
+      value = builder_->load(value, irType);
+    }
+    if (value != nullptr && irType.kind() == serem::IRType::Kind::Function) {
+      // A function value is parked as an address so the nested frame can call it
+      // indirectly.
+      value = builder_->operation("cast.value",
+                                  serem::IRType::ptr(serem::IRType::i8()),
+                                  {std::move(value)},
+                                  {{"unsigned", "false"}});
+    }
+    (void)builder_->operation(
+        "static.set", serem::IRType::voidType(), {std::move(value)}, {{"symbol", slot}});
+    captures.insert_or_assign(capture.name, slot);
+  }
+  pushFunctionState();
+  captureSymbols_ = std::move(captures);
+  const bool ok = emitFunction(function, symbol);
+  popFunctionState();
+  if (ok) {
+    functionNames_[&function] = symbol;
+    functions_.insert_or_assign(symbol, lowerType(type));
+  }
+  return ok;
+}
+
+serem::ValuePtr
+SeremGenerator::emitBoundMethod(const Type* owner, const std::string& method, const Expr& object) {
+  const Type* record = owner == nullptr ? nullptr : owner->valueType();
+  const std::string symbol = methodSymbol(record, method);
+  if (symbol.empty())
+    return nullptr;
+  const auto found = functions_.find(symbol);
+  if (found == functions_.end())
+    return nullptr;
+  const serem::IRType methodType = found->second;
+  if (methodType.kind() != serem::IRType::Kind::Function || methodType.parameters().empty()) {
+    return nullptr;
+  }
+  // The receiver outlives the expression that produced the bound method, so it
+  // is parked in a global the thunk reads back.
+  const std::size_t ordinal = boundThunks_++;
+  const std::string slot = "sere.bound." + symbol + "." + std::to_string(ordinal);
+  const serem::IRType receiverType = methodType.parameters().front();
+  const std::string thunkName = symbol + "$bound$" + std::to_string(ordinal);
+  const std::vector<serem::IRType> boundParams(methodType.parameters().begin() + 1,
+                                               methodType.parameters().end());
+  // The assignment is part of the enclosing expression's order, so bind first.
+  (void)builder_->operation(
+      "static.set", serem::IRType::voidType(), {emitExpression(object)}, {{"symbol", slot}});
+  const serem::IRType boundType = serem::IRType::function(*methodType.pointee(), boundParams);
+  pushFunctionState();
+  auto thunk = std::make_unique<serem::IRFunction>(thunkName, boundParams, *methodType.pointee());
+  function_ = &module_->addFunction(std::move(thunk));
+  builder_ = std::make_unique<serem::IRBuilder>(*function_);
+  returnType_ = nullptr;
+  std::vector<serem::ValuePtr> arguments;
+  arguments.push_back(builder_->operation("static.get", receiverType, {}, {{"symbol", slot}}));
+  for (std::size_t index = 0; index < boundParams.size(); ++index) {
+    arguments.push_back(function_->argument(index));
+  }
+  serem::ValuePtr inner = builder_->call(std::make_shared<serem::FunctionRef>(symbol, methodType),
+                                         std::move(arguments),
+                                         *methodType.pointee());
+  if (!builder_->currentBlock().isTerminated()) {
+    if (methodType.pointee()->isVoid()) {
+      builder_->retVoid();
+    } else {
+      builder_->ret(std::move(inner));
+    }
+  }
+  popFunctionState();
+  functions_.insert_or_assign(thunkName, boundType);
+  return std::make_shared<serem::FunctionRef>(thunkName, boundType);
+}
+
 bool SeremGenerator::emitBlock(const std::vector<std::unique_ptr<Stmt>>& statements) {
   for (const std::unique_ptr<Stmt>& statement : statements) {
     if (statement != nullptr && !emitStatement(*statement)) return false;
@@ -1260,6 +1439,10 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
   case NodeKind::ExprStmt:
     (void)emitExpression(static_cast<const ExprStmt&>(statement).expression());
     return true;
+  case NodeKind::FunctionDef:
+    // An inner `def` becomes a function of its own, which is what makes it a
+    // callable value for the enclosing body.
+    return emitNestedFunction(static_cast<const FunctionDef&>(statement));
   case NodeKind::PassStmt:
     return true;
   default:
@@ -1502,6 +1685,17 @@ serem::ValuePtr SeremGenerator::emitExpression(const Expr& expression) {
     const auto& cast = static_cast<const CastExpr&>(expression);
     return coerce(emitExpression(cast.value()), cast.value().resolvedType(), expression.resolvedType());
   }
+  case NodeKind::LambdaExpr: {
+    const auto& lambda = static_cast<const LambdaExpr&>(expression);
+    const auto known = functions_.find(lambda.llvmName());
+    if (known == functions_.end() && !emitLambdaFunction(lambda)) {
+      return std::make_shared<serem::ConstantInt>(0, serem::IRType::ptr(serem::IRType::i8()));
+    }
+    const auto emitted = functions_.find(lambda.llvmName());
+    const serem::IRType type =
+        emitted == functions_.end() ? lowerType(expression.resolvedType()) : emitted->second;
+    return std::make_shared<serem::FunctionRef>(lambda.llvmName(), type);
+  }
   default:
     return builder_->operation("sere.expression", lowerType(expression.resolvedType()), {},
                                {{"kind", std::to_string(static_cast<int>(expression.kind()))}});
@@ -1682,11 +1876,24 @@ serem::ValuePtr SeremGenerator::emitName(const NameExpr& expression) {
     }
     return coerce(value, stored, expression.resolvedType());
   }
+  // A captured outer local was parked in a module global when the inner body was
+  // defined, and reads back as the address it was stored under.
+  const auto captured = captureSymbols_.find(expression.name());
+  if (captured != captureSymbols_.end()) {
+    return builder_->operation(
+        "static.get", serem::IRType::ptr(serem::IRType::i8()), {}, {{"symbol", captured->second}});
+  }
   const auto symbol = functionSymbols_.find(expression.name());
   const auto found = functions_.find(symbol == functionSymbols_.end() ? expression.name() : symbol->second);
   if (found != functions_.end()) {
     return std::make_shared<serem::FunctionRef>(
         symbol == functionSymbols_.end() ? expression.name() : symbol->second, found->second);
+  }
+  if (expression.resolvedType() != nullptr && expression.resolvedType()->isTypeObject()) {
+    // A class used as a value only ever stands for its type object, which a
+    // `Class[T]` parameter passes along to a constructor. Nothing dereferences
+    // it, so the null pointer is enough of a stand-in.
+    return std::make_shared<serem::ConstantInt>(0, serem::IRType::ptr(serem::IRType::i8()));
   }
   return std::make_shared<serem::FunctionRef>(expression.name(), lowerType(expression.resolvedType()));
 }
@@ -2136,8 +2343,16 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
                                                        {serem::IRType::ptr(serem::IRType::i8())})));
       decoratedArgs.push_back(std::make_shared<serem::FunctionRef>(
           name, serem::IRType::function(lowerType(expression.resolvedType()), {})));
-      for (const std::unique_ptr<Expr>& argument : expression.arguments()) {
-        decoratedArgs.push_back(emitExpression(*argument));
+      // Sema reorders a call with keyword or default arguments, so the bound
+      // list is what the callee expects positionally.
+      if (!expression.boundArguments().empty()) {
+        for (const Expr* argument : expression.boundArguments()) {
+          decoratedArgs.push_back(argument == nullptr ? nullptr : emitExpression(*argument));
+        }
+      } else {
+        for (const std::unique_ptr<Expr>& argument : expression.arguments()) {
+          decoratedArgs.push_back(emitExpression(*argument));
+        }
       }
       return builder_->operation("decorated.call", lowerType(expression.resolvedType()),
                                 std::move(decoratedArgs));
@@ -2310,10 +2525,29 @@ serem::ValuePtr SeremGenerator::emitMember(const MemberExpr& expression) {
                                                   lowerType(expression.resolvedType()));
     }
   }
-  if (expression.resolvedType() != nullptr && expression.resolvedType()->kind() == TypeKind::Function &&
-      expression.object().kind() == NodeKind::NameExpr) {
-    return std::make_shared<serem::FunctionRef>(expression.field(),
-                                                lowerType(expression.resolvedType()));
+  // A method reached through a value, or through its class name, is a callable
+  // of its own: the symbol has to name the class that declares it, and a
+  // receiver taken from a value is bound by a thunk.
+  if (expression.resolvedType() != nullptr &&
+      expression.resolvedType()->kind() == TypeKind::Function) {
+    const Type* owner = expression.object().resolvedType();
+    const bool throughTypeName = expression.object().kind() == NodeKind::NameExpr &&
+                                 owner != nullptr && owner->isTypeObject();
+    if (throughTypeName) {
+      const Type* record = owner->typeObjectInstance();
+      const std::string symbol = methodSymbol(record, expression.field());
+      if (!symbol.empty()) {
+        const auto found = functions_.find(symbol);
+        if (found != functions_.end()) {
+          return std::make_shared<serem::FunctionRef>(symbol, found->second);
+        }
+      }
+      return std::make_shared<serem::FunctionRef>(expression.field(),
+                                                  lowerType(expression.resolvedType()));
+    }
+    if (serem::ValuePtr bound = emitBoundMethod(owner, expression.field(), expression.object())) {
+      return bound;
+    }
   }
   std::unordered_map<std::string, std::string> attributes{{"field", expression.field()}};
   if (expression.object().resolvedType() != nullptr) {

@@ -30,6 +30,36 @@ private:
   [[nodiscard]] bool emitFunction(const FunctionDef& function, std::string symbol = {});
   [[nodiscard]] bool emitStatement(const Stmt& statement);
   [[nodiscard]] bool emitBlock(const std::vector<std::unique_ptr<Stmt>>& statements);
+  /// Lowers a lambda into a standalone function and yields its address. Lambdas
+  /// capture nothing, so a plain function pointer is the whole value.
+  [[nodiscard]] bool emitLambdaFunction(const LambdaExpr& expression);
+  /// Lowers an inner `def` into a standalone function, so a callable value can
+  /// name it like any other function.
+  [[nodiscard]] bool emitNestedFunction(const FunctionDef& function);
+  /// Emits a thunk that binds `receiver` to `owner::method`'s first parameter,
+  /// so `obj.method` is callable as a value.
+  [[nodiscard]] serem::ValuePtr
+  emitBoundMethod(const Type* owner, const std::string& method, const Expr& object);
+  /// Per-function emission state, swapped out while a nested body is lowered
+  /// into its own frame.
+  struct FunctionState {
+    std::unique_ptr<serem::IRBuilder> builder;
+    serem::IRFunction* function = nullptr;
+    std::unordered_map<std::string, serem::ValuePtr> locals;
+    std::unordered_map<std::string, const Type*> localTypes;
+    std::unordered_map<std::string, std::string> statics;
+    std::unordered_map<std::string, const Type*> staticTypes;
+    const Type* returnType = nullptr;
+    std::string ownerClass;
+    std::vector<std::string> tryHandlers;
+    std::vector<const DeferStmt*> defers;
+    std::vector<serem::BasicBlock*> breakTargets;
+    std::vector<serem::BasicBlock*> continueTargets;
+    serem::ValuePtr coroutine;
+    std::unordered_map<std::string, std::string> captures;
+  };
+  void pushFunctionState();
+  void popFunctionState();
   [[nodiscard]] bool emitIf(const IfStmt& statement);
   [[nodiscard]] bool emitWhile(const WhileStmt& statement);
   [[nodiscard]] bool emitFor(const ForStmt& statement);
@@ -122,6 +152,13 @@ private:
   /// Receiver type of the method being lowered: the instantiated class when a
   /// generic class is specialised, so the body reads the instance's layout.
   const Type* receiverOverride_ = nullptr;
+  /// Saved frames of the bodies currently being lowered inside another one.
+  std::vector<FunctionState> savedStates_;
+  /// Captured outer locals the body being lowered reads through a global, keyed
+  /// by the name the body uses for them.
+  std::unordered_map<std::string, std::string> captureSymbols_;
+  /// Number of bound-method thunks emitted, used to name each one uniquely.
+  std::size_t boundThunks_ = 0;
 };
 
 } // namespace sere
