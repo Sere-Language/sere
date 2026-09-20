@@ -308,6 +308,14 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     if (source->isFloatingPointTy() && target->isIntegerTy())
       return isSigned ? ir.CreateFPToSI(value, target) : ir.CreateFPToUI(value, target);
     if (source->isPointerTy() && target->isPointerTy()) return value;
+    if (source->isPointerTy() && target->isIntegerTy()) {
+      // A class reference or a boxed value can be read back as a word.
+      llvm::Value* word = ir.CreatePtrToInt(value, ir.getInt64Ty());
+      return target->getIntegerBitWidth() == 64 ? word : ir.CreateTrunc(word, target);
+    }
+    if (source->isIntegerTy() && target->isPointerTy()) {
+      return ir.CreateIntToPtr(ir.CreateIntCast(value, ir.getInt64Ty(), isSigned), target);
+    }
     report("unsupported Serem value conversion");
     return llvm::UndefValue::get(target);
   };
@@ -521,6 +529,37 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       return result;
     }
     auto item = module_->getOrInsertFunction("sere_list_item", ir.getPtrTy(), ir.getPtrTy(), ir.getInt64Ty());
+    // A string is indexed as characters, and a negative index counts from the
+    // end, which the runtime helper already handles.
+    if (operands[0]->type().kind() == serem::IRType::Kind::String) {
+      llvm::FunctionCallee indexFn = module_->getOrInsertFunction("sere_str_index",
+                                                                  ir.getVoidTy(),
+                                                                  ir.getPtrTy(),
+                                                                  ir.getInt64Ty(),
+                                                                  ir.getInt64Ty(),
+                                                                  ir.getPtrTy(),
+                                                                  ir.getPtrTy());
+      llvm::FunctionCallee length =
+          module_->getOrInsertFunction("strlen", ir.getInt64Ty(), ir.getPtrTy());
+      llvm::Value* data = ir.CreateAlloca(ir.getPtrTy());
+      llvm::Value* dataLength = ir.CreateAlloca(ir.getInt64Ty());
+      ir.CreateCall(indexFn,
+                    {operand(0),
+                     ir.CreateCall(length, {operand(0)}),
+                     convert(operand(1), ir.getInt64Ty()),
+                     data,
+                     dataLength});
+      if (opcode == "index.address") {
+        result = data;
+      } else if (opcode == "index.set") {
+        report("Serem cannot assign through a string index");
+      } else {
+        result = ir.CreateLoad(ir.getPtrTy(), data);
+      }
+      if (!operation.resultName().empty())
+        values_[&operation] = result;
+      return result;
+    }
     llvm::Value* address = ir.CreateCall(item, {operand(0), convert(operand(1), ir.getInt64Ty())});
     if (opcode == "index.address") result = address;
     else if (opcode == "index.set") ir.CreateStore(operand(2), address);

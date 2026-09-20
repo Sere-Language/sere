@@ -251,10 +251,16 @@ std::string SeremGenerator::functionName(const FunctionDef& function) const {
   const auto known = functionNames_.find(&function);
   if (known != functionNames_.end()) return known->second;
   if (function.isExtern()) return function.externName();
+  // An imported declaration names its own module, which is also the prefix the
+  // call site resolves through sema; preferring it keeps both spellings equal.
+  const std::string& module = function.modulePrefix();
   if (function.isMethod() && !function.ownerClass().empty()) {
+    if (!module.empty())
+      return module + "_" + function.ownerClass() + "." + function.name();
     return function.ownerClass() + "." + function.name();
   }
-  if (!function.modulePrefix().empty()) return function.modulePrefix() + "_" + function.name();
+  if (!module.empty())
+    return module + "_" + function.name();
   return function.name();
 }
 
@@ -291,7 +297,10 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
     for (const std::unique_ptr<Stmt>& statement : current->statements()) {
     if (statement != nullptr && statement->kind() == NodeKind::FunctionDef) {
       const auto& function = static_cast<const FunctionDef&>(*statement);
-      if (!prefix.empty() && !function.isExtern()) functionNames_[&function] = prefix + "_" + function.name();
+      // The function's own module prefix wins: it is what the call site names.
+      if (!prefix.empty() && !function.isExtern() && function.modulePrefix().empty()) {
+        functionNames_[&function] = prefix + "_" + function.name();
+      }
       if (!function.decorators().empty()) {
         decorators_[functionName(function)] = function.decorators().front();
         decorators_[function.name()] = function.decorators().front();
@@ -726,6 +735,35 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
   }
   case NodeKind::AssignStmt: {
     const auto& assign = static_cast<const AssignStmt&>(statement);
+    // `a, b = pair` reads each element of the aggregate out by position.
+    if (assign.target().kind() == NodeKind::TupleExpr) {
+      const auto& tuple = static_cast<const TupleExpr&>(assign.target());
+      serem::ValuePtr packed = coerce(emitExpression(assign.value()),
+                                      assign.value().resolvedType(),
+                                      assign.target().resolvedType());
+      if (packed == nullptr) {
+        return false;
+      }
+      const Type* target = assign.target().resolvedType();
+      const Type* canonical = target == nullptr ? nullptr : target->canonical();
+      for (std::size_t index = 0; index < tuple.elements().size(); ++index) {
+        const Expr& element = *tuple.elements()[index];
+        if (element.kind() != NodeKind::NameExpr) {
+          continue;
+        }
+        const auto& name = static_cast<const NameExpr&>(element);
+        const Type* elementType = canonical != nullptr && index < canonical->args().size()
+                                      ? canonical->args()[index]
+                                      : name.resolvedType();
+        const serem::IRType lowered = lowerType(elementType);
+        serem::ValuePtr extracted = builder_->extract(packed, index, lowered);
+        serem::ValuePtr slot = builder_->alloca(lowered);
+        builder_->store(std::move(extracted), slot);
+        locals_[name.name()] = slot;
+        localTypes_[name.name()] = elementType;
+      }
+      return true;
+    }
     serem::ValuePtr value = coerce(emitExpression(assign.value()), assign.value().resolvedType(),
                                     assign.target().resolvedType());
     if (assign.target().kind() == NodeKind::MemberExpr) {
