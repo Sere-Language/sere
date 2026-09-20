@@ -917,6 +917,14 @@ std::vector<std::unique_ptr<FunctionDef>>& EnumDef::methods() {
   return methods_;
 }
 
+void EnumDef::setDocstring(std::string docstring) {
+  docstring_ = std::move(docstring);
+}
+
+const std::string& EnumDef::docstring() const {
+  return docstring_;
+}
+
 void EnumDef::setFlags(bool value) {
   isFlags_ = value;
 }
@@ -1093,6 +1101,14 @@ std::vector<std::unique_ptr<Stmt>>& FunctionDef::body() {
 
 const std::string& FunctionDef::externName() const {
   return externName_;
+}
+
+void FunctionDef::setDocstring(std::string docstring) {
+  docstring_ = std::move(docstring);
+}
+
+const std::string& FunctionDef::docstring() const {
+  return docstring_;
 }
 
 bool FunctionDef::isExtern() const {
@@ -1286,6 +1302,14 @@ ClassDef::ClassDef(SourceRange range,
 
 const std::string& ClassDef::name() const {
   return name_;
+}
+
+void ClassDef::setDocstring(std::string docstring) {
+  docstring_ = std::move(docstring);
+}
+
+const std::string& ClassDef::docstring() const {
+  return docstring_;
 }
 
 const std::vector<FieldDecl>& ClassDef::fields() const {

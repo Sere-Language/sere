@@ -949,6 +949,11 @@ llvm::Value* bitsFromValue(llvm::IRBuilder<>& builder, llvm::Value* value, const
   if (from->isPointerLike() || from->isSequence() || from->isDict()) {
     return builder.CreatePtrToInt(value, builder.getInt64Ty());
   }
+  if (from->isRecord()) {
+    llvm::AllocaInst* storage = builder.CreateAlloca(value->getType(), nullptr, "union.record");
+    builder.CreateStore(value, storage);
+    return builder.CreatePtrToInt(storage, builder.getInt64Ty());
+  }
   return builder.getInt64(0);
 }
 
@@ -978,6 +983,9 @@ valueFromBits(llvm::IRBuilder<>& builder, llvm::Value* bits, const Type* to, llv
   }
   if (to->isPointerLike() || to->isSequence() || to->isDict()) {
     return builder.CreateIntToPtr(bits, dest);
+  }
+  if (to->isRecord()) {
+    return builder.CreateLoad(dest, builder.CreateIntToPtr(bits, builder.getPtrTy()));
   }
   return llvm::Constant::getNullValue(dest);
 }
@@ -3577,9 +3585,13 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
       return builder.getInt1(expr.op() == BinaryOp::Is ? match : !match);
     }
     if (target != nullptr && valueType != nullptr && valueType->isUnion()) {
-      // The current union ABI carries no runtime type tag for scalar members;
-      // keep the identity test well-formed and let narrowed branch typing drive
-      // the useful path.
+      const int member = valueType->unionMemberIndex(target);
+      if (member >= 0) {
+        llvm::Value* packed = emitExpr(builder, expr.left());
+        llvm::Value* tag = builder.CreateExtractValue(packed, {0});
+        llvm::Value* match = builder.CreateICmpEQ(tag, builder.getInt32(member));
+        return expr.op() == BinaryOp::Is ? match : builder.CreateNot(match);
+      }
       return builder.getInt1(expr.op() == BinaryOp::IsNot);
     }
     if (recordHasTypeId(target) && locals_.find(asName(expr.right())->name()) == locals_.end() &&

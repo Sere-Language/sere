@@ -1452,6 +1452,19 @@ std::vector<std::unique_ptr<Stmt>> Parser::parseSuite() {
   return body;
 }
 
+static std::string takeLeadingDocstring(std::vector<std::unique_ptr<Stmt>>& body) {
+  if (body.empty() || body.front() == nullptr || body.front()->kind() != NodeKind::ExprStmt) {
+    return {};
+  }
+  auto& expression = static_cast<ExprStmt&>(*body.front()).expression();
+  if (expression.kind() != NodeKind::StringLiteral) {
+    return {};
+  }
+  const std::string doc = static_cast<const StringLiteral&>(expression).value();
+  body.erase(body.begin());
+  return doc;
+}
+
 std::vector<std::unique_ptr<Expr>> Parser::parseDecoratorExprs() {
   std::vector<std::unique_ptr<Expr>> exprs;
   while (match(TokenKind::At)) {
@@ -1885,10 +1898,19 @@ std::unique_ptr<EnumDef> Parser::parseEnum() {
       !consume(TokenKind::Indent, "expected indented enum body")) {
     return nullptr;
   }
+  std::string enumDocstring;
   while (!check(TokenKind::Dedent) && !isAtEnd()) {
     skipNewlines();
     if (check(TokenKind::Dedent)) {
       break;
+    }
+    if (check(TokenKind::String) && enumDocstring.empty()) {
+      std::unique_ptr<Expr> doc = parseExpr();
+      if (doc == nullptr || !finishExprLine(doc.get())) {
+        return nullptr;
+      }
+      enumDocstring = static_cast<const StringLiteral&>(*doc).value();
+      continue;
     }
     if (check(TokenKind::KeywordDef) || check(TokenKind::At)) {
       std::vector<std::unique_ptr<Expr>> decoratorExprs = parseDecoratorExprs();
@@ -1904,6 +1926,7 @@ std::unique_ptr<EnumDef> Parser::parseEnum() {
       auto enumDef = std::make_unique<EnumDef>(
           keyword.range(), std::move(name), std::move(typeParams), std::move(variants));
       enumDef->setTypeConstraints(std::move(typeConstraints));
+        enumDef->setDocstring(enumDocstring);
       // Collect remaining methods after this one by finishing the loop via a local vector.
       std::vector<std::unique_ptr<FunctionDef>> methods;
       methods.push_back(std::move(method));
@@ -1971,6 +1994,7 @@ std::unique_ptr<EnumDef> Parser::parseEnum() {
   auto enumDef = std::make_unique<EnumDef>(
       keyword.range(), std::move(name), std::move(typeParams), std::move(variants));
   enumDef->setTypeConstraints(std::move(typeConstraints));
+  enumDef->setDocstring(enumDocstring);
   return enumDef;
 }
 
@@ -2101,6 +2125,7 @@ std::unique_ptr<FunctionDef> Parser::parseFunction(std::string externName) {
       return nullptr;
     }
   }
+  const std::string docstring = takeLeadingDocstring(body);
   SourceRange range{start, returnType->range().end};
   if (!body.empty()) {
     range.end = body.back()->range().end;
@@ -2114,6 +2139,7 @@ std::unique_ptr<FunctionDef> Parser::parseFunction(std::string externName) {
   function->setTypeParams(std::move(typeParams));
   function->setTypeConstraints(std::move(typeConstraints));
   function->setInferredReturn(inferredReturn);
+  function->setDocstring(docstring);
   return function;
 }
 
@@ -2236,10 +2262,19 @@ std::unique_ptr<ClassDef> Parser::parseClass(const std::string& enclosing) {
   }
   std::vector<FieldDecl> fields;
   std::vector<std::unique_ptr<FunctionDef>> methods;
+  std::string classDocstring;
   while (!check(TokenKind::Dedent) && !isAtEnd()) {
     skipNewlines();
     if (check(TokenKind::Dedent)) {
       break;
+    }
+    if (check(TokenKind::String) && classDocstring.empty()) {
+      std::unique_ptr<Expr> doc = parseExpr();
+      if (doc == nullptr || !finishExprLine(doc.get())) {
+        return nullptr;
+      }
+      classDocstring = static_cast<const StringLiteral&>(*doc).value();
+      continue;
     }
     std::vector<std::unique_ptr<Expr>> decoratorExprs = parseDecoratorExprs();
     const std::vector<std::string> decorators = decoratorExprNames(decoratorExprs);
@@ -2354,6 +2389,7 @@ std::unique_ptr<ClassDef> Parser::parseClass(const std::string& enclosing) {
   def->setTypeConstraints(std::move(typeConstraints));
   def->setBaseTypes(std::move(baseTypes));
   def->setStruct(isStruct);
+  def->setDocstring(classDocstring);
   return def;
 }
 

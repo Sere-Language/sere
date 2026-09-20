@@ -366,9 +366,18 @@ void writeNullResult(const llvm::json::Value* id) {
     return name.name();
   }
   if (node.kind() == NodeKind::ClassDef) {
+    const auto& classDef = static_cast<const ClassDef&>(node);
     if (node.resolvedType() != nullptr) {
-      return formatClass(*node.resolvedType());
+      std::string text = formatClass(*node.resolvedType());
+      if (!classDef.docstring().empty()) text += "\n" + classDef.docstring();
+      return text;
     }
+  }
+  if (node.kind() == NodeKind::EnumDef) {
+    const auto& enumDef = static_cast<const EnumDef&>(node);
+    std::string text = "enum " + enumDef.name();
+    if (!enumDef.docstring().empty()) text += "\n\n" + enumDef.docstring();
+    return text;
   }
   if (node.kind() == NodeKind::FunctionDef) {
     const auto& function = static_cast<const FunctionDef&>(node);
@@ -397,6 +406,9 @@ void writeNullResult(const llvm::json::Value* id) {
     }
     if (function.hasInferredReturn()) {
       text += "  (inferred)";
+    }
+    if (!function.docstring().empty()) {
+      text += "\n\n" + function.docstring();
     }
     return text;
   }
@@ -558,7 +570,8 @@ struct CallSite {
                                                const std::vector<std::string>& params,
                                                const std::vector<std::string>& types,
                                                const std::string& returnType,
-                                               bool macro) {
+                                               bool macro,
+                                               const std::string& docstring = {}) {
   std::string label = name;
   label += macro ? "!(" : "(";
   llvm::json::Array parameters;
@@ -579,7 +592,11 @@ struct CallSite {
   if (!returnType.empty()) {
     label += " -> " + returnType;
   }
-  return llvm::json::Object{{"label", std::move(label)}, {"parameters", std::move(parameters)}};
+  llvm::json::Object result{{"label", std::move(label)}, {"parameters", std::move(parameters)}};
+  if (!docstring.empty()) {
+    result["documentation"] = llvm::json::Object{{"kind", "markdown"}, {"value", docstring}};
+  }
+  return result;
 }
 
 [[nodiscard]] const SemanticSymbol* findCallable(const TypeChecker& checker,
@@ -1793,6 +1810,7 @@ void LanguageSession::handleSignatureHelp(const llvm::json::Value* id,
   std::vector<std::string> names;
   std::vector<std::string> types;
   std::string returnType;
+  std::string docstring;
   bool macro = false;
   const CallExpr* call =
       frontend->module() == nullptr ? nullptr : findCallAt(*frontend->module(), located->second);
@@ -1818,6 +1836,21 @@ void LanguageSession::handleSignatureHelp(const llvm::json::Value* id,
     }
     if (call->resolvedType() != nullptr && !call->isConstructor() && returnType.empty()) {
       returnType = call->resolvedType()->display();
+    }
+    if (frontend->checker() != nullptr && call->callee().kind() == NodeKind::NameExpr) {
+      const auto& callee = static_cast<const NameExpr&>(call->callee());
+      if (const SemanticSymbol* symbol = findNamedSymbol(frontend->checker(), callee.name())) {
+        docstring = symbol->docstring;
+      }
+    } else if (frontend->checker() != nullptr && call->callee().kind() == NodeKind::MemberExpr) {
+      const auto& member = static_cast<const MemberExpr&>(call->callee());
+      const Type* objectType = member.object().resolvedType();
+      if (objectType != nullptr) {
+        objectType = objectType->canonical();
+        const SemanticSymbol* symbol = findCallable(*frontend->checker(), member.field(), true,
+                                                    objectType->name());
+        if (symbol != nullptr) docstring = symbol->docstring;
+      }
     }
   } else if (frontend->checker() != nullptr) {
     const auto unwrapRecord = [](const Type* type) -> const Type* {
@@ -1921,7 +1954,8 @@ void LanguageSession::handleSignatureHelp(const llvm::json::Value* id,
   writeResult(id,
               llvm::json::Object{
                   {"signatures",
-                   llvm::json::Array{makeSignature(site.callee, names, types, returnType, macro)}},
+                   llvm::json::Array{makeSignature(site.callee, names, types, returnType, macro,
+                                                   docstring)}},
                   {"activeSignature", 0},
                   {"activeParameter", static_cast<int64_t>(active)},
               });

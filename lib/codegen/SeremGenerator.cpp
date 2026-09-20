@@ -65,6 +65,7 @@ serem::IRType SeremGenerator::lowerType(const Type* type) const {
 std::string SeremGenerator::functionName(const FunctionDef& function) const {
   const auto known = functionNames_.find(&function);
   if (known != functionNames_.end()) return known->second;
+  if (function.isExtern()) return function.externName();
   if (!function.modulePrefix().empty()) return function.modulePrefix() + "_" + function.name();
   if (function.isMethod() && !function.ownerClass().empty()) {
     return function.ownerClass() + "." + function.name();

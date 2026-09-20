@@ -953,6 +953,8 @@ public:
   [[nodiscard]] std::vector<EnumVariant>& variants();
   [[nodiscard]] const std::vector<std::unique_ptr<FunctionDef>>& methods() const;
   [[nodiscard]] std::vector<std::unique_ptr<FunctionDef>>& methods();
+  void setDocstring(std::string docstring);
+  [[nodiscard]] const std::string& docstring() const;
   void setFlags(bool value);
   [[nodiscard]] bool isFlags() const;
   void setDecorators(std::vector<std::string> decorators);
@@ -967,6 +969,7 @@ private:
   std::vector<std::unique_ptr<TypeExpr>> typeConstraints_{};
   std::vector<EnumVariant> variants_;
   std::vector<std::unique_ptr<FunctionDef>> methods_{};
+  std::string docstring_{};
   std::vector<std::string> decorators_{};
   std::vector<std::unique_ptr<Expr>> decoratorExprs_{};
   bool isFlags_ = false;
@@ -999,6 +1002,8 @@ public:
   [[nodiscard]] const std::vector<std::unique_ptr<Stmt>>& body() const;
   [[nodiscard]] std::vector<std::unique_ptr<Stmt>>& body();
   [[nodiscard]] const std::string& externName() const;
+  void setDocstring(std::string docstring);
+  [[nodiscard]] const std::string& docstring() const;
   [[nodiscard]] bool isExtern() const;
   [[nodiscard]] const std::string& ownerClass() const;
   [[nodiscard]] bool isMethod() const;
@@ -1037,6 +1042,7 @@ private:
   std::unique_ptr<TypeExpr> returnType_;
   std::vector<std::unique_ptr<Stmt>> body_;
   std::string externName_;
+  std::string docstring_{};
   std::string ownerClass_;
   std::vector<std::string> decorators_{};
   std::vector<std::unique_ptr<Expr>> decoratorExprs_{};
@@ -1062,6 +1068,8 @@ public:
            std::vector<std::string> bases = {},
            std::vector<std::string> typeParams = {});
   [[nodiscard]] const std::string& name() const;
+  void setDocstring(std::string docstring);
+  [[nodiscard]] const std::string& docstring() const;
   [[nodiscard]] const std::vector<FieldDecl>& fields() const;
   [[nodiscard]] const std::vector<std::unique_ptr<FunctionDef>>& methods() const;
   [[nodiscard]] std::vector<std::unique_ptr<FunctionDef>>& methods();
@@ -1086,6 +1094,7 @@ public:
 
 private:
   std::string name_;
+  std::string docstring_{};
   std::vector<FieldDecl> fields_;
   std::vector<std::unique_ptr<FunctionDef>> methods_;
   std::vector<std::string> bases_{};

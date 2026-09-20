@@ -45,6 +45,7 @@ struct Symbol {
   std::vector<std::string> paramNames{};
   std::string typeDisplay{};
   std::string snippet{};
+  std::string docstring{};
 };
 
 struct SemanticSymbol {
@@ -62,6 +63,7 @@ struct SemanticSymbol {
   std::size_t scopeDepth = 0;
   bool navigable = true;
   std::string snippet{};
+  std::string docstring{};
 };
 
 class TypeChecker {

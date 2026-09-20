@@ -771,6 +771,9 @@ bool TypeChecker::declare(const std::string& name,
   collected.scopeRange = scopeRanges_.empty() ? SourceRange{} : scopeRanges_.back();
   collected.scopeDepth = scopes_.size();
   collected.snippet = symbol.snippet;
+  if (symbol.function != nullptr) {
+    collected.docstring = symbol.function->docstring();
+  }
   collected.type = symbol.type;
   collected.typeDisplay = !symbol.typeDisplay.empty()
                               ? symbol.typeDisplay
