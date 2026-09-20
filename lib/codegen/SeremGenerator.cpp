@@ -195,6 +195,12 @@ serem::IRType SeremGenerator::lowerType(const Type* type) const {
   if (type->isNamed("f32")) return serem::IRType::f32();
   if (type->isNamed("f64")) return serem::IRType::f64();
   if (type->isNamed("str")) return serem::IRType::stringType();
+  if (type->isPointerLike()) return serem::IRType::ptr(lowerType(type->pointeeType()));
+  if (type->isGenericCtor("tuple")) {
+    std::vector<serem::IRType> fields;
+    for (const Type* element : type->args()) fields.push_back(lowerType(element));
+    return serem::IRType::structType(type->display(), std::move(fields));
+  }
   if (type->kind() == TypeKind::Function) {
     std::vector<serem::IRType> params;
     for (const Type* param : type->paramTypes()) params.push_back(lowerType(param));
@@ -222,10 +228,10 @@ std::string SeremGenerator::functionName(const FunctionDef& function) const {
   const auto known = functionNames_.find(&function);
   if (known != functionNames_.end()) return known->second;
   if (function.isExtern()) return function.externName();
-  if (!function.modulePrefix().empty()) return function.modulePrefix() + "_" + function.name();
   if (function.isMethod() && !function.ownerClass().empty()) {
     return function.ownerClass() + "." + function.name();
   }
+  if (!function.modulePrefix().empty()) return function.modulePrefix() + "_" + function.name();
   return function.name();
 }
 
@@ -1044,6 +1050,14 @@ serem::ValuePtr SeremGenerator::emitExpression(const Expr& expression) {
 
 serem::ValuePtr SeremGenerator::coerce(serem::ValuePtr value, const Type* from, const Type* to) {
   if (value == nullptr || from == nullptr || to == nullptr || from == to) return value;
+  if (to->isAny() && !from->isAny()) {
+    return builder_->operation("any.box", lowerType(to), {value},
+        {{"name", from->display()}, {"tag", std::to_string(serem::recordTypeId(from->display()))}});
+  }
+  if (from->isAny() && !to->isAny()) {
+    return builder_->operation("any.unbox", lowerType(to), {value},
+        {{"name", to->display()}, {"tag", std::to_string(serem::recordTypeId(to->display()))}});
+  }
   if (from->isVoidLike() && lowerType(to).kind() == serem::IRType::Kind::Ptr)
     return builder_->operation("pointer.null", lowerType(to));
   if (to->isUnion() && !from->isUnion()) {
@@ -1352,6 +1366,37 @@ void SeremGenerator::appendDefaults(const std::string& symbol, std::vector<serem
 }
 
 serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
+  if (expression.isCast() && !expression.arguments().empty()) {
+    const Expr& source = *expression.arguments()[0];
+    if (expression.resolvedType()->isNamed("bool") && source.resolvedType()->methodIndex("__bool__") >= 0)
+      return callMethod(source.resolvedType(), "__bool__", emitExpression(source), {});
+    return coerce(emitExpression(source), source.resolvedType(), expression.resolvedType());
+  }
+  if (expression.intrinsic() == IntrinsicKind::Load)
+    return builder_->load(emitExpression(*expression.arguments()[0]), lowerType(expression.resolvedType()));
+  if (expression.intrinsic() == IntrinsicKind::Store) {
+    builder_->store(coerce(emitExpression(*expression.arguments()[1]), expression.arguments()[1]->resolvedType(),
+                          expression.arguments()[0]->resolvedType()->pointeeType()),
+                    emitExpression(*expression.arguments()[0]));
+    return nullptr;
+  }
+  if (expression.intrinsic() == IntrinsicKind::Alloc)
+    return builder_->operation("heap.alloc", lowerType(expression.resolvedType()));
+  if (expression.intrinsic() == IntrinsicKind::Free)
+    return builder_->operation("heap.free", serem::IRType::voidType(), {emitExpression(*expression.arguments()[0])});
+  if (expression.callee().kind() == NodeKind::MemberExpr) {
+    const auto& member = static_cast<const MemberExpr&>(expression.callee());
+    const Type* receiver = member.object().resolvedType();
+    if (receiver != nullptr && receiver->isModule()) {
+      const RecordField* field = receiver->findField(member.field());
+      const std::string symbol = !expression.loweredName().empty() ? expression.loweredName()
+          : field == nullptr ? member.field() : field->llvmName;
+      std::vector<serem::ValuePtr> args;
+      for (const auto& argument : expression.arguments()) args.push_back(emitExpression(*argument));
+      return builder_->call(std::make_shared<serem::FunctionRef>(symbol, lowerType(expression.callee().resolvedType())),
+                            std::move(args), lowerType(expression.resolvedType()));
+    }
+  }
   if (expression.intrinsic() == IntrinsicKind::SharedNew ||
       expression.intrinsic() == IntrinsicKind::UniqueNew) {
     std::vector<serem::ValuePtr> args;
@@ -1445,6 +1490,8 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
     return builder_->operation("runtime.print", serem::IRType::voidType(), std::move(args));
   }
   if (expression.intrinsic() == IntrinsicKind::TypeOf) {
+    if (!expression.arguments().empty() && expression.arguments()[0]->resolvedType()->isAny())
+      return builder_->operation("any.name", serem::IRType::stringType(), {emitExpression(*expression.arguments()[0])});
     const std::string typeName = expression.arguments().empty() ||
                                          expression.arguments()[0]->resolvedType() == nullptr
                                      ? "Any"
@@ -1466,6 +1513,11 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
     const serem::ValuePtr value = expression.arguments().empty()
                                       ? nullptr
                                       : emitExpression(*expression.arguments()[0]);
+    if (source != nullptr && source->isAny() && target != nullptr) {
+      if (target->isAny()) return std::make_shared<serem::ConstantInt>(1, serem::IRType::boolType());
+      return builder_->operation("any.is", serem::IRType::boolType(), {value},
+          {{"tag", std::to_string(serem::recordTypeId(target->display()))}});
+    }
     // A class records its concrete type id in its first word, so the test reads
     // that back and accepts every class the value may hold that derives from the
     // target.
@@ -1686,7 +1738,7 @@ serem::ValuePtr SeremGenerator::emitAggregate(const Expr& expression) {
   if (expression.kind() == NodeKind::ListLiteral) {
     kind = "list";
     for (const std::unique_ptr<Expr>& element : static_cast<const ListLiteral&>(expression).elements()) {
-      operands.push_back(emitExpression(*element));
+      operands.push_back(coerce(emitExpression(*element), element->resolvedType(), expression.resolvedType()->elementType()));
     }
   } else if (expression.kind() == NodeKind::TupleExpr) {
     kind = "tuple";

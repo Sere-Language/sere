@@ -1,0 +1,49 @@
+class Numbers:
+    limit: i32
+
+    def __init__(self, limit: i32):
+        self.limit = limit
+
+    def __iter__(self) -> Iterator[i32]:
+        for i in range(self.limit):
+            yield i
+
+def single[T](value: T) -> Iterator[T]:
+    yield value
+
+def words() -> Iterator[str]:
+    yield "hello"
+    yield "world"
+
+def forwards() -> Iterator[i32]:
+    return nested()
+
+def nested() -> Iterator[i32]:
+    for n in Numbers(3):
+        yield n + 10
+    return
+
+def main() -> i32:
+    total: i32 = 0
+    for n in Numbers(4):
+        total += n
+    assert total == 6
+
+    for text in single[str]("generic"):
+        assert text == "generic"
+
+    joined: str = ""
+    for word in words():
+        joined = joined + word
+    assert joined == "helloworld"
+
+    forwarded: i32 = 0
+    for n in forwards():
+        forwarded += n
+    assert forwarded == 33
+
+    squares = [n * n for n in Numbers(4)]
+    assert squares == [0, 1, 4, 9]
+
+    print("iterators ok", total, joined, forwarded, squares[3])
+    return 0

@@ -1,0 +1,86 @@
+class Guard:
+    def __enter__(self) -> i32:
+        return 7
+
+    def __exit__(self) -> void:
+        pass
+
+def record_order(order: list[str]) -> void:
+    defer:
+        order.append("deferred")
+    order.append("body")
+    assert len(order) == 1
+
+def main() -> i32:
+    # for/range, continue/break, while
+    total: i32 = 0
+    for n in range(0, 5):
+        if n == 2:
+            continue
+        if n == 4:
+            break
+        total += n
+    assert total == 0 + 1 + 3
+
+    n: i32 = 0
+    while n < 3:
+        n += 1
+    assert n == 3
+
+    # if / elif / else
+    tone: i32 = 2
+    label: str
+    if tone == 1:
+        label = "one"
+    elif tone == 2:
+        label = "two"
+    else:
+        label = "other"
+    assert label == "two"
+
+    # walrus assignment in a condition
+    if (captured := 3) > 0:
+        assert captured == 3
+
+    # list comprehension over a range
+    squares: list[i32] = [x * x for x in range(0, 4)]
+    assert squares == [0, 1, 4, 9]
+
+    # defer runs at scope exit, after the statement list
+    order: list[str] = []
+    record_order(order)
+    assert order[0] == "body"
+    assert order[1] == "deferred"
+
+    # with statement binds the context manager result
+    with Guard() as bound:
+        assert bound == 7
+
+    # del on list and dict entries
+    xs: list[i32] = [1, 2, 3]
+    del xs[1]
+    assert xs == [1, 3]
+    ages: dict[str, i32] = {"ada": 36}
+    del ages["ada"]
+    assert len(ages) == 0
+
+    # match on integers
+    code: i32 = 3
+    matched: str
+    match code:
+        case 1:
+            matched = "one"
+        case 3:
+            matched = "three"
+        case _:
+            matched = "other"
+    assert matched == "three"
+
+    # ++ / -- style increments
+    counter: i32 = 0
+    ++counter
+    counter++
+    assert counter == 2
+
+    print("control ok", total, n, captured, len(squares))
+    return 0
