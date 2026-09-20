@@ -1540,23 +1540,48 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
         }
       }
     } else if (type->isStructTy()) {
-      result = llvm::UndefValue::get(type);
-      unsigned field = 0;
-      if (type->getStructNumElements() == 2 && operands.size() == 1) {
-        // An enum's first word is the variant discriminant; the generator tags
-        // the constructor with the variant's index, not its arm position.
+      const std::string tagText = attribute(operation, "tag");
+      const bool enumAggregate = type->getStructNumElements() == 2 &&
+                                 type->getStructElementType(0)->isIntegerTy(32) &&
+                                 type->getStructElementType(1)->isPointerTy() && !tagText.empty();
+      if (enumAggregate) {
+        // An enum holds its discriminant in the first word and its payload
+        // behind a pointer in the second. Every payload value gets an
+        // eight-byte slot so a reader only needs the variant's argument index.
         std::int32_t tag = 0;
-        const std::string tagText = attribute(operation, "tag");
-        if (!tagText.empty()) {
-          (void)std::from_chars(tagText.data(), tagText.data() + tagText.size(), tag);
+        (void)std::from_chars(tagText.data(), tagText.data() + tagText.size(), tag);
+        llvm::Value* payload = llvm::ConstantPointerNull::get(ir.getPtrTy());
+        if (!operands.empty()) {
+          auto alloc = module_->getOrInsertFunction("sere_alloc", ir.getPtrTy(), ir.getInt64Ty());
+          payload =
+              ir.CreateCall(alloc, {ir.getInt64(static_cast<std::int64_t>(operands.size()) * 8)});
+          for (std::size_t index = 0; index < operands.size(); ++index) {
+            llvm::Value* slot = ir.CreateConstInBoundsGEP1_64(
+                ir.getInt8Ty(), payload, static_cast<std::int64_t>(index) * 8);
+            ir.CreateStore(operand(index), slot);
+          }
         }
-        result = builder_->builder.CreateInsertValue(
-            result, llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_), tag), {0});
-        field = 1;
-      }
-      for (std::size_t index = 0; index < operands.size(); ++index) {
-        result = builder_->builder.CreateInsertValue(result, operand(index),
-                                                     {field + static_cast<unsigned>(index)});
+        result = llvm::UndefValue::get(type);
+        result = ir.CreateInsertValue(result, ir.getInt32(static_cast<std::uint32_t>(tag)), {0});
+        result = ir.CreateInsertValue(result, payload, {1});
+      } else {
+        result = llvm::UndefValue::get(type);
+        unsigned field = 0;
+        if (type->getStructNumElements() == 2 && operands.size() == 1) {
+          // An enum's first word is the variant discriminant; the generator tags
+          // the constructor with the variant's index, not its arm position.
+          std::int32_t tag = 0;
+          if (!tagText.empty()) {
+            (void)std::from_chars(tagText.data(), tagText.data() + tagText.size(), tag);
+          }
+          result = builder_->builder.CreateInsertValue(
+              result, llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_), tag), {0});
+          field = 1;
+        }
+        for (std::size_t index = 0; index < operands.size(); ++index) {
+          result = builder_->builder.CreateInsertValue(
+              result, operand(index), {field + static_cast<unsigned>(index)});
+        }
       }
     } else if (!operands.empty()) {
       result = operand(0);
@@ -1607,13 +1632,64 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     llvm::Value* object = operand(0);
     if (object != nullptr && object->getType()->isStructTy()) {
       result = builder_->builder.CreateExtractValue(object, {0});
+    } else if (object != nullptr && object->getType()->isIntegerTy()) {
+      // An enum without payloads is lowered to its discriminant already.
+      result = object->getType()->isIntegerTy(32)
+                   ? object
+                   : ir.CreateIntCast(object, ir.getInt32Ty(), false);
     } else {
       result = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_), 0);
+    }
+  } else if (opcode == "enum.unit") {
+    // A variant that carries no data still has to reach a payload-carrying
+    // aggregate as `{tag, null}`, and a payload-free enum as the tag alone.
+    std::int64_t tag = 0;
+    const std::string tagText = attribute(operation, "tag");
+    (void)std::from_chars(tagText.data(), tagText.data() + tagText.size(), tag);
+    if (type->isStructTy()) {
+      llvm::Value* aggregate = llvm::UndefValue::get(type);
+      aggregate =
+          ir.CreateInsertValue(aggregate, ir.getInt32(static_cast<std::uint32_t>(tag)), {0});
+      aggregate =
+          ir.CreateInsertValue(aggregate, llvm::ConstantPointerNull::get(ir.getPtrTy()), {1});
+      result = aggregate;
+    } else {
+      result = ir.getInt32(static_cast<std::uint32_t>(tag));
+    }
+  } else if (opcode == "enum.name") {
+    // Operands are the value followed by `tag, name` pairs, so the first bare
+    // name is the answer for anything the pairs do not cover.
+    llvm::Value* tag = operands.empty() ? nullptr : operand(0);
+    if (tag != nullptr && tag->getType()->isStructTy()) {
+      tag = builder_->builder.CreateExtractValue(tag, {0});
+    }
+    if (tag != nullptr && tag->getType()->isIntegerTy() && !tag->getType()->isIntegerTy(32)) {
+      tag = ir.CreateIntCast(tag, ir.getInt32Ty(), false);
+    }
+    if (tag == nullptr || !tag->getType()->isIntegerTy()) {
+      result = llvm::ConstantPointerNull::get(ir.getPtrTy());
+    } else {
+      for (std::size_t index = 1; index + 1 < operands.size(); index += 2) {
+        llvm::Value* candidate = operand(index + 1);
+        llvm::Value* match = ir.CreateICmpEQ(tag, operand(index));
+        result = result == nullptr ? candidate : ir.CreateSelect(match, candidate, result);
+      }
+      if (result == nullptr)
+        result = llvm::ConstantPointerNull::get(ir.getPtrTy());
     }
   } else if (opcode == "enum.payload") {
     llvm::Value* object = operand(0);
     if (object != nullptr && object->getType()->isStructTy()) {
-      result = builder_->builder.CreateExtractValue(object, {1});
+      llvm::Value* base = builder_->builder.CreateExtractValue(object, {1});
+      std::int64_t index = 0;
+      const std::string indexText = attribute(operation, "index");
+      if (!indexText.empty()) {
+        (void)std::from_chars(indexText.data(), indexText.data() + indexText.size(), index);
+      }
+      if (base != nullptr && base->getType()->isPointerTy()) {
+        llvm::Value* slot = ir.CreateConstInBoundsGEP1_64(ir.getInt8Ty(), base, index * 8);
+        result = ir.CreateLoad(type, slot);
+      }
     } else {
       result = operand(0);
     }

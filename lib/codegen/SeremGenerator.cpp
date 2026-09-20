@@ -7,8 +7,10 @@
 #include "sere/types/Type.h"
 #include "sere/types/TypeContext.h"
 
-#include <utility>
 #include <charconv>
+#include <limits>
+#include <unordered_set>
+#include <utility>
 
 namespace sere {
 namespace {
@@ -109,6 +111,39 @@ namespace {
   const auto& member = static_cast<const MemberExpr&>(expression.callee());
   const RecordField* field = type->canonical()->findField(member.field());
   return field == nullptr ? std::string{} : field->llvmName;
+}
+
+/// Discriminant an enum variant is stored under. Sema records it as the
+/// decimal value the variant declares, so reading it back keeps `Color.Green`
+/// equal to 2 both as a value and inside `match`.
+[[nodiscard]] std::int32_t enumTagOf(const RecordField* field) {
+  if (field == nullptr || field->llvmName.empty()) {
+    return 0;
+  }
+  char* end = nullptr;
+  const long long parsed = std::strtoll(field->llvmName.c_str(), &end, 10);
+  if (end == field->llvmName.c_str() || *end != '\0') {
+    return 0;
+  }
+  if (parsed < std::numeric_limits<std::int32_t>::min() ||
+      parsed > std::numeric_limits<std::int32_t>::max()) {
+    return 0;
+  }
+  return static_cast<std::int32_t>(parsed);
+}
+
+/// The enum an expression names, looking through a `Class[T]`-style type object
+/// so `Color` and `Color.Green` resolve to the same record.
+[[nodiscard]] const Type* enumRecordOf(const Type* type) {
+  if (type == nullptr)
+    return nullptr;
+  const Type* canonical = type->canonical();
+  if (canonical->isTypeObject())
+    canonical = canonical->typeObjectInstance();
+  if (canonical == nullptr)
+    return nullptr;
+  canonical = canonical->canonical();
+  return canonical->isEnum() ? canonical : nullptr;
 }
 
 /// Tag a value of `type` is stored under inside `unionType`, mirroring the
@@ -240,6 +275,10 @@ serem::IRType SeremGenerator::lowerType(const Type* type) const {
     return serem::IRType::structType(type->name(), std::move(fields));
   }
   if (type->isEnum()) {
+    // An enum without payloads is just its discriminant, the way the direct
+    // backend lowers it; only a variant carrying data needs the aggregate.
+    if (!type->hasEnumPayload())
+      return serem::IRType::i32();
     return serem::IRType::structType(type->name(),
                                      {serem::IRType::i32(), serem::IRType::ptr(serem::IRType::i8())});
   }
@@ -331,6 +370,21 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
           methodSymbols_[classDef.name() + "::" + method->name()] = functionName(*method);
         }
       }
+    } else if (statement != nullptr && statement->kind() == NodeKind::EnumDef) {
+      // An enum's methods take the enum itself as the receiver, so they are
+      // named after it the way a class names its own.
+      const auto& enumDef = static_cast<const EnumDef&>(*statement);
+      for (const std::unique_ptr<FunctionDef>& method : enumDef.methods()) {
+        const Type* type = functionType(*method);
+        if (type == nullptr) {
+          continue;
+        }
+        const std::string symbol = enumDef.name() + "." + method->name();
+        functionNames_[method.get()] = symbol;
+        functions_.insert_or_assign(symbol, lowerType(type));
+        definitions_[symbol] = method.get();
+        methodSymbols_[enumDef.name() + "::" + method->name()] = symbol;
+      }
     }
     }
   }
@@ -373,6 +427,10 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
           continue;
         }
         for (const auto& method : classDef.methods())
+          if (!emitFunction(*method)) return nullptr;
+      }
+      if (statement->kind() == NodeKind::EnumDef) {
+        for (const auto& method : static_cast<const EnumDef&>(*statement).methods())
           if (!emitFunction(*method)) return nullptr;
       }
     }
@@ -1740,6 +1798,18 @@ serem::ValuePtr SeremGenerator::emitBinary(const BinaryExpr& expression) {
                    : result;
       }
     }
+    if (lhsType != nullptr && lhsType->isIntEnum() && rightType != nullptr &&
+        (rightType->isIntEnum() || rightType->isInteger())) {
+      // A flags value answers `in` with a bit test rather than a scan, and the
+      // operand is already its discriminant.
+      const auto zero = std::make_shared<serem::ConstantInt>(0, serem::IRType::i32());
+      serem::ValuePtr masked = builder_->bitAnd(left, right, serem::IRType::i32());
+      serem::ValuePtr present = builder_->compare("ne", masked, zero);
+      if (expression.op() == BinaryOp::NotIn) {
+        return builder_->operation("not", serem::IRType::boolType(), {present});
+      }
+      return present;
+    }
     if (rightType != nullptr && rightType->isList() && rightType->elementType() != nullptr) {
       attributes["element"] = rightType->elementType()->display();
     }
@@ -1841,6 +1911,31 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
     return builder_->operation("heap.alloc", lowerType(expression.resolvedType()));
   if (expression.intrinsic() == IntrinsicKind::Free)
     return builder_->operation("heap.free", serem::IRType::voidType(), {emitExpression(*expression.arguments()[0])});
+  // `Enum.variants()` reports the variant names in declaration order, which the
+  // type table already records.
+  if (expression.callee().kind() == NodeKind::MemberExpr) {
+    const auto& callee = static_cast<const MemberExpr&>(expression.callee());
+    if (callee.field() == "variants") {
+      if (const Type* record = enumRecordOf(callee.object().resolvedType()); record != nullptr) {
+        std::vector<serem::ValuePtr> names;
+        std::unordered_set<std::string> seen;
+        for (const RecordField& field : record->fields()) {
+          if (field.name.empty() || !field.isStatic || !seen.insert(field.name).second)
+            continue;
+          names.push_back(stringValue(field.name));
+        }
+        const Type* element = expression.resolvedType() == nullptr
+                                  ? nullptr
+                                  : expression.resolvedType()->elementType();
+        return builder_->operation(
+            "aggregate.list",
+            lowerType(expression.resolvedType()),
+            std::move(names),
+            {{"element", element == nullptr ? std::string{} : element->display()},
+             {"element.kind", listElementKindText(element)}});
+      }
+    }
+  }
   if (expression.callee().kind() == NodeKind::MemberExpr) {
     const auto& member = static_cast<const MemberExpr&>(expression.callee());
     const Type* receiver = member.object().resolvedType();
@@ -2158,6 +2253,46 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
 }
 
 serem::ValuePtr SeremGenerator::emitMember(const MemberExpr& expression) {
+  // Every enum member comes from the record sema built rather than from stored
+  // state: `Color.Green` is its discriminant, `tone.value` that same number, and
+  // `tone.name` the variant that number selects.
+  if (const Type* record = enumRecordOf(expression.object().resolvedType()); record != nullptr) {
+    const std::string& fieldName = expression.field();
+    if (fieldName == "__name__") {
+      return stringValue(record->name());
+    }
+    if (fieldName == "value" || fieldName == "name") {
+      serem::ValuePtr value = emitExpression(expression.object());
+      if (fieldName == "value") {
+        if (!record->hasEnumPayload())
+          return value;
+        return builder_->operation("enum.tag", serem::IRType::i32(), {value});
+      }
+      std::vector<serem::ValuePtr> operands{value};
+      std::unordered_set<std::int32_t> seen;
+      for (const RecordField& field : record->fields()) {
+        if (field.name.empty() || !field.isStatic)
+          continue;
+        const std::int32_t tag = enumTagOf(&field);
+        if (!seen.insert(tag).second)
+          continue;
+        operands.push_back(std::make_shared<serem::ConstantInt>(tag, serem::IRType::i32()));
+        operands.push_back(stringValue(field.name));
+      }
+      if (operands.size() == 1)
+        return stringValue(record->name());
+      return builder_->operation("enum.name", serem::IRType::stringType(), std::move(operands));
+    }
+    if (const RecordField* field = record->findField(fieldName);
+        field != nullptr && field->isStatic) {
+      const std::int32_t tag = enumTagOf(field);
+      if (!record->hasEnumPayload()) {
+        return std::make_shared<serem::ConstantInt>(tag, serem::IRType::i32());
+      }
+      return builder_->operation(
+          "enum.unit", lowerType(record), {}, {{"tag", std::to_string(tag)}});
+    }
+  }
   if (const std::string symbol = staticFieldSymbol(expression); !symbol.empty()) {
     return builder_->operation("static.get", lowerType(expression.resolvedType()), {},
                                {{"symbol", symbol}});
