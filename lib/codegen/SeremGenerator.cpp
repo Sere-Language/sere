@@ -1201,8 +1201,35 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
         std::vector<serem::ValuePtr> arguments;
         if (index.hasStart())
           arguments.push_back(emitExpression(*index.start()));
+        if (assign.op() != AssignOp::Assign && record->methodIndex("__getitem__") >= 0) {
+          const std::vector<serem::ValuePtr> key = arguments;
+          const serem::ValuePtr current = callMethod(record, "__getitem__", receiver, key);
+          BinaryOp binaryOp = BinaryOp::Add;
+          if (current != nullptr && binaryOpForAssign(assign.op(), binaryOp)) {
+            const serem::IRType valueType = lowerType(assign.target().resolvedType());
+            switch (binaryOp) {
+            case BinaryOp::Add:
+              value = builder_->add(current, value, valueType);
+              break;
+            case BinaryOp::Sub:
+              value = builder_->sub(current, value, valueType);
+              break;
+            case BinaryOp::Mul:
+              value = builder_->mul(current, value, valueType);
+              break;
+            case BinaryOp::Div:
+              value = builder_->div(current, value, valueType);
+              break;
+            case BinaryOp::Mod:
+              value = builder_->rem(current, value, valueType);
+              break;
+            default:
+              break;
+            }
+          }
+        }
         arguments.push_back(value);
-        (void)callMethod(record, "__setitem__", std::move(receiver), arguments);
+        (void)callMethod(record, "__setitem__", receiver, arguments);
         return true;
       }
       std::vector<serem::ValuePtr> operands{emitExpression(index.object())};
@@ -1299,7 +1326,17 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
       const serem::ValuePtr current =
           builder_->load(slot, lowerType(assign.target().resolvedType()));
       BinaryOp binaryOp = BinaryOp::Add;
-      if (binaryOpForAssign(assign.op(), binaryOp)) {
+      const Type* targetType = assign.target().resolvedType();
+      const Type* record = targetType == nullptr ? nullptr : targetType->valueType();
+      bool dispatched = false;
+      if (record != nullptr && record->isRecord() && binaryOpForAssign(assign.op(), binaryOp)) {
+        const BinaryDunderNames names = binaryDunderNames(binaryOp);
+        if (names.method != nullptr && record->methodIndex(names.method) >= 0) {
+          value = callMethod(record, names.method, current, {value});
+          dispatched = value != nullptr;
+        }
+      }
+      if (!dispatched && binaryOpForAssign(assign.op(), binaryOp)) {
         switch (binaryOp) {
         case BinaryOp::Add:
           value = builder_->add(current, value, lowerType(assign.target().resolvedType()));
@@ -2843,6 +2880,18 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
                                serem::IRType::stringType(),
                                {value},
                                {{"unsigned", source->isUnsignedInteger() ? "true" : "false"}});
+  }
+  if (expression.intrinsic() == IntrinsicKind::Repr && !expression.arguments().empty()) {
+    const Expr& argument = *expression.arguments()[0];
+    const Type* source = types_->substitute(argument.resolvedType(), subst_);
+    serem::ValuePtr value = emitExpression(argument);
+    if (source != nullptr && source->isRecord()) {
+      if (source->methodIndex("__repr__") >= 0)
+        return callMethod(source, "__repr__", std::move(value), {});
+      if (source->methodIndex("__str__") >= 0)
+        return callMethod(source, "__str__", std::move(value), {});
+    }
+    return printable(std::move(value), source);
   }
   if (expression.isCast() && !expression.arguments().empty()) {
     const Expr& source = *expression.arguments()[0];

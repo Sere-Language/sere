@@ -5417,6 +5417,46 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
             static_cast<std::size_t>(objectType->methodIndex("__setitem__"));
         llvm::Value* key = emitDunderArgument(builder, objectType, setItem, 1, *index.start());
         llvm::Value* stored = emitDunderArgument(builder, objectType, setItem, 2, assign.value());
+        if (assign.op() != AssignOp::Assign && objectType->methodIndex("__getitem__") >= 0) {
+          llvm::Value* current = emitDunderCall(builder, index.object(), "__getitem__", {key});
+          BinaryOp binaryOp = BinaryOp::Add;
+          if (current != nullptr && binaryOpForAssign(assign.op(), binaryOp)) {
+            switch (binaryOp) {
+            case BinaryOp::Add:
+              stored = builder.CreateAdd(current, stored);
+              break;
+            case BinaryOp::Sub:
+              stored = builder.CreateSub(current, stored);
+              break;
+            case BinaryOp::Mul:
+              stored = builder.CreateMul(current, stored);
+              break;
+            case BinaryOp::Div:
+              stored = builder.CreateSDiv(current, stored);
+              break;
+            case BinaryOp::Mod:
+              stored = builder.CreateSRem(current, stored);
+              break;
+            case BinaryOp::BitAnd:
+              stored = builder.CreateAnd(current, stored);
+              break;
+            case BinaryOp::BitOr:
+              stored = builder.CreateOr(current, stored);
+              break;
+            case BinaryOp::BitXor:
+              stored = builder.CreateXor(current, stored);
+              break;
+            case BinaryOp::Shl:
+              stored = builder.CreateShl(current, stored);
+              break;
+            case BinaryOp::Shr:
+              stored = builder.CreateAShr(current, stored);
+              break;
+            default:
+              break;
+            }
+          }
+        }
         emitDunderCall(builder, index.object(), "__setitem__", {key, stored});
         return true;
       }
