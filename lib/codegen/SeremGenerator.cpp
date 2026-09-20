@@ -8,6 +8,7 @@
 #include "sere/types/TypeContext.h"
 
 #include <utility>
+#include <charconv>
 
 namespace sere {
 namespace {
@@ -909,8 +910,7 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
         const auto& literal = static_cast<const IntegerLiteral&>(pattern);
         const serem::IRType subjectIr = lowerType(subjectType);
         condition = builder_->compare(
-            "eq", subject,
-            std::make_shared<serem::ConstantInt>(literal.value(), subjectIr));
+            "eq", subject, std::make_shared<serem::ConstantInt>(literal.value(), subjectIr));
       } else if (enumSubject) {
         // `case Color.Green` and `case Message.Move(x, y)` name a variant, whose
         // tag the enum records in the field table.
@@ -919,25 +919,24 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
           member = static_cast<const MemberExpr*>(&pattern);
         } else if (pattern.kind() == NodeKind::CallExpr &&
                    static_cast<const CallExpr&>(pattern).callee().kind() == NodeKind::MemberExpr) {
-          member = static_cast<const MemberExpr*>(
-              &static_cast<const CallExpr&>(pattern).callee());
+          member = static_cast<const MemberExpr*>(&static_cast<const CallExpr&>(pattern).callee());
         }
         const RecordField* field =
             member == nullptr ? nullptr : subjectType->canonical()->findField(member->field());
         if (field != nullptr) {
-          std::int64_t variant = 0;
-          (void)std::from_chars(field->llvmName.data(),
-                                field->llvmName.data() + field->llvmName.size(), variant);
-          condition = builder_->compare("eq", tag,
-                                        std::make_shared<serem::ConstantInt>(variant,
-                                                                            serem::IRType::i32()));
+          std::int64_t variant = static_cast<std::int64_t>(index);
+          if (!field->llvmName.empty()) {
+            variant = std::strtoll(field->llvmName.c_str(), nullptr, 10);
+          }
+          condition = builder_->compare(
+              "eq", tag, std::make_shared<serem::ConstantInt>(variant, serem::IRType::i32()));
         }
       }
       if (condition == nullptr && !wildcard) {
-        condition = builder_->compare(
-            "eq", tag == nullptr ? subject : tag,
-            std::make_shared<serem::ConstantInt>(static_cast<std::int64_t>(index),
-                                                 serem::IRType::i32()));
+        condition = builder_->compare("eq",
+                                      tag == nullptr ? subject : tag,
+                                      std::make_shared<serem::ConstantInt>(
+                                          static_cast<std::int64_t>(index), serem::IRType::i32()));
       }
       if (condition != nullptr) {
         (void)builder_->conditionalBranch(condition, *body, *next);
