@@ -1,8 +1,0 @@
-def main() -> i32:
-    a: f64 = 1.5
-    b: f64 = 2.5
-    print(a + b)
-    print(a * b)
-    print(a == b)
-    print(a < b)
-    return 0

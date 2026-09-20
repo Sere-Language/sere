@@ -57,6 +57,11 @@ perf.py
 test-c.exe
 test-llvm.exe
 *.serem
+tests/
+generic_constraints_fixtures/
+_scratch/
+cmake/
+.editorconfig
 
 # Scratch IR / objects at the repo root
 /*.ll

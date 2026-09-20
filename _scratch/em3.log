@@ -1,3 +1,0 @@
-warning: overriding the module target triple with x86_64-pc-windows-msvc19.44.35228 [-Woverride-module]
-1 warning generated.
-wrote _scratch\enum_plain.exe

@@ -1,4 +1,0 @@
-def main() -> i32:
-    chars = [c for c in "abc"]
-    print(chars)
-    return 0

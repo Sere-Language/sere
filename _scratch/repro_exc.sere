@@ -1,8 +1,0 @@
-def main() -> i32:
-    try:
-        raise ValueError("boom")
-    except ValueError as e:
-        print("caught", e.message)
-    finally:
-        print("finally")
-    return 0

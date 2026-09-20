@@ -1,3 +1,0 @@
-﻿def main() -> i32:
-    print("hi")
-    return 0

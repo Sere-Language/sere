@@ -1,8 +1,0 @@
-def show(names: list[str]) -> None:
-    print(names)
-
-def main(argv: list[str]) -> None:
-    print("start")
-    print(argv)
-    show(argv)
-    print("end")

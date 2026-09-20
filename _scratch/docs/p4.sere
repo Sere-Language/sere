@@ -1,8 +1,0 @@
-def main() -> i32:
-    s = "abc"
-    for ch in s:
-        print("ch", ch)
-    n = 3
-    label = "big" if n > 2 else "small"
-    print(label)
-    return 0

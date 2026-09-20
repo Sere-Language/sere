@@ -1,4 +1,0 @@
-def main() -> i32:
-    xs: list[str] = ["a", "b"]
-    print(xs)
-    return 0

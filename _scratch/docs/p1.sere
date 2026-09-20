@@ -1,3 +1,0 @@
-def main(argv: list[str]) -> i32:
-    print("argc", len(argv))
-    return 0

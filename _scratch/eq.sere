@@ -1,9 +1,0 @@
-def main() -> i32:
-    print([1, 2] == [1, 2])
-    a = [1, 2]
-    print(a == a)
-    print({"k": 1} == {"k": 1})
-    d = {"k": 1}
-    print(d == d)
-    print("ab" == "a" + "b")
-    return 0

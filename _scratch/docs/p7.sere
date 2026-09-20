@@ -1,5 +1,0 @@
-def main() -> i32:
-    xs = [1, 2, 3]
-    ys = [v * 2 for v in xs]
-    print(ys)
-    return 0
