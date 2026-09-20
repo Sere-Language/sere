@@ -276,13 +276,47 @@ int testLocalWindowVsGl() {
   return 0;
 }
 
+/// A type test narrows its subject, so completion inside the branch offers the
+/// subclass members the declared type does not have.
+int testNarrowedReceiver() {
+  const std::string text = "class Root:\n"
+                           "    name: str\n"
+                           "\n"
+                           "class Subroot(Root):\n"
+                           "    last_name: str\n"
+                           "\n"
+                           "def show(root: Root) -> None:\n"
+                           "    if isinstance(root, Subroot):\n"
+                           "        print(root.last_name)\n"
+                           "    outside = root.name\n";
+  sere::Frontend frontend;
+  if (!frontend.analyze("narrowed_completion.sere", text, stdlibDir()) ||
+      frontend.checker() == nullptr) {
+    frontend.diagnostics().printAll();
+    return fail("narrowed receiver sample should typecheck");
+  }
+  const auto membersAt = [&](std::size_t receiver) {
+    const std::uint32_t cursor = static_cast<std::uint32_t>(receiver + std::string("root.").size());
+    const sere::MemberAccessQuery query = sere::detectMemberAccess(text, cursor);
+    return sere::collectMemberCompletions(sere::resolveMemberType(&frontend, query));
+  };
+  const std::vector<sere::MemberCompletionItem> inside = membersAt(text.find("root.last_name"));
+  if (!hasLabel(inside, "last_name")) {
+    return fail("an isinstance branch must complete the subclass member");
+  }
+  const std::vector<sere::MemberCompletionItem> outside = membersAt(text.find("root.name"));
+  if (hasLabel(outside, "last_name") || !hasLabel(outside, "name")) {
+    return fail("outside the branch only the declared members may complete");
+  }
+  return 0;
+}
+
 } // namespace
 
 int main() {
   if (const int status = testDetect(); status != 0) {
     return status;
-  }
-  if (const int status = testLocalClass(); status != 0) {
+  }  if (const int status = testLocalClass(); status != 0) {
     return status;
   }
   if (const int status = testLexicalScopes(); status != 0) {
@@ -292,6 +326,9 @@ int main() {
     return status;
   }
   if (const int status = testStdlibImport(); status != 0) {
+    return status;
+  }
+  if (const int status = testNarrowedReceiver(); status != 0) {
     return status;
   }
   return testLocalWindowVsGl();

@@ -1163,6 +1163,40 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     }
     result = result_;
     if (attribute(operation, "negated") == "true") result = ir.CreateNot(result);
+  } else if (opcode == "object.isa") {
+    // A class object records its concrete type id in its first word, so an
+    // `isinstance` test reads that back and accepts every listed class, which
+    // the generator fills with the target and its subclasses.
+    auto parseInt = [](const std::string& text) {
+      std::int32_t value = 0;
+      (void)std::from_chars(text.data(), text.data() + text.size(), value);
+      return value;
+    };
+    llvm::Value* object = operand(0);
+    llvm::Value* matched = nullptr;
+    if (object != nullptr && object->getType()->isPointerTy()) {
+      llvm::Value* identity = ir.CreateLoad(ir.getInt32Ty(), object);
+      std::string current;
+      const std::string ids = attribute(operation, "ids") + ",";
+      for (const char character : ids) {
+        if (character != ',') {
+          current.push_back(character);
+          continue;
+        }
+        if (current.empty()) {
+          continue;
+        }
+        llvm::Value* test = ir.CreateICmpEQ(identity, ir.getInt32(parseInt(current)));
+        matched = matched == nullptr ? test : ir.CreateOr(matched, test);
+        current.clear();
+      }
+    }
+    if (matched == nullptr) {
+      report("Serem type test needs a class object");
+      result = nullptr;
+    } else {
+      result = attribute(operation, "negated") == "true" ? ir.CreateNot(matched) : matched;
+    }
   } else if (opcode == "await") {
     result = operand(0);
   } else if (opcode == "coro.begin") {

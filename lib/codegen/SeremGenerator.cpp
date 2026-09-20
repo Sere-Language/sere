@@ -169,6 +169,7 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
   decorators_.clear();
   classBases_.clear();
   classFields_.clear();
+  classes_.clear();
   functionNames_.clear();
   std::vector<const Module*> modules{&module};
   if (imported != nullptr) modules.insert(modules.end(), imported->begin(), imported->end());
@@ -231,7 +232,9 @@ void SeremGenerator::declareTypes(const Module& module) {
   for (const std::unique_ptr<Stmt>& statement : module.statements()) {
     if (statement == nullptr) continue;
     if (statement->kind() == NodeKind::ClassDef) {
-      declareClass(static_cast<const ClassDef&>(*statement));
+      const auto& classDef = static_cast<const ClassDef&>(*statement);
+      if (classDef.resolvedType() != nullptr) classes_.push_back(classDef.resolvedType());
+      declareClass(classDef);
     } else if (statement->kind() == NodeKind::EnumDef) {
       declareEnum(static_cast<const EnumDef&>(*statement));
     }
@@ -1140,6 +1143,59 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
                                      ? "Any"
                                      : expression.arguments()[0]->resolvedType()->display();
     return stringValue(typeName);
+  }
+  if (expression.intrinsic() == IntrinsicKind::IsInstance) {
+    const Type* source = expression.arguments().empty() ||
+                                 expression.arguments()[0]->resolvedType() == nullptr
+                             ? nullptr
+                             : expression.arguments()[0]->resolvedType()->canonical();
+    const Type* target = nullptr;
+    if (!expression.typeArgs().empty() && expression.typeArgs()[0]->resolvedType() != nullptr) {
+      target = expression.typeArgs()[0]->resolvedType()->canonical();
+    } else if (expression.arguments().size() >= 2 &&
+               expression.arguments()[1]->resolvedType() != nullptr) {
+      target = expression.arguments()[1]->resolvedType()->canonical();
+    }
+    const serem::ValuePtr value = expression.arguments().empty()
+                                      ? nullptr
+                                      : emitExpression(*expression.arguments()[0]);
+    // A class records its concrete type id in its first word, so the test reads
+    // that back and accepts every class the value may hold that derives from the
+    // target.
+    if (source != nullptr && target != nullptr && target->isRecord() &&
+        recordHasTypeId(source)) {
+      std::string ids;
+      for (const Type* record : classes_) {
+        if (record == nullptr || !recordHasTypeId(record) || !record->isSubtypeOf(target) ||
+            !record->isSubtypeOf(source)) {
+          continue;
+        }
+        if (!ids.empty()) ids += ",";
+        ids +=
+            std::to_string(static_cast<std::int32_t>(serem::recordTypeId(record->name())));
+      }
+      if (ids.empty()) {
+        return std::make_shared<serem::ConstantInt>(0, serem::IRType::boolType());
+      }
+      return builder_->operation("object.isa", serem::IRType::boolType(), {value},
+                                 {{"ids", ids}});
+    }
+    if (source != nullptr && source->isUnion() && target != nullptr) {
+      const int member = source->unionMemberIndex(target);
+      if (member >= 0) {
+        return builder_->operation("union.is", serem::IRType::boolType(), {value},
+                                   {{"tag", std::to_string(member)}});
+      }
+      const std::string tags = unionMemberTagsDerivedFrom(source, target);
+      if (!tags.empty()) {
+        return builder_->operation("union.is", serem::IRType::boolType(), {value},
+                                   {{"tags", tags}});
+      }
+      return std::make_shared<serem::ConstantInt>(0, serem::IRType::boolType());
+    }
+    const bool matches = source != nullptr && target != nullptr &&
+                         (target->isAny() || source->matchesInstance(target));
+    return std::make_shared<serem::ConstantInt>(matches ? 1 : 0, serem::IRType::boolType());
   }
   std::vector<serem::ValuePtr> args;
   if (expression.callee().kind() == NodeKind::NameExpr) {

@@ -66,6 +66,13 @@ struct SemanticSymbol {
   std::string docstring{};
 };
 
+/// A variable pinned to a narrower type inside the branch of a type test.
+struct NarrowedBinding {
+  std::string name;
+  SourceRange range{};
+  const Type* type = nullptr;
+};
+
 class TypeChecker {
 public:
   TypeChecker(TypeContext& types, DiagnosticEngine& diagnostics);
@@ -80,6 +87,12 @@ public:
   bool importSymbol(const std::string& name, Symbol symbol, SourceLocation location);
   [[nodiscard]] const Type* typeOfName(std::string_view name) const;
   [[nodiscard]] const Type* typeOfPath(const std::vector<std::string>& parts) const;
+  /// Type of `name` at `offset`, honouring the narrowing a type test applies
+  /// inside its branch (`is`, `is not`, `isinstance`). The language server asks
+  /// after checking a file, when the narrowed scopes are already popped.
+  [[nodiscard]] const Type* typeOfNameAt(std::string_view name, std::uint32_t offset) const;
+  [[nodiscard]] const Type* typeOfPathAt(const std::vector<std::string>& parts,
+                                         std::uint32_t offset) const;
 
 private:
   void pushScope(SourceRange range = {});
@@ -214,6 +227,9 @@ private:
   std::vector<std::unordered_map<std::string, Symbol>> scopes_{};
   std::vector<SourceRange> scopeRanges_{};
   std::vector<SemanticSymbol> symbols_{};
+  /// Type narrowings kept after their scope is popped, so a query that carries
+  /// a cursor offset can still resolve them.
+  std::vector<NarrowedBinding> narrowedBindings_{};
   int loopDepth_ = 0;
   std::string currentClass_{};
   [[nodiscard]] bool canAccessPrivate(const Type* owner) const;

@@ -904,6 +904,42 @@ const Type* TypeChecker::typeOfPath(const std::vector<std::string>& parts) const
   return current == nullptr ? nullptr : current->canonical();
 }
 
+const Type* TypeChecker::typeOfNameAt(std::string_view name, std::uint32_t offset) const {
+  // The innermost narrowing that covers the offset wins; bindings are appended
+  // in the order the checker visits them, so a later one is a nested branch.
+  const Type* narrowed = nullptr;
+  for (const NarrowedBinding& binding : narrowedBindings_) {
+    if (binding.name != name || binding.type == nullptr) {
+      continue;
+    }
+    if (offset < binding.range.start.offset || offset > binding.range.end.offset) {
+      continue;
+    }
+    narrowed = binding.type;
+  }
+  return narrowed == nullptr ? typeOfName(name) : narrowed;
+}
+
+const Type* TypeChecker::typeOfPathAt(const std::vector<std::string>& parts,
+                                      std::uint32_t offset) const {
+  if (parts.empty()) {
+    return nullptr;
+  }
+  const Type* current = typeOfNameAt(parts[0], offset);
+  for (std::size_t index = 1; current != nullptr && index < parts.size(); ++index) {
+    current = current->canonical();
+    if (current->isTypeObject() && current->typeObjectInstance() != nullptr) {
+      current = current->typeObjectInstance()->canonical();
+    }
+    const RecordField* field = current->findField(parts[index]);
+    if (field == nullptr || field->type == nullptr) {
+      return nullptr;
+    }
+    current = field->type;
+  }
+  return current == nullptr ? nullptr : current->canonical();
+}
+
 bool TypeChecker::importSymbol(const std::string& name, Symbol symbol, SourceLocation location) {
   auto& scope = scopes_.back();
   const auto existing = scope.find(name);
@@ -2882,6 +2918,16 @@ bool TypeChecker::checkIf(IfStmt& statement, const Type* expectedReturn) {
     } else {
       members.push_back(original->type);
     }
+    /// Rebinds the tested variable, remembering the narrowing so a query that
+    /// carries a cursor offset can still resolve it once the branch is popped.
+    const auto applyNarrowing = [&](const Type* narrowedType) {
+      Symbol narrowed = *original;
+      narrowed.type = narrowedType;
+      scopes_.back()[name->name()] = narrowed;
+      if (narrowedType != nullptr && !scopeRanges_.empty()) {
+        narrowedBindings_.push_back({name->name(), scopeRanges_.back(), narrowedType});
+      }
+    };
     for (const NarrowingTest& test : tests) {
       const Type* tested = nullptr;
       if (test.typeExpr != nullptr) {
@@ -2904,9 +2950,7 @@ bool TypeChecker::checkIf(IfStmt& statement, const Type* expectedReturn) {
         // out verbatim, which left the union untouched and un-callable.
         for (const Type* member : members) {
           if (isAssignable(tested, member)) {
-            Symbol narrowed = *original;
-            narrowed.type = tested;
-            scopes_.back()[name->name()] = std::move(narrowed);
+            applyNarrowing(tested);
             return;
           }
         }
@@ -2938,9 +2982,7 @@ bool TypeChecker::checkIf(IfStmt& statement, const Type* expectedReturn) {
     if (narrowedType == original->type) {
       return;
     }
-    Symbol narrowed = *original;
-    narrowed.type = narrowedType;
-    scopes_.back()[name->name()] = std::move(narrowed);
+    applyNarrowing(narrowedType);
   };
   for (IfBranch& branch : statement.branches()) {
     if (taken) {

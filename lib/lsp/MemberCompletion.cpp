@@ -206,7 +206,9 @@ MemberAccessQuery detectMemberAccessLine(std::string_view line, std::size_t curs
 
 MemberAccessQuery detectMemberAccess(std::string_view text, std::uint32_t offset) {
   const std::string_view line = lineToCursor(text, offset);
-  return detectMemberAccessLine(line, line.size());
+  MemberAccessQuery query = detectMemberAccessLine(line, line.size());
+  query.offset = offset;
+  return query;
 }
 
 const Type* resolveMemberType(Frontend* frontend, const MemberAccessQuery& query) {
@@ -226,7 +228,8 @@ const Type* resolveMemberType(Frontend* frontend, const MemberAccessQuery& query
     }
   }
   if (frontend->checker() != nullptr) {
-    if (const Type* fromChecker = frontend->checker()->typeOfPath(query.receiver)) {
+    if (const Type* fromChecker =
+            frontend->checker()->typeOfPathAt(query.receiver, query.offset)) {
       fromChecker = completionType(fromChecker);
       // Subclasses of a builtin carry their payload in a "$value" field; member
       // access falls through to the value type (mirrors TypeChecker::checkMethodCall).

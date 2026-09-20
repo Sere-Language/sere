@@ -88,6 +88,9 @@ private:
   std::unordered_map<std::string, std::string> decorators_;
   std::unordered_map<std::string, std::string> classBases_;
   std::unordered_map<std::string, std::vector<serem::IRType>> classFields_;
+  /// Every declared class, so `isinstance` can list the classes a value of a
+  /// given static type may hold at runtime.
+  std::vector<const Type*> classes_;
   std::string currentOwnerClass_;
   std::vector<serem::BasicBlock*> breakTargets_;
   std::vector<serem::BasicBlock*> continueTargets_;

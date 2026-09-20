@@ -18,6 +18,9 @@ struct MemberAccessQuery {
   std::vector<std::string> receiver;
   std::string receiverType;
   std::string prefix;
+  /// Offset of the cursor, so a receiver type narrowed by a type test resolves
+  /// to its narrowed type inside the branch.
+  std::uint32_t offset = 0;
 };
 
 struct MemberCompletionItem {
