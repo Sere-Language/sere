@@ -1,0 +1,23 @@
+def main() -> i32:
+    a: i32 = 300
+    b: i16 = 7
+    c: i64 = 1234567890123
+    d: f64 = 2.5
+    g: byte = 200
+    h: u8 = 255
+    small: i8 = 100
+    assert c == 1234567890123
+    assert i64(a) == 300
+    assert i32(d) == 2
+    assert f64(a) == 300.0
+    assert str(a) == "300"
+    assert a as f64 == 300.0
+    assert a + b == 307
+    assert a + i32(small) == 400
+    assert small + 1 == 101
+    assert d * 2 == 5.0
+    assert "n=" + str(a) == "n=300"
+    assert g == 200
+    assert h == 255
+    print("typing primitives ok")
+    return 0

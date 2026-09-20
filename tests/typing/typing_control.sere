@@ -1,0 +1,18 @@
+def main() -> i32:
+    i = 0
+    while i < 5:
+        i += 1
+    assert i == 5
+    flag: bool = True
+    if flag and not False:
+        i = 10
+    elif False:
+        i = 0
+    else:
+        i = -1
+    assert i == 10
+    for x in [1, 2, 3]:
+        i += x
+    assert i == 16
+    print("typing control ok")
+    return 0

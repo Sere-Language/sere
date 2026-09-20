@@ -1,0 +1,10 @@
+def main() -> i32:
+    assert f64(1) == 1.0
+    assert i32(2.9) == 2
+    assert str(42) == "42"
+    assert i64(7) == 7
+    assert u8(255) == 255
+    assert i32(3.0) == 3
+    assert 10 as f64 / 4 == 2.5
+    print("typing casts ok")
+    return 0

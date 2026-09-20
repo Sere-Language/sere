@@ -1,0 +1,15 @@
+def double(value: i32) -> i32:
+    return value * 2
+
+def apply(fn: Callable[[i32], i32], value: i32) -> i32:
+    return fn(value)
+
+def main() -> i32:
+    inc = lambda (x: i32) -> i32: x + 1
+    assert inc(5) == 6
+    assert apply(inc, 10) == 11
+    assert apply(double, 10) == 20
+    doubled: Callable[[i32], i32] = double
+    assert doubled(4) == 8
+    print("typing callables ok")
+    return 0

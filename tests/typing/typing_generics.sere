@@ -1,0 +1,20 @@
+def identity[T](value: T) -> T:
+    return value
+
+class Box[T]:
+    value: T
+
+    def __init__(self, value: T) -> void:
+        self.value = value
+
+def pair[A](left: A, right: A) -> A:
+    return left
+
+def main() -> i32:
+    assert identity(3) == 3
+    assert identity("s") == "s"
+    box = Box[str]("hello")
+    assert box.value == "hello"
+    assert pair(1, 2) == 1
+    print("typing generics ok")
+    return 0

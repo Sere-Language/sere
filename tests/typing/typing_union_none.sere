@@ -1,0 +1,12 @@
+def main() -> i32:
+    value: i32 | None = None
+    assert value is None
+    value = 7
+    assert value == 7
+    alt: i32 | str = "x"
+    assert alt == "x"
+    alt = 3
+    assert alt == 3
+    assert i32(value) + 1 == 8
+    print("typing union none ok")
+    return 0

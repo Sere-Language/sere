@@ -1,0 +1,28 @@
+class Point:
+    x: f64
+    y: f64
+
+    def __init__(self, x: f64, y: f64) -> void:
+        self.x = x
+        self.y = y
+
+    def norm(self) -> f64:
+        return self.x * self.x + self.y * self.y
+
+class Origin(Point):
+    @public name: str
+
+    def __init__(self) -> void:
+        super().__init__(0.0, 0.0)
+        self.name = "origin"
+
+def main() -> i32:
+    p = Point(3.0, 4.0)
+    assert p.norm() == 25.0
+    o = Origin()
+    assert o.norm() == 0.0
+    assert o.name == "origin"
+    assert isinstance(o, Point)
+    assert not isinstance(p, Origin)
+    print("typing classes ok")
+    return 0

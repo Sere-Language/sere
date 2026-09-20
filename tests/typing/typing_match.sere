@@ -1,0 +1,23 @@
+enum Msg:
+    Text(str)
+    Num(i32)
+
+def main() -> i32:
+    msg: Msg = Msg.Text("hi")
+    result = 0
+    match msg:
+        case Msg.Text(t):
+            result = 1
+        case Msg.Num(n):
+            result = 2
+    assert result == 1
+    msg = Msg.Num(42)
+    match msg:
+        case Msg.Text(t):
+            result = 3
+        case Msg.Num(n):
+            assert n == 42
+            result = 4
+    assert result == 4
+    print("typing match ok")
+    return 0

@@ -1,0 +1,16 @@
+def identity[T: i32 | f64](value: T) -> T:
+    return value
+
+class Box[T: i32 | str]:
+    value: T
+
+    def __init__(self, value: T) -> void:
+        self.value = value
+
+def main() -> i32:
+    assert identity[i32](3) == 3
+    assert identity(2.5) == 2.5
+    box = Box[str]("hello")
+    assert box.value == "hello"
+    print("typing constraints ok")
+    return 0

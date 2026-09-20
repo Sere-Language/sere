@@ -1,0 +1,15 @@
+enum Color:
+    Red
+    Green = 2
+    Blue
+
+def main() -> i32:
+    c: Color = Color.Green
+    assert isinstance(c, Color)
+    assert c is Color.Green
+    assert c.name == "Green"
+    assert c.value == 2
+    assert i32(c) == 2
+    assert Color.__name__ == "Color"
+    print("typing enum ok")
+    return 0

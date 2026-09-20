@@ -1,0 +1,14 @@
+class Box:
+    value: i32
+
+    def __init__(self, value: i32) -> void:
+        self.value = value
+
+def main() -> i32:
+    small: i32 = 3
+    assert typeof(small) == "i32"
+    assert typeof("x") == "str"
+    assert isinstance(small, i32)
+    assert isinstance[i32](small)
+    print("typing introspection ok", typeof(small))
+    return 0

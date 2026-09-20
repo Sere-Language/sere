@@ -1,0 +1,16 @@
+def pick(value: Any) -> Any:
+    return value
+
+def main() -> i32:
+    raw: Any = pick(5)
+    n: i32 = raw as i32
+    assert n == 5
+    text: str = pick("x") as str
+    assert text == "x"
+    assert isinstance(raw, i32)
+    assert typeof(raw) == "i32"
+    mixed: Any = pick([1, "two"])
+    second: str = (mixed as list[Any])[1] as str
+    assert second == "two"
+    print("typing any ok")
+    return 0

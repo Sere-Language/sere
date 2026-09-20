@@ -178,6 +178,7 @@ resolvedConstraints(const std::vector<std::unique_ptr<TypeExpr>>& expressions) {
   if (dest == nullptr || !dest->isScalarInteger()) {
     return true;
   }
+
   const int bits = dest->integerBitWidth();
   if (dest->isUnsignedInteger()) {
     if (value < 0) {
