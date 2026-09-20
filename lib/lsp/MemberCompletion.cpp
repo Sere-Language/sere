@@ -5,6 +5,7 @@
 
 #include "sere/ast/Query.h"
 #include "sere/driver/Frontend.h"
+#include "sere/lsp/DocFormat.h"
 #include "sere/sema/TypeChecker.h"
 #include "sere/types/BuiltinMembers.h"
 
@@ -22,6 +23,12 @@ constexpr int kCompletionConstructor = 4;
 constexpr int kCompletionField = 5;
 constexpr int kCompletionProperty = 10;
 constexpr int kCompletionEnumMember = 20;
+
+/// A member's docstring renders like a hover's documentation: the description,
+/// then the arguments, returns, and raises sections it declares.
+[[nodiscard]] std::string memberDocumentation(const std::string& docstring) {
+  return renderDocMarkdown(parseDocstring(docstring));
+}
 
 [[nodiscard]] bool isIdentStart(char ch) {
   const unsigned char value = static_cast<unsigned char>(ch);
@@ -444,7 +451,7 @@ std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type) {
       item.sortText = "0" + item.label;
       item.detail = owner + "." + variant.name;
       item.insertText = variant.name;
-      item.documentation = variant.docstring;
+      item.documentation = memberDocumentation(variant.docstring);
       if (!variant.payloadTypes.empty()) {
         item.detail += variantParams(variant) + " -> " + owner;
         item.insertText = variantSnippet(variant);
@@ -462,7 +469,7 @@ std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type) {
       item.insertText = methodSnippet(item.label, item.detail);
       item.kind = kCompletionConstructor;
       item.sortText = "0" + item.label;
-      item.documentation = init.docstring;
+      item.documentation = memberDocumentation(init.docstring);
       addItem(std::move(item));
     }
   }
@@ -481,7 +488,7 @@ std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type) {
     MemberCompletionItem item;
     item.label = field.name;
     item.detail = field.type == nullptr ? "" : field.type->display();
-    item.documentation = field.docstring;
+    item.documentation = memberDocumentation(field.docstring);
     const bool isFn = field.type != nullptr && field.type->kind() == TypeKind::Function;
     if (isFn) {
       // Module exports and callable fields read better with parameter names.
@@ -522,7 +529,7 @@ std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type) {
     item.insertText = methodSnippet(method.name, item.detail);
     item.kind = kCompletionMethod;
     item.sortText = "0" + method.name;
-    item.documentation = method.docstring;
+    item.documentation = memberDocumentation(method.docstring);
     addItem(std::move(item));
   }
   return items;

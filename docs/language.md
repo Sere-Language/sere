@@ -499,6 +499,68 @@ def add(left: i32, right: i32) -> i32
 
 The string is the link symbol. The `def` has no body.
 
+### Docstrings
+
+A string literal as the **first statement of a body** is the declaration's
+docstring. It is removed from the body, so it costs nothing at run time, and it
+is carried on the declaration for the language server and `__doc__`.
+
+```sere
+def serve_beer(name: str, age: i32) -> Result[str, str]:
+    """Serve a beer when the guest is old enough.
+
+    The drink is only poured after the guest's age has been checked, so the
+    caller handles refusal as well as success.
+
+    Args:
+        name: Who is being served.
+        age: The guest's age in years.
+
+    Returns:
+        Ok with a message when served, Err with the reason otherwise.
+
+    Raises:
+        ValueError: When the age is negative.
+
+    Example:
+        print(serve_beer("Ada", 30))
+    """
+    ...
+```
+
+Structure — the parts are all optional, and the order is free:
+
+| Part | Written as | Shown as |
+| --- | --- | --- |
+| Summary | first paragraph | the line under the signature |
+| Body | any paragraph after the summary | prose, blank lines preserved |
+| Arguments | `Args:`, `Arguments:`, `Parameters:`, `Params:` | `**Arguments**` with one bullet per name |
+| Returns | `Returns:`, `Return:`, `Result:` | `**Returns**` |
+| Raises | `Raises:`, `Throws:` | `**Raises**` with one bullet per error |
+| Example | `Example:`, `Examples:`, `Usage:`, `Code:` | a `sere` code block |
+| Note | `Notes:`, `Note:`, `Warning:`, `Tip:`, `See also:` | that title as its own section |
+
+- Section headers start at the **left edge** of the docstring; the entries under
+  them are indented, one level, as in the example above.
+- An entry is `name: description`. A parameter may repeat its type as
+  `name (type): description`; the hover shows the type from the signature, so
+  writing it again is optional but allowed. Indented lines after an entry
+  continue its description.
+- Only these titles open a section, so a sentence that happens to contain a colon
+  stays prose.
+
+Where it appears:
+
+- **Hover** over a declaration, a call, a method, or a constructor shows the
+  signature, the description, then the arguments, returns, raises, and examples.
+  A call shows the same documentation as the declaration it resolves to.
+- **Completion** shows the declared summary and sections next to the suggestion.
+- **Signature help** shows the same documentation under the parameter list.
+- The module's own leading docstring is `__doc__`.
+
+`@public`/field declarations take no docstring; a class, struct, enum, function,
+and method all do.
+
 ### Constrained generic parameters
 
 Add `: Type` or `: Type1 | Type2` after a generic parameter name to restrict its

@@ -965,6 +965,10 @@ std::unique_ptr<Expr> Parser::parsePostfix() {
       std::string field;
       if (check(TokenKind::Identifier)) {
         field = parseIdentifier("expected field name");
+      } else if (check(TokenKind::KeywordNone)) {
+        field = std::string(advance().spelling());
+      } else {
+        diagnostics_->error(peek().range(), "expected field name");
       }
       expr = std::make_unique<MemberExpr>(SourceRange{expr->range().start, previous().range().end},
                                           std::move(expr),
@@ -994,6 +998,17 @@ std::unique_ptr<Expr> Parser::parseUnary() {
     }
     return std::make_unique<AwaitExpr>(SourceRange{start, operand->range().end},
                                        std::move(operand));
+  }
+  if (match(TokenKind::StarStar)) {
+    const SourceLocation start = previous().location();
+    std::unique_ptr<Expr> operand = parseUnary();
+    if (operand == nullptr) {
+      return nullptr;
+    }
+    auto inner = std::make_unique<UnaryExpr>(
+        SourceRange{start, operand->range().end}, UnaryOp::Deref, std::move(operand));
+    return std::make_unique<UnaryExpr>(
+        SourceRange{start, inner->range().end}, UnaryOp::Deref, std::move(inner));
   }
   if (match(TokenKind::KeywordNot) || match(TokenKind::Minus) || match(TokenKind::Plus) ||
       match(TokenKind::Tilde) || match(TokenKind::PlusPlus) || match(TokenKind::MinusMinus) ||
@@ -1783,7 +1798,11 @@ std::unique_ptr<MatchStmt> Parser::parseMatch() {
 
 bool Parser::parseEnumVariant(EnumVariant& variant) {
   variant.range = peek().range();
-  variant.name = parseIdentifier("expected enum variant");
+  if (check(TokenKind::KeywordNone)) {
+    variant.name = std::string(advance().spelling());
+  } else {
+    variant.name = parseIdentifier("expected enum variant");
+  }
   if (variant.name.empty()) {
     return false;
   }

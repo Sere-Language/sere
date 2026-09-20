@@ -12,6 +12,7 @@
 #include "sere/driver/Project.h"
 #include "sere/driver/Toolchain.h"
 #include "sere/lsp/ImportCompletion.h"
+#include "sere/lsp/DocFormat.h"
 #include "sere/lsp/MemberCompletion.h"
 #include "sere/lsp/SemanticTokens.h"
 #include "sere/sema/TypeChecker.h"
@@ -375,18 +376,13 @@ void writeNullResult(const llvm::json::Value* id) {
     return name.name();
   }
   if (node.kind() == NodeKind::ClassDef) {
-    const auto& classDef = static_cast<const ClassDef&>(node);
     if (node.resolvedType() != nullptr) {
-      std::string text = formatClass(*node.resolvedType());
-      if (!classDef.docstring().empty()) text += "\n" + classDef.docstring();
-      return text;
+      // The docstring is rendered under the declaration by `documentedHover`.
+      return formatClass(*node.resolvedType());
     }
   }
   if (node.kind() == NodeKind::EnumDef) {
-    const auto& enumDef = static_cast<const EnumDef&>(node);
-    std::string text = "enum " + enumDef.name();
-    if (!enumDef.docstring().empty()) text += "\n\n" + enumDef.docstring();
-    return text;
+    return "enum " + static_cast<const EnumDef&>(node).name();
   }
   if (node.kind() == NodeKind::FunctionDef) {
     const auto& function = static_cast<const FunctionDef&>(node);
@@ -416,9 +412,8 @@ void writeNullResult(const llvm::json::Value* id) {
     if (function.hasInferredReturn()) {
       text += "  (inferred)";
     }
-    if (!function.docstring().empty()) {
-      text += "\n\n" + function.docstring();
-    }
+    // The docstring is rendered as Markdown under the signature by
+    // `documentedHover`, so it is not part of the fenced declaration here.
     return text;
   }
   if (node.kind() == NodeKind::TypeAlias) {
@@ -658,6 +653,242 @@ void collectCallableParams(const SemanticSymbol& match,
       types.erase(types.begin());
     }
   }
+}
+
+/// A callable's signature, with the receiver of a method removed from the
+/// parameter list so a hover reads like the call site writes it.
+[[nodiscard]] std::string callableLabel(const std::string& name,
+                                        const std::vector<std::string>& params,
+                                        const std::vector<std::string>& types,
+                                        const std::string& returnType,
+                                        bool macro = false) {
+  std::string label = name;
+  label += macro ? "!(" : "(";
+  for (std::size_t index = 0; index < params.size(); ++index) {
+    if (index != 0) {
+      label += ", ";
+    }
+    label += params[index];
+    if (index < types.size() && !types[index].empty()) {
+      label += ": " + types[index];
+    }
+  }
+  label += ")";
+  if (!returnType.empty()) {
+    label += " -> " + returnType;
+  }
+  return label;
+}
+
+/// The signature a hover shows for a callable symbol.
+[[nodiscard]] DocSignature symbolSignature(const SemanticSymbol& symbol) {
+  DocSignature signature;
+  std::vector<std::string> params = symbol.paramNames;
+  std::vector<std::string> types = symbol.paramTypes;
+  if (!params.empty() && params.front() == "self") {
+    params.erase(params.begin());
+    if (!types.empty()) {
+      types.erase(types.begin());
+    }
+  }
+  const bool macro = symbol.kind == "macro";
+  signature.text =
+      callableLabel(symbol.name, params, types, symbol.returnType, macro);
+  signature.params = std::move(params);
+  signature.types = std::move(types);
+  signature.returnType = symbol.returnType;
+  return signature;
+}
+
+/// The signature a hover shows for `Type(...)`: the parameters `__init__`
+/// declares, labelled with the class the call constructs.
+[[nodiscard]] DocSignature constructorSignature(const Type& type) {
+  const Type* record = type.canonical();
+  DocSignature signature;
+  std::vector<std::string> params;
+  std::vector<std::string> types;
+  const int index = record->methodIndex("__init__");
+  if (index >= 0) {
+    const RecordMethod& init = record->methods()[static_cast<std::size_t>(index)];
+    params = init.paramNames;
+    if (init.type != nullptr) {
+      for (std::size_t position = 1; position < init.type->paramTypes().size(); ++position) {
+        const Type* paramType = init.type->paramTypes()[position];
+        types.push_back(paramType == nullptr ? "?" : paramType->display());
+      }
+    }
+    if (!params.empty() && params.front() == "self") {
+      params.erase(params.begin());
+    }
+  }
+  if (params.size() > types.size()) {
+    types.resize(params.size());
+  }
+  signature.text = callableLabel(record->display(), params, types, {});
+  signature.params = std::move(params);
+  signature.types = std::move(types);
+  return signature;
+}
+
+/// The signature a hover shows for a function declared in this file.
+[[nodiscard]] DocSignature
+functionSignature(const FunctionDef& function, const std::string& declaration) {
+  DocSignature signature;
+  signature.text = declaration;
+  for (const ParamDecl& param : function.params()) {
+    const Type* paramType = param.type == nullptr ? nullptr : param.type->resolvedType();
+    signature.params.push_back(param.name);
+    if (paramType != nullptr) {
+      signature.types.push_back(paramType->display());
+    } else if (param.type != nullptr) {
+      signature.types.push_back(param.type->name());
+    } else {
+      signature.types.emplace_back();
+    }
+  }
+  const Type* returnType = function.returnType().resolvedType();
+  if (returnType != nullptr) {
+    signature.returnType = returnType->display();
+  } else if (function.resolvedType() != nullptr &&
+             function.resolvedType()->kind() == TypeKind::Function &&
+             function.resolvedType()->returnType() != nullptr) {
+    signature.returnType = function.resolvedType()->returnType()->display();
+  } else if (!function.returnType().name().empty()) {
+    signature.returnType = function.returnType().name();
+  }
+  // A method's receiver is not an argument the caller writes.
+  if (function.isMethod() && !signature.params.empty() && signature.params.front() == "self") {
+    signature.params.erase(signature.params.begin());
+    if (!signature.types.empty()) {
+      signature.types.erase(signature.types.begin());
+    }
+  }
+  return signature;
+}
+
+/// The callable a call expression names, as the checker resolved it.
+[[nodiscard]] const SemanticSymbol* calleeSymbol(TypeChecker& checker,
+                                                 const CallExpr& call,
+                                                 const Type** instanceType) {
+  if (instanceType != nullptr) {
+    *instanceType = nullptr;
+  }
+  const Expr& callee = call.callee();
+  if (callee.kind() == NodeKind::NameExpr) {
+    const std::string& name = static_cast<const NameExpr&>(callee).name();
+    const SemanticSymbol* symbol = findNamedSymbol(&checker, name);
+    if (symbol == nullptr) {
+      return nullptr;
+    }
+    if (symbol->kind == "class" || symbol->kind == "struct" || symbol->kind == "enum") {
+      if (instanceType != nullptr) {
+        *instanceType = symbol->type == nullptr ? callee.resolvedType() : symbol->type;
+      }
+    }
+    return symbol;
+  }
+  if (callee.kind() == NodeKind::MemberExpr) {
+    const auto& member = static_cast<const MemberExpr&>(callee);
+    const Type* objectType = member.object().resolvedType();
+    if (objectType == nullptr) {
+      return nullptr;
+    }
+    const Type* record = objectType->canonical();
+    if (record->isTypeObject() && record->typeObjectInstance() != nullptr) {
+      record = record->typeObjectInstance()->canonical();
+    }
+    if (record->isRecord()) {
+      // A method of a class instance, or a constructor reached through a
+      // module-qualified class name.
+      const SemanticSymbol* method = findCallable(checker, member.field(), true, record->name());
+      if (method != nullptr) {
+        return method;
+      }
+    }
+    return findCallable(checker, member.field(), false, {});
+  }
+  return nullptr;
+}
+
+/// Markdown documentation for the declaration or the use the cursor is on.
+/// Returns false when nothing documented sits under the cursor, which leaves the
+/// plain value hover in charge.
+[[nodiscard]] bool documentedHover(Frontend& frontend, const Node& node, std::string& out) {
+  TypeChecker* checker = frontend.checker();
+  if (checker == nullptr) {
+    return false;
+  }
+  const auto renderCallable = [&out](const DocSignature& signature,
+                                    const std::string& docstring) {
+    out = renderCallableMarkdown(signature, parseDocstring(docstring));
+  };
+  if (node.kind() == NodeKind::FunctionDef) {
+    const auto& function = static_cast<const FunctionDef&>(node);
+    renderCallable(functionSignature(function, hoverText(node)), function.docstring());
+    return true;
+  }
+  if (node.kind() == NodeKind::ClassDef || node.kind() == NodeKind::EnumDef) {
+    const std::string& docstring = node.kind() == NodeKind::ClassDef
+                                       ? static_cast<const ClassDef&>(node).docstring()
+                                       : static_cast<const EnumDef&>(node).docstring();
+    const DocComment doc = parseDocstring(docstring);
+    if (doc.empty()) {
+      return false;
+    }
+    out = renderDeclarationMarkdown(hoverText(node), doc);
+    return true;
+  }
+  if (node.kind() == NodeKind::CallExpr) {
+    const auto& call = static_cast<const CallExpr&>(node);
+    const Type* instanceType = nullptr;
+    const SemanticSymbol* symbol = calleeSymbol(*checker, call, &instanceType);
+    if (symbol == nullptr) {
+      return false;
+    }
+    if (symbol->kind == "class" || symbol->kind == "struct" || symbol->kind == "enum") {
+      // A constructor call is documented by the class, and its arguments are the
+      // ones `__init__` takes.
+      const Type* type = instanceType != nullptr ? instanceType : call.callee().resolvedType();
+      if (type != nullptr && type->canonical()->isRecord()) {
+        renderCallable(constructorSignature(*type), symbol->docstring);
+        return true;
+      }
+    }
+    renderCallable(symbolSignature(*symbol), symbol->docstring);
+    return true;
+  }
+  const SemanticSymbol* symbol = nullptr;
+  if (node.kind() == NodeKind::NameExpr) {
+    symbol = findNamedSymbol(checker, static_cast<const NameExpr&>(node).name());
+  } else if (node.kind() == NodeKind::MemberExpr) {
+    const auto& member = static_cast<const MemberExpr&>(node);
+    const Type* objectType = member.object().resolvedType();
+    if (objectType != nullptr) {
+      const Type* record = objectType->canonical();
+      if (record->isTypeObject() && record->typeObjectInstance() != nullptr) {
+        record = record->typeObjectInstance()->canonical();
+      }
+      if (record->isRecord()) {
+        symbol = findCallable(*checker, member.field(), true, record->name());
+      }
+    }
+    if (symbol == nullptr) {
+      symbol = findCallable(*checker, member.field(), false, {});
+    }
+  }
+  if (symbol == nullptr) {
+    return false;
+  }
+  if (symbol->kind == "function" || symbol->kind == "method" || symbol->kind == "macro") {
+    renderCallable(symbolSignature(*symbol), symbol->docstring);
+    return true;
+  }
+  const DocComment doc = parseDocstring(symbol->docstring);
+  if (doc.empty()) {
+    return false;
+  }
+  out = renderDeclarationMarkdown(hoverText(node), doc);
+  return true;
 }
 
 void addCompletion(llvm::json::Array& items,
@@ -1537,6 +1768,9 @@ void LanguageSession::handleHover(const llvm::json::Value* id, const llvm::json:
   }
   const Node* node = findNodeAt(*frontend->module(), located->second);
   std::string contents;
+  // A documented node renders as Markdown of its own: a fenced declaration, the
+  // description, and the argument, returns, and raises sections.
+  bool markdown = false;
   SourceRange hoverRange{{}, {}};
   const MacroUse* namedUse = findMacroNameAt(frontend->macroUses(), located->second);
   if (namedUse != nullptr) {
@@ -1545,11 +1779,17 @@ void LanguageSession::handleHover(const llvm::json::Value* id, const llvm::json:
                                                                  : "macro " + namedUse->name;
     hoverRange = namedUse->nameRange;
   } else if (node != nullptr) {
-    contents = hoverText(*node);
-    hoverRange = node->range();
+    if (documentedHover(*frontend, *node, contents)) {
+      markdown = true;
+      hoverRange = node->range();
+    } else {
+      contents = hoverText(*node);
+      hoverRange = node->range();
+    }
     if (node->kind() == NodeKind::MacroDef) {
       const auto& macro = static_cast<const MacroDef&>(*node);
       contents = formatMacro(macro);
+      markdown = false;
       const SourceRange nameRange = macroNameRange(macro);
       if (rangeContains(nameRange, located->second)) {
         hoverRange = nameRange;
@@ -1569,9 +1809,9 @@ void LanguageSession::handleHover(const llvm::json::Value* id, const llvm::json:
     writeNullResult(id);
     return;
   }
+  const std::string value = markdown ? contents : "```sere\n" + contents + "\n```";
   llvm::json::Object result{
-      {"contents",
-       llvm::json::Object{{"kind", "markdown"}, {"value", "```sere\n" + contents + "\n```"}}},
+      {"contents", llvm::json::Object{{"kind", "markdown"}, {"value", value}}},
   };
   if (hoverRange.start.line != 0) {
     result["range"] = lspRange(hoverRange);
@@ -1652,10 +1892,14 @@ void LanguageSession::handleCompletion(const llvm::json::Value* id,
       const std::string detail = symbol.kind == "macro"
                                      ? (symbol.typeDisplay.empty() ? "macro" : symbol.typeDisplay)
                                      : symbol.typeDisplay;
+      // The declaration's docstring, rendered the way hover shows it, so the
+      // suggestion carries the description and the arguments it documents.
+      const std::string documentation = renderDocMarkdown(parseDocstring(symbol.docstring));
       if (symbol.kind == "macro" && !symbol.snippet.empty()) {
-        addCompletion(items, symbol.name, kind, detail, prefix, symbol.snippet);
+        addCompletion(items, symbol.name, kind, detail, prefix, symbol.snippet, {}, true,
+                      documentation);
       } else {
-        addCompletion(items, symbol.name, kind, detail, prefix);
+        addCompletion(items, symbol.name, kind, detail, prefix, {}, {}, true, documentation);
       }
     }
   }
@@ -1887,7 +2131,7 @@ void LanguageSession::handleSignatureHelp(const llvm::json::Value* id,
     if (frontend->checker() != nullptr && call->callee().kind() == NodeKind::NameExpr) {
       const auto& callee = static_cast<const NameExpr&>(call->callee());
       if (const SemanticSymbol* symbol = findNamedSymbol(frontend->checker(), callee.name())) {
-        docstring = symbol->docstring;
+        docstring = renderDocMarkdown(parseDocstring(symbol->docstring));
       }
     } else if (frontend->checker() != nullptr && call->callee().kind() == NodeKind::MemberExpr) {
       const auto& member = static_cast<const MemberExpr&>(call->callee());
@@ -1896,7 +2140,7 @@ void LanguageSession::handleSignatureHelp(const llvm::json::Value* id,
         objectType = objectType->canonical();
         const SemanticSymbol* symbol = findCallable(*frontend->checker(), member.field(), true,
                                                     objectType->name());
-        if (symbol != nullptr) docstring = symbol->docstring;
+        if (symbol != nullptr) docstring = renderDocMarkdown(parseDocstring(symbol->docstring));
       }
     }
   } else if (frontend->checker() != nullptr) {
@@ -1962,6 +2206,9 @@ void LanguageSession::handleSignatureHelp(const llvm::json::Value* id,
       if (match != nullptr) {
         macro = match->kind == "macro";
         collectCallableParams(*match, names, types, returnType);
+        // The documentation a hover shows for the same callable, so the
+        // signature popup carries the description and the arguments too.
+        docstring = renderDocMarkdown(parseDocstring(match->docstring));
       }
     }
     if (names.empty() && frontend->types() != nullptr) {

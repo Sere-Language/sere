@@ -828,8 +828,12 @@ bool TypeChecker::declare(const std::string& name,
   collected.scopeRange = scopeRanges_.empty() ? SourceRange{} : scopeRanges_.back();
   collected.scopeDepth = scopes_.size();
   collected.snippet = symbol.snippet;
+  // A function keeps its docstring on the declaration the parser filled in; a
+  // class or enum does not, so its own symbol carries the string instead.
   if (symbol.function != nullptr) {
     collected.docstring = symbol.function->docstring();
+  } else {
+    collected.docstring = symbol.docstring;
   }
   collected.type = symbol.type;
   collected.typeDisplay = !symbol.typeDisplay.empty()
@@ -1012,13 +1016,15 @@ void TypeChecker::recordSymbol(const std::string& name,
                                const Type* type,
                                SourceLocation location,
                                std::string container,
-                               std::vector<std::string> paramNames) {
+                               std::vector<std::string> paramNames,
+                               std::string docstring) {
   SemanticSymbol collected;
   collected.name = name;
   collected.kind = kind;
   collected.type = type;
   collected.typeDisplay = type == nullptr ? "" : type->display();
   collected.container = std::move(container);
+  collected.docstring = std::move(docstring);
   collected.paramNames = std::move(paramNames);
   if (type != nullptr && type->kind() == TypeKind::Function) {
     for (const Type* param : type->paramTypes()) {
@@ -5055,6 +5061,9 @@ bool TypeChecker::checkReturn(ReturnStmt& statement, const Type* expectedReturn)
     }
     return true;
   }
+  if (value.kind() == NodeKind::NoneLiteral && expectedReturn->isPointerLike()) {
+    return true;
+  }
   if (!isAssignable(actual, expectedReturn)) {
     diagnostics_->error(statement.value()->range(),
                         "return type mismatch: expected " + quoteType(expectedReturn) + ", found " +
@@ -5760,6 +5769,7 @@ bool TypeChecker::collectClassNames(Module& module) {
     symbol.kind = SymbolKind::Class;
     symbol.type = record;
     symbol.fromPrelude = classDef.fromPrelude();
+    symbol.docstring = classDef.docstring();
     if (!declare(classDef.name(), symbol, classDef.range().start, !classDef.fromPrelude()) &&
         !bestEffort_) {
       return false;
@@ -5790,6 +5800,7 @@ bool TypeChecker::collectEnumNames(Module& module) {
     symbol.kind = SymbolKind::Class;
     symbol.type = record;
     symbol.fromPrelude = enumDef.fromPrelude();
+    symbol.docstring = enumDef.docstring();
     if (!declare(enumDef.name(), symbol, enumDef.range().start, !enumDef.fromPrelude()) &&
         !bestEffort_) {
       return false;
@@ -6255,7 +6266,8 @@ bool TypeChecker::collectMethods(Module& module) {
                    fnType,
                    method->range().start,
                    classDef.name(),
-                   std::move(methodParams));
+                   std::move(methodParams),
+                   method->docstring());
     }
     std::vector<RecordField> fields = record->fields();
     for (const std::unique_ptr<FunctionDef>& method : classDef.methods()) {

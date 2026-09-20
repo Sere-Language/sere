@@ -2752,6 +2752,14 @@ serem::ValuePtr SeremGenerator::emitBinary(const BinaryExpr& expression) {
       return builder_->operation(
           "union.is", serem::IRType::boolType(), {left}, std::move(attributes));
     }
+    if (source != nullptr && tested != nullptr && source->isEnum() && tested->isEnum() &&
+        expression.right().kind() == NodeKind::MemberExpr) {
+      serem::ValuePtr comparison =
+          builder_->compare("eq", left, emitExpression(expression.right()));
+      return expression.op() == BinaryOp::IsNot
+                 ? builder_->operation("not", serem::IRType::boolType(), {comparison})
+                 : comparison;
+    }
     bool matches = source != nullptr && tested != nullptr && source->isSubtypeOf(tested);
     if (expression.op() == BinaryOp::IsNot)
       matches = !matches;
@@ -3341,7 +3349,10 @@ serem::ValuePtr SeremGenerator::emitMember(const MemberExpr& expression) {
   // Every enum member comes from the record sema built rather than from stored
   // state: `Color.Green` is its discriminant, `tone.value` that same number, and
   // `tone.name` the variant that number selects.
-  if (const Type* record = enumRecordOf(expression.object().resolvedType()); record != nullptr) {
+  const Type* resolvedRecord = resolveType(expression.resolvedType());
+  if (resolvedRecord == nullptr || !resolvedRecord->isEnum())
+    resolvedRecord = resolveType(enumRecordOf(expression.object().resolvedType()));
+  if (const Type* record = resolvedRecord; record != nullptr && record->isEnum()) {
     const std::string& fieldName = expression.field();
     if (fieldName == "__name__") {
       return stringValue(record->name());

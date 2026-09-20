@@ -217,7 +217,8 @@ private:
                     const Type* type,
                     SourceLocation location,
                     std::string container,
-                    std::vector<std::string> paramNames = {});
+                    std::vector<std::string> paramNames = {},
+                    std::string docstring = {});
   bool resolveTypeConstraints(const std::vector<std::unique_ptr<TypeExpr>>& constraints);
   bool ensureRecordConstraints(const Type* record);
   bool checkTypeConstraints(const std::vector<std::string>& names,

@@ -5384,11 +5384,27 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
     llvm::Value* slot = builder.CreateAlloca(lower(decl.resolvedType()), nullptr, decl.name());
     llvm::Value* init = decl.init() == nullptr ? emitDefault(decl.resolvedType())
                                                : emitCoerce(builder,
-                                                            emitExpr(builder, *decl.init()),
-                                                            decl.init()->resolvedType(),
-                                                            decl.resolvedType());
+                                                             emitExpr(builder, *decl.init()),
+                                                             decl.init()->resolvedType(),
+                                                             decl.resolvedType());
     if (init != nullptr && !init->getType()->isVoidTy()) {
+      const Type* destination = resolveType(decl.resolvedType());
+      const Type* source = decl.init() == nullptr ? nullptr : resolveType(decl.init()->resolvedType());
+      if (destination != nullptr && source != nullptr && destination->isGenericCtor("Shared") &&
+          source->isGenericCtor("Shared")) {
+        builder.CreateCall(runtimeDecl("sere_shared_retain",
+                                       builder.getVoidTy(),
+                                       {builder.getPtrTy()}),
+                           {init});
+      }
       builder.CreateStore(init, slot);
+      if (destination != nullptr && source != nullptr && destination->isGenericCtor("Unique") &&
+          source->isGenericCtor("Unique") && decl.init()->kind() == NodeKind::NameExpr) {
+        const auto& name = static_cast<const NameExpr&>(*decl.init());
+        if (llvm::Value* sourceAddress = emitAddress(builder, name, false)) {
+          builder.CreateStore(llvm::ConstantPointerNull::get(builder.getPtrTy()), sourceAddress);
+        }
+      }
     }
     rememberLocal(decl.name(), slot, decl.resolvedType());
     return true;

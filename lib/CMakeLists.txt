@@ -88,6 +88,7 @@ add_library(sere_driver
   driver/Installer.cpp
   lsp/ImportCompletion.cpp
   lsp/MemberCompletion.cpp
+  lsp/DocFormat.cpp
   lsp/LanguageServer.cpp
   lsp/SemanticTokens.cpp
 )
