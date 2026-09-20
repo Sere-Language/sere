@@ -5,6 +5,7 @@
 
 #include "sere/Version.h"
 #include "sere/codegen/IRGenerator.h"
+#include "sere/codegen/LLVMTransform.h"
 #include "sere/codegen/OptPipeline.h"
 #include "sere/codegen/Serem.h"
 #include "sere/codegen/SeremGenerator.h"
@@ -662,6 +663,17 @@ int compileInput(const CompilerOptions& options) {
     }
   }
   std::string optError;
+  if (options.transformers) {
+    // The generator writes every function the program declares and never looks
+    // at operand values, so at O0 the module the printer sees still adds `1 + 1`
+    // at runtime and carries the prelude helpers nothing calls. The same passes
+    // `--emit-serem` runs clean that up before the opt pipeline sees it.
+    if (runLLVMTransformers(*module, optError) < 0) {
+      frontend.diagnostics().error("LLVM transformer pipeline failed: " + optError);
+      frontend.diagnostics().printAll();
+      return 1;
+    }
+  }
   if (!runOptPipeline(*module, options.optLevel, options.passes, optError)) {
     frontend.diagnostics().error("optimization pipeline failed: " + optError);
     frontend.diagnostics().printAll();

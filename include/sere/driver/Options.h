@@ -40,7 +40,7 @@ struct CompilerOptions {
   bool emitSeremBytecode = false;
   bool seremBackend = false;
   /// `--no-transformers`: print and lower the raw generator output instead of
-  /// running the Serem IR rewrite passes first.
+  /// running the IR rewrite passes first.
   bool transformers = true;
   bool dumpTokens = false;
   bool dumpAst = false;

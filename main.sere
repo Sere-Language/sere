@@ -1,6 +1,39 @@
 ﻿
-def change(s: Ptr[str]) -> None:
-    *s = "Changed!"
+class Root:
+    name: str
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+class Subroot(Root):
+    last_name: str
+
+    def __init__(self, name: str, last_name: str) -> None:
+        super().__init__(name)
+        self.last_name = last_name
+
+class ThirdRoot(Subroot):
+    age: i32
+
+    def __init__(self, name: str, last_name: str, age: i32) -> None:
+        super().__init__(name, last_name)
+        self.age = age
+
+def print_root(root: Root) -> None:
+    print(f"Root name: {root.name}")
+    if isinstance(root, Subroot):
+        print(f"Subroot last name: {root.last_name}")
+    if isinstance(root, ThirdRoot):
+        print(f"ThirdRoot age: {root.age}")
+    print("------------------")
+
 def main() -> i32:
+    root = Root("RootName")
+    subroot = Subroot("SubrootName", "LastName")
+    third_root = ThirdRoot("ThirdRootName", "LastName", 30)
+    print_root(root)
+    print_root(subroot)
+    print_root(third_root)
+
     print("Hello world!")
     return 0

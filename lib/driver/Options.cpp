@@ -48,7 +48,7 @@ void printUsage(std::string& error) {
       "  --emit-serem        Write the target-independent Serem IR text\n"
       "  --emit-serem-bytecode  Write Serem bytecode text (same stable .serem format)\n"
       "  --backend=serem     Select Serem as the output backend\n"
-      "  --no-transformers   Skip the Serem IR rewrite passes\n"
+      "  --no-transformers   Skip the IR rewrite passes\n"
       "  --dump-tokens       Print lexer tokens\n"
       "  --dump-ast          Print the parsed AST as JSON and stop\n"
       "  --dump-symbols      Print the semantic symbol table as JSON and stop\n"

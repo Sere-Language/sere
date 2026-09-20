@@ -2250,6 +2250,27 @@ llvm::Value* IRGenerator::emitIntrinsic(llvm::IRBuilder<>& builder, const CallEx
     } else if (expr.arguments().size() >= 2 && expr.arguments()[1]->resolvedType() != nullptr) {
       target = expr.arguments()[1]->resolvedType()->canonical();
     }
+    // A class value carries its type id in field 0, so the test is a comparison
+    // against every class the value could be at runtime that derives from the
+    // target. Without this `isinstance(subroot, Subroot)` on a `Root` value
+    // would use the static type and always answer false.
+    if (valueType != nullptr && target != nullptr && target->isRecord() && !target->isEnum() &&
+        recordHasTypeId(valueType)) {
+      if (llvm::Value* object = emitObjectPointer(builder, *expr.arguments()[0], valueType)) {
+        llvm::Value* got = builder.CreateLoad(builder.getInt32Ty(), object);
+        llvm::Value* match = nullptr;
+        for (const Type* record : classTypes_) {
+          if (record == nullptr || !recordHasTypeId(record) ||
+              !record->isSubtypeOf(target) || !record->isSubtypeOf(valueType)) {
+            continue;
+          }
+          llvm::Value* current =
+              builder.CreateICmpEQ(got, builder.getInt32(recordTypeId(record)));
+          match = match == nullptr ? current : builder.CreateOr(match, current);
+        }
+        return match == nullptr ? builder.getInt1(false) : match;
+      }
+    }
     llvm::Value* value = emitExpr(builder, *expr.arguments()[0]);
     if (valueType != nullptr && valueType->isAny() && target != nullptr) {
       return emitAnyTypeMatch(builder, value, target);

@@ -60,6 +60,7 @@ sere_apply_warnings(sere_sema)
 
 add_library(sere_codegen
   codegen/IRGenerator.cpp
+  codegen/LLVMTransform.cpp
   codegen/OptPipeline.cpp
   codegen/Serem.cpp
   codegen/SeremGenerator.cpp

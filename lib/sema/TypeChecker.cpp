@@ -2771,29 +2771,104 @@ std::optional<bool> TypeChecker::constBool(const Expr& expr) const {
   return std::nullopt;
 }
 
+namespace {
+
+/// A condition that pins a variable to a type for the branch it guards:
+/// `x is T`, `x is not T`, `isinstance(x, T)`, `not isinstance(x, T)`, and
+/// `isinstance[T](x)`.
+struct NarrowingTest {
+  const NameExpr* name = nullptr;
+  /// Type named by the test: the right operand of `is`, or `isinstance`'s
+  /// second argument.
+  const Expr* typeExpr = nullptr;
+  /// Type argument of `isinstance[T](value)`.
+  const TypeExpr* typeArg = nullptr;
+  /// True when the test passing *excludes* the type.
+  bool negated = false;
+};
+
+/// Recognises the conditions above, looking through `not`.
+[[nodiscard]] bool narrowingTestOf(const Expr& condition, NarrowingTest& out) {
+  if (condition.kind() == NodeKind::UnaryExpr) {
+    const auto& unary = static_cast<const UnaryExpr&>(condition);
+    if (unary.op() != UnaryOp::Not) {
+      return false;
+    }
+    NarrowingTest inner;
+    if (!narrowingTestOf(unary.operand(), inner)) {
+      return false;
+    }
+    inner.negated = !inner.negated;
+    out = inner;
+    return true;
+  }
+  if (condition.kind() == NodeKind::BinaryExpr) {
+    const auto& binary = static_cast<const BinaryExpr&>(condition);
+    if (binary.op() != BinaryOp::Is && binary.op() != BinaryOp::IsNot) {
+      return false;
+    }
+    const NameExpr* name = asName(binary.left());
+    if (name == nullptr) {
+      return false;
+    }
+    out.name = name;
+    out.typeExpr = &binary.right();
+    out.negated = binary.op() == BinaryOp::IsNot;
+    return true;
+  }
+  if (condition.kind() != NodeKind::CallExpr) {
+    return false;
+  }
+  const auto& call = static_cast<const CallExpr&>(condition);
+  if (call.intrinsic() != IntrinsicKind::IsInstance) {
+    return false;
+  }
+  if (!call.typeArgs().empty()) {
+    if (call.arguments().size() != 1) {
+      return false;
+    }
+    const NameExpr* name = asName(*call.arguments()[0]);
+    if (name == nullptr) {
+      return false;
+    }
+    out.name = name;
+    out.typeArg = call.typeArgs().front().get();
+    return true;
+  }
+  if (call.arguments().size() != 2) {
+    return false;
+  }
+  const NameExpr* name = asName(*call.arguments()[0]);
+  if (name == nullptr) {
+    return false;
+  }
+  out.name = name;
+  out.typeExpr = call.arguments()[1].get();
+  return true;
+}
+
+} // namespace
+
 bool TypeChecker::checkIf(IfStmt& statement, const Type* expectedReturn) {
   bool ok = true;
   bool taken = false;
-  // Every preceding `is` test in the chain, not just the closest one: the `else`
+  // Every preceding type test in the chain, not just the closest one: the `else`
   // of `if x is str: ... elif x is Mayor: ... else:` only runs when *both* tests
   // failed, so the false branch has to exclude all of them.
-  std::vector<const BinaryExpr*> previousTypeTests;
+  std::vector<NarrowingTest> previousTypeTests;
   /// Narrows the tested variable to the types a value can still hold after a
-  /// chain of `is` tests. `negate` selects the branch where the tests all
+  /// chain of type tests. `negate` selects the branch where the tests all
   /// failed, which drops the members that are always instances of a tested type
   /// while keeping the ones that only might be.
-  const auto narrowTypeTest = [&](const std::vector<const BinaryExpr*>& tests, bool negate) {
+  const auto narrowTypeTest = [&](const std::vector<NarrowingTest>& tests, bool negate) {
     if (tests.empty()) return;
-    const auto* name = tests.front()->left().kind() == NodeKind::NameExpr
-                           ? &static_cast<const NameExpr&>(tests.front()->left())
-                           : nullptr;
+    const NameExpr* name = tests.front().name;
     if (name == nullptr) return;
     Symbol* original = lookup(name->name());
     if (original == nullptr || original->type == nullptr) return;
-    for (const BinaryExpr* test : tests) {
+    for (const NarrowingTest& test : tests) {
       // Mixing variables in one chain would narrow the wrong symbol.
-      if (test->left().kind() != NodeKind::NameExpr ||
-          static_cast<const NameExpr&>(test->left()).name() != name->name()) {
+      if (test.name == nullptr || test.name->name() != name->name()) {
         return;
       }
     }
@@ -2807,13 +2882,20 @@ bool TypeChecker::checkIf(IfStmt& statement, const Type* expectedReturn) {
     } else {
       members.push_back(original->type);
     }
-    for (const BinaryExpr* test : tests) {
-      const Type* tested = resolveTypeFromExpr(const_cast<Expr&>(test->right()), false);
+    for (const NarrowingTest& test : tests) {
+      const Type* tested = nullptr;
+      if (test.typeExpr != nullptr) {
+        tested = resolveTypeFromExpr(const_cast<Expr&>(*test.typeExpr), false);
+      } else if (test.typeArg != nullptr) {
+        tested = resolveTypeExpr(*test.typeArg);
+      }
       if (tested != nullptr && tested->isTypeObject() && tested->typeObjectInstance() != nullptr) {
         tested = tested->typeObjectInstance();
       }
       if (tested == nullptr) return;
-      const bool positive = (test->op() == BinaryOp::Is) != negate;
+      // A test that is negated (`x is not T`, `not isinstance(x, T)`) narrows the
+      // *false* branch, which the `negate` flag already selects.
+      const bool positive = !test.negated != negate;
       std::vector<const Type*> remaining;
       if (positive) {
         // When the tested type fits inside a member, the value *is* that type,
@@ -2884,23 +2966,16 @@ bool TypeChecker::checkIf(IfStmt& statement, const Type* expectedReturn) {
       taken = true;
     }
     pushScope(branch.range);
-    if (branch.condition != nullptr && branch.condition->kind() == NodeKind::BinaryExpr) {
-      const auto& test = static_cast<const BinaryExpr&>(*branch.condition);
-      if (test.op() == BinaryOp::Is || test.op() == BinaryOp::IsNot) {
-        narrowTypeTest({&test}, false);
-      }
+    NarrowingTest test;
+    if (branch.condition != nullptr && narrowingTestOf(*branch.condition, test)) {
+      narrowTypeTest({test}, false);
     } else if (branch.condition == nullptr) {
       // The final `else` runs only when every earlier test failed, so apply the
       // whole chain negated.
       narrowTypeTest(previousTypeTests, true);
     }
-    if (branch.condition != nullptr && branch.condition->kind() == NodeKind::BinaryExpr) {
-      const auto& test = static_cast<const BinaryExpr&>(*branch.condition);
-      if (test.op() == BinaryOp::Is || test.op() == BinaryOp::IsNot) {
-        previousTypeTests.push_back(&test);
-      } else {
-        previousTypeTests.clear();
-      }
+    if (branch.condition != nullptr && narrowingTestOf(*branch.condition, test)) {
+      previousTypeTests.push_back(test);
     } else if (branch.condition != nullptr) {
       previousTypeTests.clear();
     }
