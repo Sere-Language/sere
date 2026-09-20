@@ -1,4 +1,4 @@
-def mark(tag: str) -> Function[[str], str]:
+def mark(tag: str) -> Function[[Function[[str], str]], Function[[str], str]]:
     def decorate(fn: Function[[str], str]) -> Function[[str], str]:
         def wrapper(value: str) -> str:
             return fn(value) + tag

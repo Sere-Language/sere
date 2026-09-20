@@ -751,6 +751,48 @@ std::vector<std::unique_ptr<Stmt>> substStmts(const std::vector<std::unique_ptr<
       out.push_back(std::move(cloned));
       continue;
     }
+    if (cloned->kind() == NodeKind::IfStmt) {
+      auto& ifStmt = static_cast<IfStmt&>(*cloned);
+      for (IfBranch& branch : ifStmt.branches()) {
+        if (branch.condition != nullptr) {
+          branch.condition = substOne(*branch.condition, env, callSite);
+        }
+        branch.body = substStmts(branch.body, env, mark, callSite);
+      }
+      out.push_back(std::move(cloned));
+      continue;
+    }
+    if (cloned->kind() == NodeKind::WhileStmt) {
+      auto& whileStmt = static_cast<WhileStmt&>(*cloned);
+      std::unique_ptr<Expr> condition = substOne(whileStmt.condition(), env, callSite);
+      std::vector<std::unique_ptr<Stmt>> body = substStmts(whileStmt.body(), env, mark, callSite);
+      out.push_back(std::make_unique<WhileStmt>(
+          callSite, std::move(condition), std::move(body)));
+      continue;
+    }
+    if (cloned->kind() == NodeKind::ForStmt) {
+      auto& forStmt = static_cast<ForStmt&>(*cloned);
+      std::unique_ptr<Expr> iterable = substOne(forStmt.iterable(), env, callSite);
+      std::vector<std::unique_ptr<Stmt>> body = substStmts(forStmt.body(), env, mark, callSite);
+      out.push_back(std::make_unique<ForStmt>(
+          callSite, forStmt.name(), std::move(iterable), std::move(body)));
+      continue;
+    }
+    if (cloned->kind() == NodeKind::AssertStmt) {
+      auto& assertStmt = static_cast<AssertStmt&>(*cloned);
+      std::unique_ptr<Expr> condition = substOne(assertStmt.condition(), env, callSite);
+      std::unique_ptr<Expr> message =
+          assertStmt.message() == nullptr ? nullptr : substOne(*assertStmt.message(), env, callSite);
+      out.push_back(std::make_unique<AssertStmt>(callSite, std::move(condition), std::move(message)));
+      continue;
+    }
+    if (cloned->kind() == NodeKind::RaiseStmt) {
+      auto& raiseStmt = static_cast<RaiseStmt&>(*cloned);
+      std::unique_ptr<Expr> value =
+          raiseStmt.value() == nullptr ? nullptr : substOne(*raiseStmt.value(), env, callSite);
+      out.push_back(std::make_unique<RaiseStmt>(callSite, std::move(value)));
+      continue;
+    }
     out.push_back(std::move(cloned));
   }
   return out;

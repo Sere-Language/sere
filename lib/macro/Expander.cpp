@@ -485,6 +485,19 @@ bool MacroExpander::expandStmtList(std::vector<std::unique_ptr<Stmt>>& statement
           item = std::make_unique<YieldStmt>(item->range(), std::move(expandedValue));
         else
           item = std::make_unique<ReturnStmt>(item->range(), std::move(expandedValue));
+      } else if (item->kind() == NodeKind::AssertStmt) {
+        auto& assertStmt = static_cast<AssertStmt&>(*item);
+        std::unique_ptr<Expr> expandedCondition = expandExpr(assertStmt.condition());
+        if (expandedCondition == nullptr) {
+          return false;
+        }
+        std::unique_ptr<Expr> expandedMessage =
+            assertStmt.message() == nullptr ? nullptr : expandExpr(*assertStmt.message());
+        if (assertStmt.message() != nullptr && expandedMessage == nullptr) {
+          return false;
+        }
+        item = std::make_unique<AssertStmt>(
+            item->range(), std::move(expandedCondition), std::move(expandedMessage));
       }
       if (!expandInside(*item))
         return false;

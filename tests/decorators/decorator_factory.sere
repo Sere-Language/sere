@@ -1,11 +1,11 @@
-def prefix(tag: str) -> Function[[str], str]:
+def prefix(tag: str) -> Function[[Function[[str], str]], Function[[str], str]]:
     def decorate(fn: Function[[str], str]) -> Function[[str], str]:
         def wrapper(value: str) -> str:
             return tag + fn(value)
         return wrapper
     return decorate
 
-def scale_by(factor: i32) -> Function[[i32], i32]:
+def scale_by(factor: i32) -> Function[[Function[[i32], i32]], Function[[i32], i32]]:
     def decorate(fn: Function[[i32], i32]) -> Function[[i32], i32]:
         def wrapper(value: i32) -> i32:
             return fn(value) * factor

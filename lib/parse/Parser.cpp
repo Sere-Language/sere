@@ -2762,6 +2762,16 @@ std::unique_ptr<Expr> Parser::parseSplice() {
     std::unique_ptr<Expr> inner;
     if (match(TokenKind::Dollar)) {
       inner = parseSplice();
+      if (match(TokenKind::Colon)) {
+        // Typed splice fragment such as $($x:expr). The fragment specifier is
+        // advisory; substitution only needs the splice's binding name.
+        if (!check(TokenKind::Identifier) && peek().kind() != TokenKind::KeywordType) {
+          diagnostics_->error(peek().range(),
+                              "expected fragment specifier after ':' in splice");
+          return nullptr;
+        }
+        advance();
+      }
     } else {
       inner = parseExpr();
     }

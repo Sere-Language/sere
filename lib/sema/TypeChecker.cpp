@@ -4825,9 +4825,17 @@ bool TypeChecker::checkAssign(AssignStmt& statement) {
         member.setPropertySet(field->setterLlvm);
         member.setBackingField(false);
       } else if (field != nullptr && field->setterLlvm.empty() && !field->getterLlvm.empty() &&
-                 !ownAccessor && !initBacking) {
-        diagnostics_->error(statement.range(), "property '" + member.field() + "' is read-only");
-        return false;
+                   !ownAccessor && !initBacking) {
+        // A getter-only property stays read-only to outside callers. Inside the
+        // declaring class the backing storage is owned by the author, so a plain
+        // assignment writes the stored field directly.
+        if (currentClass_ == objectType->name() && field->stored) {
+          member.setBackingField(true);
+        } else {
+          diagnostics_->error(statement.range(),
+                              "property '" + member.field() + "' is read-only");
+          return false;
+        }
       }
       if (objectType->isFrozen() && currentFunctionName_ != "__init__" &&
           member.propertySet().empty()) {
@@ -6967,9 +6975,26 @@ bool TypeChecker::applyFunctionDecorators(FunctionDef& function) {
     diagnostics_->error(function.range(), "cannot decorate an untyped function");
     return false;
   }
-  const Type* wrapped = applyDecoratorChain(function.decoratorExprs(), current, function.range());
+  // Decorators receive the callable without the receiver: the same value they
+  // would wrap in Python. The final wrapper keeps the self parameter so call
+  // sites (`obj.method(...)`) still invoke a full method ABI.
+  const Type* decoratorTarget = current;
+  if (function.isMethod() && current->kind() == TypeKind::Function &&
+      !current->paramTypes().empty()) {
+    std::vector<const Type*> withoutSelf(current->paramTypes().begin() + 1,
+                                         current->paramTypes().end());
+    decoratorTarget = types_->functionType(withoutSelf, current->returnType());
+  }
+  const Type* wrapped = applyDecoratorChain(function.decoratorExprs(), decoratorTarget, function.range());
   if (wrapped == nullptr) {
     return false;
+  }
+  if (function.isMethod() && wrapped->kind() == TypeKind::Function &&
+      current->kind() == TypeKind::Function && !current->paramTypes().empty()) {
+    std::vector<const Type*> withSelf;
+    withSelf.push_back(current->paramTypes().front());
+    withSelf.insert(withSelf.end(), wrapped->paramTypes().begin(), wrapped->paramTypes().end());
+    wrapped = types_->functionType(withSelf, wrapped->returnType());
   }
   function.setDecoratedType(wrapped);
   if (wrapped->kind() != TypeKind::Function && !wrapped->isCallableConstraint()) {
