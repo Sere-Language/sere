@@ -1,5 +1,11 @@
 
 def main() -> i32:
+    x: f32 = 3.13
+    y: i32 = 3
+    print(x)
+    print(y)
+    print(3.13)
+    
     vowels = "aeiou"
     print("Vowel identifier!")
     in_str = input("Input your sentence or word: ")

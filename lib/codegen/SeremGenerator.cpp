@@ -233,7 +233,15 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
     const serem::IRType irType = lowerType(type);
     auto slot = builder_->alloca(irType);
     locals_[declaration.name()] = slot;
-    if (declaration.init() != nullptr) builder_->store(emitExpression(*declaration.init()), slot);
+    if (declaration.init() != nullptr) {
+      serem::ValuePtr value = emitExpression(*declaration.init());
+      if (value != nullptr && value->valueKind() == serem::ValueKind::ConstantFloat &&
+          (irType.kind() == serem::IRType::Kind::F32 || irType.kind() == serem::IRType::Kind::F64)) {
+        value = std::make_shared<serem::ConstantFloat>(
+            static_cast<const serem::ConstantFloat&>(*value).value(), irType);
+      }
+      builder_->store(std::move(value), slot);
+    }
     return true;
   }
   case NodeKind::AssignStmt: {
@@ -473,16 +481,24 @@ bool SeremGenerator::emitWhile(const WhileStmt& statement) {
 
 bool SeremGenerator::emitFor(const ForStmt& statement) {
   const serem::ValuePtr iterable = emitExpression(statement.iterable());
-  (void)builder_->operation("iter.begin", serem::IRType::voidType(), {iterable});
+  const Type* iterableType = statement.iterable().resolvedType();
+  const Type* elementType = iterableType == nullptr ? nullptr : iterableType->elementType();
+  const std::unordered_map<std::string, std::string> iteratorAttributes{
+      {"element", elementType == nullptr ? std::string{} : elementType->display()}};
+  const serem::ValuePtr iterator =
+      builder_->operation("iter.begin", serem::IRType::ptr(serem::IRType::i64()), {iterable},
+                          iteratorAttributes);
   serem::BasicBlock* condition = &function_->addBlock("for.cond");
   serem::BasicBlock* body = &function_->addBlock("for.body");
   serem::BasicBlock* exit = &function_->addBlock("for.end");
   if (!builder_->currentBlock().isTerminated()) (void)builder_->branch(*condition);
   builder_->setInsertBlock(*condition);
-  auto hasNext = builder_->operation("iter.has_next", serem::IRType::boolType(), {iterable});
+  auto hasNext = builder_->operation("iter.has_next", serem::IRType::boolType(),
+                                    {iterable, iterator}, iteratorAttributes);
   (void)builder_->conditionalBranch(hasNext, *body, *exit);
   builder_->setInsertBlock(*body);
-  auto next = builder_->operation("iter.next", lowerType(statement.iterable().resolvedType()), {iterable});
+  auto next = builder_->operation("iter.next", lowerType(elementType), {iterable, iterator},
+                                 iteratorAttributes);
   auto slot = builder_->alloca(next->type());
   builder_->store(next, slot);
   locals_[statement.name()] = slot;
@@ -584,8 +600,16 @@ serem::ValuePtr SeremGenerator::emitExpression(const Expr& expression) {
 
 serem::ValuePtr SeremGenerator::emitName(const NameExpr& expression) {
   if (serem::ValuePtr value = local(expression.name())) {
-    if (value->valueKind() == serem::ValueKind::Argument) return value;
     const serem::IRType type = lowerType(expression.resolvedType());
+    if (value->valueKind() == serem::ValueKind::Argument) {
+      if (value->type().display() != type.display()) {
+        return builder_->operation("union.extract", type, {value},
+                                   {{"type", expression.resolvedType() == nullptr
+                                                     ? std::string{}
+                                                     : expression.resolvedType()->display()}});
+      }
+      return value;
+    }
     return builder_->load(value, type);
   }
   const auto found = functions_.find(expression.name());
@@ -611,10 +635,31 @@ serem::ValuePtr SeremGenerator::emitBinary(const BinaryExpr& expression) {
   case BinaryOp::Shr: return builder_->shiftRight(left, right, type);
   case BinaryOp::Eq: return builder_->compare("eq", left, right);
   case BinaryOp::Ne: return builder_->compare("ne", left, right);
+  case BinaryOp::In:
+  case BinaryOp::NotIn: {
+    std::unordered_map<std::string, std::string> attributes{
+        {"negated", expression.op() == BinaryOp::NotIn ? "true" : "false"}};
+    const Type* rightType = expression.right().resolvedType();
+    if (rightType != nullptr && rightType->isList() && rightType->elementType() != nullptr) {
+      attributes["element"] = rightType->elementType()->display();
+    }
+    return builder_->operation("contains", serem::IRType::boolType(), {left, right},
+                               std::move(attributes));
+  }
   case BinaryOp::Lt: return builder_->compare("lt", left, right);
   case BinaryOp::Le: return builder_->compare("le", left, right);
   case BinaryOp::Gt: return builder_->compare("gt", left, right);
   case BinaryOp::Ge: return builder_->compare("ge", left, right);
+  case BinaryOp::Is:
+  case BinaryOp::IsNot: {
+    const Type* tested = expression.right().resolvedType();
+    if (tested != nullptr && tested->isTypeObject() && tested->typeObjectInstance() != nullptr) {
+      tested = tested->typeObjectInstance();
+    }
+    return builder_->operation("type.is", serem::IRType::boolType(), {left},
+                               {{"type", tested == nullptr ? "Any" : tested->display()},
+                                {"negated", expression.op() == BinaryOp::IsNot ? "true" : "false"}});
+  }
   default:
     return builder_->operation("binary.dynamic", type, {left, right},
                                {{"operator", std::to_string(static_cast<int>(expression.op()))}});

@@ -34,6 +34,7 @@ def print_name(person: Person | str) -> None:
         print(person)
     else:
         print(person.get_name())
+
 def main() -> None:
     person = Person("Alice", 25)
     introduction = person.introduce()
@@ -44,3 +45,7 @@ def main() -> None:
     print(mayor_introduction)
     print(typeof(mayor))
     print(typeof(person))
+    print_name(mayor)
+    print_name(person)
+    print_name("Bob")
+    
