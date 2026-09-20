@@ -13,6 +13,8 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Type.h>
+#include <llvm/IR/Verifier.h>
+#include <llvm/Support/raw_ostream.h>
 
 #include <cstdint>
 #include <charconv>
@@ -175,6 +177,20 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
   llvm::Value* result = nullptr;
   const std::string& opcode = operation.opcode();
   llvm::Type* type = lowerType(operation.type());
+  auto& ir = builder_->builder;
+  auto convert = [&](llvm::Value* value, llvm::Type* target, bool isSigned = true) -> llvm::Value* {
+    llvm::Type* source = value->getType();
+    if (source == target) return value;
+    if (source->isIntegerTy() && target->isIntegerTy()) return ir.CreateIntCast(value, target, isSigned);
+    if (source->isFloatingPointTy() && target->isFloatingPointTy()) return ir.CreateFPCast(value, target);
+    if (source->isIntegerTy() && target->isFloatingPointTy())
+      return isSigned ? ir.CreateSIToFP(value, target) : ir.CreateUIToFP(value, target);
+    if (source->isFloatingPointTy() && target->isIntegerTy())
+      return isSigned ? ir.CreateFPToSI(value, target) : ir.CreateFPToUI(value, target);
+    if (source->isPointerTy() && target->isPointerTy()) return value;
+    report("unsupported Serem value conversion");
+    return llvm::UndefValue::get(target);
+  };
   if (opcode == "add") result = builder_->builder.CreateAdd(operand(0), operand(1));
   else if (opcode == "sub") result = builder_->builder.CreateSub(operand(0), operand(1));
   else if (opcode == "mul") result = builder_->builder.CreateMul(operand(0), operand(1));
@@ -734,6 +750,17 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     result = current;
   }
   else if (opcode == "value.repr") {
+    if (!attribute(operation, "element.name").empty()) {
+      llvm::Value* callback = llvm::ConstantPointerNull::get(ir.getPtrTy());
+      const auto repr = functions_.find(attribute(operation, "element.repr"));
+      if (repr != functions_.end()) callback = repr->second;
+      auto format = module_->getOrInsertFunction("sere_list_object_repr_data", ir.getPtrTy(),
+                                                ir.getPtrTy(), ir.getPtrTy(), ir.getPtrTy());
+      result = ir.CreateCall(format, {operand(0), callback,
+                                     ir.CreateGlobalString(attribute(operation, "element.name"))});
+      values_[&operation] = result;
+      return result;
+    }
     llvm::Function* repr = module_->getFunction("sere_list_repr_data");
     if (repr == nullptr) {
       llvm::FunctionType* reprType = llvm::FunctionType::get(
@@ -819,7 +846,21 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     }
   }
   else if (opcode == "construct") {
-    if (type->isStructTy()) {
+    if (type->isPointerTy() && operation.type().pointee() != nullptr &&
+        operation.type().pointee()->kind() == serem::IRType::Kind::Struct) {
+      llvm::Type* record = lowerType(*operation.type().pointee());
+      auto alloc = module_->getOrInsertFunction("sere_alloc", ir.getPtrTy(), ir.getInt64Ty());
+      result = ir.CreateCall(alloc, {llvm::ConstantExpr::getSizeOf(record)});
+      ir.CreateStore(llvm::Constant::getNullValue(record), result);
+      const auto init = functions_.find(attribute(operation, "type") + ".__init__");
+      if (init != functions_.end()) {
+        std::vector<llvm::Value*> args{result};
+        for (std::size_t index = 0; index < operands.size(); ++index) {
+          args.push_back(convert(operand(index), init->second->getFunctionType()->getParamType(index + 1)));
+        }
+        ir.CreateCall(init->second, args);
+      }
+    } else if (type->isStructTy()) {
       result = llvm::UndefValue::get(type);
       unsigned field = 0;
       if (type->getStructNumElements() == 2 && operands.size() == 1) {
@@ -851,13 +892,22 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       llvm::Value* object = operand(0);
       if (object != nullptr && object->getType()->isStructTy()) {
         result = builder_->builder.CreateExtractValue(object, {index});
-      } else {
-        result = object;
+      } else if (object != nullptr && operands[0]->type().pointee() != nullptr) {
+        llvm::Type* record = lowerType(*operands[0]->type().pointee());
+        result = ir.CreateLoad(type, ir.CreateStructGEP(record, object, index));
       }
     }
   } else if (opcode == "member.set") {
-    // Value aggregates are immutable in SSA; mutable object lowering will add
-    // an address-producing member operation in the next dialect revision.
+    unsigned index = 0;
+    const std::string indexText = attribute(operation, "index");
+    (void)std::from_chars(indexText.data(), indexText.data() + indexText.size(), index);
+    if (operands[0]->type().pointee() != nullptr) {
+      llvm::Type* record = lowerType(*operands[0]->type().pointee());
+      ir.CreateStore(convert(operand(1), record->getStructElementType(index)),
+                     ir.CreateStructGEP(record, operand(0), index));
+    } else {
+      report("Serem field assignment requires object storage");
+    }
   }
   else if (opcode == "enum.tag") {
     llvm::Value* object = operand(0);
@@ -885,7 +935,13 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       arguments.push_back(lowerValue(operands[index]));
     }
     if (function != nullptr) {
-      result = builder_->builder.CreateCall(function, arguments);
+      if (arguments.size() != function->arg_size()) {
+        report("Serem call argument count mismatch for " + function->getName().str());
+      } else {
+        for (std::size_t index = 0; index < arguments.size(); ++index)
+          arguments[index] = convert(arguments[index], function->getFunctionType()->getParamType(index));
+        result = builder_->builder.CreateCall(function, arguments);
+      }
     } else if (!operands.empty()) {
       llvm::Value* callee = lowerValue(operands[0]);
       if (callee != nullptr && callee->getType()->isPointerTy()) {
@@ -914,7 +970,39 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     llvm::BasicBlock* ifFalse = blockFor(attribute(operation, "false"));
     if (ifTrue != nullptr && ifFalse != nullptr) builder_->builder.CreateCondBr(operand(0), ifTrue, ifFalse);
   } else if (opcode == "cast.value") {
-    result = builder_->builder.CreateBitCast(operand(0), type);
+    result = convert(operand(0), type, attribute(operation, "unsigned") != "true");
+  } else if (opcode == "union.pack") {
+    int tag = 0;
+    const std::string text = attribute(operation, "tag");
+    (void)std::from_chars(text.data(), text.data() + text.size(), tag);
+    llvm::Value* payload = operand(0);
+    if (payload->getType()->isPointerTy()) payload = ir.CreatePtrToInt(payload, ir.getInt64Ty());
+    else if (payload->getType()->isIntegerTy()) payload = ir.CreateZExtOrTrunc(payload, ir.getInt64Ty());
+    else if (payload->getType()->isFloatingPointTy()) {
+      payload = ir.CreateBitCast(payload, ir.getIntNTy(payload->getType()->getPrimitiveSizeInBits()));
+      payload = ir.CreateZExtOrTrunc(payload, ir.getInt64Ty());
+    } else {
+      auto alloc = module_->getOrInsertFunction("sere_alloc", ir.getPtrTy(), ir.getInt64Ty());
+      llvm::Value* memory = ir.CreateCall(alloc, {llvm::ConstantExpr::getSizeOf(payload->getType())});
+      ir.CreateStore(payload, memory);
+      payload = ir.CreatePtrToInt(memory, ir.getInt64Ty());
+    }
+    result = ir.CreateInsertValue(llvm::UndefValue::get(type), ir.getInt32(tag), {0});
+    result = ir.CreateInsertValue(result, payload, {1});
+  } else if (opcode == "union.extract") {
+    llvm::Value* payload = ir.CreateExtractValue(operand(0), {1});
+    if (type->isPointerTy()) result = ir.CreateIntToPtr(payload, type);
+    else if (type->isIntegerTy()) result = ir.CreateTruncOrBitCast(payload, type);
+    else if (type->isFloatingPointTy()) {
+      result = ir.CreateBitCast(ir.CreateTruncOrBitCast(payload,
+          ir.getIntNTy(type->getPrimitiveSizeInBits())), type);
+    } else result = ir.CreateLoad(type, ir.CreateIntToPtr(payload, ir.getPtrTy()));
+  } else if (opcode == "union.is") {
+    int tag = -1;
+    const std::string text = attribute(operation, "tag");
+    (void)std::from_chars(text.data(), text.data() + text.size(), tag);
+    result = ir.CreateICmpEQ(ir.CreateExtractValue(operand(0), {0}), ir.getInt32(tag));
+    if (attribute(operation, "negated") == "true") result = ir.CreateNot(result);
   } else if (opcode == "await") {
     result = operand(0);
   } else if (opcode == "coro.begin") {
@@ -939,7 +1027,10 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       result = builder_->builder.CreateCall(wrappedType, wrapped, arguments);
     }
   }
-  if (result == nullptr && !operation.type().isVoid()) result = llvm::UndefValue::get(type);
+  if (result == nullptr && !operation.type().isVoid()) {
+    report("unsupported Serem operation: " + opcode);
+    result = llvm::UndefValue::get(type);
+  }
   if (!operation.resultName().empty()) values_[&operation] = result;
   return result;
 }
@@ -1049,6 +1140,12 @@ std::unique_ptr<llvm::Module> SeremLLVMBackend::emit(const serem::IRModule& modu
   }
   if (userMain != nullptr) {
     emitEntryPoint(*userMain, functions_["main"]);
+  }
+  std::string verificationError;
+  llvm::raw_string_ostream errors(verificationError);
+  if (llvm::verifyModule(*module_, &errors)) {
+    report("invalid Serem LLVM module: " + verificationError);
+    return nullptr;
   }
   return std::move(module_);
 }

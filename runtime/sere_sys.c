@@ -1227,6 +1227,27 @@ void sere_list_repr_data(void* list, int32_t kind, const char** out_data, int64_
   outStr(ownBytes(output, (int64_t)length), out_data, out_len);
 }
 
+const char* sere_list_object_repr_data(void* list, const char* (*repr)(void*), const char* name) {
+  const SereList* typed = (const SereList*)list;
+  size_t capacity = 32;
+  size_t length = 0;
+  char* output = (char*)malloc(capacity);
+  if (output == NULL) return "";
+  reprAppend(&output, &length, &capacity, "[", 1);
+  if (typed != NULL) {
+    for (int64_t index = 0; index < typed->len; ++index) {
+      void* object = NULL;
+      memcpy(&object, (const char*)typed->data + index * typed->stride, sizeof(object));
+      const char* text = repr == NULL ? name : repr(object);
+      if (index != 0) reprAppend(&output, &length, &capacity, ", ", 2);
+      if (text != NULL) reprAppend(&output, &length, &capacity, text, strlen(text));
+    }
+  }
+  reprAppend(&output, &length, &capacity, "]", 1);
+  output[length] = '\0';
+  return ownBytes(output, (int64_t)length).data;
+}
+
 void sere_list_str_repr_data(void* list, const char** out_data, int64_t* out_len) {
   sere_list_repr_data(list, SERE_LIST_STR, out_data, out_len);
 }

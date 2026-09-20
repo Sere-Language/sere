@@ -37,7 +37,7 @@ def show(value: Vec | str) -> None:
     else:
         print("vec:")
         print(value)
-        print(value.get_len_marker())
+        print(len(value))
 
 
 def main(argv: list[str]) -> None:
@@ -61,8 +61,8 @@ def main(argv: list[str]) -> None:
     print(2 in a)
     print(9 in a)
     print("bool:")
-    if a:
-        print("truthy")
+    print(not a)
+    print(not Vec(0, 0))
     print("list:")
     print([a, b])
     print("union:")

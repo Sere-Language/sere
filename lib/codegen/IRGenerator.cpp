@@ -2683,11 +2683,24 @@ IRGenerator::emitValueRepr(llvm::IRBuilder<>& builder, llvm::Value* value, const
   llvm::Value* object = function->getArg(0);
   llvm::Value* result = nullptr;
   if (type->isRecord()) {
-    const int repr = type->methodIndex("__repr__");
-    if (repr >= 0 && functions_.contains(type->methods()[repr].llvmName)) {
+    // `__repr__` describes a value nested in a container; `__str__` stands in
+    // when it is missing, and the type name is the last resort.
+    const auto method = [&](std::string_view name) -> llvm::Function* {
+      const int index = type->methodIndex(name);
+      if (index < 0) {
+        return nullptr;
+      }
+      const auto found = functions_.find(type->methods()[static_cast<std::size_t>(index)].llvmName);
+      return found == functions_.end() ? nullptr : found->second;
+    };
+    llvm::Function* render = method("__repr__");
+    if (render == nullptr) {
+      render = method("__str__");
+    }
+    if (render != nullptr) {
       llvm::Value* address = body.CreateAlloca(lower(type));
       body.CreateStore(object, address);
-      result = body.CreateCall(functions_.at(type->methods()[repr].llvmName), {address});
+      result = body.CreateCall(render, {address});
     } else if (type->valueType() != type) {
       result = emitValueRepr(
           body,
@@ -4188,6 +4201,37 @@ llvm::Value* IRGenerator::emitUnary(llvm::IRBuilder<>& builder, const UnaryExpr&
               : (isFloat ? builder.CreateFAdd(current, one) : builder.CreateAdd(current, one));
     builder.CreateStore(next, address);
     return expr.op() == UnaryOp::PostInc || expr.op() == UnaryOp::PostDec ? current : next;
+  }
+  // A class operand is converted by its dunder method: `not v` calls `__bool__`
+  // and `-v` calls `__neg__`. Emitting the LLVM instruction on a record value
+  // would build invalid IR.
+  const Type* operandType = resolveType(expr.operand().resolvedType());
+  const Type* recordType =
+      operandType == nullptr ? nullptr : resolveType(operandType->valueType());
+  const char* dunder = nullptr;
+  switch (expr.op()) {
+  case UnaryOp::Not:
+    dunder = "__bool__";
+    break;
+  case UnaryOp::Invert:
+    dunder = "__invert__";
+    break;
+  case UnaryOp::Neg:
+    dunder = "__neg__";
+    break;
+  case UnaryOp::Pos:
+    dunder = "__pos__";
+    break;
+  default:
+    break;
+  }
+  if (recordType != nullptr && recordType->isRecord() && dunder != nullptr &&
+      recordType->methodIndex(dunder) >= 0) {
+    llvm::Value* result = emitDunderCall(builder, expr.operand(), dunder, {});
+    if (result == nullptr) {
+      return nullptr;
+    }
+    return expr.op() == UnaryOp::Not ? builder.CreateNot(result) : result;
   }
   llvm::Value* operand = emitBuiltinExpr(builder, expr.operand());
   if (operand == nullptr) {

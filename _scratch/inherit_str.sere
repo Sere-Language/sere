@@ -1,0 +1,25 @@
+class Person:
+    @private name: str
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __str__(self) -> str:
+        return f"Person({self.name})"
+
+
+class Mayor(Person):
+    @private city: str
+
+    def __init__(self, name: str, city: str) -> None:
+        super().__init__(name)
+        self.city = city
+
+
+def main(argv: list[str]) -> None:
+    person = Person("Alice")
+    mayor = Mayor("Bob", "Springfield")
+    print(person)
+    print(mayor)
+    print(f"{mayor}")
+    print([person, mayor])
