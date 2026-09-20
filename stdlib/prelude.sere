@@ -124,6 +124,35 @@ class RecursionError(Exception):
 class NotImplementedError(Exception):
     pass
 
+class ResultError(Exception):
+    pass
+
+enum Result[T]:
+    Ok(value: T)
+    Err(message: str)
+
+    def unwrap(self) -> T:
+        match self:
+            case Result.Ok(value):
+                return value
+            case Result.Err(message):
+                raise ResultError(message)
+
+    def try_unwrap(self) -> T | None:
+        match self:
+            case Result.Ok(value):
+                return value
+            case Result.Err(_):
+                return None
+
+    def is_ok(self) -> bool:
+        match self:
+            case Result.Ok(_):
+                return True
+            case Result.Err(_):
+                return False
+
+    
 macro dbg(x):
     quote:
         print($x)

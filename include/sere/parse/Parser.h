@@ -55,6 +55,7 @@ private:
   std::unique_ptr<Expr> parseExpr();
   std::unique_ptr<Expr> parseTupleTail(std::unique_ptr<Expr> first, SourceLocation start);
   std::unique_ptr<Expr> parseLambda();
+  std::unique_ptr<Expr> parseDoExpr();
   std::unique_ptr<Stmt> parseConst();
   std::unique_ptr<Expr> parseEqualsValue();
   std::unique_ptr<Expr> parseTernary();

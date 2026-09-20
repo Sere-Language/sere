@@ -1452,6 +1452,89 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
   }
 }
 
+serem::ValuePtr SeremGenerator::emitDo(const DoExpr& expression) {
+  return emitBlockValue(expression.body(), expression.resolvedType());
+}
+
+serem::ValuePtr SeremGenerator::emitBlockValue(const std::vector<std::unique_ptr<Stmt>>& body,
+                                               const Type* resultType) {
+  const auto savedLocals = locals_;
+  const auto savedLocalTypes = localTypes_;
+  const bool wantsValue = resultType != nullptr && !resultType->isVoidLike();
+  serem::ValuePtr result;
+  for (std::size_t index = 0; index < body.size(); ++index) {
+    const Stmt& statement = *body[index];
+    const bool isLast = index + 1 == body.size();
+    if (isLast && statement.kind() == NodeKind::ExprStmt) {
+      result = emitExpression(static_cast<const ExprStmt&>(statement).expression());
+      break;
+    }
+    if (isLast && wantsValue && statement.kind() == NodeKind::IfStmt) {
+      result = emitIfValue(static_cast<const IfStmt&>(statement), resultType);
+      break;
+    }
+    if (!emitStatement(statement)) {
+      result = nullptr;
+      break;
+    }
+    if (builder_->currentBlock().isTerminated()) {
+      break;
+    }
+  }
+  locals_ = std::move(savedLocals);
+  localTypes_ = std::move(savedLocalTypes);
+  if (wantsValue && result == nullptr) {
+    result = std::make_shared<serem::ConstantInt>(0, lowerType(resultType));
+  }
+  return result;
+}
+
+serem::ValuePtr SeremGenerator::emitIfValue(const IfStmt& statement, const Type* resultType) {
+  const serem::IRType irType = lowerType(resultType);
+  // Serem's `phi` cannot join values defined in sibling blocks, so the branches
+  // write into a slot that the merge block reloads.
+  auto slot = builder_->alloca(irType);
+  const std::vector<IfBranch>& branches = statement.branches();
+  serem::BasicBlock* merge = &function_->addBlock("do.if.end");
+  std::vector<serem::BasicBlock*> tests(branches.size(), nullptr);
+  std::vector<serem::BasicBlock*> bodies;
+  bodies.reserve(branches.size());
+  for (std::size_t index = 0; index < branches.size(); ++index) {
+    if (index > 0 && branches[index].condition != nullptr) {
+      tests[index] = &function_->addBlock("do.if.test" + std::to_string(index));
+    }
+    bodies.push_back(&function_->addBlock("do.if.body" + std::to_string(index)));
+  }
+  for (std::size_t index = 0; index < branches.size(); ++index) {
+    const IfBranch& branch = branches[index];
+    serem::BasicBlock* fallthrough = merge;
+    if (index + 1 < branches.size()) {
+      fallthrough = branches[index + 1].condition != nullptr ? tests[index + 1] : bodies[index + 1];
+    }
+    if (branch.condition == nullptr) {
+      if (&builder_->currentBlock() != bodies[index] && !builder_->currentBlock().isTerminated()) {
+        (void)builder_->branch(*bodies[index]);
+      }
+    } else {
+      const serem::ValuePtr condition = emitExpression(*branch.condition);
+      (void)builder_->conditionalBranch(condition, *bodies[index], *fallthrough);
+    }
+    builder_->setInsertBlock(*bodies[index]);
+    serem::ValuePtr value = emitBlockValue(branch.body, resultType);
+    if (!builder_->currentBlock().isTerminated()) {
+      serem::ValuePtr stored =
+          value != nullptr ? std::move(value) : std::make_shared<serem::ConstantInt>(0, irType);
+      builder_->store(std::move(stored), slot);
+      (void)builder_->branch(*merge);
+    }
+    if (branch.condition == nullptr)
+      break;
+    builder_->setInsertBlock(*fallthrough);
+  }
+  builder_->setInsertBlock(*merge);
+  return builder_->load(slot, irType);
+}
+
 bool SeremGenerator::emitIf(const IfStmt& statement) {
   const std::vector<IfBranch>& branches = statement.branches();
   serem::BasicBlock* merge = &function_->addBlock("if.end");
@@ -1681,6 +1764,8 @@ serem::ValuePtr SeremGenerator::emitExpression(const Expr& expression) {
     (void)bindLocal(walrus.name(), slot);
     return value;
   }
+  case NodeKind::DoExpr:
+    return emitDo(static_cast<const DoExpr&>(expression));
   case NodeKind::CastExpr: {
     const auto& cast = static_cast<const CastExpr&>(expression);
     return coerce(emitExpression(cast.value()), cast.value().resolvedType(), expression.resolvedType());
@@ -1835,8 +1920,35 @@ serem::ValuePtr SeremGenerator::formatValue(const Expr& expression, const std::s
                              std::move(attributes));
 }
 
+serem::ValuePtr
+SeremGenerator::enumNameValue(const Type* record, serem::ValuePtr value, bool qualified) {
+  if (record == nullptr || value == nullptr)
+    return value;
+  // The discriminant selects the name, so the operation carries `tag, name`
+  // pairs the backend folds into one selection.
+  std::vector<serem::ValuePtr> operands{std::move(value)};
+  std::unordered_set<std::int32_t> seen;
+  for (const RecordField& field : record->fields()) {
+    if (field.name.empty() || !field.isStatic)
+      continue;
+    const std::int32_t tag = enumTagOf(&field);
+    if (!seen.insert(tag).second)
+      continue;
+    operands.push_back(std::make_shared<serem::ConstantInt>(tag, serem::IRType::i32()));
+    operands.push_back(stringValue(qualified ? record->name() + "." + field.name : field.name));
+  }
+  if (operands.size() == 1)
+    return stringValue(record->name());
+  return builder_->operation("enum.name", serem::IRType::stringType(), std::move(operands));
+}
+
 serem::ValuePtr SeremGenerator::printable(serem::ValuePtr value, const Type* type) {
   if (type == nullptr) return value;
+  if (type->isEnum()) {
+    // An enum renders as its variant name, so `Message.Write("x")` reads back
+    // the way it was written.
+    return enumNameValue(type->canonical(), std::move(value), true);
+  }
   if (type->isList() || type->isArray()) {
     const Type* element = type->elementType();
     std::unordered_map<std::string, std::string> attributes{
@@ -2483,20 +2595,7 @@ serem::ValuePtr SeremGenerator::emitMember(const MemberExpr& expression) {
           return value;
         return builder_->operation("enum.tag", serem::IRType::i32(), {value});
       }
-      std::vector<serem::ValuePtr> operands{value};
-      std::unordered_set<std::int32_t> seen;
-      for (const RecordField& field : record->fields()) {
-        if (field.name.empty() || !field.isStatic)
-          continue;
-        const std::int32_t tag = enumTagOf(&field);
-        if (!seen.insert(tag).second)
-          continue;
-        operands.push_back(std::make_shared<serem::ConstantInt>(tag, serem::IRType::i32()));
-        operands.push_back(stringValue(field.name));
-      }
-      if (operands.size() == 1)
-        return stringValue(record->name());
-      return builder_->operation("enum.name", serem::IRType::stringType(), std::move(operands));
+      return enumNameValue(record, std::move(value), false);
     }
     if (const RecordField* field = record->findField(fieldName);
         field != nullptr && field->isStatic) {
@@ -2605,9 +2704,17 @@ serem::ValuePtr SeremGenerator::emitAggregate(const Expr& expression) {
   } else {
     kind = "dict";
     const auto& dict = static_cast<const DictLiteral&>(expression);
+    // The entries take the literal's declared layouts, so an `Any` value is
+    // boxed here rather than stored as its unboxed self.
+    const Type* keyType =
+        expression.resolvedType() == nullptr ? nullptr : expression.resolvedType()->dictKeyType();
+    const Type* valueType =
+        expression.resolvedType() == nullptr ? nullptr : expression.resolvedType()->dictValueType();
     for (std::size_t index = 0; index < dict.keys().size(); ++index) {
-      operands.push_back(emitExpression(*dict.keys()[index]));
-      operands.push_back(emitExpression(*dict.values()[index]));
+      operands.push_back(
+          coerce(emitExpression(*dict.keys()[index]), dict.keys()[index]->resolvedType(), keyType));
+      operands.push_back(coerce(
+          emitExpression(*dict.values()[index]), dict.values()[index]->resolvedType(), valueType));
     }
   }
   std::unordered_map<std::string, std::string> attributes;

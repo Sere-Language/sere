@@ -5210,6 +5210,8 @@ llvm::Value* IRGenerator::emitExpr(llvm::IRBuilder<>& builder, const Expr& expr)
     return emitTuple(builder, static_cast<const TupleExpr&>(expr));
   case NodeKind::WalrusExpr:
     return emitWalrus(builder, static_cast<const WalrusExpr&>(expr));
+  case NodeKind::DoExpr:
+    return emitDo(builder, static_cast<const DoExpr&>(expr));
   case NodeKind::LambdaExpr:
     return emitLambda(builder, static_cast<const LambdaExpr&>(expr));
   default:
@@ -5537,6 +5539,10 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
 
 namespace {
 
+void collectStmtUses(const Stmt& stmt,
+                     std::vector<std::string>& names,
+                     std::vector<const Type*>& printed);
+
 void collectExprUses(const Expr& expr,
                      std::vector<std::string>& names,
                      std::vector<const Type*>& printed) {
@@ -5655,6 +5661,14 @@ void collectExprUses(const Expr& expr,
   }
   if (expr.kind() == NodeKind::WalrusExpr) {
     collectExprUses(static_cast<const WalrusExpr&>(expr).value(), names, printed);
+    return;
+  }
+  if (expr.kind() == NodeKind::DoExpr) {
+    for (const std::unique_ptr<Stmt>& statement : static_cast<const DoExpr&>(expr).body()) {
+      if (statement != nullptr) {
+        collectStmtUses(*statement, names, printed);
+      }
+    }
     return;
   }
   if (expr.kind() == NodeKind::LambdaExpr) {
@@ -6524,6 +6538,7 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
     ++index;
   }
   const Type* returnType = fnType->returnType();
+  currentReturnType_ = returnType;
   if (asyncFn_) {
     if (!setupAsyncCoroutine(
             builder, llvmFn, function.isGenerator() ? returnType->genericArg(0) : returnType)) {
@@ -7283,6 +7298,116 @@ llvm::Value* IRGenerator::emitWalrus(llvm::IRBuilder<>& builder, const WalrusExp
   return value;
 }
 
+llvm::Value* IRGenerator::emitDo(llvm::IRBuilder<>& builder, const DoExpr& expr) {
+  return emitBlockValue(builder, expr.body(), expr.resolvedType());
+}
+
+llvm::Value* IRGenerator::emitBlockValue(llvm::IRBuilder<>& builder,
+                                         const std::vector<std::unique_ptr<Stmt>>& body,
+                                         const Type* resultType) {
+  const auto savedLocals = locals_;
+  const auto savedLocalTypes = localTypes_;
+  const bool wantsValue = resultType != nullptr && !resultType->isVoidLike();
+  llvm::Value* result = nullptr;
+  for (std::size_t index = 0; index < body.size(); ++index) {
+    const Stmt& statement = *body[index];
+    const bool isLast = index + 1 == body.size();
+    if (isLast && statement.kind() == NodeKind::ExprStmt) {
+      result = emitExpr(builder, static_cast<const ExprStmt&>(statement).expression());
+      break;
+    }
+    if (isLast && wantsValue && statement.kind() == NodeKind::IfStmt) {
+      result = emitIfValue(builder, static_cast<const IfStmt&>(statement), resultType);
+      break;
+    }
+    if (!emitStatement(builder, statement, currentReturnType_)) {
+      result = nullptr;
+      break;
+    }
+    if (builder.GetInsertBlock()->getTerminator() != nullptr) {
+      break;
+    }
+    emitErrorCheck(builder);
+  }
+  locals_ = savedLocals;
+  localTypes_ = savedLocalTypes;
+  if (wantsValue && result == nullptr) {
+    result = emitDefault(resultType);
+  }
+  return result;
+}
+
+llvm::Value* IRGenerator::emitIfValue(llvm::IRBuilder<>& builder,
+                                      const IfStmt& statement,
+                                      const Type* resultType) {
+  llvm::Function* function = builder.GetInsertBlock()->getParent();
+  llvm::BasicBlock* merge = llvm::BasicBlock::Create(*context_, "do.if.end", function);
+  std::vector<std::pair<llvm::Value*, llvm::BasicBlock*>> incoming;
+  const auto emitBranch = [&](const IfBranch& branch) -> bool {
+    llvm::Value* value = emitBlockValue(builder, branch.body, resultType);
+    if (builder.GetInsertBlock()->getTerminator() != nullptr) {
+      return true;
+    }
+    if (value == nullptr) {
+      value = emitDefault(resultType);
+    }
+    if (value != nullptr) {
+      incoming.emplace_back(value, builder.GetInsertBlock());
+    }
+    builder.CreateBr(merge);
+    return true;
+  };
+  for (const IfBranch& branch : statement.branches()) {
+    if (branch.condition == nullptr) {
+      if (!emitBranch(branch)) {
+        return nullptr;
+      }
+      break;
+    }
+    const std::optional<bool> known = constBool(*branch.condition);
+    if (known.has_value() && !*known) {
+      continue;
+    }
+    if (known.has_value() && *known) {
+      if (!emitBranch(branch)) {
+        return nullptr;
+      }
+      break;
+    }
+    llvm::Value* condition = emitExpr(builder, *branch.condition);
+    if (condition == nullptr) {
+      return nullptr;
+    }
+    llvm::BasicBlock* thenBlock = llvm::BasicBlock::Create(*context_, "do.if.then", function);
+    llvm::BasicBlock* nextBlock = llvm::BasicBlock::Create(*context_, "do.if.next", function);
+    builder.CreateCondBr(condition, thenBlock, nextBlock);
+    builder.SetInsertPoint(thenBlock);
+    if (!emitBranch(branch)) {
+      return nullptr;
+    }
+    builder.SetInsertPoint(nextBlock);
+  }
+  if (builder.GetInsertBlock()->getTerminator() == nullptr) {
+    llvm::Value* fallback = emitDefault(resultType);
+    if (fallback != nullptr) {
+      incoming.emplace_back(fallback, builder.GetInsertBlock());
+    }
+    builder.CreateBr(merge);
+  }
+  if (merge->hasNPredecessors(0)) {
+    merge->eraseFromParent();
+    return emitDefault(resultType);
+  }
+  builder.SetInsertPoint(merge);
+  llvm::Type* llvmResult = lower(resultType);
+  llvm::PHINode* phi =
+      builder.CreatePHI(llvmResult, static_cast<unsigned>(incoming.size()), "do.if.value");
+  for (const auto& [value, block] : incoming) {
+    phi->addIncoming(value, block);
+  }
+  return phi;
+}
+
 llvm::FunctionType* IRGenerator::llvmFunctionTypeFrom(const Type* type) {
   if (type == nullptr) {
     return llvm::FunctionType::get(llvm::Type::getVoidTy(*context_), false);
@@ -7460,6 +7585,13 @@ void IRGenerator::collectLambdas(const Expr& expr, std::vector<const LambdaExpr*
   case NodeKind::WalrusExpr:
     collectLambdas(static_cast<const WalrusExpr&>(expr).value(), out);
     break;
+  case NodeKind::DoExpr:
+    for (const std::unique_ptr<Stmt>& statement : static_cast<const DoExpr&>(expr).body()) {
+      if (statement != nullptr) {
+        collectLambdas(*statement, out);
+      }
+    }
+    break;
   case NodeKind::LambdaExpr:
     collectLambdas(static_cast<const LambdaExpr&>(expr).body(), out);
     break;
@@ -7573,6 +7705,8 @@ bool IRGenerator::emitLambdaFunction(const LambdaExpr& expr) {
   dropStack_.clear();
   std::size_t index = 0;
   const Type* fnType = expr.resolvedType();
+  const Type* savedReturnType = currentReturnType_;
+  currentReturnType_ = fnType->returnType();
   for (llvm::Argument& arg : fn->args()) {
     if (index >= expr.params().size()) {
       break;
@@ -7594,6 +7728,7 @@ bool IRGenerator::emitLambdaFunction(const LambdaExpr& expr) {
   localTypes_ = std::move(savedLocalTypes);
   dropStack_ = std::move(savedDrops);
   currentFunction_ = savedFn;
+  currentReturnType_ = savedReturnType;
   return true;
 }
 

@@ -673,6 +673,20 @@ std::unique_ptr<Expr> MacroExpander::expandExpr(const Expr& expr) {
                                          expandExpr(ternary.condition()),
                                          expandExpr(ternary.elseValue()));
   }
+  case NodeKind::DoExpr: {
+    const auto& doExpr = static_cast<const DoExpr&>(expr);
+    std::vector<std::unique_ptr<Stmt>> body;
+    body.reserve(doExpr.body().size());
+    for (const std::unique_ptr<Stmt>& statement : doExpr.body()) {
+      if (statement != nullptr) {
+        body.push_back(cloneStmt(*statement));
+      }
+    }
+    if (!expandStmtList(body)) {
+      return nullptr;
+    }
+    return std::make_unique<DoExpr>(expr.range(), std::move(body));
+  }
   case NodeKind::InterpolatedStringExpr: {
     const auto& interpolated = static_cast<const InterpolatedStringExpr&>(expr);
     std::vector<StringPart> parts;

@@ -4511,6 +4511,8 @@ const Type* TypeChecker::checkExpr(Expr& expr) {
     return checkTuple(static_cast<TupleExpr&>(expr));
   case NodeKind::WalrusExpr:
     return checkWalrus(static_cast<WalrusExpr&>(expr));
+  case NodeKind::DoExpr:
+    return checkDo(static_cast<DoExpr&>(expr));
   case NodeKind::LambdaExpr:
     return checkLambda(static_cast<LambdaExpr&>(expr));
   case NodeKind::MacroInvokeExpr:
@@ -5096,6 +5098,8 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
   const bool inferNested = nestedFunction_ == &function && function.hasInferredReturn() &&
                            !function.isAsync();
   inferredNestedReturns_ = inferNested ? &inferredReturns : nullptr;
+  const Type* savedReturnType = currentReturnType_;
+  currentReturnType_ = returnType;
   bool ok = returnType != nullptr;
   if (function.isGenerator() &&
       (function.isAsync() || returnType == nullptr || !returnType->isGenericCtor("Iterator"))) {
@@ -5110,6 +5114,7 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
     ok = checkStatement(*statement, returnType) && ok;
   }
   inferredNestedReturns_ = savedReturns;
+  currentReturnType_ = savedReturnType;
   // Preserve a concrete nested return ABI when all exits return the same type.
   // Mixed/recursive inference continues to use Any until it can be resolved.
   if (ok && inferNested && !inferredReturns.empty() && !function.body().empty() &&
@@ -6630,6 +6635,101 @@ const Type* TypeChecker::checkWalrus(WalrusExpr& expr) {
   }
   expr.setResolvedType(value);
   return value;
+}
+
+const Type* TypeChecker::blockValueType(const std::vector<std::unique_ptr<Stmt>>& body,
+                                        SourceRange range,
+                                        bool& ok) {
+  if (body.empty() || body.back() == nullptr) {
+    return types_->noneType();
+  }
+  const Stmt& last = *body.back();
+  if (last.kind() == NodeKind::ExprStmt) {
+    const Type* value = static_cast<const ExprStmt&>(last).expression().resolvedType();
+    if (value == nullptr) {
+      ok = false;
+      return nullptr;
+    }
+    return isVoidLike(value) ? types_->noneType() : value;
+  }
+  if (last.kind() != NodeKind::IfStmt) {
+    return types_->noneType();
+  }
+  const auto& ifStmt = static_cast<const IfStmt&>(last);
+  bool hasElse = false;
+  const Type* merged = nullptr;
+  bool branchesProduceValue = false;
+  for (const IfBranch& branch : ifStmt.branches()) {
+    if (branch.condition == nullptr) {
+      hasElse = true;
+    }
+    if (branch.body.empty() || branch.body.back() == nullptr) {
+      continue;
+    }
+    const NodeKind tail = branch.body.back()->kind();
+    if (tail == NodeKind::ReturnStmt || tail == NodeKind::RaiseStmt ||
+        tail == NodeKind::BreakStmt || tail == NodeKind::ContinueStmt) {
+      continue; // Diverges, so it contributes no value to the join.
+    }
+    const Type* branchType = blockValueType(branch.body, range, ok);
+    if (!ok || branchType == nullptr) {
+      return nullptr;
+    }
+    if (!isVoidLike(branchType)) {
+      branchesProduceValue = true;
+    }
+    if (merged == nullptr) {
+      merged = branchType;
+    } else if (merged->canonical() != branchType->canonical()) {
+      diagnostics_->error(range,
+                          "do-expression if/else branches produce different types: " +
+                              quoteType(merged) + " and " + quoteType(branchType));
+      ok = false;
+      return nullptr;
+    }
+  }
+  if (!hasElse) {
+    // Control can fall through the condition without producing a value.
+    if (branchesProduceValue) {
+      diagnostics_->error(range, "an if used as the value of a do expression needs an else branch");
+      ok = false;
+      return nullptr;
+    }
+    return types_->noneType();
+  }
+  return merged == nullptr ? types_->noneType() : merged;
+}
+
+const Type* TypeChecker::checkDo(DoExpr& expr) {
+  pushScope(expr.range());
+  const std::size_t savedScopeDepth = scopes_.size();
+  bool ok = true;
+  std::vector<std::unique_ptr<Stmt>>& body = expr.body();
+  for (std::unique_ptr<Stmt>& statement : body) {
+    if (statement == nullptr) {
+      ok = false;
+      continue;
+    }
+    ok = checkStatement(*statement, currentReturnType_) && ok;
+  }
+  const Type* result = types_->noneType();
+  if (ok && !body.empty() && body.back() != nullptr) {
+    result = blockValueType(body, expr.range(), ok);
+    if (result == nullptr) {
+      ok = false;
+    }
+  }
+  // Nested-scope symbols must not leak past the do expression, but the
+  // expression is checked in place so `scopes_.size()` never grows here.
+  while (scopes_.size() > savedScopeDepth) {
+    popScope();
+  }
+  popScope();
+  if (!ok) {
+    return nullptr;
+  }
+  expr.setResolvedType(result);
+  return result;
 }
 
 const Type* TypeChecker::checkLambda(LambdaExpr& expr) {

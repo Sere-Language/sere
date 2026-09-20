@@ -101,6 +101,13 @@ const Node* searchExpr(const Expr& expr, std::uint32_t offset) {
   case NodeKind::WalrusExpr:
     inner = searchExpr(static_cast<const WalrusExpr&>(expr).value(), offset);
     break;
+  case NodeKind::DoExpr:
+    for (const std::unique_ptr<Stmt>& statement : static_cast<const DoExpr&>(expr).body()) {
+      if (statement != nullptr) {
+        inner = firstNotNull(inner, searchStmt(*statement, offset));
+      }
+    }
+    break;
   case NodeKind::LambdaExpr:
     inner = searchExpr(static_cast<const LambdaExpr&>(expr).body(), offset);
     break;

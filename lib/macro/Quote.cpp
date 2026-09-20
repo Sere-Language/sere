@@ -74,6 +74,13 @@ void collectDeclNames(const Expr& expr, std::unordered_set<std::string>& names) 
     collectDeclNames(static_cast<const ComprehensionExpr&>(expr).element(), names);
     collectDeclNames(static_cast<const ComprehensionExpr&>(expr).iterable(), names);
     break;
+  case NodeKind::DoExpr:
+    for (const std::unique_ptr<Stmt>& statement : static_cast<const DoExpr&>(expr).body()) {
+      if (statement != nullptr) {
+        collectDeclNames(*statement, names);
+      }
+    }
+    break;
   case NodeKind::InterpolatedStringExpr:
     for (const StringPart& part : static_cast<const InterpolatedStringExpr&>(expr).parts()) {
       if (part.value != nullptr) {
@@ -195,6 +202,13 @@ void rewriteNames(Expr& expr, const std::unordered_map<std::string, std::string>
   case NodeKind::ComprehensionExpr:
     rewriteNames(static_cast<ComprehensionExpr&>(expr).element(), map);
     rewriteNames(static_cast<ComprehensionExpr&>(expr).iterable(), map);
+    break;
+  case NodeKind::DoExpr:
+    for (std::unique_ptr<Stmt>& statement : static_cast<DoExpr&>(expr).body()) {
+      if (statement != nullptr) {
+        rewriteNames(*statement, map);
+      }
+    }
     break;
   case NodeKind::InterpolatedStringExpr:
     for (StringPart& part : static_cast<InterpolatedStringExpr&>(expr).parts()) {
@@ -512,6 +526,10 @@ std::unique_ptr<Expr> cloneExpr(const Expr& expr) {
   case NodeKind::WalrusExpr: {
     const auto& walrus = static_cast<const WalrusExpr&>(expr);
     return std::make_unique<WalrusExpr>(expr.range(), walrus.name(), cloneExpr(walrus.value()));
+  }
+  case NodeKind::DoExpr: {
+    const auto& doExpr = static_cast<const DoExpr&>(expr);
+    return std::make_unique<DoExpr>(expr.range(), cloneStmts(doExpr.body()));
   }
   case NodeKind::LambdaExpr: {
     const auto& lambda = static_cast<const LambdaExpr&>(expr);

@@ -364,6 +364,8 @@ static std::string nodeKindText(NodeKind kind) {
     case NodeKind::TernaryExpr: return "TernaryExpr";
     case NodeKind::TupleExpr: return "TupleExpr";
     case NodeKind::WalrusExpr: return "WalrusExpr";
+    case NodeKind::DoExpr:
+      return "DoExpr";
     case NodeKind::LambdaExpr: return "LambdaExpr";
     case NodeKind::SpliceExpr: return "SpliceExpr";
     case NodeKind::MacroInvokeExpr: return "MacroInvokeExpr";

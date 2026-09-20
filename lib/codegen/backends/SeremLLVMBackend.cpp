@@ -25,6 +25,13 @@ namespace sere {
 
 namespace {
 
+/// Storage a string occupies inside a container slot: the data pointer and its
+/// length side by side, which is wider than the pointer alone.
+[[nodiscard]] llvm::StructType* stringSlotType(llvm::LLVMContext& context) {
+  return llvm::StructType::get(
+      context, {llvm::PointerType::getUnqual(context), llvm::Type::getInt64Ty(context)});
+}
+
 /// Storage layout for one list element kind: the LLVM type actually stored and
 /// the byte stride the runtime uses to index items. Both must agree with the
 /// runtime formatter, which reads the same kind code.
@@ -40,7 +47,10 @@ listElementLayout(llvm::LLVMContext& context, std::int32_t kind) {
   case 8:
   case 10: return {llvm::Type::getInt16Ty(context), 2};
   case 5: return {llvm::Type::getInt8Ty(context), 1};
-  case 0: return {llvm::PointerType::getUnqual(context), 16};
+  // A string slot is the whole pair, so a slot allocated from this layout has
+  // room for both words.
+  case 0:
+    return {stringSlotType(context), 16};
   default: return {llvm::PointerType::getUnqual(context), 8};
   }
 }
@@ -493,7 +503,7 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
           listElementLayout(*context_, elementKindCode(attribute(operation, "value.kind")));
       llvm::Value* key = ir.CreateAlloca(keyLayout.first);
       if (keyLayout.second == 16) {
-        llvm::Type* stringType = llvm::StructType::get(*context_, {ir.getPtrTy(), ir.getInt64Ty()});
+        llvm::Type* stringType = stringSlotType(*context_);
         auto length = module_->getOrInsertFunction("strlen", ir.getInt64Ty(), ir.getPtrTy());
         ir.CreateStore(operand(1), ir.CreateStructGEP(stringType, key, 0));
         ir.CreateStore(ir.CreateCall(length, {operand(1)}), ir.CreateStructGEP(stringType, key, 1));
@@ -503,8 +513,7 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       if (opcode == "index.set") {
         llvm::Value* value = ir.CreateAlloca(valueLayout.first);
         if (valueLayout.second == 16) {
-          llvm::Type* stringType =
-              llvm::StructType::get(*context_, {ir.getPtrTy(), ir.getInt64Ty()});
+          llvm::Type* stringType = stringSlotType(*context_);
           auto length = module_->getOrInsertFunction("strlen", ir.getInt64Ty(), ir.getPtrTy());
           ir.CreateStore(operand(2), ir.CreateStructGEP(stringType, value, 0));
           ir.CreateStore(ir.CreateCall(length, {operand(2)}),
@@ -614,7 +623,7 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     auto store = [&](llvm::Value* item, llvm::Type* slotType, std::int64_t stride) {
       llvm::Value* slot = ir.CreateAlloca(slotType);
       if (stride == 16) {
-        llvm::Type* stringType = llvm::StructType::get(*context_, {ir.getPtrTy(), ir.getInt64Ty()});
+        llvm::Type* stringType = stringSlotType(*context_);
         auto length = module_->getOrInsertFunction("strlen", ir.getInt64Ty(), ir.getPtrTy());
         ir.CreateStore(item, ir.CreateStructGEP(stringType, slot, 0));
         ir.CreateStore(ir.CreateCall(length, {item}), ir.CreateStructGEP(stringType, slot, 1));

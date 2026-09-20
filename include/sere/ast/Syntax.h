@@ -39,6 +39,7 @@ enum class NodeKind {
   TernaryExpr,
   TupleExpr,
   WalrusExpr,
+  DoExpr,
   LambdaExpr,
   VarDecl,
   AssignStmt,
@@ -637,6 +638,20 @@ public:
 private:
   std::string name_;
   std::unique_ptr<Expr> value_;
+};
+
+/// `do:` introduces a nested statement block in expression position. The
+/// statements execute in their own scope and the value of the trailing
+/// expression statement becomes the value of the whole expression. A block
+/// whose last statement is not an expression evaluates to `None`.
+class DoExpr final : public Expr {
+public:
+  DoExpr(SourceRange range, std::vector<std::unique_ptr<Stmt>> body);
+  [[nodiscard]] const std::vector<std::unique_ptr<Stmt>>& body() const;
+  [[nodiscard]] std::vector<std::unique_ptr<Stmt>>& body();
+
+private:
+  std::vector<std::unique_ptr<Stmt>> body_;
 };
 
 struct ParamDecl {

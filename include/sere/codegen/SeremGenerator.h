@@ -61,6 +61,12 @@ private:
   void pushFunctionState();
   void popFunctionState();
   [[nodiscard]] bool emitIf(const IfStmt& statement);
+  [[nodiscard]] serem::ValuePtr emitDo(const DoExpr& expression);
+  /// Emits a statement list and yields the value of its trailing expression
+  /// (or of a trailing `if`/`else`).
+  [[nodiscard]] serem::ValuePtr emitBlockValue(const std::vector<std::unique_ptr<Stmt>>& body,
+                                               const Type* resultType);
+  [[nodiscard]] serem::ValuePtr emitIfValue(const IfStmt& statement, const Type* resultType);
   [[nodiscard]] bool emitWhile(const WhileStmt& statement);
   [[nodiscard]] bool emitFor(const ForStmt& statement);
   void declareTypes(const Module& module);
@@ -78,6 +84,10 @@ private:
   /// name when the record has no `__str__`, and a formatted rendering for a
   /// container.
   [[nodiscard]] serem::ValuePtr printable(serem::ValuePtr value, const Type* type);
+  /// Renders an enum's variant name from its discriminant, qualified as
+  /// `Type.Variant` when the caller asks for the long form.
+  [[nodiscard]] serem::ValuePtr
+  enumNameValue(const Type* record, serem::ValuePtr value, bool qualified);
   /// Lowers `f"{value:spec}"` to the runtime formatter. The kind code is the
   /// one `sere_format_value` expects: 0 int, 1 float, 2 str, 3 bool.
   [[nodiscard]] serem::ValuePtr formatValue(const Expr& value, const std::string& spec);

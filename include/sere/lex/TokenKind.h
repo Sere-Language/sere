@@ -86,6 +86,7 @@ enum class TokenKind {
   KeywordDef,
   KeywordDefer,
   KeywordDel,
+  KeywordDo,
   KeywordElif,
   KeywordElse,
   KeywordEnum,

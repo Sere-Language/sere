@@ -640,6 +640,18 @@ Expr& WalrusExpr::value() {
   return *value_;
 }
 
+DoExpr::DoExpr(SourceRange range, std::vector<std::unique_ptr<Stmt>> body)
+    : Expr(NodeKind::DoExpr, range), body_(std::move(body)) {
+}
+
+const std::vector<std::unique_ptr<Stmt>>& DoExpr::body() const {
+  return body_;
+}
+
+std::vector<std::unique_ptr<Stmt>>& DoExpr::body() {
+  return body_;
+}
+
 LambdaExpr::LambdaExpr(SourceRange range,
                        std::vector<ParamDecl> params,
                        std::unique_ptr<Expr> body,
@@ -1149,12 +1161,32 @@ void FunctionDef::setOverride(bool value) {
 }
 
 bool containsYield(const std::vector<std::unique_ptr<Stmt>>& body) {
+  // A `do:` expression carries statements of its own, so a yield there still
+  // makes the enclosing function a generator.
+  const auto exprYields = [](const Expr* expr) {
+    if (expr == nullptr || expr->kind() != NodeKind::DoExpr) {
+      return false;
+    }
+    return containsYield(static_cast<const DoExpr&>(*expr).body());
+  };
   for (const auto& stmt : body) {
     if (stmt == nullptr)
       continue;
     switch (stmt->kind()) {
     case NodeKind::YieldStmt:
       return true;
+    case NodeKind::ExprStmt:
+      if (exprYields(&static_cast<const ExprStmt&>(*stmt).expression()))
+        return true;
+      break;
+    case NodeKind::VarDecl:
+      if (exprYields(static_cast<const VarDecl&>(*stmt).init()))
+        return true;
+      break;
+    case NodeKind::AssignStmt:
+      if (exprYields(&static_cast<const AssignStmt&>(*stmt).value()))
+        return true;
+      break;
     case NodeKind::IfStmt:
       for (const auto& branch : static_cast<const IfStmt&>(*stmt).branches())
         if (containsYield(branch.body))

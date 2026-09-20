@@ -30,6 +30,7 @@ constexpr KeywordEntry kKeywords[] = {
     {"def", TokenKind::KeywordDef},
     {"defer", TokenKind::KeywordDefer},
     {"del", TokenKind::KeywordDel},
+    {"do", TokenKind::KeywordDo},
     {"elif", TokenKind::KeywordElif},
     {"else", TokenKind::KeywordElse},
     {"enum", TokenKind::KeywordEnum},
@@ -253,6 +254,8 @@ std::string_view tokenKindName(TokenKind kind) {
     return "KeywordDefer";
   case TokenKind::KeywordDel:
     return "KeywordDel";
+  case TokenKind::KeywordDo:
+    return "KeywordDo";
   case TokenKind::KeywordElif:
     return "KeywordElif";
   case TokenKind::KeywordElse:

@@ -193,6 +193,14 @@ private:
   llvm::Value* emitTernary(llvm::IRBuilder<>& builder, const TernaryExpr& expr);
   llvm::Value* emitTuple(llvm::IRBuilder<>& builder, const TupleExpr& expr);
   llvm::Value* emitWalrus(llvm::IRBuilder<>& builder, const WalrusExpr& expr);
+  llvm::Value* emitDo(llvm::IRBuilder<>& builder, const DoExpr& expr);
+  /// Emits a statement list and returns the value of its trailing expression
+  /// (or the value of a trailing `if`/`else`).
+  llvm::Value* emitBlockValue(llvm::IRBuilder<>& builder,
+                              const std::vector<std::unique_ptr<Stmt>>& body,
+                              const Type* resultType);
+  llvm::Value*
+  emitIfValue(llvm::IRBuilder<>& builder, const IfStmt& statement, const Type* resultType);
   llvm::Value* emitLambda(llvm::IRBuilder<>& builder, const LambdaExpr& expr);
   bool emitLambdaFunction(const LambdaExpr& expr);
   void declareLambdas(const Module& ast);
@@ -302,6 +310,9 @@ private:
   std::unordered_map<std::string, llvm::Value*> decoratorSlots_{};
   std::unordered_map<const Module*, const SourceManager*> moduleSources_{};
   const FunctionDef* currentFunction_ = nullptr;
+  /// Declared return type of the function being lowered, forwarded to
+  /// statement lists nested inside expressions (a `do:` block).
+  const Type* currentReturnType_ = nullptr;
   /// Last function whose body was lowered, kept after currentFunction_ clears so
   /// a module-level verification failure can point at real Sere code.
   const FunctionDef* lastFunction_ = nullptr;

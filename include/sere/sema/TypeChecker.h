@@ -178,6 +178,11 @@ private:
   [[nodiscard]] const Type* checkTernary(TernaryExpr& expr);
   [[nodiscard]] const Type* checkTuple(TupleExpr& expr);
   [[nodiscard]] const Type* checkWalrus(WalrusExpr& expr);
+  [[nodiscard]] const Type* checkDo(DoExpr& expr);
+  /// Value type produced by a statement list used as an expression: the type of
+  /// its trailing expression, or the join of a trailing `if`/`else`.
+  [[nodiscard]] const Type*
+  blockValueType(const std::vector<std::unique_ptr<Stmt>>& body, SourceRange range, bool& ok);
   [[nodiscard]] const Type* checkLambda(LambdaExpr& expr);
   [[nodiscard]] const Type* checkIndirectCall(CallExpr& expr, const Type* functionType);
   [[nodiscard]] const Type* checkCallableCall(CallExpr& expr, const Type* constraint);
@@ -247,6 +252,9 @@ private:
   unsigned yieldCleanupDepth_ = 0;
   bool currentFunctionIsGenerator_ = false;
   bool currentFunctionIsAsync_ = false;
+  /// Declared return type of the innermost enclosing function, forwarded to
+  /// statement lists nested inside expressions (a `do:` block).
+  const Type* currentReturnType_ = nullptr;
   std::string currentPropertyName_{};
   int lambdaDepth_ = 0;
   int lambdaCounter_ = 0;

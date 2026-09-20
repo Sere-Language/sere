@@ -271,6 +271,12 @@ bool Parser::finishLine() {
     match(TokenKind::Newline);
     return true;
   }
+  // A statement that ends with an indented suite (a `do:` expression) has
+  // already consumed the newline that closed the suite's last statement, so the
+  // dedent is the last token of the logical line.
+  if (previous().kind() == TokenKind::Dedent) {
+    return true;
+  }
   diagnostics_->error(peek().range(), "expected end of statement, found " + describeToken(peek()));
   synchronize();
   return false;
@@ -511,6 +517,9 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
   if (match(TokenKind::KeywordLambda)) {
     return parseLambda();
   }
+  if (match(TokenKind::KeywordDo)) {
+    return parseDoExpr();
+  }
   if (match(TokenKind::KeywordSuper)) {
     return std::make_unique<NameExpr>(previous().range(), "super");
   }
@@ -703,6 +712,16 @@ std::unique_ptr<Expr> Parser::parseLambda() {
                                       std::move(params),
                                       std::move(body),
                                       std::move(returnType));
+}
+
+std::unique_ptr<Expr> Parser::parseDoExpr() {
+  const SourceLocation start = previous().range().start;
+  std::vector<std::unique_ptr<Stmt>> body = parseSuite();
+  SourceLocation end = previous().range().end;
+  if (!body.empty() && body.back() != nullptr) {
+    end = body.back()->range().end;
+  }
+  return std::make_unique<DoExpr>(SourceRange{start, end}, std::move(body));
 }
 
 std::unique_ptr<Expr> Parser::parseListLiteral() {
