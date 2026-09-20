@@ -365,6 +365,24 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     if (source->isIntegerTy() && target->isPointerTy()) {
       return ir.CreateIntToPtr(ir.CreateIntCast(value, ir.getInt64Ty(), isSigned), target);
     }
+    // A generic enum or struct and its instantiation differ only in name, so two
+    // records with the same field layout hold the same value: re-type through
+    // memory instead of failing the conversion.
+    if (source->isStructTy() && target->isStructTy() &&
+        source->getStructNumElements() == target->getStructNumElements()) {
+      bool compatible = true;
+      for (unsigned index = 0; index < source->getStructNumElements(); ++index) {
+        if (source->getStructElementType(index) != target->getStructElementType(index)) {
+          compatible = false;
+          break;
+        }
+      }
+      if (compatible) {
+        llvm::AllocaInst* slot = ir.CreateAlloca(source);
+        ir.CreateStore(value, slot);
+        return ir.CreateLoad(target, slot);
+      }
+    }
     report("unsupported Serem value conversion");
     return llvm::UndefValue::get(target);
   };
