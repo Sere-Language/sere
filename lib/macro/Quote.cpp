@@ -302,7 +302,18 @@ std::vector<std::unique_ptr<Expr>> substExprList(const std::vector<std::unique_p
     if (expr->kind() == NodeKind::SpliceExpr) {
       const auto& splice = static_cast<const SpliceExpr&>(*expr);
       const auto found = env.exprs.find(splice.name());
-      if (found != env.exprs.end() && (splice.isRepeat() || found->second.size() != 1)) {
+      if (splice.isRepeat()) {
+        // A repeat group expands to every binding it captured. A group that
+        // captured none contributes nothing, which is what `vec!()` needs: the
+        // list literal it sits in becomes empty rather than keeping the splice.
+        if (found != env.exprs.end()) {
+          for (const std::unique_ptr<Expr>& bound : found->second) {
+            out.push_back(cloneExpr(*bound));
+          }
+        }
+        continue;
+      }
+      if (found != env.exprs.end() && found->second.size() != 1) {
         for (const std::unique_ptr<Expr>& bound : found->second) {
           out.push_back(cloneExpr(*bound));
         }
@@ -725,6 +736,18 @@ std::vector<std::unique_ptr<Stmt>> substStmts(const std::vector<std::unique_ptr<
                                               std::move(init),
                                               decl.isStatic(),
                                               decl.isConst()));
+      continue;
+    }
+    if (cloned->kind() == NodeKind::AssignStmt) {
+      // The target is a splice too: `$target = $target + 1` writes through the
+      // name the caller passed, which is what makes a statement macro useful.
+      auto& assign = static_cast<AssignStmt&>(*cloned);
+      std::unique_ptr<Expr> target = substOne(assign.target(), env, callSite);
+      std::unique_ptr<Expr> value = substOne(assign.value(), env, callSite);
+      auto substituted = std::make_unique<AssignStmt>(
+          callSite, std::move(target), std::move(value), assign.op());
+      substituted->setNameAlias(assign.isNameAlias());
+      out.push_back(std::move(substituted));
       continue;
     }
     if (cloned->kind() == NodeKind::ReturnStmt || cloned->kind() == NodeKind::YieldStmt) {

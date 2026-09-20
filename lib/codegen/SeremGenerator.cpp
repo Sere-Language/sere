@@ -2428,6 +2428,16 @@ void SeremGenerator::emitPendingRenderers() {
 }
 
 serem::ValuePtr SeremGenerator::emitName(const NameExpr& expression) {
+  // A compile-time host fact is a literal, not a value the module declares:
+  // `__windows__` is a flag and `__file__` is text. A macro such as the prelude's
+  // `cfg!` expands to one of these, so it has to lower before any lookup.
+  if (!expression.compileTimeText().empty()) {
+    return stringValue(expression.compileTimeText());
+  }
+  if (expression.hasCompileTimeBool()) {
+    return std::make_shared<serem::ConstantInt>(expression.compileTimeBool() ? 1 : 0,
+                                                serem::IRType::boolType());
+  }
   // A `static` local reads its module global, which outlives the frame.
   const auto statik = functionStatics_.find(expression.name());
   if (statik != functionStatics_.end()) {
@@ -3374,6 +3384,11 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
 }
 
 serem::ValuePtr SeremGenerator::emitMember(const MemberExpr& expression) {
+  // A compile-time member is a literal: `Point.__name__` is text and
+  // `module.__file__` is the module's own name, both known while lowering.
+  if (!expression.compileTimeText().empty()) {
+    return stringValue(expression.compileTimeText());
+  }
   // Every enum member comes from the record sema built rather than from stored
   // state: `Color.Green` is its discriminant, `tone.value` that same number, and
   // `tone.name` the variant that number selects.

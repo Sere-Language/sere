@@ -1815,6 +1815,12 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     // `AssertionError` and, when nothing catches it, reports and exits.
     llvm::Value* condition = operand(0);
     llvm::Function* function = ir.GetInsertBlock()->getParent();
+    if (condition == nullptr || !condition->getType()->isIntegerTy(1)) {
+      // A condition the generator could not lower (an unresolved call, say) is a
+      // compile error rather than an assertion that always fires.
+      report("Serem assert condition could not be lowered");
+      condition = ir.getFalse();
+    }
     llvm::BasicBlock* failBlock = llvm::BasicBlock::Create(*context_, "assert.fail", function);
     llvm::BasicBlock* okBlock = llvm::BasicBlock::Create(*context_, "assert.ok", function);
     ir.CreateCondBr(condition, okBlock, failBlock);
