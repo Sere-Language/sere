@@ -193,13 +193,6 @@ find_sere() {
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   echo "Activate in this shell with:"
   echo "  . ./scripts/activate"
-  SERE="$(find_sere)"
-  if [[ -n "$SERE" ]]; then
-    echo
-    echo "Starting a clean Sere shell..."
-    cd "$ROOT"
-    exec "$SERE" shell --host bash
-  fi
   exit 1
 fi
 
@@ -276,13 +269,6 @@ $Sourced = $MyInvocation.InvocationName -eq '.'
 if (-not $Sourced) {
   Write-Host "Activate in this shell with:"
   Write-Host "  . .\scripts\activate.ps1"
-  $sere = Find-SereCompiler $Root
-  if ($sere) {
-    Write-Host ""
-    Write-Host "Starting a clean Sere shell..."
-    Set-Location $Root
-    & $sere shell --host powershell
-  }
   return
 }
 
@@ -560,34 +546,7 @@ fi
   return ok;
 }
 
-void writeShellRcImpl(const std::filesystem::path& root) {
-  const char* bashRc = "# Nested `sere shell` only. Does not load ~/.bashrc.\n"
-                       "# PATH and SERE_* are already set by the parent `sere` process.\n"
-                       "PS1=\"(sere:${SERE_PROJECT_NAME}) \\w \\$ \"\n"
-                       "deactivate() { echo \"Leaving nested Sere shell.\"; exit; }\n";
-  const char* psRc = "# Nested `sere shell` only. Does not load the user profile.\n"
-                     "# PATH and SERE_* are already set by the parent `sere` process.\n"
-                     "function global:prompt {\n"
-                     "  \"(sere:$env:SERE_PROJECT_NAME) "
-                     "$($executionContext.SessionState.Path.CurrentLocation.ProviderPath)> \"\n"
-                     "}\n"
-                     "function global:deactivate {\n"
-                     "  Write-Host 'Leaving nested Sere shell.'\n"
-                     "  exit\n"
-                     "}\n";
-  const char* cmdRc = "@echo off\n"
-                      "prompt (sere:%SERE_PROJECT_NAME%) $P$G\n"
-                      "doskey deactivate=echo Leaving nested Sere shell. $T exit\n";
-  (void)writeText(root / "venv" / "shell.bash", bashRc);
-  (void)writeText(root / "venv" / "shell.ps1", psRc);
-  (void)writeText(root / "venv" / "shell.cmd", cmdRc);
-}
-
 } // namespace
-
-void writeProjectShellRc(const std::filesystem::path& root) {
-  writeShellRcImpl(root);
-}
 
 namespace {
 
@@ -887,7 +846,6 @@ int initSereProject(const std::filesystem::path& name,
     error = "cannot write project files";
     return 1;
   }
-  writeProjectShellRc(root);
   copyProjectToolchain(compilerDir, root);
   if (!writeText(root / "venv" / "sere.cfg",
                  "home = " + compilerDir.string() +

@@ -261,6 +261,18 @@ private:
                            std::vector<llvm::Value*>& args,
                            std::size_t skipParams = 0);
   llvm::Value* emitAddress(llvm::IRBuilder<>& builder, const Expr& expr, bool required = true);
+  /// Lowers one call argument to a parameter. A class argument is passed by
+  /// reference so the callee sees the object's dynamic type and can read the
+  /// fields a subclass adds.
+  llvm::Value* emitCallArgument(llvm::IRBuilder<>& builder,
+                                const Expr& argument,
+                                const Type* parameterType);
+  /// Lowers argument `paramIndex` of the method at `methodIndex` on `record`.
+  llvm::Value* emitDunderArgument(llvm::IRBuilder<>& builder,
+                                  const Type* record,
+                                  std::size_t methodIndex,
+                                  std::size_t paramIndex,
+                                  const Expr& argument);
   /// Materialises an address for a local whose declared storage type was
   /// narrowed by an `is` check (for example a `Person | str` local used as a
   /// `Person` inside an `else` branch) and returns nullptr when the storage

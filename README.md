@@ -174,12 +174,13 @@ sere run
 deactivate
 ```
 
-Dot-source `scripts/activate.ps1` so the new environment lands in the terminal you already have. `deactivate` puts the old `PATH` and prompt back; it does not close the window. Running `activate.ps1` without the leading dot opens a clean nested `sere shell` instead, which is handy but easy to get lost in.
+Dot-source `scripts/activate.ps1` so the new environment lands in the terminal you already have. `deactivate` puts the old `PATH` and prompt back; it does not close the window. Running `activate.ps1` without the leading dot just prints the dot-source command to use.
 
-`sere build` compiles `[paths].entry`, which is `src/main.sere` unless you point it elsewhere, and `sere run` builds and then executes `bin/<name>.exe`. `[build].output` selects a different path and `[build].opt` picks an optimization level. Arguments after `--` go to your program:
+`sere build` compiles `[paths].entry`, which is `src/main.sere` unless you point it elsewhere, and `sere run` builds and then executes `bin/<name>.exe`. `[build].output` selects a different path and `[build].opt` picks an optimization level. `sere build` also takes the compiler options, such as `--emit-llvm`, `--emit-asm`, `--backend=serem`, or `--no-transformers`. Every argument after `run` is passed to your program:
 
 ```powershell
-sere run -- first second
+sere run first second
+sere build --emit-asm -o bin\app.s
 ```
 
 Put the compiler itself on `PATH` from the repository or from any project:
@@ -195,11 +196,10 @@ Put the compiler itself on `PATH` from the repository or from any project:
 | --- | --- |
 | `sere init <name>` | Create an application project (`src`, `libs`, `bin`, `venv`, `scripts`) |
 | `sere init-lib <name>` | Create a library project (`src`, `libs`, `dist`) |
-| `sere build` | Compile the configured entry to an executable; packs a `kind = "lib"` project to `.slib` |
+| `sere build [options]` | Compile the configured entry to an executable; packs a `kind = "lib"` project to `.slib`. Takes the compiler options |
 | `sere pack [file.sere]` | Pack a single module into a drop-in `.slib` |
-| `sere run [-- <args>]` | Build, then run the project executable |
+| `sere run [args...]` | Build, then run the project executable; the arguments go to the program |
 | `sere clean` | Remove `bin/`, `dist/`, the native build directory, and the extracted library cache |
-| `sere shell [--host <shell>]` | Enter a nested project shell (`powershell`, `cmd`, or `bash`) |
 | `sere refresh-bin` | Copy this compiler, runtime, and stdlib into `./bin` |
 | `sere update` | Install the newest GitHub portable release, or refresh a replaced asset |
 | `sere update-local` | Copy this compiler into the system installation, then refresh the project environment |

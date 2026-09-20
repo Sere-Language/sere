@@ -17,11 +17,10 @@ void printUsage(std::string& error) {
       "Project commands:\n"
       "  init <name>         Create a Sere project (src, libs, bin, venv, scripts)\n"
       "  init-lib <name>     Create a drop-in library project (src, libs, dist)\n"
-      "  build               Compile the project (exe) or pack a library (.slib)\n"
+      "  build               Compile the project; also accepts the compiler options below\n"
       "  pack [file.sere]    Build a single-file .slib you can drop into libs/\n"
-      "  run [-- <args>]     Build and run the project executable\n"
+      "  run [args...]       Build and run; everything after `run` goes to the program\n"
       "  clean               Remove bin/ and dist/ artifacts\n"
-      "  shell               Enter the Sere project shell\n"
       "  login [token]       Sign in to the Sere registry (no token: show status)\n"
       "  logout              Forget the saved registry token\n"
       "  publish             Pack this library project and upload it to the registry\n"
@@ -67,7 +66,6 @@ void printUsage(std::string& error) {
       "  --token <token>     Registry token for this command (sere login, publish)\n"
       "  --force             With add: replace a package already in libs/\n"
       "  --dry-run           With publish or add: describe the work, change nothing\n"
-      "  --host <shell>      Shell to nest: powershell, cmd, bash (shell command)\n"
       "  --link <lib>        Link an extra native C/C++ library into the program\n"
       "  --color=<mode>      Color diagnostics: auto, always, never\n"
       "  --no-color          Disable color (same as --color=never)\n"
@@ -105,10 +103,6 @@ void printUsage(std::string& error) {
   }
   if (argument == "clean") {
     command = ProjectCommand::Clean;
-    return true;
-  }
-  if (argument == "shell" || argument == "activate") {
-    command = ProjectCommand::Shell;
     return true;
   }
   if (argument == "login") {
@@ -158,6 +152,13 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
     }
     if (argument == "--") {
       endOfFlags = true;
+      continue;
+    }
+    // `sere run` owns every argument after it, flags included: the built program
+    // has its own command line and nothing after `run` is meant for the
+    // compiler. Compiler options still apply when written before the command.
+    if (options.projectCommand == ProjectCommand::Run) {
+      options.programArgs.emplace_back(argument);
       continue;
     }
     if (argument == "--help" || argument == "-h" || argument == "help") {
@@ -294,15 +295,6 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
       options.force = true;
       continue;
     }
-    if (argument == "--host") {
-      if (index + 1 >= argc) {
-        error = "missing shell name after --host";
-        return false;
-      }
-      ++index;
-      options.shellHost = argv[index];
-      continue;
-    }
     if (argument == "--link") {
       if (index + 1 >= argc) {
         error = "missing library path after --link";
@@ -405,10 +397,6 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
         ++index;
         options.packageSpec = argv[index];
       }
-      continue;
-    }
-    if (options.projectCommand == ProjectCommand::Run) {
-      options.programArgs.emplace_back(argument);
       continue;
     }
     if ((options.projectCommand == ProjectCommand::Init ||

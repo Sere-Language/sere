@@ -10,7 +10,7 @@ Codegen, linking, and the language server are thin clients of that pipeline.
 ```
 Compiler::run
  ├── --lsp            → runLanguageServer()
- ├── init/init-lib/build/pack/run/clean/shell
+ ├── init/init-lib/build/pack/run/clean
  └── compileInput()
       ├── Frontend::analyze()     lex, parse, import, prelude, macros, sema
       ├── IRGenerator::emit()     typed AST → LLVM module

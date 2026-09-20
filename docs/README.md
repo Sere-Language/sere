@@ -14,7 +14,7 @@ This folder holds two kinds of docs:
 Sere is a **statically typed Python-superset** with an **LLVM 22** backend.
 The compiler is `sere` (`tools/sere`). The same binary also speaks LSP
 (`sere --lsp`) and drives project commands
-(`sere init|init-lib|build|pack|run|clean|shell`).
+(`sere init|init-lib|build|pack|run|clean`).
 
 ## Read this first
 
@@ -89,7 +89,7 @@ sere [options] <file.sere>
 
 | Flag / command | Effect |
 | --- | --- |
-| `init`, `build`, `run`, `clean`, `shell` | Project workflow |
+| `init`, `build`, `run`, `clean` | Project workflow (`build` also takes the compiler flags) |
 | `--build-installer` | Package a Windows setup exe (compiler, LLVM, stdlib, editor) |
 | `--emit-llvm` | Stop after writing `.ll` |
 | `--emit-asm`, `-S` | Stop after writing native assembly (`.s`) |

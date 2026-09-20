@@ -19,7 +19,6 @@
 #include "sere/driver/Prelude.h"
 #include "sere/driver/Project.h"
 #include "sere/driver/ProjectInit.h"
-#include "sere/driver/ProjectShell.h"
 #include "sere/driver/Registry.h"
 #include "sere/driver/Toolchain.h"
 #include "sere/lex/Lexer.h"
@@ -808,9 +807,6 @@ int Compiler::run(const CompilerOptions& options) {
   }
   if (options.projectCommand == ProjectCommand::Clean) {
     return cleanProject(options);
-  }
-  if (options.projectCommand == ProjectCommand::Shell) {
-    return enterProjectShell(options);
   }
   if (options.projectCommand == ProjectCommand::Login) {
     return loginCommand(options);

@@ -260,13 +260,36 @@ int main() {
     return fail("expected dumpLlvmIrRaw from --dump-llvm-ir-raw");
   }
 
-  sere::CompilerOptions shellOptions;
-  if (!parseArgs({"sere", "shell", "--host", "powershell"}, shellOptions, error)) {
-    return fail("failed to parse 'sere shell'");
+  sere::CompilerOptions runOptions;
+  if (!parseArgs({"sere", "run", "--backend=serem", "-o", "out.exe", "data.txt"}, runOptions,
+                 error)) {
+    return fail("failed to parse 'sere run'");
   }
-  if (shellOptions.projectCommand != sere::ProjectCommand::Shell ||
-      shellOptions.shellHost != "powershell") {
-    return fail("expected shell --host powershell");
+  if (runOptions.projectCommand != sere::ProjectCommand::Run || runOptions.seremBackend ||
+      !runOptions.outputPath.empty()) {
+    return fail("'sere run' must not consume the program's own arguments");
+  }
+  const std::vector<std::string> expectedRunArgs{"--backend=serem", "-o", "out.exe", "data.txt"};
+  if (runOptions.programArgs != expectedRunArgs) {
+    return fail("expected every argument after 'run' to reach the program");
+  }
+  sere::CompilerOptions runWithSeparator;
+  if (!parseArgs({"sere", "run", "--", "-v"}, runWithSeparator, error)) {
+    return fail("failed to parse 'sere run -- -v'");
+  }
+  if (runWithSeparator.programArgs.size() != 1 || runWithSeparator.programArgs.front() != "-v") {
+    return fail("expected '--' to be dropped from the program arguments");
+  }
+  sere::CompilerOptions buildOptions;
+  if (!parseArgs({"sere", "build", "--backend=serem", "--no-transformers", "--emit-asm", "-o",
+                  "dist/app.s"},
+                 buildOptions, error)) {
+    return fail("failed to parse 'sere build' with compiler options");
+  }
+  if (buildOptions.projectCommand != sere::ProjectCommand::Build || !buildOptions.seremBackend ||
+      buildOptions.transformers || !buildOptions.emitAsm ||
+      buildOptions.outputPath.generic_string() != "dist/app.s") {
+    return fail("expected 'sere build' to take the compiler options");
   }
 
   sere::CompilerOptions installerOptions;
@@ -381,7 +404,6 @@ int main() {
       !std::filesystem::exists(project / "scripts" / "activate.bat") ||
       !std::filesystem::exists(project / "bin" / "sere-path.ps1") ||
       !std::filesystem::exists(project / "bin" / "sere-path.cmd") ||
-      !std::filesystem::exists(project / "venv" / "shell.ps1") ||
       !std::filesystem::exists(project / "sere.toml") ||
       !std::filesystem::exists(project / "src" / "main.sere")) {
     return fail("init did not write expected files");
@@ -404,11 +426,6 @@ int main() {
   if (activate.find("SERE_PROJECT_ROOT") == std::string::npos ||
       activate.find("deactivate") == std::string::npos) {
     return fail("activate.ps1 is not an in-process project activate");
-  }
-  const std::string shell = readAll(project / "venv" / "shell.ps1");
-  if (shell.find(". $PROFILE") != std::string::npos ||
-      shell.find("Test-Path $PROFILE") != std::string::npos) {
-    return fail("shell.ps1 must not source the user profile");
   }
   sere::ProjectManifest manifest;
   if (!sere::loadProjectManifest(project, manifest, error)) {

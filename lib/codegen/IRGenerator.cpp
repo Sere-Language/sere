@@ -216,6 +216,14 @@ matchParamType(llvm::IRBuilder<>& builder, llvm::Value* value, llvm::Type* wante
   if (value->getType()->isIntegerTy() && wanted->isIntegerTy()) {
     return builder.CreateIntCast(value, wanted, true);
   }
+  if (wanted->isPointerTy() && !value->getType()->isPointerTy() &&
+      !value->getType()->isVoidTy()) {
+    // The parameter is passed by reference, so hand over the storage instead of
+    // reinterpreting the value's first word as a pointer.
+    llvm::Value* slot = builder.CreateAlloca(value->getType(), nullptr, "arg.ref");
+    builder.CreateStore(value, slot);
+    return slot;
+  }
   llvm::Value* tmp = builder.CreateAlloca(value->getType(), nullptr, "match.tmp");
   builder.CreateStore(value, tmp);
   return builder.CreateLoad(wanted, tmp);
@@ -471,6 +479,10 @@ llvm::FunctionType* IRGenerator::llvmFunctionType(const FunctionDef& function) {
     if (function.isExtern() && sereType->isStrLayout()) {
       params.push_back(llvm::PointerType::getUnqual(*context_));
       params.push_back(llvm::Type::getInt64Ty(*context_));
+    } else if (!function.isExtern() && recordHasTypeId(sereType)) {
+      // A class parameter is passed by reference, like a method's `self`, so the
+      // callee sees the object's dynamic type instead of a sliced copy.
+      params.push_back(llvm::PointerType::getUnqual(*context_));
     } else {
       params.push_back(lower(sereType));
     }
@@ -1160,6 +1172,48 @@ llvm::Value* IRGenerator::emitCoerce(llvm::IRBuilder<>& builder,
   return value;
 }
 
+llvm::Value* IRGenerator::emitCallArgument(llvm::IRBuilder<>& builder,
+                                           const Expr& argument,
+                                           const Type* parameterType) {
+  const Type* target = resolveType(parameterType);
+  if (target == nullptr || !recordHasTypeId(target)) {
+    llvm::Value* value = emitExpr(builder, argument);
+    if (value == nullptr) {
+      return nullptr;
+    }
+    return emitCoerce(builder, value, argument.resolvedType(), target);
+  }
+  // A class parameter is a pointer to the object: reusing the argument's own
+  // storage keeps the subclass fields readable and makes mutation visible to the
+  // caller. An expression with no storage gets a temporary copy instead.
+  if (llvm::Value* address = emitAddress(builder, argument, false)) {
+    return address;
+  }
+  llvm::Value* value = emitExpr(builder, argument);
+  if (value == nullptr) {
+    return nullptr;
+  }
+  llvm::Value* slot = builder.CreateAlloca(lower(target), nullptr, "arg.copy");
+  builder.CreateStore(emitCoerce(builder, value, argument.resolvedType(), target), slot);
+  return slot;
+}
+
+llvm::Value* IRGenerator::emitDunderArgument(llvm::IRBuilder<>& builder,
+                                             const Type* record,
+                                             std::size_t methodIndex,
+                                             std::size_t paramIndex,
+                                             const Expr& argument) {
+  record = resolveType(record);
+  if (record == nullptr || methodIndex >= record->methods().size()) {
+    return emitExpr(builder, argument);
+  }
+  const Type* signature = record->methods()[methodIndex].type;
+  const Type* parameter = signature != nullptr && paramIndex < signature->paramTypes().size()
+                              ? signature->paramTypes()[paramIndex]
+                              : nullptr;
+  return emitCallArgument(builder, argument, parameter);
+}
+
 void IRGenerator::appendDefaultArgs(llvm::IRBuilder<>& builder,
                                     std::vector<llvm::Value*>& args,
                                     const FunctionDef& function,
@@ -1169,12 +1223,10 @@ void IRGenerator::appendDefaultArgs(llvm::IRBuilder<>& builder,
     if (function.params()[index].defaultValue == nullptr) {
       break;
     }
-    llvm::Value* value = emitExpr(builder, *function.params()[index].defaultValue);
-    const Type* fromType = function.params()[index].defaultValue->resolvedType();
     const Type* toType = function.params()[index].type == nullptr
                              ? nullptr
                              : function.params()[index].type->resolvedType();
-    args.push_back(emitCoerce(builder, value, fromType, toType));
+    args.push_back(emitCallArgument(builder, *function.params()[index].defaultValue, toType));
   }
 }
 
@@ -1208,11 +1260,7 @@ void IRGenerator::appendBoundCallArgs(llvm::IRBuilder<>& builder,
     if (argument == nullptr) {
       return nullptr;
     }
-    llvm::Value* value = emitExpr(builder, *argument);
-    if (value == nullptr) {
-      return nullptr;
-    }
-    return emitCoerce(builder, value, argument->resolvedType(), toType);
+    return emitCallArgument(builder, *argument, toType);
   };
   const auto appendArgument = [&](const Expr* argument, const Type* toType) {
     llvm::Value* value = emitArgument(argument, toType);
@@ -1622,8 +1670,13 @@ llvm::Value* IRGenerator::emitIndex(llvm::IRBuilder<>& builder, const IndexExpr&
                    builder.CreateLoad(builder.getInt64Ty(), lenSlot));
   }
   if (objectType != nullptr && objectType->methodIndex("__getitem__") >= 0 && expr.hasStart()) {
-    return emitDunderCall(
-        builder, expr.object(), "__getitem__", {emitExpr(builder, *expr.start())});
+    return emitDunderCall(builder, expr.object(), "__getitem__",
+                          {emitDunderArgument(builder,
+                                             objectType,
+                                             static_cast<std::size_t>(
+                                                 objectType->methodIndex("__getitem__")),
+                                             1,
+                                             *expr.start())});
   }
   llvm::Value* address = emitAddress(builder, expr);
   if (address == nullptr) {
@@ -3526,11 +3579,12 @@ llvm::Value* IRGenerator::emitInitConstruct(llvm::IRBuilder<>& builder, const Ca
   } else {
     std::size_t paramIndex = 1;
     for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
-      llvm::Value* value = emitExpr(builder, *argument);
-      if (initType != nullptr && paramIndex < initType->paramTypes().size()) {
-        value = emitCoerce(
-            builder, value, argument->resolvedType(), initType->paramTypes()[paramIndex]);
-      }
+      llvm::Value* value = emitCallArgument(
+          builder,
+          *argument,
+          initType != nullptr && paramIndex < initType->paramTypes().size()
+              ? initType->paramTypes()[paramIndex]
+              : nullptr);
       args.push_back(value);
       ++paramIndex;
     }
@@ -3584,11 +3638,12 @@ llvm::Value* IRGenerator::emitMethodCall(llvm::IRBuilder<>& builder, const CallE
   } else {
     std::size_t paramIndex = 1;
     for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
-      llvm::Value* value = emitExpr(builder, *argument);
-      if (methodType != nullptr && paramIndex < methodType->paramTypes().size()) {
-        value = emitCoerce(
-            builder, value, argument->resolvedType(), methodType->paramTypes()[paramIndex]);
-      }
+      llvm::Value* value = emitCallArgument(
+          builder,
+          *argument,
+          methodType != nullptr && paramIndex < methodType->paramTypes().size()
+              ? methodType->paramTypes()[paramIndex]
+              : nullptr);
       args.push_back(value);
       ++paramIndex;
     }
@@ -3993,7 +4048,16 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
           builder.CreateCall(fn, {right, emitTempSlot(builder, left, leftType)}),
           builder.getInt32(0));
     } else if (rightType != nullptr && rightType->methodIndex("__contains__") >= 0) {
-      llvm::Value* result = emitDunderCall(builder, expr.right(), "__contains__", {left});
+      llvm::Value* item = left;
+      const std::size_t contains = static_cast<std::size_t>(rightType->methodIndex("__contains__"));
+      const Type* signature = rightType->methods()[contains].type;
+      const Type* parameter = signature != nullptr && signature->paramTypes().size() >= 2
+                                  ? signature->paramTypes()[1]
+                                  : nullptr;
+      if (parameter != nullptr && recordHasTypeId(parameter)) {
+        item = emitDunderArgument(builder, rightType, contains, 1, expr.left());
+      }
+      llvm::Value* result = emitDunderCall(builder, expr.right(), "__contains__", {item});
       contained = result == nullptr ? builder.getInt1(false) : result;
     } else if (rightType != nullptr && rightType->isEnum() && rightType->isFlags() &&
                leftType != nullptr && leftType->isEnum()) {
@@ -4110,7 +4174,10 @@ llvm::Value* IRGenerator::emitDunderBinary(llvm::IRBuilder<>& builder,
     self = builder.CreateAlloca(lower(record), nullptr, "dunder.self");
     builder.CreateStore(value, self);
   }
-  llvm::Value* argument = emitExpr(builder, *argumentExpr);
+  // The other operand follows the same rule as the receiver: a class argument is
+  // passed as the object's address so the callee sees its dynamic type.
+  llvm::Value* argument =
+      emitDunderArgument(builder, record, static_cast<std::size_t>(index), 1, *argumentExpr);
   if (argument == nullptr) {
     return nullptr;
   }
@@ -4139,7 +4206,12 @@ llvm::Value* IRGenerator::emitDunderRecordCall(llvm::IRBuilder<>& builder,
   }
   const Type* signature = method.type;
   if (signature != nullptr && signature->paramTypes().size() >= 2) {
-    argument = emitCoerce(builder, argument, argumentType, signature->paramTypes()[1]);
+    const Type* parameter = signature->paramTypes()[1];
+    // A by-reference class parameter already arrives as the object's address.
+    if (!(parameter != nullptr && recordHasTypeId(parameter) &&
+          argument != nullptr && argument->getType()->isPointerTy())) {
+      argument = emitCoerce(builder, argument, argumentType, parameter);
+    }
   }
   if (argument == nullptr) {
     return nullptr;
@@ -5137,16 +5209,11 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
       }
       if (objectType != nullptr && objectType->methodIndex("__setitem__") >= 0 &&
           index.hasStart()) {
-        llvm::Value* key = emitExpr(builder, *index.start());
-        llvm::Value* stored = emitExpr(builder, assign.value());
-        const RecordMethod& method = objectType->methods()[
-            static_cast<std::size_t>(objectType->methodIndex("__setitem__"))];
-        if (method.type != nullptr && method.type->paramTypes().size() == 3) {
-          key = emitCoerce(builder, key, index.start()->resolvedType(),
-                           method.type->paramTypes()[1]);
-          stored = emitCoerce(builder, stored, assign.value().resolvedType(),
-                              method.type->paramTypes()[2]);
-        }
+        const std::size_t setItem =
+            static_cast<std::size_t>(objectType->methodIndex("__setitem__"));
+        llvm::Value* key = emitDunderArgument(builder, objectType, setItem, 1, *index.start());
+        llvm::Value* stored =
+            emitDunderArgument(builder, objectType, setItem, 2, assign.value());
         emitDunderCall(builder, index.object(), "__setitem__", {key, stored});
         return true;
       }
@@ -6362,13 +6429,16 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
     const ParamDecl& param = function.params()[index];
     const Type* paramType = fnType->paramTypes()[index];
     arg.setName(param.name);
-    if (function.isMethod() && index == 0) {
-      // The self argument is already a pointer to the object, but captured
-      // locals are read back through a load (see the FunctionDef case in
-      // emitStatement), so keep a slot that holds the pointer itself.
+    if ((function.isMethod() && index == 0) || (arg.getType()->isPointerTy() &&
+                                                recordHasTypeId(paramType))) {
+      // `self` and every class parameter arrive as a pointer to the object, but
+      // captured locals are read back through a load (see the FunctionDef case
+      // in emitStatement), so keep a slot that holds the pointer itself.
       llvm::Value* selfSlot =
           builder.CreateAlloca(arg.getType(), nullptr, param.name + ".slot");
       builder.CreateStore(&arg, selfSlot);
+      // While a class parameter is borrowed storage, it behaves like `self`:
+      // reading it loads the pointer and field access follows it.
       rememberLocal(param.name, selfSlot, paramType);
     } else {
       llvm::Value* slot = builder.CreateAlloca(arg.getType(), nullptr, param.name);

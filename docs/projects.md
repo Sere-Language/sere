@@ -8,13 +8,18 @@ cd hello
 . .\scripts\activate.ps1
 sere build
 sere run
-sere run -- first second
+sere run first second
+sere build --emit-llvm -o bin/hello.ll
 deactivate
 ```
 
-`build` compiles the configured entry; `run` builds and then executes it. Arguments
-after `--` go to the program. Dot-source activation to use the current terminal;
-`sere shell` opens a nested project shell instead.
+`build` compiles the configured entry, and takes the compiler options
+(`--backend=serem`, `--no-transformers`, `--emit-llvm`, `--emit-asm`, `--opt=O2`,
+`-o <path>`, …) the same way a direct `sere <file.sere>` build does.
+`run` builds the executable and then executes it: **every argument after `run`
+is passed to the program**, including arguments that look like compiler flags.
+Write compiler options before the command word (`sere --opt=O2 run first second`)
+when you need them. Dot-source activation to use the current terminal.
 
 | Path | Purpose |
 | --- | --- |

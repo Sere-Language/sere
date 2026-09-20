@@ -1,10 +1,5 @@
 /// @file LLVMTransform.cpp
 /// Always-on cleanup passes over the generated LLVM module.
-///
-/// Each stage mirrors a Serem transformer stage, so `--emit-llvm` shows the same
-/// program `--emit-serem` does: `print(1 + 1)` is folded rather than added at
-/// runtime, and a prelude helper the program never reaches is dropped instead of
-/// being lowered alongside the code that runs.
 
 #include "sere/codegen/LLVMTransform.h"
 

@@ -46,8 +46,9 @@ The program prints `2`, `4`, `6`, and `8`, each on its own line. `run` builds
 before executing. Use `sere build` to build without running; the default Windows
 output is `bin/hello.exe`. Returning zero from `main` indicates success.
 
-Use `sere run -- first second` to pass arguments to your program. When finished,
-run `deactivate` to restore the terminal's previous environment.
+Use `sere run first second` to pass arguments to your program: everything after
+`run` is handed to it unchanged, so program flags do not need a separator. When
+finished, run `deactivate` to restore the terminal's previous environment.
 
 ## Move code into a module
 

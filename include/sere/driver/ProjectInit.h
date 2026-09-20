@@ -26,7 +26,4 @@ void copyProjectToolchain(const std::filesystem::path& compilerDir,
 /// if `sere.toml` is found. Leaves src/ and libs/ alone.
 [[nodiscard]] int updateSereEnvironment(const std::filesystem::path& start, std::string& error);
 
-/// Rewrites venv/shell.* so `sere shell` never sources a user profile.
-void writeProjectShellRc(const std::filesystem::path& root);
-
 } // namespace sere

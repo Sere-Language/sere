@@ -20,7 +20,6 @@ enum class ProjectCommand {
   Pack,
   Run,
   Clean,
-  Shell,
   BuildInstaller,
   RefreshBin,
   Update,
@@ -55,7 +54,6 @@ struct CompilerOptions {
   ProjectCommand projectCommand = ProjectCommand::None;
   std::filesystem::path initName;
   bool initLibrary = false;
-  std::string shellHost;
   /// Registry publish token: `sere login <token>` or `--token`.
   std::string authToken;
   /// `sere add <name>[@<version>]`.

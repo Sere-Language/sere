@@ -351,13 +351,33 @@ void collectLooseNativeSources(const std::filesystem::path& directory,
   return manifest;
 }
 
+/// Output path for a project build.
+///
+/// A build that asks for IR, assembly, or Serem text keeps the project's bin
+/// directory but names the file after what it holds, so `sere build --emit-llvm`
+/// does not write text into the executable's name.
+[[nodiscard]] std::filesystem::path projectOutputPath(const CompilerOptions& options,
+                                                      const ProjectManifest& manifest) {
+  std::filesystem::path output = manifest.output;
+  if (options.emitLlvm) {
+    return output.replace_extension(".ll");
+  }
+  if (options.emitAsm) {
+    return output.replace_extension(".s");
+  }
+  if (options.emitSerem) {
+    return output.replace_extension(".serem");
+  }
+  return output;
+}
+
 [[nodiscard]] CompilerOptions compileOptionsFor(const ProjectManifest& manifest,
                                                 const CompilerOptions& options) {
   CompilerOptions compile = options;
   compile.projectCommand = ProjectCommand::None;
   compile.inputPath = manifest.entry;
   if (options.outputPath.empty()) {
-    compile.outputPath = manifest.output;
+    compile.outputPath = projectOutputPath(options, manifest);
   }
   if (!options.optOverridden) {
     compile.optLevel = manifest.optLevel;
@@ -898,21 +918,26 @@ int buildProject(const CompilerOptions& options) {
 
 int runProject(const CompilerOptions& options) {
   std::string manifestError;
-  const std::optional<ProjectManifest> current = requireManifest(manifestError);
-  if (current.has_value() && current->kind == ProjectKind::Lib) {
-    llvm::errs() << "error: '" << current->name
+  const std::optional<ProjectManifest> manifest = requireManifest(manifestError);
+  if (!manifest.has_value()) {
+    llvm::errs() << "error: " << manifestError << '\n';
+    return 1;
+  }
+  if (manifest->kind == ProjectKind::Lib) {
+    llvm::errs() << "error: '" << manifest->name
                  << "' is a library; use sere pack and import the .slib\n";
+    return 1;
+  }
+  // `sere run` needs an executable, and every argument after `run` belongs to
+  // the program, so an output mode here was written before the command word.
+  if (options.emitLlvm || options.emitAsm || options.emitSerem || options.emitSeremBytecode) {
+    llvm::errs() << "error: sere run always builds an executable; use sere build for LLVM, "
+                    "assembly, or Serem output\n";
     return 1;
   }
   const int built = buildProject(options);
   if (built != 0) {
     return built;
-  }
-  std::string error;
-  const std::optional<ProjectManifest> manifest = requireManifest(error);
-  if (!manifest.has_value()) {
-    llvm::errs() << "error: " << error << '\n';
-    return 1;
   }
   const std::filesystem::path exe =
       options.outputPath.empty() ? manifest->output : options.outputPath;

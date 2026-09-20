@@ -80,7 +80,6 @@ add_library(sere_driver
   driver/Registry.cpp
   driver/Packages.cpp
   driver/Library.cpp
-  driver/ProjectShell.cpp
   driver/Frontend.cpp
   driver/ImportPath.cpp
   driver/Toolchain.cpp
