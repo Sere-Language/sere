@@ -304,27 +304,31 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
   // Generic instantiations are emitted per concrete type argument, so a call
   // site can name the specialized symbol directly.
   for (const FunctionInstantiation& inst : types_->functionInstantiations()) {
+    if (inst.isMethod) {
+      // Methods are lowered once per instantiated class below.
+      continue;
+    }
     if (inst.specializedType != nullptr && !functions_.contains(inst.llvmName)) {
       functions_.insert_or_assign(inst.llvmName, lowerType(inst.specializedType));
     }
-    // A method of a generic class is only callable through the instantiated
-    // class name, which is what `methodSymbol` looks up first.
-    if (!inst.isMethod || inst.llvmName.empty() || inst.specializedType == nullptr) {
+  }
+  // A method of a generic class exists once per instantiated type argument, and
+  // the instance owns the specialized symbol the call site has to name.
+  for (const auto& entry : types_->instantiations()) {
+    const Type* generic = entry.first;
+    const Type* instance = entry.second;
+    if (generic == nullptr || instance == nullptr || generic->typeParams().empty() ||
+        generic->typeParams().size() != instance->args().size()) {
       continue;
     }
-    for (const Type* klass : classes_) {
-      if (klass == nullptr || klass->typeParams().empty() ||
-          klass->methodIndex(inst.sourceName) < 0 ||
-          klass->typeParams().size() != inst.args.size()) {
+    for (const RecordMethod& method : instance->methods()) {
+      if (method.llvmName.empty() || method.type == nullptr) {
         continue;
       }
-      std::string owner = klass->name() + "[";
-      for (std::size_t index = 0; index < inst.args.size(); ++index) {
-        if (index != 0) owner += ", ";
-        owner += inst.args[index] == nullptr ? std::string{"?"} : inst.args[index]->display();
-      }
-      owner += "]";
-      methodSymbols_[owner + "::" + inst.sourceName] = inst.llvmName;
+      std::fprintf(stderr, "DBG inst %s method %s -> %s\n", instance->name().c_str(),
+                   method.name.c_str(), method.llvmName.c_str());
+      functions_.insert_or_assign(method.llvmName, lowerType(method.type));
+      methodSymbols_[instance->name() + "::" + method.name] = method.llvmName;
     }
   }
   for (const Module* current : modules) {
@@ -343,6 +347,9 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
     }
   }
   for (const FunctionInstantiation& inst : types_->functionInstantiations()) {
+    if (inst.isMethod) {
+      continue;
+    }
     subst_.clear();
     for (std::size_t index = 0; index < inst.typeParams.size() && index < inst.args.size();
          ++index) {
@@ -371,6 +378,48 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
     if (source != nullptr && !emitFunction(*source, inst.llvmName)) {
       subst_.clear();
       return nullptr;
+    }
+    subst_.clear();
+  }
+  // A generic class has no body of its own: each instance is lowered with its
+  // type arguments substituted, under the symbol the instance declares.
+  for (const auto& entry : types_->instantiations()) {
+    const Type* generic = entry.first;
+    const Type* instance = entry.second;
+    if (generic == nullptr || instance == nullptr || generic->typeParams().empty() ||
+        generic->typeParams().size() != instance->args().size()) {
+      continue;
+    }
+    const ClassDef* classDef = nullptr;
+    for (const Module* current : modules) {
+      for (const auto& statement : current->statements()) {
+        if (statement->kind() == NodeKind::ClassDef &&
+            static_cast<const ClassDef&>(*statement).resolvedType() == generic) {
+          classDef = static_cast<const ClassDef*>(statement.get());
+          break;
+        }
+      }
+      if (classDef != nullptr) {
+        break;
+      }
+    }
+    if (classDef == nullptr) {
+      continue;
+    }
+    subst_.clear();
+    for (std::size_t index = 0; index < generic->typeParams().size(); ++index) {
+      subst_[generic->typeParams()[index]] = instance->args()[index];
+    }
+    const std::vector<RecordMethod>& methods = instance->methods();
+    const std::size_t count = std::min(classDef->methods().size(), methods.size());
+    for (std::size_t index = 0; index < count; ++index) {
+      if (methods[index].llvmName.empty()) {
+        continue;
+      }
+      if (!emitFunction(*classDef->methods()[index], methods[index].llvmName)) {
+        subst_.clear();
+        return nullptr;
+      }
     }
     subst_.clear();
   }
