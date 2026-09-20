@@ -29,6 +29,8 @@ struct MemberCompletionItem {
   std::string insertText;
   int kind = 0;
   std::string sortText;
+  /// Declaration docstring, shown by the client next to the suggestion.
+  std::string documentation;
 };
 
 /// A member access read from the typed AST. This is what resolves receivers the

@@ -1,0 +1,77 @@
+class Flags:
+    bits: i32
+
+    def __init__(self, bits: i32) -> void:
+        self.bits = bits
+
+    def __and__(self, other: Flags) -> Flags:
+        return Flags(self.bits & other.bits)
+
+    def __or__(self, other: Flags) -> Flags:
+        return Flags(self.bits | other.bits)
+
+    def __xor__(self, other: Flags) -> Flags:
+        return Flags(self.bits ^ other.bits)
+
+    def __lshift__(self, count: i32) -> Flags:
+        return Flags(self.bits << count)
+
+    def __rshift__(self, count: i32) -> Flags:
+        return Flags(self.bits >> count)
+
+    def __invert__(self) -> Flags:
+        return Flags(~self.bits)
+
+    def has(self, other: Flags) -> bool:
+        return (self.bits & other.bits) == other.bits
+
+def main() -> i32:
+    read: Flags = Flags(0b0001)
+    write: Flags = Flags(0b0010)
+    exec_bit: Flags = Flags(0b0100)
+
+    both: Flags = read | write
+    assert both.bits == 3
+    assert both.has(read)
+    assert both.has(write)
+    assert not both.has(exec_bit)
+
+    masked: Flags = both & read
+    assert masked.bits == 1
+    assert masked.has(read)
+    assert not masked.has(write)
+
+    toggled: Flags = both ^ read
+    assert toggled.bits == 2
+    assert toggled.has(write)
+
+    all_bits: Flags = read | write | exec_bit
+    assert all_bits.bits == 7
+    assert all_bits.has(exec_bit)
+
+    shifted: Flags = read << 3
+    assert shifted.bits == 8
+    back: Flags = shifted >> 2
+    assert back.bits == 2
+
+    inverted: Flags = ~Flags(0)
+    assert inverted.bits == -1
+
+    # Compound assignment through the bitwise operators.
+    running: Flags = Flags(1)
+    running |= Flags(4)
+    assert running.bits == 5
+    running &= Flags(1)
+    assert running.bits == 1
+    running ^= Flags(3)
+    assert running.bits == 2
+
+    # Built-in bitwise operations still apply to plain integers and flags.
+    plain: i32 = 0b1010 | 0b0101
+    assert plain == 15
+    assert (0b1100 & 0b0110) == 4
+    assert (1 << 4) == 16
+    assert (~0) == -1
+
+    print("operator bitwise ok", both.bits, all_bits.bits, running.bits, plain)
+    return 0

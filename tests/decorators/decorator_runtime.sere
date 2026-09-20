@@ -1,0 +1,25 @@
+def logged(fn: Function[[i32], i32]) -> Function[[i32], i32]:
+    def wrapper(n: i32) -> i32:
+        print("logged", n)
+        return fn(n)
+    return wrapper
+
+@logged
+def bump(n: i32) -> i32:
+    return n + 1
+
+@logged
+@logged
+def double(n: i32) -> i32:
+    return n * 2
+
+def main() -> i32:
+    # The name is rebound to the wrapper, so calling it runs the decorator.
+    assert bump(1) == 2
+    assert bump(10) == 11
+
+    # Stacked decorators wrap bottom-up: the lower one runs first.
+    assert double(4) == 8
+
+    print("decorator runtime ok", bump(2), double(3))
+    return 0

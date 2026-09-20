@@ -1,0 +1,69 @@
+enum Option[T]:
+    Some(T)
+    None
+
+    def is_some(self) -> bool:
+        match self:
+            case Option.Some(_):
+                return True
+            case Option.None:
+                return False
+
+    def unwrap_or(self, fallback: T) -> T:
+        match self:
+            case Option.Some(value):
+                return value
+            case Option.None:
+                return fallback
+
+def first_positive(values: list[i32]) -> Option[i32]:
+    for value in values:
+        if value > 0:
+            return Option.Some(value)
+    return Option.None
+
+def main() -> i32:
+    some: Option[i32] = Option.Some(5)
+    none: Option[i32] = Option.None
+
+    assert some.is_some()
+    assert not none.is_some()
+    assert some.unwrap_or(0) == 5
+    assert none.unwrap_or(-1) == -1
+
+    match some:
+        case Option.Some(value):
+            assert value == 5
+        case Option.None:
+            assert False
+
+    match none:
+        case Option.Some(_):
+            assert False
+        case Option.None:
+            pass
+
+    assert first_positive([1, 2]).unwrap_or(0) == 1
+    assert first_positive([-3, 4]).unwrap_or(0) == 4
+    assert not first_positive([-1, -2]).is_some()
+    assert first_positive([]).unwrap_or(99) == 99
+
+    # `Option` payload types are inferred from the argument.
+    inferred: Option[str] = Option.Some("text")
+    assert inferred.is_some()
+    assert inferred.unwrap_or("") == "text"
+
+    # The prelude ships the same shape as `Result`.
+    ok: Result[i32, str] = Result.Ok(7)
+    assert ok.is_ok()
+    assert not ok.is_err()
+    assert ok.unwrap() == 7
+    assert ok.unwrap_or(0) == 7
+
+    failure: Result[i32, str] = Result.Err("boom")
+    assert failure.is_err()
+    assert failure.unwrap_or(-1) == -1
+    assert failure.err() == "boom"
+
+    print("enum generic ok", some.unwrap_or(0), failure.err())
+    return 0

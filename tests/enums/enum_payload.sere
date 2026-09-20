@@ -1,0 +1,61 @@
+enum Message:
+    Quit
+    Move(x: i32, y: i32)
+    Write(str)
+
+    def is_quit(self) -> bool:
+        match self:
+            case Message.Quit:
+                return True
+            case _:
+                return False
+
+    def __str__(self) -> str:
+        return "Message." + self.name
+
+def move_by(message: Message, dx: i32, dy: i32) -> Message:
+    match message:
+        case Message.Move(x, y):
+            return Message.Move(x + dx, y + dy)
+        case _:
+            return message
+
+def main() -> i32:
+    quit_message: Message = Message.Quit
+    assert quit_message.is_quit()
+    assert str(quit_message) == "Message.Quit"
+    assert quit_message.name == "Quit"
+
+    moved: Message = Message.Move(1, 2)
+    assert not moved.is_quit()
+    assert moved.name == "Move"
+    assert str(moved) == "Message.Move"
+
+    match moved:
+        case Message.Move(x, y):
+            assert x == 1
+            assert y == 2
+        case _:
+            assert False
+
+    shifted: Message = move_by(moved, 10, 20)
+    match shifted:
+        case Message.Move(x, y):
+            assert x == 11
+            assert y == 22
+        case _:
+            assert False
+
+    # Single-field payload declared by type only.
+    written: Message = Message.Write("payload")
+    match written:
+        case Message.Write(text):
+            assert text == "payload"
+        case _:
+            assert False
+
+    # `_` keeps the function total for the non-quit cases.
+    assert move_by(quit_message, 1, 1).is_quit()
+
+    print("enum payload ok", str(shifted), written.name)
+    return 0

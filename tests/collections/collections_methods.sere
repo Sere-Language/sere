@@ -1,0 +1,42 @@
+def main() -> i32:
+    # List methods: append/push, copy, extend, reverse, clear, remove, find,
+    # index, count, contains, has.
+    xs: list[i32] = [1, 2, 3]
+    xs.append(4)
+    xs.push(5)
+    assert xs == [1, 2, 3, 4, 5]
+    assert xs.contains(3)
+    assert xs.has(9) == False
+    assert xs.count(2) == 1
+    assert xs.find(4) == 3
+    assert xs.index(5) == 4
+    assert xs.find(99) == -1
+    xs.remove(4)
+    assert xs == [1, 2, 3, 5]
+    xs.remove(77)
+    assert xs == [1, 2, 3, 5]
+
+    ys: list[i32] = xs.copy()
+    assert ys == [1, 2, 3, 5]
+    ys[0] = 99
+    assert xs[0] == 1
+
+    xs.extend([6, 7])
+    assert xs == [1, 2, 3, 5, 6, 7]
+    xs.reverse()
+    assert xs == [7, 6, 5, 3, 2, 1]
+    xs.clear()
+    assert len(xs) == 0
+    xs.append(10)
+    assert xs == [10]
+
+    fruit: list[str] = ["apple"]
+    fruit.append("fig")
+    assert len(fruit) == 2
+    fresh: list[str] = fruit.copy()
+    fresh.reverse()
+    assert fresh[0] == "fig"
+    assert fruit[0] == "apple"
+
+    print("collections methods ok", ys[0], xs[0], fresh[1])
+    return 0

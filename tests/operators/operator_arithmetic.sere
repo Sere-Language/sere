@@ -1,0 +1,96 @@
+class Vec:
+    @frozen x: i32
+    @frozen y: i32
+
+    def __init__(self, x: i32, y: i32) -> void:
+        self.x = x
+        self.y = y
+
+    def __add__(self, other: Vec) -> Vec:
+        return Vec(self.x + other.x, self.y + other.y)
+
+    def __sub__(self, other: Vec) -> Vec:
+        return Vec(self.x - other.x, self.y - other.y)
+
+    def __mul__(self, factor: i32) -> Vec:
+        return Vec(self.x * factor, self.y * factor)
+
+    def __truediv__(self, divisor: i32) -> Vec:
+        return Vec(self.x // divisor, self.y // divisor)
+
+    def __mod__(self, divisor: i32) -> Vec:
+        return Vec(self.x % divisor, self.y % divisor)
+
+    def __pow__(self, factor: i32) -> Vec:
+        return Vec(self.x * self.x, self.y * self.y)
+
+    def magnitude(self) -> i32:
+        return self.x * self.x + self.y * self.y
+
+class Offset:
+    @frozen dx: i32
+
+    def __init__(self, dx: i32) -> void:
+        self.dx = dx
+
+    def __radd__(self, other: i32) -> i32:
+        return other + self.dx
+
+class Counter:
+    value: i32
+
+    def __init__(self, value: i32) -> void:
+        self.value = value
+
+    def __add__(self, step: i32) -> Counter:
+        return Counter(self.value + step)
+
+def main() -> i32:
+    left: Vec = Vec(1, 2)
+    right: Vec = Vec(3, 4)
+
+    total: Vec = left + right
+    assert total.x == 4
+    assert total.y == 6
+
+    difference: Vec = right - left
+    assert difference.x == 2
+    assert difference.y == 2
+
+    scaled: Vec = left * 3
+    assert scaled.x == 3
+    assert scaled.y == 6
+
+    halved: Vec = right / 2
+    assert halved.x == 1
+    assert halved.y == 2
+
+    remainder: Vec = right % 2
+    assert remainder.x == 1
+    assert remainder.y == 0
+
+    squared: Vec = left ** 2
+    assert squared.x == 1
+    assert squared.y == 4
+
+    assert left.magnitude() == 5
+
+    # Compound assignment dispatches to `__add__` and rebinds the variable.
+    running: Vec = Vec(1, 1)
+    running += Vec(2, 3)
+    assert running.x == 3
+    assert running.y == 4
+    running -= Vec(1, 1)
+    assert running.x == 2
+    assert running.y == 3
+
+    # Reflected operator: the left operand is an i32, the right is a class.
+    assert 5 + Offset(10) == 15
+    assert 0 + Offset(-1) == -1
+
+    counter: Counter = Counter(1)
+    counter = counter + 4
+    assert counter.value == 5
+
+    print("operator arithmetic ok", total.x, scaled.y, 5 + Offset(1), counter.value)
+    return 0

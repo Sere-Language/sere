@@ -1,0 +1,68 @@
+def identity[T](value: T) -> T:
+    return value
+
+def first[T](values: list[T]) -> T:
+    return values[0]
+
+def last[T](values: list[T]) -> T:
+    return values[len(values) - 1]
+
+def pair_first[K, V](key: K, value: V) -> K:
+    return key
+
+def pair_second[K, V](key: K, value: V) -> V:
+    return value
+
+def count_of[T](values: list[T], probe: T) -> i32:
+    total: i32 = 0
+    for value in values:
+        if value == probe:
+            total += 1
+    return total
+
+def swap[T](values: list[T]) -> list[T]:
+    result: list[T] = []
+    for index in range(len(values)):
+        result.append(values[len(values) - 1 - index])
+    return result
+
+def main() -> i32:
+    # Type arguments are inferred from the call site.
+    assert identity(9) == 9
+    assert identity("text") == "text"
+    assert identity(1.5) == 1.5
+    assert identity(True)
+
+    # ...or given explicitly.
+    assert identity[i32](3) == 3
+    assert identity[str]("explicit") == "explicit"
+
+    numbers: list[i32] = [4, 5, 6]
+    words: list[str] = ["a", "b", "c"]
+    assert first(numbers) == 4
+    assert last(numbers) == 6
+    assert first(words) == "a"
+    assert last(words) == "c"
+
+    # Two independent parameters, each inferred separately.
+    assert pair_first(1, "one") == 1
+    assert pair_second(1, "one") == "one"
+    assert pair_first("key", 2.0) == "key"
+    assert pair_second(0, True)
+
+    # A generic parameter inside the body keeps its element type.
+    assert count_of(numbers, 5) == 1
+    assert count_of(numbers, 99) == 0
+    assert count_of(words, "b") == 1
+
+    reversed_numbers: list[i32] = swap(numbers)
+    assert reversed_numbers == [6, 5, 4]
+    reversed_words: list[str] = swap(words)
+    assert reversed_words == ["c", "b", "a"]
+
+    # A generic call may be nested inside another generic call.
+    assert identity(identity(7)) == 7
+    assert first(swap(numbers)) == 6
+
+    print("generic functions ok", identity(1), first(words), last(numbers))
+    return 0

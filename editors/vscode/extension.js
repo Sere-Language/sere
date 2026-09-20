@@ -606,17 +606,44 @@ function fromLspCompletionKind(kind) {
   return Math.max(0, kind - 1);
 }
 
+// Range of the identifier the suggestion replaces. When the cursor sits behind
+// a member-access dot (`add(5, 4).un|`) only the text typed after the dot is
+// replaced, so accepting `unwrap` cannot clobber the receiver.
 function replaceRangeAfterDot(document, position) {
   const line = document.lineAt(position.line).text;
   const before = line.slice(0, position.character);
-  const dot = before.lastIndexOf(".");
-  const start =
-    dot >= 0
-      ? new vscode.Position(position.line, dot + 1)
-      : document.getWordRangeAtPosition(position)
-        ? document.getWordRangeAtPosition(position).start
-        : position;
+  const typed = /[A-Za-z0-9_]*$/.exec(before)[0];
+  const dot = before.length - typed.length - 1;
+  const memberAccess =
+    dot >= 0 && before[dot] === "." && !insideStringLiteral(document, position.line, dot);
+  const start = memberAccess
+    ? new vscode.Position(position.line, dot + 1)
+    : document.getWordRangeAtPosition(position)
+      ? document.getWordRangeAtPosition(position).start
+      : position;
   return new vscode.Range(start, position);
+}
+
+// A `.` inside a string or comment is not a member access: replacing from it
+// would delete source text when a suggestion is accepted.
+function insideStringLiteral(document, lineNumber, column) {
+  const line = document.lineAt(lineNumber).text;
+  let quote = "";
+  for (let index = 0; index < column; index += 1) {
+    const character = line[index];
+    if (quote) {
+      if (character === quote && line[index - 1] !== "\\") {
+        quote = "";
+      }
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === "#") {
+      return true;
+    }
+  }
+  return Boolean(quote);
 }
 
 function toCompletion(item, document, position) {
@@ -627,6 +654,16 @@ function toCompletion(item, document, position) {
   completion.sortText = item.sortText || item.label;
   if (item.insertTextFormat === 2) {
     completion.insertText = new vscode.SnippetString(String(item.insertText || item.label));
+  }
+  const documentation = item.documentation;
+  if (documentation) {
+    const value =
+      typeof documentation === "string" ? documentation : documentation.value || "";
+    if (value) {
+      const markdown = new vscode.MarkdownString(value);
+      markdown.supportHtml = false;
+      completion.documentation = markdown;
+    }
   }
   completion.range = replaceRangeAfterDot(document, position);
   return completion;

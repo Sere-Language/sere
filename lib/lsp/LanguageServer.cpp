@@ -666,7 +666,8 @@ void addCompletion(llvm::json::Array& items,
                    const std::string& prefix,
                    const std::string& insertText = {},
                    const std::string& sortText = {},
-                   bool snippet = true) {
+                   bool snippet = true,
+                   const std::string& documentation = {}) {
   const auto startsWithIgnoreCase = [](std::string_view text, std::string_view prefix) {
     if (prefix.empty()) {
       return true;
@@ -701,6 +702,9 @@ void addCompletion(llvm::json::Array& items,
   if (!detail.empty()) {
     item["detail"] = detail;
   }
+  if (!documentation.empty()) {
+    item["documentation"] = llvm::json::Object{{"kind", "markdown"}, {"value", documentation}};
+  }
   item["insertText"] = insertText.empty() ? label : insertText;
   if (snippet && !insertText.empty()) {
     item["insertTextFormat"] = 2;
@@ -724,7 +728,8 @@ void addMemberCompletions(llvm::json::Array& items,
                   prefix,
                   member.insertText,
                   member.sortText,
-                  true);
+                  true,
+                  member.documentation);
   }
 }
 
@@ -887,6 +892,12 @@ private:
   void handleFormatting(const llvm::json::Value* id, const llvm::json::Object& params);
   void handleCodeAction(const llvm::json::Value* id, const llvm::json::Object& params);
   [[nodiscard]] Frontend* analyzeCached(const std::string& uri);
+  /// Re-analyzes `uri` only when the document changed since the last analysis,
+  /// then returns its frontend. Every position-based request goes through this
+  /// so answers always describe the text the editor sent: a frontend left over
+  /// from an earlier revision produces missing or misplaced semantic tokens.
+  [[nodiscard]] Frontend* freshFrontend(const std::string& uri);
+  void analyzeDocument(const std::string& uri, bool publish = true);
   [[nodiscard]] std::optional<std::pair<std::string, std::uint32_t>>
   documentOffset(const llvm::json::Object& params) const;
 
@@ -895,6 +906,9 @@ private:
   std::filesystem::path workspaceRoot_{};
   std::unordered_map<std::string, std::string> documents_{};
   std::unordered_map<std::string, std::unique_ptr<Frontend>> frontends_{};
+  /// Text each cached frontend was built from, so `freshFrontend` can tell
+  /// whether a re-analysis is needed.
+  std::unordered_map<std::string, std::string> analyzedText_{};
   bool shutdown_ = false;
 };
 
@@ -1064,7 +1078,7 @@ void LanguageSession::publishDiagnostics(const std::string& uri,
   return key.starts_with(prefix);
 }
 
-void LanguageSession::analyzeDocument(const std::string& uri) {
+void LanguageSession::analyzeDocument(const std::string& uri, bool publish) {
   const auto found = documents_.find(uri);
   if (found == documents_.end()) {
     return;
@@ -1074,7 +1088,10 @@ void LanguageSession::analyzeDocument(const std::string& uri) {
   applyLanguageContext(file);
   applyOverlays(*frontend);
   (void)frontend->analyze(file.string(), found->second, stdlibDir_);
-  publishDiagnostics(uri, frontend->diagnostics());
+  if (publish) {
+    publishDiagnostics(uri, frontend->diagnostics());
+  }
+  analyzedText_[uri] = found->second;
   frontends_[uri] = std::move(frontend);
 }
 
@@ -1096,6 +1113,7 @@ void LanguageSession::refreshOpenDocuments() {
     uris.push_back(uri);
   }
   frontends_.clear();
+  analyzedText_.clear();
   for (const std::string& uri : uris) {
     analyzeDocument(uri);
   }
@@ -1141,6 +1159,21 @@ Frontend* LanguageSession::analyzeCached(const std::string& uri) {
     return nullptr;
   }
   return created->second.get();
+}
+
+Frontend* LanguageSession::freshFrontend(const std::string& uri) {
+  const auto text = documents_.find(uri);
+  if (text == documents_.end()) {
+    return nullptr;
+  }
+  const auto cached = frontends_.find(uri);
+  const auto analyzed = analyzedText_.find(uri);
+  if (cached != frontends_.end() && analyzed != analyzedText_.end() &&
+      analyzed->second == text->second) {
+    return cached->second.get();
+  }
+  analyzeDocument(uri, false);
+  return analyzeCached(uri);
 }
 
 [[nodiscard]] bool stdlibHasPrelude(const std::filesystem::path& dir) {

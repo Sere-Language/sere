@@ -1,0 +1,71 @@
+def twice[T: i32 | f64](value: T) -> T:
+    return value + value
+
+class NumberBox[T: i32 | f64]:
+    value: T
+
+    def __init__(self, value: T) -> void:
+        self.value = value
+
+    def doubled(self) -> T:
+        return self.value + self.value
+
+class Named[T: i32 | str]:
+    name: T
+
+    def __init__(self, name: T) -> void:
+        self.name = name
+
+    def describe(self) -> str:
+        return "name=" + str(self.name)
+
+enum Value[T: i32 | str]:
+    Item(T)
+    Empty
+
+def first_or[T: i32 | str](values: list[T], fallback: T) -> T:
+    if len(values) == 0:
+        return fallback
+    return values[0]
+
+def main() -> i32:
+    # Inference picks a permitted specialization.
+    assert twice(3) == 6
+    assert twice(2.5) == 5.0
+    # Explicit arguments must satisfy the constraint too.
+    assert twice[i32](4) == 8
+    assert twice[f64](1.5) == 3.0
+
+    int_box: NumberBox[i32] = NumberBox[i32](5)
+    assert int_box.doubled() == 10
+    float_box: NumberBox[f64] = NumberBox[f64](2.0)
+    assert float_box.doubled() == 4.0
+
+    # Constraints compose with `str` alternatives and with str() conversion.
+    text: Named[str] = Named[str]("alpha")
+    assert text.describe() == "name=alpha"
+    counted: Named[i32] = Named[i32](7)
+    assert counted.describe() == "name=7"
+
+    item: Value[i32] = Value.Item(1)
+    match item:
+        case Value.Item(payload):
+            assert payload == 1
+        case Value.Empty:
+            assert False
+
+    empty: Value[str] = Value.Empty
+    match empty:
+        case Value.Item(_):
+            assert False
+        case Value.Empty:
+            pass
+
+    words: list[str] = ["first", "second"]
+    assert first_or(words, "none") == "first"
+    assert first_or([], "none") == "none"
+    numbers: list[i32] = []
+    assert first_or(numbers, -1) == -1
+
+    print("generic constraints ok", twice(3), int_box.doubled(), text.describe())
+    return 0

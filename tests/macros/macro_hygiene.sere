@@ -1,0 +1,34 @@
+macro scaled(x):
+    quote:
+        tmp: i32 = ($x) * 2
+        tmp + 1
+
+macro shadow(x):
+    quote:
+        value: i32 = ($x)
+        value
+
+def main() -> i32:
+    # `tmp` is declared inside the quote, so it must not capture or leak into
+    # the caller's scope: this `tmp` keeps its own value.
+    tmp: i32 = 100
+    result: i32 = scaled!(3)
+    assert result == 7
+    assert tmp == 100
+
+    # The same name declared by a macro twice stays private to each expansion.
+    a: i32 = scaled!(1)
+    b: i32 = scaled!(2)
+    assert a == 3
+    assert b == 5
+    assert tmp == 100
+
+    # A macro parameter with the same name as a caller variable is substituted,
+    # not captured.
+    value: i32 = 2
+    shadowed: i32 = shadow!(41)
+    assert shadowed == 41
+    assert value == 2
+
+    print("macro hygiene ok", result, a, b, tmp, value)
+    return 0

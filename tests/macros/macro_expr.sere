@@ -1,0 +1,33 @@
+macro twice(x):
+    quote:
+        ($x) + ($x)
+
+macro square(x):
+    quote:
+        ($x) * ($x)
+
+macro sum3(a, b, c):
+    quote:
+        ($a) + ($b) + ($c)
+
+def bump(n: i32) -> i32:
+    return n + 1
+
+def main() -> i32:
+    n: i32 = 3
+    assert twice!(n) == 6
+    assert twice!(n + 1) == 8
+    assert square!(twice!(n)) == 36
+    assert sum3!(1, 2, 3) == 6
+
+    # A splice may be any expression, including a call.
+    assert twice!(bump(1)) == 4
+    assert sum3!(bump(0), twice!(2), square!(2)) == 9
+
+    # The macro expands at compile time, so the operand is evaluated twice.
+    calls: i32 = 0
+    assert twice!(n) == 6
+    assert calls == 0
+
+    print("macro expr ok", twice!(n))
+    return 0

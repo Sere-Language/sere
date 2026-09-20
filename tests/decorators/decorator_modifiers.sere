@@ -1,0 +1,61 @@
+class Animal:
+    @abstract
+    def speak(self) -> i32:
+        pass
+
+    @abstract
+    def describe(self) -> str:
+        return "animal"
+
+class Dog(Animal):
+    @override
+    def speak(self) -> i32:
+        return 1
+
+class Account:
+    @private balance: i32
+    @static opened: i32
+    @frozen id: i32
+
+    def __init__(self, id: i32) -> void:
+        self.balance = 0
+        self.id = id
+
+    # Visibility is per accessor: a public getter with a private field.
+    @public balance.get:
+        return self.balance
+
+    def deposit(self, amount: i32) -> void:
+        self.balance = self.balance + amount
+
+def main() -> i32:
+    dog: Dog = Dog()
+    assert dog.speak() == 1
+    # The inherited default hook is still reachable and works unmodified.
+    assert dog.describe() == "animal"
+
+    account: Account = Account(3)
+    # `@frozen` allows the constructor to write the field.
+    assert account.id == 3
+    assert account.balance == 0
+
+    account.deposit(5)
+    account.deposit(2)
+    assert account.balance == 7
+
+    other: Account = Account(4)
+    assert other.balance == 0
+    assert account.balance == 7
+
+    # `@static` fields are one value shared by every instance and the type.
+    Account.opened = 1
+    assert Account.opened == 1
+    account.opened = 2
+    assert Account.opened == 2
+    other.opened += 1
+    assert Account.opened == 3
+    assert account.opened == 3
+
+    print("decorator modifiers ok", dog.speak(), account.balance, Account.opened)
+    return 0
+

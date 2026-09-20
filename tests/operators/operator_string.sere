@@ -1,0 +1,44 @@
+class Temperature:
+    celsius: f64
+
+    def __init__(self, celsius: f64) -> void:
+        self.celsius = celsius
+
+    def __str__(self) -> str:
+        return str(self.celsius) + "C"
+
+class Point:
+    x: i32
+    y: i32
+
+    def __init__(self, x: i32, y: i32) -> void:
+        self.x = x
+        self.y = y
+
+    def __str__(self) -> str:
+        return "(" + str(self.x) + ", " + str(self.y) + ")"
+
+    def __repr__(self) -> str:
+        return "Point(" + str(self.x) + ", " + str(self.y) + ")"
+
+def show(value: Point) -> str:
+    return str(value)
+
+def main() -> i32:
+    hot: Temperature = Temperature(21.5)
+    # `__str__` drives str() and interpolation.
+    assert str(hot) == "21.5C"
+    assert f"{hot}" == "21.5C"
+    assert f"temp {hot}!" == "temp 21.5C!"
+    assert len(str(hot)) == 5
+
+    point: Point = Point(1, 2)
+    assert str(point) == "(1, 2)"
+    assert f"{point}" == "(1, 2)"
+    assert show(point) == "(1, 2)"
+
+    # `__repr__` is separate from `__str__` and drives repr().
+    assert repr(point) == "Point(1, 2)"
+
+    print("operator string ok", str(hot), str(point), repr(point), f"{hot}")
+    return 0

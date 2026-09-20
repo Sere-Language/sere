@@ -444,6 +444,7 @@ std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type) {
       item.sortText = "0" + item.label;
       item.detail = owner + "." + variant.name;
       item.insertText = variant.name;
+      item.documentation = variant.docstring;
       if (!variant.payloadTypes.empty()) {
         item.detail += variantParams(variant) + " -> " + owner;
         item.insertText = variantSnippet(variant);
@@ -461,6 +462,7 @@ std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type) {
       item.insertText = methodSnippet(item.label, item.detail);
       item.kind = kCompletionConstructor;
       item.sortText = "0" + item.label;
+      item.documentation = init.docstring;
       addItem(std::move(item));
     }
   }
@@ -479,6 +481,7 @@ std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type) {
     MemberCompletionItem item;
     item.label = field.name;
     item.detail = field.type == nullptr ? "" : field.type->display();
+    item.documentation = field.docstring;
     const bool isFn = field.type != nullptr && field.type->kind() == TypeKind::Function;
     if (isFn) {
       // Module exports and callable fields read better with parameter names.
@@ -519,6 +522,7 @@ std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type) {
     item.insertText = methodSnippet(method.name, item.detail);
     item.kind = kCompletionMethod;
     item.sortText = "0" + method.name;
+    item.documentation = method.docstring;
     addItem(std::move(item));
   }
   return items;

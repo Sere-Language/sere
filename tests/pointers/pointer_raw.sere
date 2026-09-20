@@ -1,0 +1,35 @@
+def increment(value: Ptr[i32]) -> void:
+    *value = *value + 1
+
+def main() -> i32:
+    raw: Ptr[i32] = alloc[i32]()
+    store(raw, 7)
+    assert load(raw) == 7
+
+    *raw = 8
+    assert *raw == 8
+
+    increment(raw)
+    increment(raw)
+    assert load(raw) == 10
+
+    other: Ptr[i32] = alloc[i32]()
+    store(other, 100)
+    assert load(other) == 100
+
+    # Two raw pointers are independent allocations.
+    *other = *raw
+    assert load(other) == 10
+    assert load(raw) == 10
+
+    free(other)
+    free(raw)
+
+    # Reallocation after freeing is allowed and returns usable storage.
+    again: Ptr[i32] = alloc[i32]()
+    store(again, 3)
+    assert load(again) == 3
+    free(again)
+
+    print("pointer raw ok")
+    return 0

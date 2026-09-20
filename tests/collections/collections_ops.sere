@@ -1,0 +1,33 @@
+def main() -> i32:
+    # Collection operators: concat, repeat, membership, slices, del, equality.
+    left: list[i32] = [1, 2]
+    right: list[i32] = [3, 4]
+    merged: list[i32] = left + right
+    assert merged == [1, 2, 3, 4]
+    assert left == [1, 2]
+
+    repeated: list[i32] = [0] * 4
+    assert repeated == [0, 0, 0, 0]
+    assert len(left * 3) == 6
+
+    assert [1, 2, 3] == [1, 2, 3]
+    assert [1, 2, 3] != [1, 2, 4]
+    assert [1, 2] != [1, 2, 3]
+
+    data: list[i32] = [0, 1, 2, 3, 4]
+    assert data[0] == 0
+    assert data[4] == 4
+    assert data[1:4] == [1, 2, 3]
+    assert data[:3] == [0, 1, 2]
+    assert data[2:] == [2, 3, 4]
+    assert data[-2:] == [3, 4]
+    assert 3 in data
+    assert 9 not in data
+
+    del data[4]
+    assert data == [0, 1, 2, 3]
+    del data[0]
+    assert data == [1, 2, 3]
+
+    print("collections ops ok", merged[3], repeated[2], data[1])
+    return 0

@@ -1,0 +1,59 @@
+@flags
+enum Perm:
+    Read = 1
+    Write = 2
+    Exec = 4
+
+@flags
+enum Style:
+    Bold = 1
+    Italic = 4
+    Underline = 8
+
+def describe(perm: Perm) -> str:
+    if Perm.Read in perm and Perm.Write in perm:
+        return "read-write"
+    if Perm.Read in perm:
+        return "read-only"
+    return "none"
+
+def main() -> i32:
+    none_mask: Perm = Perm.Read
+    assert Perm.Read in none_mask
+    assert Perm.Write not in none_mask
+    assert Perm.Exec not in none_mask
+
+    combined: Perm = Perm.Read | Perm.Write
+    assert Perm.Read in combined
+    assert Perm.Write in combined
+    assert Perm.Exec not in combined
+    assert i32(combined) == 3
+    assert describe(combined) == "read-write"
+    assert describe(Perm.Read) == "read-only"
+
+    # Bitwise combination and removal.
+    full: Perm = Perm.Read | Perm.Write | Perm.Exec
+    assert i32(full) == 7
+    assert describe(full) == "read-write"
+    without_read: Perm = full & Perm.Write
+    assert Perm.Read not in without_read
+    assert Perm.Write in without_read
+    toggled: Perm = without_read ^ Perm.Exec
+    assert Perm.Exec in toggled
+    toggled = toggled ^ Perm.Exec
+    assert Perm.Exec not in toggled
+
+    mixed: Style = Style.Bold | Style.Underline
+    assert Style.Bold in mixed
+    assert Style.Underline in mixed
+    assert Style.Italic not in mixed
+    assert i32(mixed) == 9
+
+    assert len(Perm.variants()) == 3
+    assert Perm.variants()[0] == "Read"
+    assert Perm.Read.name == "Read"
+    assert Perm.Read.value == 1
+    assert i32(Perm.Write) == 2
+
+    print("enum flags ok", i32(full), describe(full), i32(mixed))
+    return 0

@@ -1,0 +1,42 @@
+def get_name(out_name: Ptr[str]) -> void:
+    *out_name = "Sere"
+
+def set_value(target: Ptr[i32], value: i32) -> void:
+    *target = value
+
+def bump(value: Ptr[i32]) -> void:
+    *value = *value + 1
+
+def main() -> i32:
+    # Address of a stack local.
+    local: i32 = 10
+    stack: Ptr[i32] = &local
+    *stack = 11
+    assert local == 11
+    bump(&local)
+    assert local == 12
+    assert *stack == 12
+
+    # Address of an out parameter, written by a callee.
+    name: str = ""
+    get_name(&name)
+    assert name == "Sere"
+    assert len(name) == 4
+
+    # Address of a mutable variable in a loop body.
+    total: i32 = 0
+    for step in [1, 2, 3]:
+        slot: i32 = step
+        set_value(&slot, step * 2)
+        total += slot
+    assert total == 12
+
+    # Chained addressing: a pointer to a pointer.
+    handle: Ptr[i32] = &local
+    handle_pointer: Ptr[Ptr[i32]] = &handle
+    **handle_pointer = 30
+    assert local == 30
+    assert *handle == 30
+
+    print("pointer address ok", local, name, total)
+    return 0

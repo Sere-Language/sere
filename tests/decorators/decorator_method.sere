@@ -1,0 +1,33 @@
+def instrument(fn: Function[[i32], i32]) -> Function[[i32], i32]:
+    def wrapper(value: i32) -> i32:
+        return fn(value) + 1
+    return wrapper
+
+class Calculator:
+    base: i32
+
+    def __init__(self, base: i32) -> void:
+        self.base = base
+
+    def offset(self, value: i32) -> i32:
+        return self.base + value
+
+    @instrument
+    def boosted(self, value: i32) -> i32:
+        return self.base * value
+
+def main() -> i32:
+    # A decorated method keeps `self` applied by the instance.
+    calculator: Calculator = Calculator(10)
+    assert calculator.offset(1) == 11
+    assert calculator.boosted(2) == 21
+
+    plain: Calculator = Calculator(0)
+    assert plain.boosted(5) == 1
+    assert plain.offset(5) == 5
+
+    # The decorated method is still an ordinary method of the class.
+    assert calculator.boosted(3) == 31
+
+    print("decorator method ok", calculator.boosted(1), plain.boosted(1))
+    return 0

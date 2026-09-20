@@ -1,0 +1,100 @@
+class Box[T]:
+    value: T
+
+    def __init__(self, value: T) -> void:
+        self.value = value
+
+    def get(self) -> T:
+        return self.value
+
+    def set(self, value: T) -> void:
+        self.value = value
+
+class Stack[T]:
+    items: list[T]
+
+    def __init__(self) -> void:
+        self.items = []
+
+    def push(self, value: T) -> void:
+        self.items.append(value)
+
+    def pop(self) -> T:
+        return self.items.pop(-1)
+
+    def size(self) -> i32:
+        return len(self.items)
+
+class Pair[K, V]:
+    key: K
+    val: V
+
+    def __init__(self, key: K, val: V) -> void:
+        self.key = key
+        self.val = val
+
+    def label(self) -> str:
+        return str(self.key) + "=" + str(self.val)
+
+struct Slot[T]:
+    item: T
+
+    def get(self) -> T:
+        return self.item
+
+def unwrap_box[T](box: Box[T]) -> T:
+    return box.get()
+
+def main() -> i32:
+    numbers: Box[i32] = Box[i32](4)
+    assert numbers.get() == 4
+    numbers.set(9)
+    assert numbers.get() == 9
+    assert unwrap_box(numbers) == 9
+
+    text: Box[str] = Box[str]("hello")
+    assert text.get() == "hello"
+    assert unwrap_box(text) == "hello"
+
+    flags: Box[bool] = Box[bool](True)
+    assert flags.get()
+
+    # A generic class nests inside another generic class.
+    boxed: Box[i32] = Box[i32](1)
+    outer: Box[Box[i32]] = Box[Box[i32]](boxed)
+    assert outer.get().get() == 1
+
+    # A generic class with a generic collection field.
+    stack: Stack[i32] = Stack[i32]()
+    assert stack.size() == 0
+    stack.push(1)
+    stack.push(2)
+    assert stack.size() == 2
+    assert stack.pop() == 2
+    assert stack.pop() == 1
+    assert stack.size() == 0
+
+    word_stack: Stack[str] = Stack[str]()
+    word_stack.push("a")
+    word_stack.push("b")
+    assert word_stack.pop() == "b"
+
+    # Two independent type parameters.
+    entry: Pair[str, i32] = Pair[str, i32]("count", 3)
+    assert entry.key == "count"
+    assert entry.val == 3
+    assert entry.label() == "count=3"
+
+    mixed: Pair[i32, str] = Pair[i32, str](7, "seven")
+    assert mixed.label() == "7=seven"
+
+    # Generic structs are values and are copied on assignment.
+    slot: Slot[i32] = Slot[i32](5)
+    assert slot.get() == 5
+    copy: Slot[i32] = slot
+    copy.item = 6
+    assert slot.item == 5
+    assert copy.item == 6
+
+    print("generic classes ok", numbers.get(), text.get(), stack.size(), entry.label())
+    return 0

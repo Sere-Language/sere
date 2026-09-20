@@ -1,0 +1,32 @@
+def bump_shared(value: Ptr[i32]) -> void:
+    *value = *value + 1
+
+def main() -> i32:
+    first: Shared[i32] = shared[i32](7)
+    assert load(first) == 7
+
+    # Copying a Shared value shares the same allocation.
+    second: Shared[i32] = first
+    assert load(second) == 7
+
+    bump_shared(second)
+    assert load(second) == 8
+    # Both handles observe the shared mutation.
+    assert load(first) == 8
+
+    *first = 20
+    assert load(second) == 20
+
+    # The last handle to die releases the allocation; earlier ones must stay
+    # alive across another scope.
+    if True:
+        inner: Shared[i32] = first
+        *inner = 21
+    assert load(first) == 21
+    assert load(second) == 21
+
+    text: Shared[str] = shared[str]("shared text")
+    assert load(text) == "shared text"
+
+    print("pointer shared ok", load(first), load(second))
+    return 0

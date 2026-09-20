@@ -1,0 +1,30 @@
+macro typed_len(x):
+    typed: true
+    quote:
+        print("type", $type)
+        ($x)
+
+def main() -> i32:
+    # `dbg!` prints and yields the value.
+    n: i32 = 7
+    echoed: i32 = dbg!(n)
+    assert echoed == 7
+    assert dbg!(n + 1) == 8
+
+    # `cfg!` reports host facts at compile time, and the false branch of an
+    # `if` is not required to type check as a runtime value.
+    if cfg!(windows):
+        assert cfg!(windows)
+    else:
+        assert not cfg!(windows)
+
+    assert cfg!(windows) != cfg!(unix) or cfg!(windows) and cfg!(unix)
+    assert cfg!(x86_64) or cfg!(arm64)
+    assert cfg!(debug) or not cfg!(debug)
+
+    # A `typed: true` macro may read `$type` for its first argument.
+    value: i32 = typed_len!(5)
+    assert value == 5
+
+    print("macro prelude ok", n, echoed)
+    return 0

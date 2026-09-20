@@ -1,0 +1,54 @@
+enum Color:
+    Red
+    Green = 2
+    Blue
+
+enum Level:
+    Low
+    High
+
+def label(level: Level) -> str:
+    if level == Level.High:
+        return "high"
+    return "low"
+
+def main() -> i32:
+    tone: Color = Color.Green
+    assert tone is Color.Green
+    assert tone is not Color.Red
+    assert tone == Color.Green
+    assert tone != Color.Red
+    assert tone.name == "Green"
+    assert tone.value == 2
+    assert Color.Red.value == 0
+    assert Color.Blue.value == 3
+    assert i32(tone) == 2
+    assert i32(Color.Red) == 0
+
+    names: list[str] = Color.variants()
+    assert len(names) == 3
+    assert names[0] == "Red"
+    assert names[1] == "Green"
+    assert names[2] == "Blue"
+
+    assert Color.__name__ == "Color"
+    assert len(Color.variants()) == 3
+
+    # A unit enum behaves as an integer, so no explicit cast is needed.
+    index: i32 = Color.Blue
+    assert index == 3
+    assert label(Level.High) == "high"
+    assert label(Level.Low) == "low"
+    assert i32(Level.High) == 1
+
+    # Enums are valid `match` subjects and exhaustive coverage is checked.
+    match tone:
+        case Color.Red:
+            assert False
+        case Color.Green:
+            pass
+        case Color.Blue:
+            assert False
+
+    print("enum unit ok", tone.name, names[1], index)
+    return 0

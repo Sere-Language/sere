@@ -168,6 +168,7 @@ void bindModuleExports(TypeChecker& checker,
       field.name = function.name();
       field.type = function.resolvedType();
       field.isPublic = !item->isPrivate();
+      field.docstring = function.docstring();
       field.llvmName =
           function.isExtern() ? function.externName() : moduleName + "_" + function.name();
       for (const ParamDecl& param : function.params()) {

@@ -1,0 +1,41 @@
+def main() -> i32:
+    # Iteration and comprehensions over lists, arrays, and ranges.
+    xs: list[i32] = [1, 2, 3, 4, 5]
+    total = 0
+    for value in xs:
+        total = total + value
+    assert total == 15
+
+    sum_range = 0
+    for i in range(0, 6):
+        sum_range = sum_range + i
+    assert sum_range == 15
+
+    sum_step = 0
+    for i in range(0, 10, 2):
+        sum_step = sum_step + i
+    assert sum_step == 20
+
+    arr: array[i32] = array[i32](10, 20, 30)
+    sum_arr = 0
+    for value in arr:
+        sum_arr = sum_arr + value
+    assert sum_arr == 60
+
+    squares: list[i32] = [x * x for x in range(0, 5)]
+    assert squares == [0, 1, 4, 9, 16]
+
+    evens: list[i32] = [n for n in range(0, 8, 2)]
+    assert evens == [0, 2, 4, 6]
+
+    scaled: list[i32] = [v * 2 for v in xs]
+    assert scaled == [2, 4, 6, 8, 10]
+
+    count = 0
+    for name in ["ada", "linus", "grace"]:
+        if len(name) > 3:
+            count = count + 1
+    assert count == 2
+
+    print("collections loops ok", total, sum_range, squares[4], scaled[4])
+    return 0

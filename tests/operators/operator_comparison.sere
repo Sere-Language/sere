@@ -1,0 +1,66 @@
+class Version:
+    @frozen major: i32
+    @frozen minor: i32
+
+    def __init__(self, major: i32, minor: i32) -> void:
+        self.major = major
+        self.minor = minor
+
+    def __eq__(self, other: Version) -> bool:
+        return self.major == other.major and self.minor == other.minor
+
+    def __lt__(self, other: Version) -> bool:
+        if self.major != other.major:
+            return self.major < other.major
+        return self.minor < other.minor
+
+    def __le__(self, other: Version) -> bool:
+        return self < other or self == other
+
+    def __str__(self) -> str:
+        return str(self.major) + "." + str(self.minor)
+
+class Tag:
+    @frozen text: str
+
+    def __init__(self, text: str) -> void:
+        self.text = text
+
+    def __eq__(self, other: Tag) -> bool:
+        return self.text == other.text
+
+    def __ne__(self, other: Tag) -> bool:
+        return self.text != other.text
+
+def describe(version: Version) -> str:
+    if version > Version(1, 0):
+        return "new"
+    return "old"
+
+def main() -> i32:
+    one_zero: Version = Version(1, 0)
+
+    assert one_zero == Version(1, 0)
+    assert one_zero != Version(1, 1)
+    assert one_zero < Version(1, 1)
+    assert one_zero <= Version(1, 0)
+    assert Version(2, 0) > Version(1, 9)
+    assert Version(1, 1) >= Version(1, 0)
+    assert not (Version(1, 0) > Version(2, 0))
+
+    # `__gt__` falls back to the swapped `__lt__` on the right operand.
+    assert Version(2, 1) > one_zero
+    assert not (one_zero > Version(2, 1))
+
+    assert describe(Version(1, 2)) == "new"
+    assert describe(Version(0, 9)) == "old"
+    assert str(Version(1, 2)) == "1.2"
+
+    # An explicit `__ne__` takes precedence over inverting `__eq__`.
+    assert Tag("a") == Tag("a")
+    assert Tag("a") != Tag("b")
+    assert not (Tag("a") == Tag("b"))
+
+    # Distinct objects without `__eq__` are never equal by contents.
+    print("operator comparison ok", str(Version(1, 2)), describe(Version(3, 0)))
+    return 0

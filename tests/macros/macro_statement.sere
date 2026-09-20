@@ -1,0 +1,33 @@
+macro bump(target, amount):
+    quote:
+        $target = $target + ($amount)
+
+macro record(value):
+    quote:
+        print("value", $value)
+
+def main() -> i32:
+    n: i32 = 1
+    bump!(n, 4)
+    assert n == 5
+    bump!(n, 1)
+    assert n == 6
+
+    total: i32 = 0
+    for step in [1, 2, 3]:
+        bump!(total, step)
+    assert total == 6
+
+    record!(total)
+
+    # Statement macros inside a block body.
+    if n > 5:
+        bump!(n, 10)
+    assert n == 16
+
+    while n < 20:
+        bump!(n, 2)
+    assert n == 20
+
+    print("macro statement ok", n, total)
+    return 0

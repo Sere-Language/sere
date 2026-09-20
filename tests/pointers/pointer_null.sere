@@ -1,0 +1,39 @@
+def maybe(value: i32) -> Ptr[i32]:
+    if value > 0:
+        return alloc[i32]()
+    return None
+
+def main() -> i32:
+    raw: Ptr[i32] = alloc[i32]()
+    assert raw is not None
+    store(raw, 1)
+    assert load(raw) == 1
+
+    empty: Ptr[i32] = None
+    assert empty is None
+    assert not (raw is None)
+
+    # Reassigning through a nullable handle.
+    raw = None
+    assert raw is None
+    raw = alloc[i32]()
+    store(raw, 4)
+    assert load(raw) == 4
+    free(raw)
+
+    present: Ptr[i32] = maybe(1)
+    assert present is not None
+    store(present, 2)
+    assert load(present) == 2
+    free(present)
+
+    absent: Ptr[i32] = maybe(0)
+    assert absent is None
+
+    # Comparing two pointer values for identity.
+    again: Ptr[i32] = None
+    assert again is absent
+    assert not (again is present)
+
+    print("pointer null ok")
+    return 0

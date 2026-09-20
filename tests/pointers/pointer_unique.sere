@@ -1,0 +1,32 @@
+def double(value: Ptr[i32]) -> void:
+    *value = *value * 2
+
+def main() -> i32:
+    owned: Unique[i32] = unique[i32](42)
+    assert load(owned) == 42
+
+    *owned = 43
+    assert load(owned) == 43
+
+    # An owning pointer may be borrowed as a raw pointer; the borrower does not
+    # take ownership, so the value survives the call.
+    double(owned)
+    assert load(owned) == 86
+
+    # Moving an owned pointer into a local transfers the value.
+    moved: Unique[i32] = owned
+    assert load(moved) == 86
+    *moved = 1
+    assert load(moved) == 1
+
+    # Unique values are released at the end of the scope, so a later
+    # allocation must not disturb the live one.
+    second: Unique[i32] = unique[i32](5)
+    assert load(second) == 5
+    assert load(moved) == 1
+
+    nested: Unique[str] = unique[str]("owned text")
+    assert load(nested) == "owned text"
+
+    print("pointer unique ok", load(moved), load(second))
+    return 0

@@ -1,0 +1,55 @@
+class Box[T]:
+    value: T
+
+    def __init__(self, value: T) -> void:
+        self.value = value
+
+    def get(self) -> T:
+        return self.value
+
+    def replace(self, value: T) -> T:
+        previous: T = self.value
+        self.value = value
+        return previous
+
+def flatten_inner(outer: Box[Box[i32]]) -> i32:
+    return outer.get().get()
+
+def sum_boxes(boxes: list[Box[i32]]) -> i32:
+    total: i32 = 0
+    for box in boxes:
+        total += box.get()
+    return total
+
+def main() -> i32:
+    # Nested generic instantiation keeps the inner type argument.
+    inner: Box[i32] = Box[i32](1)
+    outer: Box[Box[i32]] = Box[Box[i32]](inner)
+    assert outer.get().get() == 1
+    assert flatten_inner(outer) == 1
+
+    replacement: Box[i32] = Box[i32](5)
+    previous: Box[i32] = outer.replace(replacement)
+    assert previous.get() == 1
+    assert outer.get().get() == 5
+
+    # A collection of a generic type.
+    boxes: list[Box[i32]] = []
+    boxes.append(Box[i32](1))
+    boxes.append(Box[i32](2))
+    boxes.append(Box[i32](4))
+    assert len(boxes) == 3
+    assert sum_boxes(boxes) == 7
+    assert boxes[2].get() == 4
+
+    # A generic type nested in a generic class parameter.
+    strings: Box[list[str]] = Box[list[str]](["a", "b"])
+    assert len(strings.get()) == 2
+    assert strings.get()[1] == "b"
+
+    # Three levels deep.
+    deep: Box[Box[Box[i32]]] = Box[Box[Box[i32]]](Box[Box[i32]](Box[i32](9)))
+    assert deep.get().get().get() == 9
+
+    print("generic nested ok", outer.get().get(), sum_boxes(boxes), len(strings.get()))
+    return 0

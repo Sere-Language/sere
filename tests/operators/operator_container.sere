@@ -1,0 +1,76 @@
+class Board:
+    cells: list[i32]
+
+    def __init__(self) -> void:
+        self.cells = [0, 0, 0]
+
+    def __len__(self) -> i64:
+        return len(self.cells)
+
+    def __getitem__(self, index: i32) -> i32:
+        return self.cells[index]
+
+    def __setitem__(self, index: i32, value: i32) -> void:
+        self.cells[index] = value
+
+    def __contains__(self, value: i32) -> bool:
+        return value in self.cells
+
+    def __bool__(self) -> bool:
+        for cell in self.cells:
+            if cell != 0:
+                return True
+        return False
+
+    def __call__(self, index: i32) -> i32:
+        return self.cells[index] * 2
+
+class Grid:
+    rows: i32
+    columns: i32
+
+    def __init__(self, rows: i32, columns: i32) -> void:
+        self.rows = rows
+        self.columns = columns
+
+    def __len__(self) -> i64:
+        return self.rows * self.columns
+
+    def __getitem__(self, key: str) -> i32:
+        if key == "rows":
+            return self.rows
+        return self.columns
+
+def main() -> i32:
+    board: Board = Board()
+    assert len(board) == 3
+    assert board[0] == 0
+    assert board[2] == 0
+    assert not bool(board)
+
+    board[1] = 5
+    assert board[1] == 5
+    assert 5 in board
+    assert 4 not in board
+    assert bool(board)
+    assert board(1) == 10
+
+    # Compound assignment through `__setitem__` and `__getitem__`.
+    board[1] += 1
+    assert board[1] == 6
+    assert board(1) == 12
+
+    # A negative-yield branch of `__bool__` is still false.
+    empty: Board = Board()
+    assert not bool(empty)
+    empty[-1] = 1
+    assert bool(empty)
+
+    # `__getitem__` may be keyed by anything, not just integers.
+    grid: Grid = Grid(3, 4)
+    assert len(grid) == 12
+    assert grid["rows"] == 3
+    assert grid["columns"] == 4
+
+    print("operator container ok", len(board), board[1], len(grid), grid["rows"])
+    return 0

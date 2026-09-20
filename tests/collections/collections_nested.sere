@@ -1,0 +1,29 @@
+def main() -> i32:
+    # Nested collections: lists of lists, dicts of lists, and lists of dicts.
+    grid: list[list[i32]] = [[1], [2, 3]]
+    grid[1].append(4)
+    assert grid[1][2] == 4
+    assert len(grid) == 2
+    assert grid[0][0] == 1
+
+    nested: list[list[list[i32]]] = [[[0, 1], [2]], [[3]]]
+    assert nested[0][1][0] == 2
+    assert nested[1][0][0] == 3
+
+    grades: dict[str, list[i32]] = {"ada": [90, 95]}
+    grades["ada"].append(100)
+    assert grades["ada"] == [90, 95, 100]
+    assert len(grades) == 1
+
+    people: list[dict[str, i32]] = [{"a": 1}, {"b": 2}]
+    people[1]["b"] = 20
+    assert people[1]["b"] == 20
+    assert people[0]["a"] == 1
+
+    rows: dict[str, list[str]] = {"names": ["ada", "linus"]}
+    rows["names"].append("grace")
+    assert rows["names"][1] == "linus"
+    assert len(rows["names"]) == 3
+
+    print("collections nested ok", grid[1][2], nested[0][1][0], grades["ada"][2], people[1]["b"])
+    return 0
