@@ -148,6 +148,8 @@ int32_t sere_parse_bool(const char* data, int64_t len, int32_t* out);
 int32_t sere_parse_none(const char* data, int64_t len);
 
 int32_t sere_list_contains(void* list, const void* item);
+// Element kind: 0 raw scalar/pointer bytes, 1 strings, 2 f32, 3 f64.
+int32_t sere_list_equal(void* left, void* right, int32_t kind);
 void* sere_list_concat(void* left, void* right);
 void* sere_list_repeat(void* list, int64_t count);
 

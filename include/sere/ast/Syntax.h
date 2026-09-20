@@ -229,6 +229,7 @@ public:
 
   [[nodiscard]] const Expr& callee() const;
   [[nodiscard]] Expr& callee();
+  void wrapCalleeAsMember(std::string member);
   [[nodiscard]] const std::vector<std::unique_ptr<TypeExpr>>& typeArgs() const;
   [[nodiscard]] const std::vector<std::unique_ptr<Expr>>& arguments() const;
   [[nodiscard]] const std::vector<NamedArgument>& keywordArguments() const;

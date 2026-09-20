@@ -737,6 +737,12 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
         (void)builder_->conditionalBranch(matched, *taken, *next);
       }
       builder_->setInsertBlock(*taken);
+      // Save and clear the matched error before the handler runs. error.leave
+      // consumes this frame; without enter, an unnamed handler leaves the
+      // original error pending at program exit.
+      if (handler.name.empty()) {
+        (void)builder_->operation("error.enter", serem::IRType::voidType());
+      }
       if (!handler.name.empty()) {
         const Type* caught = handler.type == nullptr ? nullptr : handler.type->resolvedType();
         const serem::ValuePtr object =
@@ -748,6 +754,7 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
         builder_->store(object, slot);
         locals_[handler.name] = slot;
         localTypes_[handler.name] = caught;
+        (void)builder_->operation("error.enter", serem::IRType::voidType());
       }
       if (!emitBlock(handler.body)) return false;
       if (!builder_->currentBlock().isTerminated()) {

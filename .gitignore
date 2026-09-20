@@ -59,7 +59,9 @@ test-c.exe
 test-llvm.exe
 perf-test.c 
 *.serem
-tests/
+/tests/*
+!/tests/run-tests.ps1
+!/tests/README.md
 generic_constraints_fixtures/
 _scratch/
 cmake/

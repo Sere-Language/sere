@@ -221,6 +221,11 @@ Expr& CallExpr::callee() {
   return *callee_;
 }
 
+void CallExpr::wrapCalleeAsMember(std::string member) {
+  const SourceRange sourceRange = callee_->range();
+  callee_ = std::make_unique<MemberExpr>(sourceRange, std::move(callee_), std::move(member));
+}
+
 const std::vector<std::unique_ptr<TypeExpr>>& CallExpr::typeArgs() const {
   return typeArgs_;
 }

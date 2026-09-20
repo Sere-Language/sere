@@ -1390,6 +1390,7 @@ bool TypeChecker::canCast(const Type* from, const Type* to) const {
     return true;
   }
   const bool fromNumber = from->isInteger() || from->isNamed("bool") || from->isFloat();
+  if (to->isNamed("bool") && from->methodIndex("__bool__") >= 0) return true;
   const bool toNumber = to->isInteger() || to->isNamed("bool") || to->isFloat();
   if (fromNumber && toNumber) {
     return true;
@@ -3550,6 +3551,10 @@ const Type* TypeChecker::checkCall(CallExpr& expr) {
     if (calleeType->isCallableConstraint()) {
       return checkCallableCall(expr, calleeType);
     }
+    if (calleeType->methodIndex("__call__") >= 0) {
+      expr.wrapCalleeAsMember("__call__");
+      return checkMethodCall(expr);
+    }
     diagnostics_->error(expr.range(), "callee is not a function");
     diagnostics_->help("a lambda, function value, or Callable is required here");
     return nullptr;
@@ -3645,6 +3650,10 @@ const Type* TypeChecker::checkCall(CallExpr& expr) {
     if (calleeType->isCallableConstraint()) {
       expr.callee().setResolvedType(calleeType);
       return checkCallableCall(expr, calleeType);
+    }
+    if (calleeType->methodIndex("__call__") >= 0) {
+      expr.wrapCalleeAsMember("__call__");
+      return checkMethodCall(expr);
     }
     diagnostics_->error(expr.range(), "'" + name->name() + "' is not a function");
     return nullptr;

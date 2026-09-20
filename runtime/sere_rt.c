@@ -1399,6 +1399,36 @@ int32_t sere_list_contains_i32(void* list, int32_t value) {
   return 0;
 }
 
+int32_t sere_list_equal(void* left, void* right, int32_t kind) {
+  const SereList* lhs = (const SereList*)left;
+  const SereList* rhs = (const SereList*)right;
+  if (lhs == NULL || rhs == NULL) return lhs == rhs;
+  if (lhs->len != rhs->len || lhs->stride != rhs->stride) return 0;
+  for (int64_t index = 0; index < lhs->len; ++index) {
+    const char* a = (const char*)lhs->data + index * lhs->stride;
+    const char* b = (const char*)rhs->data + index * rhs->stride;
+    if (kind == 1) {
+      SereStr x, y;
+      memcpy(&x, a, sizeof(x));
+      memcpy(&y, b, sizeof(y));
+      if (x.len != y.len || (x.len > 0 && memcmp(x.data, y.data, (size_t)x.len) != 0)) return 0;
+    } else if (kind == 2) {
+      float x, y;
+      memcpy(&x, a, sizeof(x));
+      memcpy(&y, b, sizeof(y));
+      if (x != y) return 0;
+    } else if (kind == 3) {
+      double x, y;
+      memcpy(&x, a, sizeof(x));
+      memcpy(&y, b, sizeof(y));
+      if (x != y) return 0;
+    } else if (memcmp(a, b, (size_t)lhs->stride) != 0) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 int32_t sere_list_contains(void* list, const void* item) {
   SereList* typed = (SereList*)list;
   if (typed == NULL || item == NULL || typed->data == NULL) {

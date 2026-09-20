@@ -365,10 +365,12 @@ std::uint32_t annotateRuntimeDeclarations(llvm::Module& module,
         changed = true;
       }
     }
-    if (isFreshAllocation(name)) {
+    if (inSet(name, {"sere_alloc", "sere_gc_alloc", "sere_shared_new"}) &&
+        function.arg_size() > 0 && function.getArg(0)->getType()->isIntegerTy()) {
       // `allocsize` lets LLVM fold two allocation sizes into one and lets it
       // know the block is at least that large.
-      if (!function.hasFnAttribute(llvm::Attribute::AllocSize)) {        function.addFnAttr(llvm::Attribute::getWithAllocSizeArgs(
+      if (!function.hasFnAttribute(llvm::Attribute::AllocSize)) {
+        function.addFnAttr(llvm::Attribute::getWithAllocSizeArgs(
             module.getContext(), /*ElemSizeArg=*/0, std::nullopt));
         changed = true;
       }

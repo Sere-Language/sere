@@ -2975,7 +2975,7 @@ llvm::Value* IRGenerator::emitCastValue(llvm::IRBuilder<>& builder,
   if (from->isStrLayout() && to->isStrLayout()) {
     return source;
   }
-  if (from->isUnion() || to->isUnion()) {
+  if (from->isAny() || to->isAny() || from->isUnion() || to->isUnion()) {
     return emitCoerce(builder, source, from, to);
   }
   if (from->isPointerLike() && to->isPointerLike()) {
@@ -2994,6 +2994,20 @@ llvm::Value* IRGenerator::emitCastValue(llvm::IRBuilder<>& builder,
   if ((from->isInteger() || from->isNamed("bool") || from->isFloat()) &&
       (to->isInteger() || to->isNamed("bool") || to->isFloat())) {
     return emitNumericCast(builder, source, from, to);
+  }
+  if (to->isNamed("bool") && from->methodIndex("__bool__") >= 0) {
+    const RecordMethod& method = from->methods()[from->methodIndex("__bool__")];
+    const auto found = functions_.find(method.llvmName);
+    if (found != functions_.end()) {
+      llvm::Value* self = emitAddress(builder, value, false);
+      if (self == nullptr) {
+        self = builder.CreateAlloca(source->getType());
+        builder.CreateStore(source, self);
+      }
+      llvm::Value* result = builder.CreateCall(found->second, {self});
+      emitErrorCheck(builder);
+      return result;
+    }
   }
   if (from->isEnum() && to->isInteger()) {
     llvm::Value* tag = emitEnumTag(builder, source);
@@ -3913,6 +3927,17 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
   if (expr.op() == BinaryOp::Add && leftType != nullptr && leftType->isList() &&
       rightType != nullptr && rightType->isList()) {
     return emitListConcat(builder, left, right);
+  }
+  if ((expr.op() == BinaryOp::Eq || expr.op() == BinaryOp::Ne) &&
+      leftType != nullptr && rightType != nullptr && leftType->isList() && rightType->isList()) {
+    const Type* element = leftType->elementType();
+    int kind = element->isNamed("str") ? 1 : element->isNamed("f32") ? 2
+                                          : element->isNamed("f64") ? 3 : 0;
+    llvm::Function* equal = runtimeDecl("sere_list_equal", builder.getInt32Ty(),
+                                       {builder.getPtrTy(), builder.getPtrTy(), builder.getInt32Ty()});
+    llvm::Value* result = builder.CreateICmpNE(
+        builder.CreateCall(equal, {left, right, builder.getInt32(kind)}), builder.getInt32(0));
+    return expr.op() == BinaryOp::Eq ? result : builder.CreateNot(result);
   }
   if ((expr.op() == BinaryOp::Eq || expr.op() == BinaryOp::Ne || expr.op() == BinaryOp::Lt ||
        expr.op() == BinaryOp::Le || expr.op() == BinaryOp::Gt || expr.op() == BinaryOp::Ge ||
