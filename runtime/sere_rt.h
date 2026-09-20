@@ -387,6 +387,10 @@ void sere_string_replace(const char* data,
                          int64_t* out_len);
 void* sere_string_split(const char* data, int64_t len, const char* sep, int64_t sep_len);
 void sere_list_str_repr_data(void* list, const char** out_data, int64_t* out_len);
+/// Formats a list using the Serem element-kind codes so numeric, boolean, and
+/// pointer lists render like their scalar counterparts instead of `[]`.
+void sere_list_repr_data(void* list, int32_t element_kind, const char** out_data,
+                         int64_t* out_len);
 void sere_string_join(
     const char* sep, int64_t sep_len, void* parts, const char** out_data, int64_t* out_len);
 int64_t sere_string_rfind(const char* data, int64_t len, const char* needle, int64_t needle_len);

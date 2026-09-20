@@ -1,0 +1,38 @@
+class Person:
+    @private name: str
+    @private age: i32
+
+    def __init__(self, name: str, age: i32) -> None:
+        self.name = name
+        self.age = age
+
+    def get_name(self) -> str:
+        return self.name
+
+
+class Mayor(Person):
+    @private city: str
+
+    def __init__(self, name: str, age: i32, city: str) -> None:
+        super().__init__(name, age)
+        self.city = city
+
+
+def check(person: Person | str) -> None:
+    print("check: entering")
+    if person is str:
+        print("check: is str")
+    else:
+        print(person.get_name())
+
+
+def main(argv: list[str]) -> None:
+    person = Person("Alice", 25)
+    mayor = Mayor("Bob", 45, "Springfield")
+    print("t1: Person|str arg=Person")
+    check(person)
+    print("t2: Person|str arg=str")
+    check("Bob")
+    print("t3: Person|str arg=Mayor")
+    check(mayor)
+    print("done")

@@ -35,6 +35,10 @@ private:
   [[nodiscard]] llvm::Type* lowerType(const serem::IRType& type);
   [[nodiscard]] llvm::Value* lowerValue(const serem::ValuePtr& value);
   [[nodiscard]] llvm::Value* lowerOperation(const serem::Operation& operation);
+  /// Defines the platform entry point. The Sere `main` follows the language's
+  /// signature (`main(argv: list[str])`), so the process arguments have to be
+  /// turned into a list before the user function runs.
+  void emitEntryPoint(const serem::IRFunction& userMain, llvm::Function* userEntry);
   [[nodiscard]] llvm::BasicBlock* blockFor(std::string_view name) const;
   [[nodiscard]] llvm::Function* functionFor(const serem::FunctionRef& function);
   [[nodiscard]] llvm::Function* ensureExternal(const serem::FunctionRef& function);

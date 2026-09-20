@@ -453,6 +453,7 @@ void IRGenerator::rememberLocal(const std::string& name,
                                 llvm::Value* allocaInst,
                                 const Type* type) {
   locals_[name] = allocaInst;
+  localTypes_[name] = type;
   if (type != nullptr && (type->isGenericCtor("Unique") || type->isGenericCtor("Shared"))) {
     dropStack_.emplace_back(allocaInst, type);
   }
@@ -949,6 +950,13 @@ llvm::Value* bitsFromValue(llvm::IRBuilder<>& builder, llvm::Value* value, const
   if (from->isPointerLike() || from->isSequence() || from->isDict()) {
     return builder.CreatePtrToInt(value, builder.getInt64Ty());
   }
+  // A string is a { ptr, i64 } pair, so it only fits in the payload by
+  // reference, exactly like a record.
+  if (from->isStrLayout()) {
+    llvm::AllocaInst* storage = builder.CreateAlloca(value->getType(), nullptr, "union.str");
+    builder.CreateStore(value, storage);
+    return builder.CreatePtrToInt(storage, builder.getInt64Ty());
+  }
   if (from->isRecord()) {
     llvm::AllocaInst* storage = builder.CreateAlloca(value->getType(), nullptr, "union.record");
     builder.CreateStore(value, storage);
@@ -983,6 +991,9 @@ valueFromBits(llvm::IRBuilder<>& builder, llvm::Value* bits, const Type* to, llv
   }
   if (to->isPointerLike() || to->isSequence() || to->isDict()) {
     return builder.CreateIntToPtr(bits, dest);
+  }
+  if (to->isStrLayout()) {
+    return builder.CreateLoad(dest, builder.CreateIntToPtr(bits, builder.getPtrTy()));
   }
   if (to->isRecord()) {
     return builder.CreateLoad(dest, builder.CreateIntToPtr(bits, builder.getPtrTy()));
@@ -1328,6 +1339,18 @@ llvm::Value* IRGenerator::emitAddress(llvm::IRBuilder<>& builder, const Expr& ex
           slot->getAllocatedType()->isPointerTy()) {
         return builder.CreateLoad(builder.getPtrTy(), local->second);
       }
+      // An `is` check narrows the type of a union local without changing its
+      // storage, so unbox the narrowed value into an address of its own.
+      const auto declared = localTypes_.find(name->name());
+      const Type* storageType =
+          declared == localTypes_.end() ? nullptr : resolveType(declared->second);
+      if (type != nullptr && storageType != nullptr && storageType != type &&
+          storageType->isUnion()) {
+        if (llvm::Value* narrowed =
+                emitNarrowedAddress(builder, local->second, storageType, type)) {
+          return narrowed;
+        }
+      }
       return local->second;
     }
     const auto global = globals_.find(name->name());
@@ -1411,6 +1434,69 @@ llvm::Value* IRGenerator::emitAddress(llvm::IRBuilder<>& builder, const Expr& ex
     diagnostics_->error(expr.range(), "expression is not assignable");
   }
   return nullptr;
+}
+
+llvm::Value* IRGenerator::emitNarrowedAddress(llvm::IRBuilder<>& builder,
+                                              llvm::Value* storage,
+                                              const Type* storageType,
+                                              const Type* narrowed) {
+  if (storage == nullptr || storageType == nullptr || narrowed == nullptr) {
+    return nullptr;
+  }
+  llvm::Type* packedLlvm = lower(storageType);
+  llvm::Type* narrowedLlvm = lower(narrowed);
+  if (packedLlvm == nullptr || narrowedLlvm == nullptr || packedLlvm->isVoidTy() ||
+      narrowedLlvm->isVoidTy()) {
+    return nullptr;
+  }
+  llvm::Value* packed = builder.CreateLoad(packedLlvm, storage);
+  // A tagged union is lowered to { i32 tag, i64 payload }.
+  const auto* layout = llvm::dyn_cast<llvm::StructType>(packedLlvm);
+  const bool tagged =
+      layout != nullptr && layout->getNumElements() == 2 &&
+      layout->getElementType(0)->isIntegerTy(32) && layout->getElementType(1)->isIntegerTy(64);
+  llvm::Value* value = nullptr;
+  if (tagged && narrowed->isRecord() && !narrowed->isEnum()) {
+    // A record travels through the payload as a pointer to its storage, so pass
+    // that pointer on directly and keep the narrowed view aliasing the object.
+    return builder.CreateIntToPtr(builder.CreateExtractValue(packed, {1}), builder.getPtrTy());
+  }
+  if (tagged && narrowed->isUnion() && narrowedLlvm == packedLlvm) {
+    // Narrowing `A | B | C` to `A | B` keeps every payload bit; only the tag has
+    // to move to the member's position inside the narrower union.
+    llvm::Function* function = builder.GetInsertBlock()->getParent();
+    llvm::Value* slot = builder.CreateAlloca(builder.getInt32Ty(), nullptr, "narrowed.tag");
+    llvm::BasicBlock* merge = llvm::BasicBlock::Create(*context_, "narrowed.end", function);
+    llvm::BasicBlock* fallback = llvm::BasicBlock::Create(*context_, "narrowed.def", function);
+    llvm::SwitchInst* sw = builder.CreateSwitch(builder.CreateExtractValue(packed, {0}), fallback);
+    for (std::size_t index = 0; index < storageType->args().size(); ++index) {
+      const Type* member = storageType->args()[index];
+      const int target = member == nullptr ? -1 : narrowed->unionMemberIndex(member);
+      if (target < 0) {
+        continue;
+      }
+      llvm::BasicBlock* block = llvm::BasicBlock::Create(*context_, "narrowed.case", function);
+      sw->addCase(builder.getInt32(static_cast<unsigned>(index)), block);
+      builder.SetInsertPoint(block);
+      builder.CreateStore(builder.getInt32(static_cast<unsigned>(target)), slot);
+      builder.CreateBr(merge);
+    }
+    builder.SetInsertPoint(fallback);
+    builder.CreateStore(builder.getInt32(0), slot);
+    builder.CreateBr(merge);
+    builder.SetInsertPoint(merge);
+    llvm::Value* repacked = llvm::UndefValue::get(narrowedLlvm);
+    repacked = builder.CreateInsertValue(repacked, builder.CreateLoad(builder.getInt32Ty(), slot), {0});
+    value = builder.CreateInsertValue(repacked, builder.CreateExtractValue(packed, {1}), {1});
+  } else {
+    value = emitCoerce(builder, packed, storageType, narrowed);
+  }
+  if (value == nullptr) {
+    return nullptr;
+  }
+  llvm::Value* result = builder.CreateAlloca(narrowedLlvm, nullptr, "narrowed.local");
+  builder.CreateStore(value, result);
+  return result;
 }
 
 llvm::Value* IRGenerator::emitIndex(llvm::IRBuilder<>& builder, const IndexExpr& expr) {
@@ -4144,8 +4230,10 @@ bool IRGenerator::emitIf(llvm::IRBuilder<>& builder,
   llvm::BasicBlock* merge = llvm::BasicBlock::Create(*context_, "if.end", function);
   auto emitBranch = [&](const IfBranch& branch) {
     const auto savedLocals = locals_;
+    const auto savedLocalTypes = localTypes_;
     const bool ok = emitBlock(builder, branch.body, returnType);
     locals_ = savedLocals;
+    localTypes_ = savedLocalTypes;
     return ok;
   };
   for (const IfBranch& branch : statement.branches()) {
@@ -4384,6 +4472,7 @@ bool IRGenerator::emitIteratorLoop(llvm::IRBuilder<>& builder,
                                    const std::string& name,
                                    const std::function<bool()>& emitBody) {
   const auto savedLocals = locals_;
+  const auto savedLocalTypes = localTypes_;
   llvm::Function* function = builder.GetInsertBlock()->getParent();
   llvm::Function* resumeFn =
       llvm::Intrinsic::getOrInsertDeclaration(module_, llvm::Intrinsic::coro_resume);
@@ -4419,6 +4508,7 @@ bool IRGenerator::emitIteratorLoop(llvm::IRBuilder<>& builder,
   bool ok = emitBody();
   loops_.pop_back();
   locals_ = savedLocals;
+  localTypes_ = savedLocalTypes;
   if (!ok)
     return false;
   if (builder.GetInsertBlock()->getTerminator() == nullptr)
@@ -6085,6 +6175,7 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
   lastFunction_ = &function;
   lastFunctionSource_ = diagnostics_->source();
   locals_.clear();
+  localTypes_.clear();
   dropStack_.clear();
   loops_.clear();
   tryHandlers_.clear();
@@ -6154,6 +6245,7 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
       // Parameters borrow their pointer values; ownership remains with the
       // caller. Registering an owning parameter for drops double-frees it.
       locals_[param.name] = slot;
+      localTypes_[param.name] = paramType;
     }
     ++index;
   }
@@ -6704,6 +6796,7 @@ bool IRGenerator::emitTry(llvm::IRBuilder<>& builder,
     }
     builder.SetInsertPoint(taken);
     const auto savedLocals = locals_;
+    const auto savedLocalTypes = localTypes_;
     if (!handler.name.empty()) {
       const Type* caught = handler.type->resolvedType();
       llvm::Value* slot = createLocalSlot(builder, handler.name, caught);
@@ -6747,6 +6840,7 @@ bool IRGenerator::emitTry(llvm::IRBuilder<>& builder,
     builder.CreateCall(leave, {builder.getInt32(0)});
     builder.CreateBr(finish);
     locals_ = savedLocals;
+    localTypes_ = savedLocalTypes;
     builder.SetInsertPoint(next);
   }
   branch(finish);
@@ -7196,10 +7290,12 @@ bool IRGenerator::emitLambdaFunction(const LambdaExpr& expr) {
   llvm::BasicBlock* entry = llvm::BasicBlock::Create(*context_, "entry", fn);
   llvm::IRBuilder<> builder(entry);
   auto savedLocals = locals_;
+  auto savedLocalTypes = localTypes_;
   auto savedDrops = dropStack_;
   const FunctionDef* savedFn = currentFunction_;
   currentFunction_ = nullptr;
   locals_.clear();
+  localTypes_.clear();
   dropStack_.clear();
   std::size_t index = 0;
   const Type* fnType = expr.resolvedType();
@@ -7221,6 +7317,7 @@ bool IRGenerator::emitLambdaFunction(const LambdaExpr& expr) {
     emitReturn(builder, result, ret);
   }
   locals_ = std::move(savedLocals);
+  localTypes_ = std::move(savedLocalTypes);
   dropStack_ = std::move(savedDrops);
   currentFunction_ = savedFn;
   return true;

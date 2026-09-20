@@ -21,6 +21,39 @@
 
 namespace sere {
 
+namespace {
+
+/// Storage layout for one list element kind: the LLVM type actually stored and
+/// the byte stride the runtime uses to index items. Both must agree with the
+/// runtime formatter, which reads the same kind code.
+[[nodiscard]] std::pair<llvm::Type*, std::int64_t>
+listElementLayout(llvm::LLVMContext& context, std::int32_t kind) {
+  switch (kind) {
+  case 1: return {llvm::Type::getInt32Ty(context), 4};
+  case 2: return {llvm::Type::getInt64Ty(context), 8};
+  case 3: return {llvm::Type::getDoubleTy(context), 8};
+  case 4: return {llvm::Type::getFloatTy(context), 4};
+  case 5: return {llvm::Type::getInt8Ty(context), 1};
+  case 0: return {llvm::PointerType::getUnqual(context), 16};
+  default: return {llvm::PointerType::getUnqual(context), 8};
+  }
+}
+
+/// Reads a list element kind attribute; unknown or absent codes fall back to the
+/// pointer layout instead of guessing a numeric width.
+[[nodiscard]] std::int32_t elementKindCode(const std::string& text) {
+  std::int32_t code = 6;
+  if (text.empty()) return code;
+  (void)std::from_chars(text.data(), text.data() + text.size(), code);
+  return code;
+}
+
+/// Symbol the language-level `main` is emitted under while the platform entry
+/// point takes the `main` symbol.
+constexpr const char* kEntrySymbol = "sere_main";
+
+} // namespace
+
 class SeremLLVMBackend::IRBuilderHolder {
 public:
   explicit IRBuilderHolder(llvm::LLVMContext& context) : builder(context) {}
@@ -701,23 +734,28 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     result = current;
   }
   else if (opcode == "value.repr") {
-    llvm::Function* repr = module_->getFunction("sere_list_str_repr_data");
+    llvm::Function* repr = module_->getFunction("sere_list_repr_data");
     if (repr == nullptr) {
       llvm::FunctionType* reprType = llvm::FunctionType::get(
           llvm::Type::getVoidTy(*context_),
-          {llvm::PointerType::getUnqual(*context_), llvm::PointerType::getUnqual(*context_),
-           llvm::PointerType::getUnqual(*context_)},
+          {llvm::PointerType::getUnqual(*context_), llvm::Type::getInt32Ty(*context_),
+           llvm::PointerType::getUnqual(*context_), llvm::PointerType::getUnqual(*context_)},
           false);
       repr = llvm::Function::Create(reprType, llvm::Function::ExternalLinkage,
-                                    "sere_list_str_repr_data", module_.get());
+                                    "sere_list_repr_data", module_.get());
     }
     llvm::Value* data = builder_->builder.CreateAlloca(llvm::PointerType::getUnqual(*context_));
     llvm::Value* length = builder_->builder.CreateAlloca(llvm::Type::getInt64Ty(*context_));
-    builder_->builder.CreateCall(repr, {operand(0), data, length});
+    builder_->builder.CreateCall(
+        repr, {operand(0),
+               llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_),
+                                      elementKindCode(attribute(operation, "element.kind"))),
+               data, length});
     result = builder_->builder.CreateLoad(llvm::PointerType::getUnqual(*context_), data);
   }
   else if (opcode == "aggregate.list") {
-    const std::string element = attribute(operation, "element");
+    const std::int32_t elementKind = elementKindCode(attribute(operation, "element.kind"));
+    const std::pair<llvm::Type*, std::int64_t> layout = listElementLayout(*context_, elementKind);
     llvm::Function* create = module_->getFunction("sere_list_new");
     if (create == nullptr) {
       llvm::FunctionType* createType = llvm::FunctionType::get(
@@ -726,9 +764,8 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
                                       "sere_list_new", module_.get());
     }
     result = builder_->builder.CreateCall(
-        create, {llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context_),
-                                        element == "str" ? 16 : 8)});
-    if (element == "str") {
+        create, {llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context_), layout.second)});
+    if (elementKind == 0) {
       llvm::Function* push = module_->getFunction("sere_list_str_push");
       if (push == nullptr) {
         llvm::FunctionType* pushType = llvm::FunctionType::get(
@@ -748,7 +785,36 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       }
       for (std::size_t index = 0; index < operands.size(); ++index) {
         llvm::Value* item = operand(index);
+        if (item == nullptr) continue;
         builder_->builder.CreateCall(push, {result, item, builder_->builder.CreateCall(length, {item})});
+      }
+    } else if (!operands.empty()) {
+      llvm::Function* push = module_->getFunction("sere_list_push");
+      if (push == nullptr) {
+        llvm::FunctionType* pushType = llvm::FunctionType::get(
+            llvm::Type::getVoidTy(*context_),
+            {llvm::PointerType::getUnqual(*context_), llvm::PointerType::getUnqual(*context_)},
+            false);
+        push = llvm::Function::Create(pushType, llvm::Function::ExternalLinkage,
+                                      "sere_list_push", module_.get());
+      }
+      llvm::Type* elementType = layout.first;
+      for (std::size_t index = 0; index < operands.size(); ++index) {
+        llvm::Value* item = operand(index);
+        if (item == nullptr) continue;
+        if (item->getType()->isIntegerTy(1) && elementType->isIntegerTy(8)) {
+          item = builder_->builder.CreateZExt(item, elementType);
+        } else if (item->getType()->isIntegerTy() && elementType->isIntegerTy() &&
+                   item->getType() != elementType) {
+          item = builder_->builder.CreateIntCast(item, elementType, true);
+        } else if (item->getType()->isFloatingPointTy() && elementType->isFloatingPointTy() &&
+                   item->getType() != elementType) {
+          item = elementType->isDoubleTy() ? builder_->builder.CreateFPExt(item, elementType)
+                                           : builder_->builder.CreateFPTrunc(item, elementType);
+        }
+        llvm::AllocaInst* slot = builder_->builder.CreateAlloca(elementType);
+        builder_->builder.CreateStore(item, slot);
+        builder_->builder.CreateCall(push, {result, slot});
       }
     }
   }
@@ -878,6 +944,44 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
   return result;
 }
 
+void SeremLLVMBackend::emitEntryPoint(const serem::IRFunction& userMain,
+                                      llvm::Function* userEntry) {
+  if (userEntry == nullptr) {
+    return;
+  }
+  if (userMain.parameters().size() > 1) {
+    report("Serem entry point accepts at most one list[str] parameter");
+    return;
+  }
+  llvm::Type* pointerType = llvm::PointerType::getUnqual(*context_);
+  llvm::Type* countType = llvm::Type::getInt32Ty(*context_);
+  llvm::Function* wrapper = llvm::Function::Create(
+      llvm::FunctionType::get(countType, {countType, pointerType}, false),
+      llvm::Function::ExternalLinkage, "main", module_.get());
+  llvm::BasicBlock* entryBlock = llvm::BasicBlock::Create(*context_, "entry", wrapper);
+  builder_->builder.SetInsertPoint(entryBlock);
+  std::vector<llvm::Value*> arguments;
+  // `main(argv: list[str])` receives the process arguments as a list, which the
+  // runtime builds from the platform's argc/argv pair.
+  if (!userMain.parameters().empty()) {
+    llvm::Function* fromArgv = module_->getFunction("sere_list_from_argv");
+    if (fromArgv == nullptr) {
+      fromArgv = llvm::Function::Create(
+          llvm::FunctionType::get(pointerType, {countType, pointerType}, false),
+          llvm::Function::ExternalLinkage, "sere_list_from_argv", module_.get());
+    }
+    arguments.push_back(builder_->builder.CreateCall(
+        fromArgv, {wrapper->getArg(0), wrapper->getArg(1)}));
+  }
+  llvm::Value* result = builder_->builder.CreateCall(userEntry, arguments);
+  if (result->getType()->isVoidTy()) {
+    builder_->builder.CreateRet(llvm::ConstantInt::get(countType, 0));
+  } else {
+    builder_->builder.CreateRet(result);
+  }
+  functions_.insert_or_assign("main", wrapper);
+}
+
 std::unique_ptr<llvm::Module> SeremLLVMBackend::emit(const serem::IRModule& module,
                                                      const std::string& moduleName) {
   module_ = std::make_unique<llvm::Module>(moduleName, *context_);
@@ -886,6 +990,16 @@ std::unique_ptr<llvm::Module> SeremLLVMBackend::emit(const serem::IRModule& modu
   blocks_.clear();
   values_.clear();
   for (const auto& type : module.types()) (void)lowerType(type->type());
+  // The user's `main` is renamed so the synthesised platform entry point can
+  // own the `main` symbol, the same split the LLVM backend performs in
+  // emitCMainWrapper.
+  const serem::IRFunction* userMain = nullptr;
+  for (const auto& function : module.functions()) {
+    if (!function->isExternal() && function->name() == "main") {
+      userMain = function.get();
+      break;
+    }
+  }
   for (const auto& function : module.functions()) {
     // External declarations are materialized lazily by ensureExternal when a
     // call actually references them, so unrelated externs (such as runtime
@@ -898,9 +1012,11 @@ std::unique_ptr<llvm::Module> SeremLLVMBackend::emit(const serem::IRModule& modu
     if (function->name() == "main" && function->resultType().isVoid()) {
       resultType = llvm::Type::getInt32Ty(*context_);
     }
+    const std::string symbol =
+        userMain != nullptr && function->name() == "main" ? kEntrySymbol : function->name();
     auto* functionType = llvm::FunctionType::get(resultType, params, false);
     functions_[function->name()] = llvm::Function::Create(
-        functionType, llvm::Function::ExternalLinkage, function->name(), module_.get());
+        functionType, llvm::Function::ExternalLinkage, symbol, module_.get());
   }
   for (const auto& function : module.functions()) {
     if (function->isExternal()) continue;
@@ -930,6 +1046,9 @@ std::unique_ptr<llvm::Module> SeremLLVMBackend::emit(const serem::IRModule& modu
         else builder_->builder.CreateRet(llvm::UndefValue::get(lowerType(function->resultType())));
       }
     }
+  }
+  if (userMain != nullptr) {
+    emitEntryPoint(*userMain, functions_["main"]);
   }
   return std::move(module_);
 }

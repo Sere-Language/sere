@@ -261,6 +261,14 @@ private:
                            std::vector<llvm::Value*>& args,
                            std::size_t skipParams = 0);
   llvm::Value* emitAddress(llvm::IRBuilder<>& builder, const Expr& expr, bool required = true);
+  /// Materialises an address for a local whose declared storage type was
+  /// narrowed by an `is` check (for example a `Person | str` local used as a
+  /// `Person` inside an `else` branch) and returns nullptr when the storage
+  /// cannot be converted.
+  llvm::Value* emitNarrowedAddress(llvm::IRBuilder<>& builder,
+                                   llvm::Value* storage,
+                                   const Type* storageType,
+                                   const Type* narrowed);
   void emitDrops(llvm::IRBuilder<>& builder);
   void rememberLocal(const std::string& name, llvm::Value* allocaInst, const Type* type);
 
@@ -273,6 +281,10 @@ private:
   std::vector<const Type*> boxedTypes_{};
   std::unordered_map<const Type*, llvm::Type*> lowered_{};
   std::unordered_map<std::string, llvm::Value*> locals_{};
+  /// Declared type of each entry in locals_. An `is` check narrows a union
+  /// local's expression type without changing its storage, so codegen needs
+  /// the storage type to unbox the narrowed value.
+  std::unordered_map<std::string, const Type*> localTypes_{};
   std::unordered_map<std::string, llvm::Value*> globals_{};
   llvm::Function* moduleInitFn_ = nullptr;
   std::unordered_map<std::string, llvm::Value*> decoratorSlots_{};

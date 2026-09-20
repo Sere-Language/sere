@@ -1,5 +1,6 @@
 ﻿
 class Person:
+    """Person Class"""
     @private name: str
     @private age: i32
 
@@ -13,10 +14,14 @@ class Person:
     def get_age(self) -> i32:
         return self.age
 
+    def __len__(self) -> i64:
+        return self.age
 
     def introduce(self) -> str:
         return f"Hello, my name is {self.name}, I am {self.age} years old."
 
+    def __str__(self) -> str:
+        return f"Person(name={self.name}, age={self.age})"
 
 class Mayor(Person):
     @private city: str
@@ -33,9 +38,12 @@ def print_name(person: Person | str) -> None:
     if person is str:
         print(person)
     else:
+        print("This is a person!")
         print(person.get_name())
 
-def main() -> None:
+def main(argv: list[str]) -> None:
+    print([1, 2, 3])
+    print(argv)
     person = Person("Alice", 25)
     introduction = person.introduce()
     print(introduction)
@@ -44,6 +52,10 @@ def main() -> None:
     mayor_introduction = mayor.introduce()
     print(mayor_introduction)
 
+    print(f"len: {len(person)}")
     print_name(mayor)
     print_name(person)
     print_name("Bob")
+    print([person, mayor])
+    ls = [person, mayor]
+    print(ls)

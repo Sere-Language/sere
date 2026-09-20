@@ -1,0 +1,6 @@
+def show(names: list[str]) -> None:
+    print(names)
+
+def main(argv: list[str]) -> None:
+    show(argv)
+    print(argv)

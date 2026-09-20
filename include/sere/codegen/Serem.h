@@ -13,6 +13,23 @@
 
 namespace sere::serem {
 
+/// Element interpretation for `aggregate.list` and `value.repr` operands.
+///
+/// The numeric values are part of the Serem dialect contract: the LLVM backend
+/// derives the element's storage layout from the code and the runtime formatter
+/// reads values back with the same code. Keeping one enumeration means a new
+/// element type is added once instead of in a generator switch, a backend
+/// switch, and a formatter switch that can silently disagree.
+enum class ListElementKind : std::int32_t {
+  Str = 0,     // SereStr { data, len }
+  Int32 = 1,   // i32/u32
+  Int64 = 2,   // i64/u64 and other integers
+  Float64 = 3, // f64
+  Float32 = 4, // f32
+  Bool = 5,    // stored as one byte
+  Ptr = 6,     // any other pointer-like value
+};
+
 class IRType {
 public:
   enum class Kind {

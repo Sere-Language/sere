@@ -27,6 +27,25 @@ namespace {
   return function.resolvedType();
 }
 
+/// Element interpretation for list repr and list construction. The code is part
+/// of the Serem dialect contract so the backend layout and the runtime formatter
+/// agree without either side keeping its own type-name switch.
+[[nodiscard]] serem::ListElementKind listElementKindOf(const Type* type) {
+  if (type == nullptr) return serem::ListElementKind::Ptr;
+  const Type* canonical = type->canonical();
+  if (canonical->isNamed("str")) return serem::ListElementKind::Str;
+  if (canonical->isNamed("bool")) return serem::ListElementKind::Bool;
+  if (canonical->isNamed("f32")) return serem::ListElementKind::Float32;
+  if (canonical->isNamed("f64")) return serem::ListElementKind::Float64;
+  if (canonical->isNamed("i32") || canonical->isNamed("u32")) return serem::ListElementKind::Int32;
+  if (canonical->isInteger()) return serem::ListElementKind::Int64;
+  return serem::ListElementKind::Ptr;
+}
+
+[[nodiscard]] std::string listElementKindText(const Type* type) {
+  return std::to_string(static_cast<std::int32_t>(listElementKindOf(type)));
+}
+
 } // namespace
 
 SeremGenerator::SeremGenerator(DiagnosticEngine& diagnostics, TypeContext& types)
@@ -565,7 +584,9 @@ serem::ValuePtr SeremGenerator::emitExpression(const Expr& expression) {
         const Type* valueType = part.value->resolvedType();
         if (valueType != nullptr && valueType->isList()) {
           value = builder_->operation("value.repr", serem::IRType::stringType(), {value},
-                                      {{"kind", "list.str"}});
+                                      {{"kind", "list"},
+                                       {"element.kind",
+                                        listElementKindText(valueType->elementType())}});
         }
         parts.push_back(std::move(value));
       }
@@ -718,9 +739,10 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
     const Type* element = expression.resolvedType() == nullptr
                               ? nullptr
                               : expression.resolvedType()->elementType();
-    return builder_->operation("aggregate.list", lowerType(expression.resolvedType()),
-                               std::move(args),
-                               {{"element", element == nullptr ? std::string{} : element->display()}});
+    return builder_->operation(
+        "aggregate.list", lowerType(expression.resolvedType()), std::move(args),
+        {{"element", element == nullptr ? std::string{} : element->display()},
+         {"element.kind", listElementKindText(element)}});
   }
   if (expression.intrinsic() == IntrinsicKind::Len) {
     const Type* argumentType = expression.arguments().empty()
@@ -768,7 +790,9 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
       const Type* valueType = argument->resolvedType();
       if (valueType != nullptr && valueType->isList()) {
         value = builder_->operation("value.repr", serem::IRType::stringType(), {value},
-                                    {{"kind", "list.str"}});
+                                    {{"kind", "list"},
+                                     {"element.kind",
+                                      listElementKindText(valueType->elementType())}});
       }
       args.push_back(std::move(value));
     }
@@ -915,7 +939,9 @@ serem::ValuePtr SeremGenerator::emitAggregate(const Expr& expression) {
   std::unordered_map<std::string, std::string> attributes;
   if (expression.kind() == NodeKind::ListLiteral && expression.resolvedType() != nullptr &&
       expression.resolvedType()->elementType() != nullptr) {
-    attributes["element"] = expression.resolvedType()->elementType()->display();
+    const Type* element = expression.resolvedType()->elementType();
+    attributes["element"] = element->display();
+    attributes["element.kind"] = listElementKindText(element);
   }
   return builder_->operation("aggregate." + kind, lowerType(expression.resolvedType()),
                              std::move(operands), std::move(attributes));

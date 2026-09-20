@@ -1,0 +1,19 @@
+class Person:
+    @private name: str
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def get_name(self) -> str:
+        return self.name
+
+def print_name(person: Person | str) -> None:
+    if person is str:
+        print(person)
+    else:
+        print(person.get_name())
+
+def main() -> i32:
+    print_name("Bob")
+    print_name(Person("Alice"))
+    return 0

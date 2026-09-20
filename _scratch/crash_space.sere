@@ -1,0 +1,25 @@
+class Person:
+    @private name: str
+    @private age: i32
+
+    def __init__(self, name: str, age: i32) -> None:
+        self.name = name
+        self.age = age
+
+
+class Mayor(Person):
+    @private city: str
+
+    def __init__(self, name: str, age: i32, city: str) -> None:
+        super().__init__(name, age)
+        self.city = city
+
+    def introduce(self) -> str:
+        return f"Hello, my name is {self.name}, I am {self.age} years old, and I am the mayor of {self.city}."
+
+
+def main(argv: list[str]) -> None:
+    mayor = Mayor("Bob", 45, "Springfield")
+    text = mayor.introduce()
+    print(text)
+    print(len(text))

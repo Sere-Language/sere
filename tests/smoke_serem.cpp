@@ -24,5 +24,21 @@ int main() {
   assert(text.find("return %0") != std::string::npos);
   assert(result->type().display() == "i32");
   assert(add.blocks().front()->isTerminated());
+
+  // String literals are emitted as named globals, and their uses reference the
+  // global instead of repeating the literal inline.
+  IRModule stringModule("strings");
+  (void)stringModule.addGlobal(
+      std::make_unique<GlobalConstant>("str.0", IRType::stringType(), ConstantString("hi").display()));
+  auto stringFunction =
+      std::make_unique<IRFunction>("greet", std::vector<IRType>{}, IRType::voidType());
+  IRFunction& greet = stringModule.addFunction(std::move(stringFunction));
+  IRBuilder stringBuilder(greet);
+  (void)stringBuilder.operation("runtime.print", IRType::voidType(),
+                                {std::make_shared<ConstantString>("hi", "str.0")});
+  const std::string stringText = stringModule.display();
+  assert(stringText.find("global @str.0 = str \"hi\"") != std::string::npos);
+  assert(stringText.find("runtime.print @str.0") != std::string::npos);
+  assert(stringText.find("runtime.print \"hi\"") == std::string::npos);
   return 0;
 }

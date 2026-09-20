@@ -1116,46 +1116,119 @@ void* sere_string_split(const char* data, int64_t len, const char* sep, int64_t 
   return list;
 }
 
-void sere_list_str_repr_data(void* list, const char** out_data, int64_t* out_len) {
-  const SereList* typed = (const SereList*)list;
-  if (typed == NULL || typed->stride != (int64_t)sizeof(SereStr)) {
-    outStr(copyBytes("[]", 2), out_data, out_len);
+/* Element kind codes shared with the Serem dialect's ListElementKind. */
+enum {
+  SERE_LIST_STR = 0,
+  SERE_LIST_I32 = 1,
+  SERE_LIST_I64 = 2,
+  SERE_LIST_F64 = 3,
+  SERE_LIST_F32 = 4,
+  SERE_LIST_BOOL = 5,
+  SERE_LIST_PTR = 6,
+};
+
+static void
+reprAppend(char** output, size_t* length, size_t* capacity, const char* text, size_t text_len) {
+  if (text == NULL || text_len == 0) {
     return;
   }
-  size_t capacity = 16;
-  size_t length = 1;
+  if (*length + text_len + 1 > *capacity) {
+    size_t grown = *capacity == 0 ? 32 : *capacity;
+    while (grown < *length + text_len + 1) {
+      grown *= 2;
+    }
+    char* resized = (char*)realloc(*output, grown);
+    if (resized == NULL) {
+      return;
+    }
+    *output = resized;
+    *capacity = grown;
+  }
+  memcpy(*output + *length, text, text_len);
+  *length += text_len;
+}
+
+void sere_list_repr_data(void* list, int32_t kind, const char** out_data, int64_t* out_len) {
+  const SereList* typed = (const SereList*)list;
+  const int64_t stride = (typed == NULL || typed->stride <= 0) ? 1 : typed->stride;
+  const int64_t count = (typed == NULL || typed->data == NULL) ? 0 : typed->len;
+  size_t capacity = 32;
+  size_t length = 0;
   char* output = (char*)malloc(capacity);
   if (output == NULL) {
     outStr(emptyStr(), out_data, out_len);
     return;
   }
-  output[0] = '[';
-  for (int64_t index = 0; index < typed->len; ++index) {
-    const SereStr* item = (const SereStr*)((const char*)typed->data + index * typed->stride);
-    int64_t item_len = 0;
-    const char* item_data = sere_str_repr_data(item->data, item->len, &item_len);
-    size_t extra = (index == 0 ? 0 : 2) + (size_t)item_len;
-    while (length + extra + 2 > capacity)
-      capacity *= 2;
-    char* grown = (char*)realloc(output, capacity);
-    if (grown == NULL) {
-      free(output);
-      outStr(emptyStr(), out_data, out_len);
-      return;
+  reprAppend(&output, &length, &capacity, "[", 1);
+  for (int64_t index = 0; index < count; ++index) {
+    const char* item = (const char*)typed->data + (size_t)(index * stride);
+    char text[64];
+    const char* rendered = text;
+    int64_t rendered_len = 0;
+    switch (kind) {
+    case SERE_LIST_STR: {
+      const SereStr* value = (const SereStr*)item;
+      rendered = sere_str_repr_data(value->data, value->len, &rendered_len);
+      break;
     }
-    output = grown;
+    case SERE_LIST_I32: {
+      int32_t value = 0;
+      memcpy(&value, item, sizeof(value));
+      rendered_len = snprintf(text, sizeof(text), "%d", (int)value);
+      break;
+    }
+    case SERE_LIST_I64: {
+      int64_t value = 0;
+      memcpy(&value, item, sizeof(value));
+      rendered_len = snprintf(text, sizeof(text), "%lld", (long long)value);
+      break;
+    }
+    case SERE_LIST_F64: {
+      double value = 0;
+      memcpy(&value, item, sizeof(value));
+      rendered_len = snprintf(text, sizeof(text), "%g", value);
+      break;
+    }
+    case SERE_LIST_F32: {
+      float value = 0;
+      memcpy(&value, item, sizeof(value));
+      rendered_len = snprintf(text, sizeof(text), "%g", (double)value);
+      break;
+    }
+    case SERE_LIST_BOOL: {
+      int8_t value = 0;
+      memcpy(&value, item, sizeof(value));
+      rendered = value ? "True" : "False";
+      rendered_len = value ? 4 : 5;
+      break;
+    }
+    default: {
+      void* value = NULL;
+      memcpy(&value, item, sizeof(value));
+      if (value == NULL) {
+        rendered = "None";
+        rendered_len = 4;
+      } else {
+        rendered_len = snprintf(text, sizeof(text), "0x%llx", (unsigned long long)(uintptr_t)value);
+      }
+      break;
+    }
+    }
+    if (rendered_len < 0) {
+      rendered_len = 0;
+    }
     if (index != 0) {
-      output[length++] = ',';
-      output[length++] = ' ';
+      reprAppend(&output, &length, &capacity, ", ", 2);
     }
-    if (item_len > 0) {
-      memcpy(output + length, item_data, (size_t)item_len);
-      length += (size_t)item_len;
-    }
+    reprAppend(&output, &length, &capacity, rendered, (size_t)rendered_len);
   }
-  output[length++] = ']';
+  reprAppend(&output, &length, &capacity, "]", 1);
   output[length] = '\0';
   outStr(ownBytes(output, (int64_t)length), out_data, out_len);
+}
+
+void sere_list_str_repr_data(void* list, const char** out_data, int64_t* out_len) {
+  sere_list_repr_data(list, SERE_LIST_STR, out_data, out_len);
 }
 
 void sere_string_join(const char* sep, int64_t sep_len, void* parts, const char** out_data,

@@ -1,0 +1,47 @@
+class Person:
+    @private name: str
+    @private age: i32
+
+    def __init__(self, name: str, age: i32) -> None:
+        self.name = name
+        self.age = age
+
+    def get_name(self) -> str:
+        return self.name
+
+
+class Mayor(Person):
+    @private city: str
+
+    def __init__(self, name: str, age: i32, city: str) -> None:
+        super().__init__(name, age)
+        self.city = city
+
+
+def print_name(person: Person | str) -> None:
+    if person is str:
+        print(person)
+    else:
+        print(person.get_name())
+
+
+def main(argv: list[str]) -> None:
+    person = Person("Alice", 25)
+    print("case1: mayor.get_name()")
+    mayor = Mayor("Bob", 45, "Springfield")
+    print(mayor.get_name())
+    print("case2: print_name(mayor)")
+    print_name(mayor)
+    print("case3: print_name(person)")
+    print_name(person)
+    print("case4: print_name(str)")
+    print_name("Bob")
+    print("case5: print([person, mayor])")
+    print([person, mayor])
+    print("case6: print([person])")
+    print([person])
+    print("case7: print([mayor])")
+    print([mayor])
+    print("case8: print(person)")
+    print(person)
+    print("done")

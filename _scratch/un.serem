@@ -1,4 +1,4 @@
-module @main
+module @union_narrow
 type @Exception = %Exception [class, field=message:0]
 type @SyntaxError = %SyntaxError [class]
 type @IndentationError = %IndentationError [class]
@@ -13,20 +13,9 @@ type @PermissionError = %PermissionError [class]
 type @RuntimeError = %RuntimeError [class]
 type @RecursionError = %RecursionError [class]
 type @NotImplementedError = %NotImplementedError [class]
-type @Person = %Person [class, field=name:0, field=age:1]
-type @Mayor = %Mayor [class, field=city:2]
-global @str.0 = str "Hello, my name is "
-global @str.1 = str ", I am "
-global @str.2 = str " years old."
-global @str.3 = str "Hello, my name is "
-global @str.4 = str ", I am "
-global @str.5 = str " years old, and I am the mayor of "
-global @str.6 = str "."
-global @str.7 = str "__main__.Person | str"
-global @str.8 = str "Alice"
-global @str.9 = str "Bob"
-global @str.10 = str "Springfield"
-global @str.11 = str "Bob"
+type @Person = %Person [class, field=name:0]
+global @str.0 = str "Bob"
+global @str.1 = str "Alice"
 extern func @sere_input(%arg0: str) -> str
 func @abs(%arg0: i32) -> i32 {
 entry:
@@ -85,10 +74,9 @@ entry:
   member.set %arg0, %arg1 {field = message}
   return
 }
-func @Person.__init__(%arg0: %Person, %arg1: str, %arg2: i32) -> void {
+func @Person.__init__(%arg0: %Person, %arg1: str) -> void {
 entry:
   member.set %arg0, %arg1 {field = name}
-  member.set %arg0, %arg2 {field = age}
   return
 }
 func @Person.get_name(%arg0: %Person) -> str {
@@ -96,35 +84,8 @@ entry:
   %0 = member.get str %arg0 {field = name, index = 0}
   return %0
 }
-func @Person.get_age(%arg0: %Person) -> i32 {
-entry:
-  %0 = member.get i32 %arg0 {field = age, index = 1}
-  return %0
-}
-func @Person.introduce(%arg0: %Person) -> str {
-entry:
-  %0 = member.get str %arg0 {field = name, index = 0}
-  %1 = member.get i32 %arg0 {field = age, index = 1}
-  %2 = string.concat str @str.0, %0, @str.1, %1, @str.2
-  return %2
-}
-func @Mayor.__init__(%arg0: %Mayor, %arg1: str, %arg2: i32, %arg3: str) -> void {
-entry:
-  call @Person.__init__, %arg0, %arg1, %arg2
-  member.set %arg0, %arg3 {field = city}
-  return
-}
-func @Mayor.introduce(%arg0: %Mayor) -> str {
-entry:
-  %0 = member.get str %arg0 {field = name, index = 0}
-  %1 = member.get i32 %arg0 {field = age, index = 1}
-  %2 = member.get str %arg0 {field = city, index = 2}
-  %3 = string.concat str @str.3, %0, @str.4, %1, @str.5, %2, @str.6
-  return %3
-}
 func @print_name(%arg0: %union) -> void {
 entry:
-  runtime.print @str.7
   %0 = type.is i1 %arg0 {negated = false, type = str}
   cond_branch %0 {true = if.body0, false = if.body1}
 if.end:
@@ -139,33 +100,10 @@ if.body1:
   runtime.print %3
   branch {target = if.end}
 }
-func @main(%arg0: Ptr[i8]) -> void {
+func @main() -> i32 {
 entry:
-  %0 = aggregate.list Ptr[i8] 1, 2, 3 {element = i32, element.kind = 1}
-  %1 = value.repr str %0 {kind = list, element.kind = 1}
-  runtime.print %1
-  %2 = construct %Person @str.8, 25 {type = Person}
-  %3 = alloca Ptr[%Person]
-  store %2, %3
-  %4 = load %Person %3
-  %5 = call str @Person.introduce, %4
-  %6 = alloca Ptr[str]
-  store %5, %6
-  %7 = load str %6
-  runtime.print %7
-  %8 = construct %Mayor @str.9, 45, @str.10 {type = Mayor}
-  %9 = alloca Ptr[%Mayor]
-  store %8, %9
-  %10 = load %Mayor %9
-  %11 = call str @Mayor.introduce, %10
-  %12 = alloca Ptr[str]
-  store %11, %12
-  %13 = load str %12
-  runtime.print %13
-  %14 = load %Mayor %9
-  call @print_name, %14
-  %15 = load %Person %3
-  call @print_name, %15
-  call @print_name, @str.11
-  return
+  call @print_name, @str.0
+  %0 = construct %Person @str.1 {type = Person}
+  call @print_name, %0
+  return 0
 }
