@@ -224,7 +224,8 @@ void IRFunction::setAttribute(std::string name, std::string value) {
   attributes_.insert_or_assign(std::move(name), std::move(value));
 }
 std::string IRFunction::display() const {
-  std::string text = (external_ ? "extern " : "") + (async_ ? "async " : "") +
+  std::string text = std::string(external_ ? "extern " : "") +
+                     std::string(async_ ? "async " : "") +
                      std::string(generator_ ? "generator " : "") + "func @" + name_ + "(";
   for (std::size_t index = 0; index < arguments_.size(); ++index) {
     if (index != 0) text += ", ";
