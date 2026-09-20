@@ -57,6 +57,7 @@ perf.py
 test.py
 test-c.exe
 test-llvm.exe
+perf-test.c 
 *.serem
 tests/
 generic_constraints_fixtures/
