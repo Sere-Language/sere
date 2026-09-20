@@ -3935,7 +3935,8 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
       asName(expr.right()) != nullptr) {
     const Type* target = resolveType(expr.right().resolvedType());
     const Type* valueType = resolveType(expr.left().resolvedType());
-    if (target != nullptr && valueType != nullptr && !valueType->isAny() && !valueType->isUnion()) {
+    if (target != nullptr && valueType != nullptr && !valueType->isAny() && !valueType->isUnion() &&
+        !target->isPointerLike() && !valueType->isPointerLike()) {
       const bool match = valueType->matchesInstance(target);
       return builder.getInt1(expr.op() == BinaryOp::Is ? match : !match);
     }
@@ -4052,6 +4053,11 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
   const bool noneCompare =
       (leftIsNone != rightIsNone) && (expr.op() == BinaryOp::Is || expr.op() == BinaryOp::IsNot ||
                                       expr.op() == BinaryOp::Eq || expr.op() == BinaryOp::Ne);
+  if ((expr.op() == BinaryOp::Is || expr.op() == BinaryOp::IsNot) &&
+      left->getType()->isPointerTy() && right->getType()->isPointerTy()) {
+    llvm::Value* equal = builder.CreateICmpEQ(left, right);
+    return expr.op() == BinaryOp::IsNot ? builder.CreateNot(equal) : equal;
+  }
   if (noneCompare) {
     llvm::Value* operand = leftIsNone ? right : left;
     const Type* operandType = leftIsNone ? rightType : leftType;
@@ -4062,6 +4068,12 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
       const bool positive = expr.op() == BinaryOp::Is || expr.op() == BinaryOp::Eq;
       return positive ? isNull : builder.CreateNot(isNull);
     }
+  }
+  if ((expr.op() == BinaryOp::Is || expr.op() == BinaryOp::IsNot) && leftType != nullptr &&
+      rightType != nullptr && leftType->isPointerLike() && rightType->isPointerLike() &&
+      left->getType()->isPointerTy() && right->getType()->isPointerTy()) {
+    llvm::Value* equal = builder.CreateICmpEQ(left, right);
+    return expr.op() == BinaryOp::IsNot ? builder.CreateNot(equal) : equal;
   }
   if (leftType != nullptr) {
     left = emitCoerce(builder, left, leftType, leftType->valueType());

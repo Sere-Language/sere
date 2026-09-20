@@ -2072,7 +2072,7 @@ serem::ValuePtr SeremGenerator::coerce(serem::ValuePtr value, const Type* from, 
         {"tag", std::to_string(serem::recordTypeId(from->display()))}};
     // Every box names the renderer that turns its payload back into text, so a
     // container holding it can be formatted without knowing the program's types.
-    if (!from->isVoidLike()) {
+    if (hasReadableBoxPayload(from)) {
       attributes["repr"] = anyReprSymbol(from);
     }
     return builder_->operation("any.box", lowerType(to), {value}, std::move(attributes));
@@ -2345,6 +2345,16 @@ std::string SeremGenerator::anyReprSymbol(const Type* type) {
   return registerRenderer("sere.any.repr." + type->display(), type, /*boxed=*/true);
 }
 
+bool SeremGenerator::hasReadableBoxPayload(const Type* type) {
+  if (type == nullptr || type->isVoidLike()) {
+    return false;
+  }
+  // A function lowers to a signature rather than to storage, so a renderer has
+  // no payload to load. Such a box falls back to the type name it carries, which
+  // is what the direct backend prints for a boxed callable too.
+  return lowerType(type).kind() != serem::IRType::Kind::Function;
+}
+
 std::string SeremGenerator::valueReprSymbol(const Type* type) {
   return registerRenderer("sere.repr." + type->display(), type, /*boxed=*/false);
 }
@@ -2384,7 +2394,7 @@ void SeremGenerator::emitPendingRenderers() {
     }
     const Type* type = found->second.type;
     const bool boxed = found->second.boxed;
-    if (type->isVoidLike()) {
+    if (type->isVoidLike() || (boxed && !hasReadableBoxPayload(type))) {
       continue;
     }
     pushFunctionState();
@@ -2587,6 +2597,17 @@ serem::ValuePtr SeremGenerator::emitBinary(const BinaryExpr& expression) {
                                {std::move(value)},
                                {{"negated", negated ? "true" : "false"}});
   };
+  if ((expression.op() == BinaryOp::Is || expression.op() == BinaryOp::IsNot) && left != nullptr &&
+      expression.right().kind() != NodeKind::NoneLiteral &&
+      left->type().kind() == serem::IRType::Kind::Ptr) {
+    serem::ValuePtr rightValue = emitExpression(expression.right());
+    if (rightValue != nullptr && rightValue->type().kind() == serem::IRType::Kind::Ptr) {
+      serem::ValuePtr comparison = builder_->compare("eq", left, std::move(rightValue));
+      return expression.op() == BinaryOp::IsNot
+                 ? builder_->operation("not", serem::IRType::boolType(), {comparison})
+                 : comparison;
+    }
+  }
   // `None` is the absence of a value, so `x == None` and `x != None` are null
   // checks rather than a comparison against a literal.
   const bool leftNone = expression.left().kind() == NodeKind::NoneLiteral;
@@ -2724,6 +2745,13 @@ serem::ValuePtr SeremGenerator::emitBinary(const BinaryExpr& expression) {
     const Type* source = expression.left().resolvedType();
     if (!subst_.empty() && source != nullptr) {
       source = types_->substitute(source, subst_);
+    }
+    if (source != nullptr && tested != nullptr && source->isPointerLike() &&
+        tested->isPointerLike()) {
+      serem::ValuePtr comparison = builder_->compare("eq", left, emitExpression(expression.right()));
+      return expression.op() == BinaryOp::IsNot
+                 ? builder_->operation("not", serem::IRType::boolType(), {comparison})
+                 : comparison;
     }
     if (source != nullptr && source->isUnion()) {
       std::unordered_map<std::string, std::string> attributes{
@@ -3728,6 +3756,17 @@ serem::ValuePtr SeremGenerator::emitUnary(const UnaryExpr& expression) {
       const auto& name = static_cast<const NameExpr&>(expression.operand());
       if (serem::ValuePtr slot = local(name.name()))
         return slot;
+    }
+    if (expression.operand().kind() == NodeKind::MemberExpr) {
+      const auto& member = static_cast<const MemberExpr&>(expression.operand());
+      const Type* objectType = member.object().resolvedType();
+      const int index = objectType == nullptr ? -1 : objectType->fieldIndex(member.field());
+      return builder_->operation(
+          "member.address",
+          type,
+          {emitExpression(member.object())},
+          {{"field", member.field()},
+           {"index", std::to_string(fieldSlot(objectType, index))}});
     }
     return builder_->operation("address.of", type, {operand});
   case UnaryOp::Deref:

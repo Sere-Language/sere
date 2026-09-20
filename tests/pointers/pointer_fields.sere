@@ -1,3 +1,4 @@
+
 class Counter:
     value: i32
     label: str
@@ -11,7 +12,7 @@ def read(counter: Counter) -> i32:
 
 def main() -> i32:
     counter: Counter = Counter(1)
-    
+
     # Address of a field, then write through the pointer.
     field: Ptr[i32] = &counter.value
     *field = 9
@@ -32,7 +33,7 @@ def main() -> i32:
 
     local: Ptr[i32] = &counter.value
     *local = *local + 1
-    assert counter.value == 7
+    assert counter.value == 13
 
     print("pointer fields ok", counter.value, counter.label, read(counter))
     return 0

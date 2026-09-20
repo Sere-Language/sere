@@ -1962,6 +1962,15 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
         result = ir.CreateLoad(type, ir.CreateStructGEP(record, object, index));
       }
     }
+  } else if (opcode == "member.address") {
+    unsigned index = 0;
+    const std::string indexText = attribute(operation, "index");
+    (void)std::from_chars(indexText.data(), indexText.data() + indexText.size(), index);
+    llvm::Value* object = operand(0);
+    if (object != nullptr && operands[0]->type().pointee() != nullptr) {
+      llvm::Type* record = lowerType(*operands[0]->type().pointee());
+      result = ir.CreateStructGEP(record, object, index);
+    }
   } else if (opcode == "member.set") {
     unsigned index = 0;
     const std::string indexText = attribute(operation, "index");

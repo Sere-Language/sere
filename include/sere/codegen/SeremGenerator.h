@@ -98,6 +98,9 @@ private:
   /// once per module by `emitPendingRenderers`. Every boxed type names one, so a
   /// container holding an `Any` needs no knowledge of the program's types.
   [[nodiscard]] std::string anyReprSymbol(const Type* type);
+  /// Whether a box of `type` holds storage a renderer can read back. A function
+  /// value lowers to a signature, which has none.
+  [[nodiscard]] bool hasReadableBoxPayload(const Type* type);
   /// Serem symbol of the function that renders a `type` value a container holds
   /// directly, which is the renderer its own slots point at.
   [[nodiscard]] std::string valueReprSymbol(const Type* type);
