@@ -183,7 +183,8 @@ void copyBesideOutput(const std::filesystem::path& from, const std::filesystem::
 }
 
 [[nodiscard]] int emitAssembly(const std::filesystem::path& irPath,
-                               const std::filesystem::path& outputPath) {
+                               const std::filesystem::path& outputPath,
+                               const std::vector<std::string>& backendFlags) {
   const std::optional<std::string> clang = findClang();
   if (!clang.has_value()) {
     llvm::errs() << "error: clang not found; set SERE_LLVM_DIR or re-run the Sere installer\n";
@@ -191,8 +192,13 @@ void copyBesideOutput(const std::filesystem::path& from, const std::filesystem::
   }
   prependLlvmToolsToPath();
   const std::string clangPath = *clang;
-  const std::vector<std::string> owned{
-      clangPath, "-S", "-x", "ir", "-O0", irPath.string(), "-o", outputPath.string()};
+  std::vector<std::string> owned{clangPath, "-S", "-x", "ir"};
+  for (const std::string& flag : backendFlags) {
+    owned.push_back(flag);
+  }
+  owned.push_back(irPath.string());
+  owned.push_back("-o");
+  owned.push_back(outputPath.string());
   llvm::SmallVector<llvm::StringRef, 8> arguments;
   for (const std::string& item : owned) {
     arguments.push_back(item);
@@ -207,7 +213,8 @@ void copyBesideOutput(const std::filesystem::path& from, const std::filesystem::
 [[nodiscard]] int linkExecutable(const std::filesystem::path& irPath,
                                  const std::filesystem::path& outputPath,
                                  const std::vector<std::filesystem::path>& extraLibs,
-                                 const std::vector<std::string>& importedModules) {
+                                 const std::vector<std::string>& importedModules,
+                                 const std::vector<std::string>& backendFlags) {
   const std::optional<std::string> clang = findClang();
   const std::optional<std::filesystem::path> runtime = findRuntimeLibrary();
   if (!clang.has_value()) {
@@ -229,6 +236,9 @@ void copyBesideOutput(const std::filesystem::path& from, const std::filesystem::
   const std::string runtimeLib = runtime->string();
   const std::string output = outputPath.string();
   std::vector<std::string> owned{clangPath, ir};
+  for (const std::string& flag : backendFlags) {
+    owned.push_back(flag);
+  }
 #ifdef _WIN32
   owned.push_back("-fms-runtime-lib=static");
 #endif
@@ -593,7 +603,7 @@ int compileInput(const CompilerOptions& options) {
       return 1;
     }
     if (options.transformers) {
-      (void)serem::runTransformers(*seremModule);
+      (void)serem::runOptimizingTransformers(*seremModule, options.opt);
     }
     const std::string seremText = seremModule->display();
     std::string writeError;
@@ -635,7 +645,7 @@ int compileInput(const CompilerOptions& options) {
       // The same passes `--emit-serem` shows, so the printed IR is what the
       // backend lowers.
       if (options.transformers) {
-        (void)serem::runTransformers(*seremModule);
+        (void)serem::runOptimizingTransformers(*seremModule, options.opt);
       }
       SeremLLVMBackend backend(context, frontend.diagnostics());
       module = backend.emit(*seremModule, options.inputPath.string());
@@ -673,7 +683,7 @@ int compileInput(const CompilerOptions& options) {
       return 1;
     }
   }
-  if (!runOptPipeline(*module, options.optLevel, options.passes, optError)) {
+  if (!runOptPipeline(*module, options.opt, optError)) {
     frontend.diagnostics().error("optimization pipeline failed: " + optError);
     frontend.diagnostics().printAll();
     return 1;
@@ -699,7 +709,7 @@ int compileInput(const CompilerOptions& options) {
       frontend.diagnostics().printAll();
       return 1;
     }
-    const int code = emitAssembly(irPath, outputPath);
+    const int code = emitAssembly(irPath, outputPath, clangCodegenFlags(options.opt));
     if (code == 0) {
       llvm::outs() << "wrote " << outputPath.string() << '\n';
     }
@@ -722,8 +732,8 @@ int compileInput(const CompilerOptions& options) {
   for (const std::filesystem::path& runtime : runtimeFiles) {
     copyBesideOutput(runtime, outputPath);
   }
-  const int code =
-      linkExecutable(irPath, outputPath, linkLibraries, frontend.importedModuleNames());
+  const int code = linkExecutable(irPath, outputPath, linkLibraries,
+                                  frontend.importedModuleNames(), clangCodegenFlags(options.opt));
   if (code == 0) {
     llvm::outs() << "wrote " << outputPath.string() << '\n';
   }

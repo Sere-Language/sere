@@ -69,9 +69,33 @@ void printUsage(std::string& error) {
       "  --link <lib>        Link an extra native C/C++ library into the program\n"
       "  --color=<mode>      Color diagnostics: auto, always, never\n"
       "  --no-color          Disable color (same as --color=never)\n"
-      "  --opt=<level>       LLVM optimization: O0, O1, O2, O3, Os, Oz\n"
-      "  --passes=<pipeline> Custom LLVM pass pipeline (PassBuilder syntax)\n"
-      "  -o <path>           Output path\n";
+      "  -o <path>           Output path\n"
+      "\n"
+      "Optimization:\n"
+      "  -O0 -O1 -O2 -O3     Optimization level (also --O2, --opt=O2)\n"
+      "  -Os, -Oz            Optimize for size\n"
+      "  --release           -O3 with every runtime check off and --stack-alloc\n"
+      "  --debug             -O0 with every check on\n"
+      "  --inline            Enable inlining; --no-inline disables it\n"
+      "  --inline-all        Mark every function alwaysinline\n"
+      "  --const-fold        Constant propagation and SCCP\n"
+      "  --dead-code         Aggressive dead code elimination\n"
+      "  --peephole          Instruction combining\n"
+      "  --cse               Early CSE and GVN\n"
+      "  --strength-reduce   Replace expensive arithmetic with cheap arithmetic\n"
+      "  --loop-unroll       Unroll loops\n"
+      "  --loop-invariant-hoist  Hoist loop-invariant work (LICM)\n"
+      "  --tailcalls         Enable tail call elimination\n"
+      "  --fast-math         Relaxed floating point\n"
+      "  --vectorize         Loop and SLP vectorization\n"
+      "  --branch-opt        CFG simplification and jump threading\n"
+      "  --lto               Link-time optimization for this module\n"
+      "  --no-runtime-checks Drop every compiler-inserted runtime check\n"
+      "  --no-bounds-checks  Drop indexing checks; accessors become raw loads\n"
+      "  --no-null-checks    Assume allocation results are never null\n"
+      "  --stack-alloc       Promote non-escaping allocations to stack slots\n"
+      "  --arena-alloc       Never free single blocks; the collector bulk-frees\n"
+      "  --passes=<pipeline> Custom LLVM pass pipeline (PassBuilder syntax)\n";
 
   if (error.empty()) {
     error = usage;
@@ -161,12 +185,22 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
       options.programArgs.emplace_back(argument);
       continue;
     }
+    // Every optimization switch lives in `parseOptimizationFlag`, so `-O2`,
+    // `--O3`, `--cse`, and `--no-null-checks` are decided in one place.
+    {
+      bool handled = false;
+      if (!parseOptimizationFlag(argument, options.opt, handled, error)) {
+        return false;
+      }
+      if (handled) {
+        continue;
+      }
+    }
     if (argument == "--help" || argument == "-h" || argument == "help") {
       options.help = true;
       printUsage(error);
       return true;
-    }
-    if (argument == "--version" || argument == "version") {
+    }    if (argument == "--version" || argument == "version") {
       options.version = true;
       continue;
     }
@@ -328,10 +362,12 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
       continue;
     }
     if (argument.starts_with("--opt=")) {
-      if (!parseOptLevel(argument.substr(6), options.optLevel, error)) {
+      OptLevel level = options.opt.level;
+      if (!parseOptLevel(argument.substr(6), level, error)) {
         return false;
       }
-      options.optOverridden = true;
+      applyOptLevel(options.opt, level);
+      options.opt.levelExplicit = true;
       continue;
     }
     if (argument == "--opt") {
@@ -340,14 +376,16 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
         return false;
       }
       ++index;
-      if (!parseOptLevel(argv[index], options.optLevel, error)) {
+      OptLevel level = options.opt.level;
+      if (!parseOptLevel(argv[index], level, error)) {
         return false;
       }
-      options.optOverridden = true;
+      applyOptLevel(options.opt, level);
+      options.opt.levelExplicit = true;
       continue;
     }
     if (argument.starts_with("--passes=")) {
-      options.passes = std::string(argument.substr(9));
+      options.opt.passes = std::string(argument.substr(9));
       continue;
     }
     if (argument == "--passes") {
@@ -356,7 +394,7 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
         return false;
       }
       ++index;
-      options.passes = argv[index];
+      options.opt.passes = argv[index];
       continue;
     }
     if (argument == "-o") {

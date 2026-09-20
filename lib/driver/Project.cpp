@@ -379,8 +379,9 @@ void collectLooseNativeSources(const std::filesystem::path& directory,
   if (options.outputPath.empty()) {
     compile.outputPath = projectOutputPath(options, manifest);
   }
-  if (!options.optOverridden) {
-    compile.optLevel = manifest.optLevel;
+  if (!options.opt.levelExplicit) {
+    applyOptLevel(compile.opt, manifest.optLevel);
+    compile.opt.levelExplicit = manifest.optLevel != OptLevel::O0;
   }
   collectLinkLibraries(manifest.libs, compile.linkLibraries);
   return compile;

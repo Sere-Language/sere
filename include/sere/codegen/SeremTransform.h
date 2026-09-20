@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "sere/codegen/OptPipeline.h"
 #include "sere/codegen/Serem.h"
 
 #include <memory>
@@ -34,9 +35,30 @@ public:
 /// Drops string literals no surviving function still references.
 [[nodiscard]] std::unique_ptr<TransformPass> makeUnusedGlobalPass();
 
+/// Identity and absorbing rewrites plus strength reduction: `x * 8` becomes
+/// `x << 3`, unsigned `x / 8` becomes `x >> 3`, and `x & 15` replaces
+/// unsigned `x % 16`.
+[[nodiscard]] std::unique_ptr<TransformPass> makeStrengthReducePass();
+
+/// Replaces repeated pure computations in a block with the first result.
+[[nodiscard]] std::unique_ptr<TransformPass> makeCommonSubexpressionPass();
+
+/// Removes the pending-error bookkeeping (`error.enter`, `error.leave`,
+/// `error.bind`) and turns the handler dispatch (`error.isa`) into `false`, so
+/// the exception machinery disappears from a release build.
+[[nodiscard]] std::unique_ptr<TransformPass> makeRuntimeCheckStripPass();
+
 /// The pipeline `runTransformers` applies, in the order the passes must run:
 /// dead code first so the later passes do not spend time on unreachable work.
 [[nodiscard]] std::vector<std::unique_ptr<TransformPass>> defaultTransformPasses();
+
+/// The pipeline the optimizer switches select. Every level keeps the baseline
+/// cleanups; the switches add the passes they name.
+[[nodiscard]] std::vector<std::unique_ptr<TransformPass>>
+transformPasses(const OptimizationOptions& options);
+
+/// Runs the switch-selected pipeline to a fixed point.
+int runOptimizingTransformers(IRModule& module, const OptimizationOptions& options);
 
 /// Applies `defaultTransformPasses()` until they stop changing the module and
 /// returns the number of passes that reported a change.

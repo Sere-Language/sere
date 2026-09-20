@@ -509,6 +509,318 @@ public:
   }
 };
 
+/// Rewrites every operand through `replacements` and drops the replaced
+/// operations from their block, so a rewrite is visible to the printer and to
+/// both backends.
+[[nodiscard]] bool applyReplacements(IRModule& module,
+                                     const std::unordered_map<const Value*, ValuePtr>& replacements) {
+  const auto substitute = [&replacements](const ValuePtr& value) -> ValuePtr {
+    if (value == nullptr) {
+      return value;
+    }
+    const auto found = replacements.find(value.get());
+    return found == replacements.end() ? value : found->second;
+  };
+  bool changed = false;
+  for (const std::unique_ptr<IRFunction>& function : module.functions()) {
+    if (function->isExternal()) {
+      continue;
+    }
+    for (const std::unique_ptr<BasicBlock>& block : function->blocks()) {
+      std::vector<std::shared_ptr<Operation>> kept;
+      kept.reserve(block->operations().size());
+      for (const std::shared_ptr<Operation>& operation : block->operations()) {
+        if (operation == nullptr) {
+          continue;
+        }
+        if (replacements.contains(operation.get())) {
+          changed = true;
+          continue;
+        }
+        std::vector<ValuePtr> operands = operation->operands();
+        bool rewritten = false;
+        for (ValuePtr& operand : operands) {
+          ValuePtr replacement = substitute(operand);
+          if (replacement != operand) {
+            operand = std::move(replacement);
+            rewritten = true;
+          }
+        }
+        if (rewritten) {
+          operation->setOperands(std::move(operands));
+        }
+        kept.push_back(operation);
+      }
+      if (kept.size() != block->operations().size()) {
+        block->setOperations(std::move(kept));
+      }
+    }
+  }
+  return changed;
+}
+
+/// True for integer kinds whose division and remainder round toward zero the
+/// way a shift or a mask does.
+[[nodiscard]] bool isUnsignedKind(const IRType& type) {
+  switch (type.kind()) {
+  case IRType::Kind::Bool:
+  case IRType::Kind::U8:
+  case IRType::Kind::U16:
+  case IRType::Kind::U32:
+  case IRType::Kind::U64: return true;
+  default: return false;
+  }
+}
+
+/// Exact `log2` of a positive power of two, or -1.
+[[nodiscard]] int powerOfTwoShift(std::int64_t value) {
+  if (value <= 1) {
+    return -1;
+  }
+  int shift = 0;
+  std::uint64_t remaining = static_cast<std::uint64_t>(value);
+  while ((remaining & 1u) == 0 && remaining != 0) {
+    remaining >>= 1;
+    ++shift;
+  }
+  return remaining == 1 ? shift : -1;
+}
+
+/// The rewrite `reduceOperation` produces for one operation, or nullptr.
+[[nodiscard]] ValuePtr reduceOperation(const Operation& operation) {
+  const std::string& opcode = operation.opcode();
+  const IRType& type = operation.type();
+  if (bitWidth(type) == 0 || operation.operands().size() != 2) {
+    return nullptr;
+  }
+  const ValuePtr left = operation.operands()[0];
+  const ValuePtr right = operation.operands()[1];
+  const ConstantInt* leftInt = intValue(left);
+  const ConstantInt* rightInt = intValue(right);
+  const auto zero = [&type]() { return std::make_shared<ConstantInt>(0, type); };
+  const auto shiftBy = [&operation, &type](const ValuePtr& value, int shift,
+                                           const char* opcodeName) {
+    return std::make_shared<Operation>(
+        opcodeName, type, operation.resultName(),
+        std::vector<ValuePtr>{value, std::make_shared<ConstantInt>(shift, type)},
+        std::unordered_map<std::string, std::string>{});
+  };
+
+  if (opcode == "add") {
+    if (rightInt != nullptr && rightInt->value() == 0) {
+      return left;
+    }
+    if (leftInt != nullptr && leftInt->value() == 0) {
+      return right;
+    }
+  } else if (opcode == "sub") {
+    if (rightInt != nullptr && rightInt->value() == 0) {
+      return left;
+    }
+    if (leftInt != nullptr && rightInt != nullptr && leftInt->value() == rightInt->value()) {
+      return zero();
+    }
+  } else if (opcode == "mul") {
+    if (rightInt != nullptr && rightInt->value() == 1) {
+      return left;
+    }
+    if (leftInt != nullptr && leftInt->value() == 1) {
+      return right;
+    }
+    if ((rightInt != nullptr && rightInt->value() == 0) ||
+        (leftInt != nullptr && leftInt->value() == 0)) {
+      return zero();
+    }
+    // Multiplying by a power of two is a shift.
+    if (rightInt != nullptr && leftInt == nullptr) {
+      const int shift = powerOfTwoShift(rightInt->value());
+      if (shift > 0) {
+        return shiftBy(left, shift, "shl");
+      }
+    }
+  } else if (opcode == "and") {
+    if (rightInt != nullptr && rightInt->value() == -1) {
+      return left;
+    }
+    if (leftInt != nullptr && leftInt->value() == -1) {
+      return right;
+    }
+    if ((rightInt != nullptr && rightInt->value() == 0) ||
+        (leftInt != nullptr && leftInt->value() == 0)) {
+      return zero();
+    }
+  } else if (opcode == "or" || opcode == "xor") {
+    if (rightInt != nullptr && rightInt->value() == 0) {
+      return left;
+    }
+    if (leftInt != nullptr && leftInt->value() == 0) {
+      return right;
+    }
+    if (opcode == "xor" && leftInt != nullptr && rightInt != nullptr &&
+        leftInt->value() == rightInt->value()) {
+      return zero();
+    }
+  } else if (opcode == "shl" || opcode == "shr") {
+    if (rightInt != nullptr && rightInt->value() == 0) {
+      return left;
+    }
+  } else if ((opcode == "div" || opcode == "rem") && isUnsignedKind(type)) {
+    // Unsigned division by a power of two is a shift; the remainder is a mask.
+    if (rightInt != nullptr && leftInt == nullptr) {
+      const int shift = powerOfTwoShift(rightInt->value());
+      if (shift > 0) {
+        if (opcode == "div") {
+          return shiftBy(left, shift, "shr");
+        }
+        return std::make_shared<Operation>(
+            "and", type, operation.resultName(),
+            std::vector<ValuePtr>{left, std::make_shared<ConstantInt>(rightInt->value() - 1, type)},
+            std::unordered_map<std::string, std::string>{});
+      }
+    }
+  }
+  return nullptr;
+}
+
+/// True for the arithmetic opcodes whose repeated computation is redundant.
+[[nodiscard]] bool isPureOpcode(std::string_view opcode) {
+  return opcode == "add" || opcode == "sub" || opcode == "mul" || opcode == "div" ||
+         opcode == "rem" || opcode == "and" || opcode == "or" || opcode == "xor" ||
+         opcode == "shl" || opcode == "shr" || opcode == "select" || opcode == "invert" ||
+         opcode == "neg" || opcode == "not" || opcode == "pointer.is_null" ||
+         opcode.starts_with("cmp.") || opcode.starts_with("cast.") ||
+         opcode.starts_with("aggregate.");
+}
+
+class StrengthReducePass final : public TransformPass {
+public:
+  [[nodiscard]] std::string_view name() const override { return "strength-reduce"; }
+  bool run(IRModule& module) override {
+    std::unordered_map<const Value*, ValuePtr> replacements;
+    for (const std::unique_ptr<IRFunction>& function : module.functions()) {
+      if (function->isExternal()) {
+        continue;
+      }
+      for (const std::unique_ptr<BasicBlock>& block : function->blocks()) {
+        for (const std::shared_ptr<Operation>& operation : block->operations()) {
+          if (operation == nullptr) {
+            continue;
+          }
+          if (ValuePtr reduced = reduceOperation(*operation)) {
+            replacements.insert_or_assign(operation.get(), std::move(reduced));
+          }
+        }
+      }
+    }
+    if (replacements.empty()) {
+      return false;
+    }
+    return applyReplacements(module, replacements);
+  }
+};
+
+class CommonSubexpressionPass final : public TransformPass {
+public:
+  [[nodiscard]] std::string_view name() const override { return "cse"; }
+  bool run(IRModule& module) override {
+    std::unordered_map<const Value*, ValuePtr> replacements;
+    for (const std::unique_ptr<IRFunction>& function : module.functions()) {
+      if (function->isExternal()) {
+        continue;
+      }
+      for (const std::unique_ptr<BasicBlock>& block : function->blocks()) {
+        // Visibility never crosses a block boundary, so the table is per block.
+        std::unordered_map<std::string, ValuePtr> seen;
+        for (const std::shared_ptr<Operation>& operation : block->operations()) {
+          if (operation == nullptr || !isPureOpcode(operation->opcode())) {
+            continue;
+          }
+          std::string key = operation->opcode();
+          key += '|';
+          key += operation->type().display();
+          for (const ValuePtr& operand : operation->operands()) {
+            key += '|';
+            key += operand == nullptr ? std::string{"(null)"} : operand->reference();
+          }
+          for (const auto& [name, value] : operation->attributes()) {
+            key += '|';
+            key += name;
+            key += '=';
+            key += value;
+          }
+          const auto [found, inserted] = seen.try_emplace(std::move(key), operation);
+          if (!inserted) {
+            replacements.insert_or_assign(operation.get(), found->second);
+          }
+        }
+      }
+    }
+    if (replacements.empty()) {
+      return false;
+    }
+    return applyReplacements(module, replacements);
+  }
+};
+
+/// True for the pending-error operations a release build does not need.
+[[nodiscard]] bool isErrorBookkeeping(std::string_view opcode) {
+  return opcode == "error.enter" || opcode == "error.leave" || opcode == "error.bind";
+}
+
+class RuntimeCheckStripPass final : public TransformPass {
+public:
+  [[nodiscard]] std::string_view name() const override { return "runtime-checks"; }
+  bool run(IRModule& module) override {
+    std::unordered_map<const Value*, ValuePtr> replacements;
+    std::unordered_set<const Value*> dropped;
+    for (const std::unique_ptr<IRFunction>& function : module.functions()) {
+      if (function->isExternal()) {
+        continue;
+      }
+      for (const std::unique_ptr<BasicBlock>& block : function->blocks()) {
+        for (const std::shared_ptr<Operation>& operation : block->operations()) {
+          if (operation == nullptr) {
+            continue;
+          }
+          const std::string& opcode = operation->opcode();
+          if (isErrorBookkeeping(opcode)) {
+            dropped.insert(operation.get());
+            continue;
+          }
+          if (opcode == "error.isa") {
+            // Nothing raised, so no handler matches.
+            replacements.insert_or_assign(operation.get(), boolConstant(false));
+          }
+        }
+      }
+    }
+    if (replacements.empty() && dropped.empty()) {
+      return false;
+    }
+    bool changed = applyReplacements(module, replacements);
+    for (const std::unique_ptr<IRFunction>& function : module.functions()) {
+      if (function->isExternal()) {
+        continue;
+      }
+      for (const std::unique_ptr<BasicBlock>& block : function->blocks()) {
+        std::vector<std::shared_ptr<Operation>> kept;
+        kept.reserve(block->operations().size());
+        for (const std::shared_ptr<Operation>& operation : block->operations()) {
+          if (operation == nullptr || dropped.contains(operation.get())) {
+            changed = true;
+            continue;
+          }
+          kept.push_back(operation);
+        }
+        if (kept.size() != block->operations().size()) {
+          block->setOperations(std::move(kept));
+        }
+      }
+    }
+    return changed;
+  }
+};
+
 } // namespace
 
 std::unique_ptr<TransformPass> makeConstantFoldPass() {
@@ -525,6 +837,18 @@ std::unique_ptr<TransformPass> makeUnusedGlobalPass() {
   return std::make_unique<UnusedGlobalPass>();
 }
 
+std::unique_ptr<TransformPass> makeStrengthReducePass() {
+  return std::make_unique<StrengthReducePass>();
+}
+
+std::unique_ptr<TransformPass> makeCommonSubexpressionPass() {
+  return std::make_unique<CommonSubexpressionPass>();
+}
+
+std::unique_ptr<TransformPass> makeRuntimeCheckStripPass() {
+  return std::make_unique<RuntimeCheckStripPass>();
+}
+
 std::vector<std::unique_ptr<TransformPass>> defaultTransformPasses() {
   std::vector<std::unique_ptr<TransformPass>> passes;
   passes.push_back(makeDeadCodePass());
@@ -532,6 +856,46 @@ std::vector<std::unique_ptr<TransformPass>> defaultTransformPasses() {
   passes.push_back(makeUnreachableBlockPass());
   passes.push_back(makeUnusedGlobalPass());
   return passes;
+}
+
+std::vector<std::unique_ptr<TransformPass>> transformPasses(const OptimizationOptions& options) {
+  std::vector<std::unique_ptr<TransformPass>> passes;
+  // The error machinery goes first: dropping it makes the handler blocks
+  // unreachable, and every later pass then skips them.
+  if (!options.runtimeChecks) {
+    passes.push_back(makeRuntimeCheckStripPass());
+  }
+  passes.push_back(makeDeadCodePass());
+  passes.push_back(makeConstantFoldPass());
+  if (options.peephole || options.strengthReduce) {
+    passes.push_back(makeStrengthReducePass());
+  }
+  if (options.cse) {
+    passes.push_back(makeCommonSubexpressionPass());
+    passes.push_back(makeConstantFoldPass());
+  }
+  passes.push_back(makeUnreachableBlockPass());
+  passes.push_back(makeDeadCodePass());
+  passes.push_back(makeUnusedGlobalPass());
+  return passes;
+}
+
+int runOptimizingTransformers(IRModule& module, const OptimizationOptions& options) {
+  std::vector<std::unique_ptr<TransformPass>> passes = transformPasses(options);
+  int applied = 0;
+  for (int round = 0; round < kMaxRounds; ++round) {
+    bool changed = false;
+    for (const std::unique_ptr<TransformPass>& pass : passes) {
+      if (pass->run(module)) {
+        changed = true;
+        ++applied;
+      }
+    }
+    if (!changed) {
+      break;
+    }
+  }
+  return applied;
 }
 
 int runTransformers(IRModule& module) {

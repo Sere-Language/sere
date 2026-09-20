@@ -82,6 +82,10 @@ struct OptimizationOptions {
   /// `--arena-alloc`: never return single blocks; let the collector bulk-free.
   bool arenaAlloc = false;
 
+  /// True once a per-pass switch (`--inline`, `--cse`, ...) was named, which
+  /// selects the flag-composed pipeline over the level's default one.
+  bool passFlagsExplicit = false;
+
   /// True when any per-pass switch differs from where the level left it.
   [[nodiscard]] bool hasExplicitPassFlags() const;
 };

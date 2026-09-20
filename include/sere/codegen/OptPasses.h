@@ -25,6 +25,7 @@ struct OptRewriteReport {
   std::uint32_t nullChecksRemoved = 0;
   std::uint32_t checkBlocksRemoved = 0;
   std::uint32_t boundsCheckBlocksRemoved = 0;
+  std::uint32_t errorChecksRemoved = 0;
   std::uint32_t blocksSimplified = 0;
   std::uint32_t allocationsStackPromoted = 0;
   std::uint32_t freesElided = 0;
@@ -48,6 +49,11 @@ struct OptRewriteReport {
 /// Rewrites conditional branches whose failure arm only reports a check.
 [[nodiscard]] std::uint32_t
 eliminateCheckBlocks(llvm::Module& module, bool removeRuntimeChecks, bool removeBoundsChecks);
+
+/// Drops the Sere error-state machinery: `sere_has_error` becomes `false`,
+/// every clear/release call disappears, and the error paths it guarded become
+/// unreachable and are deleted.
+[[nodiscard]] std::uint32_t stripErrorStateChecks(llvm::Module& module);
 
 /// Promotes non-escaping `sere_alloc`/`sere_gc_alloc` calls to stack slots.
 [[nodiscard]] std::uint32_t promoteNonEscapingAllocations(llvm::Module& module);

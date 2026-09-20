@@ -50,7 +50,8 @@ struct CompilerOptions {
   bool help = false;
   bool version = false;
   bool printEnv = false;
-  bool optOverridden = false;
+  /// `--opt=<level>` and the `--<pass>` switches; see `OptimizationOptions`.
+  OptimizationOptions opt;
   ProjectCommand projectCommand = ProjectCommand::None;
   std::filesystem::path initName;
   bool initLibrary = false;
@@ -65,8 +66,6 @@ struct CompilerOptions {
   std::vector<std::string> programArgs;
   std::vector<std::filesystem::path> linkLibraries;
   ColorMode colorMode = ColorMode::Auto;
-  OptLevel optLevel = OptLevel::O0;
-  std::string passes;
 };
 
 [[nodiscard]] bool

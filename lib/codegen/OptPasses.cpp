@@ -4,21 +4,30 @@
 #include "sere/codegen/OptPasses.h"
 
 #include <llvm/ADT/SmallVector.h>
-#include <llvm/ADT/StringSwitch.h>
+#include <llvm/ADT/STLExtras.h>
+#include <llvm/Analysis/ConstantFolding.h>
+#include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
+#include <llvm/IR/DataLayout.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/Module.h>
+#include <llvm/IR/Operator.h>
 #include <llvm/Support/ModRef.h>
+#include <llvm/TargetParser/Host.h>
+#include <llvm/TargetParser/Triple.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 #include <llvm/Transforms/Utils/Local.h>
 
 #include <algorithm>
 #include <cstdlib>
+#include <initializer_list>
+#include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -40,11 +49,31 @@ constexpr std::uint64_t kDefaultStackAllocMax = 1u << 20;
   return kDefaultStackAllocMax;
 }
 
+/// Allocating declarations return fresh memory: the pointer is never null and
+/// never aliases anything else the program can already name.
+///
+/// Accessors that read an existing object are not here: their result aliases
+/// the argument, so `noalias` would be a lie.
+[[nodiscard]] bool isFreshAllocation(std::string_view name) {
+  return isAllocatingDeclaration(name) &&
+         !inSet(name, {"sere_list_item", "sere_list_from_argv", "sere_pool_alloc"});
+}
+
+/// Declarations whose result the runtime may return as null, so `nonnull` must
+/// not be claimed for them.
+[[nodiscard]] bool mayReturnNull(std::string_view name) {
+  return inSet(name,
+               {"sere_list_item", "sere_dict_get", "sere_str_index", "sere_list_pop_at",
+                "sere_str_concat_data", "sere_str_repr_data", "sere_str_i32_data",
+                "sere_str_i64_data", "sere_str_bool_data", "sere_str_ptr_data",
+                "sere_str_f64_data", "sere_format_value", "sere_input"});
+}
+
 /// Names whose result the runtime never returns as null. Anything with `try`,
 /// `find`, `search`, `maybe`, or `optional` in it is a lookup that may miss and
 /// is therefore left alone.
 [[nodiscard]] bool isNonNullReturning(std::string_view name) {
-  if (!name.starts_with("sere_")) {
+  if (!name.starts_with("sere_") || mayReturnNull(name)) {
     return false;
   }
   for (const std::string_view miss : {"try", "find", "search", "maybe", "optional", "scan"}) {
@@ -62,37 +91,42 @@ constexpr std::uint64_t kDefaultStackAllocMax = 1u << 20;
   return false;
 }
 
+/// True when `name` is one of `names`.
+[[nodiscard]] bool inSet(std::string_view name, std::initializer_list<std::string_view> names) {
+  for (const std::string_view candidate : names) {
+    if (name == candidate) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /// Runtime accessors the release-mode `--no-bounds-checks` promise extends to:
 /// out-of-range access no longer unwinds, so the calls can be hoisted, CSEd,
 /// and vectorized like a raw load.
 [[nodiscard]] bool isBoundsCheckedAccessor(std::string_view name) {
-  return llvm::StringSwitch<bool>(name)
-      .Cases("sere_list_item", "sere_list_pop_at", "sere_list_insert", "sere_list_remove", true)
-      .Cases("sere_str_index", "sere_str_slice", "sere_list_slice", true)
-      .Cases("sere_dict_get", "sere_dict_set", "sere_dict_del", true)
-      .Default(false);
+  return inSet(name,
+               {"sere_list_item", "sere_list_pop_at", "sere_list_insert", "sere_list_remove",
+                "sere_str_index", "sere_str_slice", "sere_list_slice", "sere_dict_get",
+                "sere_dict_set", "sere_dict_del"});
 }
 
 /// Pure readers: the whole call is a function of its arguments.
 [[nodiscard]] bool isPureReader(std::string_view name) {
-  return llvm::StringSwitch<bool>(name)
-      .Cases("sere_list_len", "sere_list_index_of", "sere_list_count", true)
-      .Cases("sere_dict_len", "sere_dict_has", true)
-      .Cases("sere_str_contains", "sere_str_eq", "sere_str_cmp", true)
-      .Cases("sere_gc_bytes_in_use", "sere_gc_bytes_allocated", "sere_gc_live_blocks", true)
-      .Cases("sere_gc_collections", "sere_async_now_ms", true)
-      .Default(false);
+  return inSet(name,
+               {"sere_list_len", "sere_list_index_of", "sere_list_count", "sere_dict_len",
+                "sere_dict_has", "sere_str_contains", "sere_str_eq", "sere_str_cmp",
+                "sere_gc_bytes_in_use", "sere_gc_bytes_allocated", "sere_gc_live_blocks",
+                "sere_gc_collections", "sere_async_now_ms"});
 }
 
 [[nodiscard]] bool isAllocatingDeclaration(std::string_view name) {
-  return llvm::StringSwitch<bool>(name)
-      .Cases("sere_alloc", "sere_gc_alloc", "sere_arena_alloc", "sere_pool_alloc", true)
-      .Cases("sere_shared_new", "sere_list_new", "sere_array_new", "sere_dict_new", true)
-      .Cases("sere_list_copy", "sere_list_slice", "sere_list_item", "sere_dict_copy", true)
-      .Cases("sere_arena_new", "sere_pool_new", true)
-      .Default(false);
+  return inSet(name,
+               {"sere_alloc", "sere_gc_alloc", "sere_arena_alloc", "sere_pool_alloc",
+                "sere_shared_new", "sere_list_new", "sere_array_new", "sere_dict_new",
+                "sere_list_copy", "sere_list_slice", "sere_list_item", "sere_dict_copy",
+                "sere_arena_new", "sere_pool_new"});
 }
-
 /// The global a string literal pointer refers to, or null when the pointer is
 /// not a literal.
 [[nodiscard]] const llvm::GlobalVariable* literalGlobal(const llvm::Value* value) {
@@ -160,6 +194,9 @@ enum class CheckKind {
   std::string message;
   bool sawPanic = false;
   for (const llvm::Instruction& instruction : block) {
+    if (instruction.isTerminator()) {
+      continue;
+    }
     const auto* call = llvm::dyn_cast<llvm::CallInst>(&instruction);
     if (call == nullptr) {
       // A phi would make the block reachable from several places and a store
@@ -238,37 +275,108 @@ enum class CheckKind {
   return true;
 }
 
+/// Folds every instruction whose operands are constant and then every branch
+/// whose condition became constant, so the blocks a rewrite orphaned can be
+/// collected.
+void foldConstants(llvm::Function& function,
+                   const llvm::DataLayout& layout,
+                   const llvm::TargetLibraryInfo& libraryInfo) {
+  for (llvm::BasicBlock& block : function) {
+    for (llvm::Instruction& instruction : llvm::make_early_inc_range(block)) {
+      if (instruction.getType()->isVoidTy() || instruction.isTerminator() ||
+          llvm::isa<llvm::PHINode>(instruction)) {
+        continue;
+      }
+      llvm::Constant* folded = llvm::ConstantFoldInstruction(&instruction, layout, &libraryInfo);
+      if (folded == nullptr || llvm::isa<llvm::UndefValue>(folded)) {
+        continue;
+      }
+      instruction.replaceAllUsesWith(folded);
+      instruction.eraseFromParent();
+    }
+  }
+  // Terminators are folded after the value pass so a compare that folded to a
+  // constant already decided its branch.
+  for (llvm::BasicBlock& block : function) {
+    (void)llvm::ConstantFoldTerminator(&block, /*DeleteDeadConditions=*/false);
+  }
+}
+
+/// True when the call only inspects or clears the pending error state.
+[[nodiscard]] bool isErrorStateCall(std::string_view name) {
+  return inSet(name,
+               {"sere_has_error", "sere_clear_error", "sere_release_current_error",
+                "sere_error_isa", "sere_error_message", "sere_error_name", "sere_reraise"});
+}
+
+/// Target library info for folding, built from the module's triple.
+[[nodiscard]] std::unique_ptr<llvm::TargetLibraryInfoImpl>
+libraryInfoFor(const llvm::Module& module) {
+  llvm::Triple target = module.getTargetTriple();
+  if (target.getTriple().empty()) {
+    target = llvm::Triple(llvm::sys::getDefaultTargetTriple());
+  }
+  return std::make_unique<llvm::TargetLibraryInfoImpl>(target);
+}
+
 } // namespace
 
 std::uint32_t annotateRuntimeDeclarations(llvm::Module& module,
                                           const OptimizationOptions& options) {
   std::uint32_t annotated = 0;
-  if (options.boundsChecks && options.nullChecks && options.runtimeChecks) {
-    return 0;
-  }
   for (llvm::Function& function : module) {
     if (!function.isDeclaration()) {
       continue;
     }
     const std::string_view name = function.getName();
-    if (!options.boundsChecks && isBoundsCheckedAccessor(name)) {
-      // Out-of-range access no longer unwinds, so the call is a raw load the
-      // middle end may hoist, CSE, and vectorize.
+    if (!name.starts_with("sere_")) {
+      continue;
+    }
+    // The runtime is C: nothing in it can unwind through the caller's frame,
+    // and every entry point either returns or terminates. Claiming both lets
+    // the middle end sink and hoist calls and enables tail-call formation.
+    bool changed = false;
+    if (!function.hasFnAttribute(llvm::Attribute::NoUnwind)) {
       function.addFnAttr(llvm::Attribute::NoUnwind);
+      changed = true;
+    }
+    if (isPureReader(name)) {
+      function.setMemoryEffects(llvm::MemoryEffects::readOnly());
+      function.addFnAttr(llvm::Attribute::WillReturn);
+      function.addFnAttr("sere.pure", "true");
+    } else if (isBoundsCheckedAccessor(name) && !options.boundsChecks) {
+      // No check can fire, so the accessor returns whenever it is called. Its
+      // memory effects stay unknown because the dictionary and list mutators
+      // are in this set.
+      function.addFnAttr(llvm::Attribute::WillReturn);
+    }
+    if (options.boundsChecks) {
+      // With checks on, `sere_list_len` and the other readers still cannot
+      // fault, but an out-of-range access can, so only the readers are
+      // promised a return.
       if (isPureReader(name)) {
-        function.setMemoryEffects(llvm::MemoryEffects::readOnly());
+        function.addFnAttr(llvm::Attribute::WillReturn);
       }
-      ++annotated;
     }
     if ((!options.nullChecks || !options.runtimeChecks) &&
-        function.getReturnType()->isPointerTy() &&
-        (isAllocatingDeclaration(name) || isNonNullReturning(name)) &&
-        !function.hasRetAttribute(llvm::Attribute::NonNull)) {
-      function.addRetAttr(llvm::Attribute::NonNull);
-      ++annotated;
+        function.getReturnType()->isPointerTy() && isFreshAllocation(name)) {
+      if (!function.hasRetAttribute(llvm::Attribute::NonNull)) {
+        function.addRetAttr(llvm::Attribute::NonNull);
+        function.addRetAttr(llvm::Attribute::NoAlias);
+        function.addRetAttr(llvm::Attribute::NoUndef);
+        changed = true;
+      }
     }
-    if (!options.runtimeChecks && !options.nullChecks && isPureReader(name)) {
-      function.setMemoryEffects(llvm::MemoryEffects::readOnly());
+    if (isFreshAllocation(name)) {
+      // `allocsize` lets LLVM fold two allocation sizes into one and lets it
+      // know the block is at least that large.
+      if (!function.hasFnAttribute(llvm::Attribute::AllocSize)) {        function.addFnAttr(llvm::Attribute::getWithAllocSizeArgs(
+            module.getContext(), /*ElemSizeArg=*/0, std::nullopt));
+        changed = true;
+      }
+    }
+    if (changed) {
+      ++annotated;
     }
   }
   return annotated;
@@ -343,16 +451,16 @@ std::uint32_t eliminateCheckBlocks(llvm::Module& module, bool removeRuntimeCheck
       bool takeFalse = false;
       for (unsigned index = 0; index < 2; ++index) {
         llvm::BasicBlock* successor = branch->getSuccessor(index);
-        if (index == 1 && removable != nullptr) {
-          // Both arms report a check: there is no good path to keep.
-          removable = nullptr;
-          break;
-        }
         const CheckKind kind = classifyCheckBlock(*successor);
         const bool wanted = kind == CheckKind::Bounds ? removeBoundsChecks
                                                       : kind == CheckKind::Runtime && removeRuntimeChecks;
         if (!wanted || !hasSinglePredecessor(*successor, *branch)) {
           continue;
+        }
+        if (removable != nullptr) {
+          // Both arms report a check: there is no good path to keep.
+          removable = nullptr;
+          break;
         }
         removable = successor;
         takeFalse = index == 0;
@@ -416,6 +524,45 @@ std::uint32_t promoteNonEscapingAllocations(llvm::Module& module) {
   return promoted;
 }
 
+std::uint32_t stripErrorStateChecks(llvm::Module& module) {
+  std::uint32_t removed = 0;
+  const std::unique_ptr<llvm::TargetLibraryInfoImpl> libraryInfoImpl = libraryInfoFor(module);
+  const llvm::TargetLibraryInfo libraryInfo(*libraryInfoImpl);
+  const llvm::DataLayout& layout = module.getDataLayout();
+  for (llvm::Function& function : module) {
+    if (function.isDeclaration()) {
+      continue;
+    }
+    bool touched = false;
+    for (llvm::Instruction& instruction :
+         llvm::make_early_inc_range(llvm::instructions(function))) {
+      auto* call = llvm::dyn_cast<llvm::CallInst>(&instruction);
+      if (call == nullptr) {
+        continue;
+      }
+      const llvm::Function* callee = call->getCalledFunction();
+      if (callee == nullptr || !callee->isDeclaration() || !isErrorStateCall(callee->getName())) {
+        continue;
+      }
+      // A query of the pending error reports "none": nothing raised, so a real
+      // raise cannot reach the runtime either once the checks are gone. A
+      // clear has no observable effect without a reader, and a re-raise is
+      // only reachable from an error path that is about to disappear.
+      if (!call->getType()->isVoidTy()) {
+        call->replaceAllUsesWith(llvm::Constant::getNullValue(call->getType()));
+      }
+      call->eraseFromParent();
+      ++removed;
+      touched = true;
+    }
+    if (touched) {
+      foldConstants(function, layout, libraryInfo);
+      (void)llvm::removeUnreachableBlocks(function);
+    }
+  }
+  return removed;
+}
+
 std::uint32_t elideIndividualFrees(llvm::Module& module) {
   std::uint32_t elided = 0;
   for (llvm::Function& function : module) {
@@ -447,6 +594,8 @@ std::uint32_t elideIndividualFrees(llvm::Module& module) {
 
 std::uint32_t applyFastMathAttributes(llvm::Module& module) {
   std::uint32_t count = 0;
+  llvm::FastMathFlags flags;
+  flags.setFast();
   for (llvm::Function& function : module) {
     if (function.isDeclaration()) {
       continue;
@@ -458,11 +607,10 @@ std::uint32_t applyFastMathAttributes(llvm::Module& module) {
     function.addFnAttr("fp-contract", "fast");
     function.addFnAttr("less-precise-fpmad", "true");
     for (llvm::Instruction& instruction : llvm::instructions(function)) {
-      auto* operation = llvm::dyn_cast<llvm::FPMathOperator>(&instruction);
-      if (operation == nullptr || !operation->getType()->isFloatingPointTy()) {
+      if (!llvm::isa<llvm::FPMathOperator>(instruction)) {
         continue;
       }
-      operation->setFast(true);
+      instruction.setFastMathFlags(flags);
     }
     ++count;
   }
@@ -487,7 +635,7 @@ void markAlwaysInline(llvm::Module& module) {
       continue;
     }
     const std::string_view name = function.getName();
-    if (name == "main" || name == "sere_main" || name.contains("coro")) {
+    if (name == "main" || name == "sere_main" || name.find("coro") != std::string_view::npos) {
       continue;
     }
     function.addFnAttr(llvm::Attribute::AlwaysInline);
@@ -532,6 +680,12 @@ OptRewriteReport runPrePipelinePasses(llvm::Module& module,
   }
   if (!options.nullChecks || !options.runtimeChecks) {
     report.nullChecksRemoved = eliminateNullChecks(module);
+  }
+  if (!options.runtimeChecks) {
+    // Dropping the error-state checks first turns the exception paths into
+    // unreachable blocks, so the check-block pass then only has the panics to
+    // consider.
+    report.errorChecksRemoved = stripErrorStateChecks(module);
   }
   report.checkBlocksRemoved =
       eliminateCheckBlocks(module, !options.runtimeChecks, !options.boundsChecks);
