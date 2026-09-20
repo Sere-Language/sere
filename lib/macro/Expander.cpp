@@ -416,6 +416,12 @@ bool MacroExpander::expandStmtList(std::vector<std::unique_ptr<Stmt>>& statement
     } else {
       pieces.push_back(std::move(statement));
     }
+    // A macro used as an expression can contribute whole statements; they run
+    // before the statement that consumed the macro's value.
+    std::vector<std::unique_ptr<Stmt>> hoisted;
+    std::vector<std::unique_ptr<Stmt>>* previousTarget = hoistTarget_;
+    hoistTarget_ = &hoisted;
+    std::vector<std::unique_ptr<Stmt>> expandedItems;
     for (std::unique_ptr<Stmt>& item : pieces) {
       if (item == nullptr) {
         continue;
@@ -432,7 +438,7 @@ bool MacroExpander::expandStmtList(std::vector<std::unique_ptr<Stmt>>& statement
                                invoke.tokens());
         std::vector<std::unique_ptr<Stmt>> expanded = expandInvokeStmt(asStmt);
         if (expanded.empty()) {
-          out.push_back(std::move(item));
+          expandedItems.push_back(std::move(item));
           continue;
         }
         for (std::unique_ptr<Stmt>& extra : expanded) {
@@ -445,7 +451,7 @@ bool MacroExpander::expandStmtList(std::vector<std::unique_ptr<Stmt>>& statement
           }
           if (extra != nullptr) {
             (void)expandInside(*extra);
-            out.push_back(std::move(extra));
+            expandedItems.push_back(std::move(extra));
           }
         }
         continue;
@@ -466,20 +472,32 @@ bool MacroExpander::expandStmtList(std::vector<std::unique_ptr<Stmt>>& statement
                                          decl.isConst());
       } else if (item->kind() == NodeKind::AssignStmt) {
         const auto& assign = static_cast<const AssignStmt&>(*item);
+        std::unique_ptr<Expr> target = expandExpr(assign.target());
+        std::unique_ptr<Expr> value = expandExpr(assign.value());
         item = std::make_unique<AssignStmt>(
-            item->range(), expandExpr(assign.target()), expandExpr(assign.value()), assign.op());
+            item->range(), std::move(target), std::move(value), assign.op());
       } else if (item->kind() == NodeKind::ReturnStmt || item->kind() == NodeKind::YieldStmt) {
         const Expr* value = static_cast<const ReturnStmt&>(*item).value();
-        std::unique_ptr<Expr> expanded = value == nullptr ? nullptr : expandExpr(*value);
-        if (value != nullptr && expanded == nullptr)
+        std::unique_ptr<Expr> expandedValue = value == nullptr ? nullptr : expandExpr(*value);
+        if (value != nullptr && expandedValue == nullptr)
           return false;
         if (item->kind() == NodeKind::YieldStmt)
-          item = std::make_unique<YieldStmt>(item->range(), std::move(expanded));
+          item = std::make_unique<YieldStmt>(item->range(), std::move(expandedValue));
         else
-          item = std::make_unique<ReturnStmt>(item->range(), std::move(expanded));
+          item = std::make_unique<ReturnStmt>(item->range(), std::move(expandedValue));
       }
       if (!expandInside(*item))
         return false;
+      expandedItems.push_back(std::move(item));
+    }
+    hoistTarget_ = previousTarget;
+    if (!hoisted.empty() && !expandStmtList(hoisted)) {
+      return false;
+    }
+    for (std::unique_ptr<Stmt>& extra : hoisted) {
+      out.push_back(std::move(extra));
+    }
+    for (std::unique_ptr<Stmt>& item : expandedItems) {
       out.push_back(std::move(item));
     }
   }
@@ -561,6 +579,13 @@ std::unique_ptr<Expr> MacroExpander::expandExpr(const Expr& expr) {
   }
   if (expr.kind() == NodeKind::MacroInvokeExpr) {
     --fuel_;
+    if (hoistTarget_ != nullptr) {
+      std::unique_ptr<Expr> hoisted =
+          expandInvokeExprHoisted(static_cast<const MacroInvokeExpr&>(expr));
+      if (hoisted != nullptr) {
+        return expandExpr(*hoisted);
+      }
+    }
     std::unique_ptr<Expr> expanded = expandInvokeExpr(static_cast<const MacroInvokeExpr&>(expr));
     if (expanded == nullptr) {
       return nullptr;
@@ -737,6 +762,71 @@ std::unique_ptr<Expr> MacroExpander::expandInvokeExpr(const MacroInvokeExpr& inv
                    invoke.delimiter());
 }
 
+std::unique_ptr<Expr> MacroExpander::expandInvokeExprHoisted(const MacroInvokeExpr& invoke) {
+  if (hoistTarget_ == nullptr) {
+    return nullptr;
+  }
+  const MacroDef* def = env_->find(invoke.name());
+  if (def == nullptr || def->syntaxMode() == MacroSyntaxMode::Raw ||
+      def->syntaxMode() == MacroSyntaxMode::Pipeline || !def->matchArms().empty()) {
+    return nullptr;
+  }
+  MacroBindings env;
+  if (!macroBindings(*def, invoke.rawText(), invoke.rawRange(), env, invoke.range())) {
+    return nullptr;
+  }
+  std::vector<std::unique_ptr<Stmt>> body = expandQuoteStmts(*def, std::move(env), invoke.range());
+  if (body.empty()) {
+    diagnostics_->error(invoke.range(), "macro '" + def->name() + "' produced no expression");
+    return nullptr;
+  }
+  if (body.size() == 1 && body.front() != nullptr && body.front()->kind() == NodeKind::ExprStmt) {
+    return cloneExpr(static_cast<const ExprStmt&>(*body.front()).expression());
+  }
+  if (body.back() == nullptr || body.back()->kind() != NodeKind::ExprStmt) {
+    return nullptr;
+  }
+  // The statements before the trailing expression become declarations in the
+  // enclosing scope, so the value expression can name them directly.
+  for (std::size_t index = 0; index + 1 < body.size(); ++index) {
+    if (body[index] != nullptr) {
+      hoistTarget_->push_back(std::move(body[index]));
+    }
+  }
+  return cloneExpr(static_cast<const ExprStmt&>(*body.back()).expression());
+}
+
+bool MacroExpander::macroBindings(const MacroDef& def,
+                                  const std::string& rawText,
+                                  SourceRange rawRange,
+                                  MacroBindings& env,
+                                  SourceRange callSite) {
+  std::vector<std::unique_ptr<Expr>> args =
+      parseSereExprList(*diagnostics_, rawText, rawRange.start);
+  if (def.variadic()) {
+    if (!def.params().empty()) {
+      env.exprs[def.params().front()] = std::move(args);
+    }
+  } else {
+    if (args.size() != def.params().size()) {
+      return false;
+    }
+    for (std::size_t index = 0; index < args.size(); ++index) {
+      env.exprs[def.params()[index]].push_back(std::move(args[index]));
+    }
+  }
+  if (def.typed() && !def.params().empty() && !env.exprs[def.params().front()].empty()) {
+    std::vector<std::unique_ptr<Expr>> typeofArgs;
+    typeofArgs.push_back(cloneExpr(*env.exprs[def.params().front()].front()));
+    env.exprs["type"].push_back(
+        std::make_unique<CallExpr>(callSite,
+                                   std::make_unique<NameExpr>(callSite, "typeof"),
+                                   std::vector<std::unique_ptr<TypeExpr>>{},
+                                   std::move(typeofArgs)));
+  }
+  return true;
+}
+
 std::unique_ptr<Expr> MacroExpander::expandDef(const MacroDef& def,
                                                const std::string& rawText,
                                                SourceRange rawRange,
@@ -754,36 +844,16 @@ std::unique_ptr<Expr> MacroExpander::expandDef(const MacroDef& def,
     return expandMatch(def, wrapped, callSite);
   }
   MacroBindings env;
-  std::vector<std::unique_ptr<Expr>> args =
-      parseSereExprList(*diagnostics_, rawText, rawRange.start);
-  if (def.variadic()) {
-    if (!def.params().empty()) {
-      env.exprs[def.params().front()] = std::move(args);
-    }
-  } else {
-    if (args.size() != def.params().size()) {
-      diagnostics_->error(callSite, "macro '" + def.name() + "' argument count mismatch");
-      return nullptr;
-    }
-    for (std::size_t index = 0; index < args.size(); ++index) {
-      env.exprs[def.params()[index]].push_back(std::move(args[index]));
-    }
-  }
-  if (def.typed() && !def.params().empty() && !env.exprs[def.params().front()].empty()) {
-    std::vector<std::unique_ptr<Expr>> typeofArgs;
-    typeofArgs.push_back(cloneExpr(*env.exprs[def.params().front()].front()));
-    auto typeofCall = std::make_unique<CallExpr>(callSite,
-                                                 std::make_unique<NameExpr>(callSite, "typeof"),
-                                                 std::vector<std::unique_ptr<TypeExpr>>{},
-                                                 std::move(typeofArgs));
-    env.exprs["type"].push_back(std::move(typeofCall));
+  if (!macroBindings(def, rawText, rawRange, env, callSite)) {
+    diagnostics_->error(callSite, "macro '" + def.name() + "' argument count mismatch");
+    return nullptr;
   }
   return expandQuote(def, std::move(env), callSite);
 }
 
 std::unique_ptr<Expr>
 MacroExpander::expandQuote(const MacroDef& def, MacroBindings env, SourceRange callSite) {
-  std::vector<std::unique_ptr<Stmt>> body = substStmts(def.quoteBody(), env, nextMark_++, callSite);
+  std::vector<std::unique_ptr<Stmt>> body = expandQuoteStmts(def, std::move(env), callSite);
   if (body.size() == 1 && body.front()->kind() == NodeKind::ExprStmt) {
     return cloneExpr(static_cast<const ExprStmt&>(*body.front()).expression());
   }
@@ -797,6 +867,12 @@ MacroExpander::expandQuote(const MacroDef& def, MacroBindings env, SourceRange c
     return nullptr;
   }
   return cloneExpr(static_cast<const ExprStmt&>(*body.back()).expression());
+}
+
+std::vector<std::unique_ptr<Stmt>> MacroExpander::expandQuoteStmts(const MacroDef& def,
+                                                                  MacroBindings env,
+                                                                  SourceRange callSite) {
+  return substStmts(def.quoteBody(), env, nextMark_++, callSite);
 }
 
 std::unique_ptr<Expr> MacroExpander::expandMatch(const MacroDef& def,

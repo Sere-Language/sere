@@ -435,9 +435,10 @@ private:
         }
         const std::string& opcode = operation->opcode();
         if (opcode != "branch" && opcode != "cond_branch") {
-          // A `throw` reaches its handler through an attribute rather than a
-          // branch edge, so the dispatch block has to stay reachable.
-          if (opcode == "throw") {
+          // A `throw` and a failed `assert` reach their handler through an
+          // attribute rather than a branch edge, so the dispatch block has to
+          // stay reachable.
+          if (opcode == "throw" || opcode == "assert") {
             const std::string label = attributeAt(*operation, "handler");
             if (!label.empty() && labels.contains(label) && reachable.insert(label).second) {
               pending.push_back(label);

@@ -44,6 +44,14 @@ private:
                                   SourceRange callSite,
                                   MacroDelimiter delimiter);
   std::unique_ptr<Expr> expandQuote(const MacroDef& def, MacroBindings env, SourceRange callSite);
+  std::vector<std::unique_ptr<Stmt>>
+  expandQuoteStmts(const MacroDef& def, MacroBindings env, SourceRange callSite);
+  bool macroBindings(const MacroDef& def,
+                     const std::string& rawText,
+                     SourceRange rawRange,
+                     MacroBindings& env,
+                     SourceRange callSite);
+  std::unique_ptr<Expr> expandInvokeExprHoisted(const MacroInvokeExpr& invoke);
   std::unique_ptr<Expr>
   expandMatch(const MacroDef& def, const std::vector<Token>& tokens, SourceRange callSite);
   std::unique_ptr<Expr> expandRaw(const MacroDef& def,
@@ -58,6 +66,10 @@ private:
   MacroEnv* env_;
   std::uint32_t fuel_;
   std::uint32_t nextMark_ = 1;
+  /// Statements a quote body contributed while an expression was being
+  /// expanded; the enclosing statement list splices them in front of the
+  /// statement that used the macro.
+  std::vector<std::unique_ptr<Stmt>>* hoistTarget_ = nullptr;
 };
 
 } // namespace sere

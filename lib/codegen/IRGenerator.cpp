@@ -3797,6 +3797,45 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
       return builder.getInt1(expr.op() == BinaryOp::Is ? match : !match);
     }
   }
+  // `tone is Color.Green` tests enum identity. Sema types the variant operand as
+  // a type object (a type test shape), so the variant itself is not lowered as a
+  // value: the tag comes from the enum's field table instead.
+  if ((expr.op() == BinaryOp::Is || expr.op() == BinaryOp::IsNot) &&
+      expr.right().kind() == NodeKind::MemberExpr) {
+    const auto& member = static_cast<const MemberExpr&>(expr.right());
+    const auto enumOf = [](const Type* type) -> const Type* {
+      if (type == nullptr) {
+        return nullptr;
+      }
+      if (type->isEnum()) {
+        return type->canonical();
+      }
+      if (type->isTypeObject() && type->typeObjectInstance() != nullptr) {
+        const Type* instance = type->typeObjectInstance()->canonical();
+        if (instance != nullptr && instance->isEnum()) {
+          return instance;
+        }
+      }
+      return nullptr;
+    };
+    const Type* enumType = enumOf(resolveType(expr.right().resolvedType()));
+    if (enumType == nullptr) {
+      enumType = enumOf(resolveType(member.object().resolvedType()));
+    }
+    const Type* leftType = resolveType(expr.left().resolvedType());
+    if (enumType != nullptr && leftType != nullptr && leftType->isEnum() &&
+        leftType->canonical() == enumType->canonical()) {
+      const RecordField* field = enumType->findField(member.field());
+      if (field != nullptr && !field->llvmName.empty()) {
+        llvm::Value* left = emitExpr(builder, expr.left());
+        if (left != nullptr) {
+          llvm::Value* match = builder.CreateICmpEQ(
+              emitEnumTag(builder, left), builder.getInt32(enumTagFromField(field)));
+          return expr.op() == BinaryOp::Is ? match : builder.CreateNot(match);
+        }
+      }
+    }
+  }
   if ((expr.op() == BinaryOp::Is || expr.op() == BinaryOp::IsNot) &&
       asName(expr.right()) != nullptr) {
     const Type* target =
@@ -3871,6 +3910,14 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
   llvm::Value* left = emitExpr(builder, expr.left());
   llvm::Value* right = emitExpr(builder, expr.right());
   if (left == nullptr || right == nullptr) {
+    if (left == nullptr) {
+      diagnostics_->error(expr.left().range(),
+                          "cannot lower the left operand of this operator");
+    }
+    if (right == nullptr) {
+      diagnostics_->error(expr.right().range(),
+                          "cannot lower the right operand of this operator");
+    }
     return nullptr;
   }
   const Type* leftType =
@@ -4980,6 +5027,7 @@ llvm::Value* IRGenerator::emitComprehension(llvm::IRBuilder<>& builder,
 bool IRGenerator::emitAssert(llvm::IRBuilder<>& builder, const AssertStmt& statement) {
   llvm::Value* cond = emitExpr(builder, statement.condition());
   if (cond == nullptr) {
+    diagnostics_->error(statement.range(), "cannot lower this assert condition");
     return false;
   }
   llvm::Function* function = builder.GetInsertBlock()->getParent();

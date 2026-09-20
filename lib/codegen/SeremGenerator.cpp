@@ -281,6 +281,14 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
       }
     } else if (statement != nullptr && statement->kind() == NodeKind::ClassDef) {
       const auto& classDef = static_cast<const ClassDef&>(*statement);
+      // A generic class only has concrete methods once a type argument is
+      // known, so its unspecialised bodies are skipped and the per-instantiation
+      // symbols registered below stand in for them.
+      const bool genericClass =
+          classDef.resolvedType() != nullptr && !classDef.resolvedType()->typeParams().empty();
+      if (genericClass) {
+        continue;
+      }
       for (const std::unique_ptr<FunctionDef>& method : classDef.methods()) {
         if (!prefix.empty()) functionNames_[method.get()] = prefix + "_" + functionName(*method);
         const Type* type = functionType(*method);
@@ -299,13 +307,37 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
     if (inst.specializedType != nullptr && !functions_.contains(inst.llvmName)) {
       functions_.insert_or_assign(inst.llvmName, lowerType(inst.specializedType));
     }
+    // A method of a generic class is only callable through the instantiated
+    // class name, which is what `methodSymbol` looks up first.
+    if (!inst.isMethod || inst.llvmName.empty() || inst.specializedType == nullptr) {
+      continue;
+    }
+    for (const Type* klass : classes_) {
+      if (klass == nullptr || klass->typeParams().empty() ||
+          klass->methodIndex(inst.sourceName) < 0 ||
+          klass->typeParams().size() != inst.args.size()) {
+        continue;
+      }
+      std::string owner = klass->name() + "[";
+      for (std::size_t index = 0; index < inst.args.size(); ++index) {
+        if (index != 0) owner += ", ";
+        owner += inst.args[index] == nullptr ? std::string{"?"} : inst.args[index]->display();
+      }
+      owner += "]";
+      methodSymbols_[owner + "::" + inst.sourceName] = inst.llvmName;
+    }
   }
   for (const Module* current : modules) {
     for (const auto& statement : current->statements()) {
       if (statement->kind() == NodeKind::FunctionDef &&
           !emitFunction(static_cast<const FunctionDef&>(*statement))) return nullptr;
       if (statement->kind() == NodeKind::ClassDef) {
-        for (const auto& method : static_cast<const ClassDef&>(*statement).methods())
+        const auto& classDef = static_cast<const ClassDef&>(*statement);
+        if (classDef.resolvedType() != nullptr &&
+            !classDef.resolvedType()->typeParams().empty()) {
+          continue;
+        }
+        for (const auto& method : classDef.methods())
           if (!emitFunction(*method)) return nullptr;
       }
     }
@@ -528,6 +560,24 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
                                   {{"symbol", symbol}});
         return true;
       }
+      const Type* objectType = member.object().resolvedType();
+      const serem::IRType lowered = lowerType(objectType);
+      // A value `struct` lives in a stack slot rather than behind a pointer, so
+      // the field is updated by storing the rebuilt aggregate back into it.
+      if (lowered.kind() == serem::IRType::Kind::Struct &&
+          member.object().kind() == NodeKind::NameExpr) {
+        const auto& name = static_cast<const NameExpr&>(member.object());
+        if (serem::ValuePtr slot = local(name.name())) {
+          const int index = objectType == nullptr ? -1 : objectType->fieldIndex(member.field());
+          if (index >= 0) {
+            const serem::ValuePtr current = builder_->load(slot, lowered);
+            const serem::ValuePtr updated =
+                builder_->insert(current, value, static_cast<std::size_t>(index), lowered);
+            builder_->store(updated, slot);
+            return true;
+          }
+        }
+      }
       (void)builder_->operation("member.set", serem::IRType::voidType(),
                                 {emitExpression(member.object()), value},
                                 {{"field", member.field()},
@@ -684,8 +734,14 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
   }
   case NodeKind::AssertStmt: {
     const auto& assertion = static_cast<const AssertStmt&>(statement);
-    (void)builder_->operation("assert", serem::IRType::voidType(),
-                              {emitExpression(assertion.condition())});
+    std::vector<serem::ValuePtr> operands{emitExpression(assertion.condition())};
+    if (assertion.message() != nullptr && assertion.message()->resolvedType() != nullptr &&
+        assertion.message()->resolvedType()->isNamed("str")) {
+      operands.push_back(emitExpression(*assertion.message()));
+    }
+    (void)builder_->operation(
+        "assert", serem::IRType::voidType(), std::move(operands),
+        {{"handler", tryHandlers_.empty() ? std::string{} : tryHandlers_.back()}});
     return true;
   }
   case NodeKind::WithStmt: {
@@ -878,16 +934,16 @@ bool SeremGenerator::emitWhile(const WhileStmt& statement) {
 bool SeremGenerator::emitFor(const ForStmt& statement) {
   const Type* iterable = statement.iterable().resolvedType();
   const Type* custom = iterable == nullptr ? nullptr : iterable->valueType();
-  // A class iterator is a coroutine (`Iterator[T]`), and coroutines lower as
-  // no-ops in the Serem backend, so iterating one would read garbage.
+  serem::ValuePtr customIterator;
   if (custom != nullptr && custom->isRecord() && custom->methodIndex("__iter__") >= 0) {
-    return unsupported(statement, "for-in over a class __iter__");
+    customIterator = callMethod(custom, "__iter__", emitExpression(statement.iterable()), {});
+    iterable = custom->dunderReturn("__iter__");
   }
   // A generator function call produces values through a coroutine: resume it,
   // read the promise while it is suspended, and stop once it is done.
   if (iterable != nullptr && iterable->isGenericCtor("Iterator")) {
     const Type* elementType = iterable->genericArg(0);
-    const serem::ValuePtr iterator = emitExpression(statement.iterable());
+    const serem::ValuePtr iterator = customIterator != nullptr ? customIterator : emitExpression(statement.iterable());
     const std::unordered_map<std::string, std::string> attributes{
         {"element", elementType == nullptr ? std::string{} : elementType->display()}};
     const serem::IRType loweredElement = lowerType(elementType);
@@ -1257,7 +1313,36 @@ serem::ValuePtr SeremGenerator::emitBinary(const BinaryExpr& expression) {
   serem::ValuePtr left = emitExpression(expression.left());
   serem::ValuePtr right = expression.op() == BinaryOp::Is || expression.op() == BinaryOp::IsNot
                               ? nullptr : emitExpression(expression.right());
+  // `None` is the absence of a value, so `x == None` and `x != None` are null
+  // checks rather than a comparison against a literal.
+  const bool leftNone = expression.left().kind() == NodeKind::NoneLiteral;
+  const bool rightNone = expression.right().kind() == NodeKind::NoneLiteral;
+  if (leftNone != rightNone && (expression.op() == BinaryOp::Eq || expression.op() == BinaryOp::Ne)) {
+    const bool positive = expression.op() == BinaryOp::Eq;
+    return builder_->operation("pointer.is_null", serem::IRType::boolType(),
+                               {leftNone ? right : left},
+                               {{"negated", positive ? "false" : "true"}});
+  }
   const serem::IRType type = lowerType(expression.resolvedType());
+  const Type* lhsType = expression.left().resolvedType();
+  const Type* rhsType = expression.right().resolvedType();
+  if (lhsType != nullptr && rhsType != nullptr && lhsType->isList() && rhsType->isList() &&
+      (expression.op() == BinaryOp::Eq || expression.op() == BinaryOp::Ne)) {
+    const Type* element = lhsType->elementType();
+    const int kind = element->isNamed("str") ? 1 : element->isNamed("f32") ? 2 : element->isNamed("f64") ? 3 : 0;
+    return builder_->operation("list.equal", type, {left, right},
+        {{"kind", std::to_string(kind)}, {"negated", expression.op() == BinaryOp::Ne ? "true" : "false"}});
+  }
+  if (expression.op() == BinaryOp::Add && lhsType->isList() && rhsType->isList())
+    return builder_->operation("list.concat", type, {left, right});
+  if (expression.op() == BinaryOp::Mul && (lhsType->isList() || rhsType->isList()))
+    return builder_->operation("list.repeat", type, lhsType->isList() ? std::vector<serem::ValuePtr>{left, right}
+                                                                    : std::vector<serem::ValuePtr>{right, left});
+  if (expression.op() == BinaryOp::Add && lhsType->isNamed("str"))
+    return builder_->operation("string.concat", type, {left, right});
+  if (expression.op() == BinaryOp::Mul && (lhsType->isNamed("str") || rhsType->isNamed("str")))
+    return builder_->operation("string.repeat", type, lhsType->isNamed("str") ? std::vector<serem::ValuePtr>{left, right}
+                                                                            : std::vector<serem::ValuePtr>{right, left});
   switch (expression.op()) {
   case BinaryOp::Add: return builder_->add(left, right, type);
   case BinaryOp::Sub: return builder_->sub(left, right, type);
@@ -1729,7 +1814,9 @@ serem::ValuePtr SeremGenerator::emitIndex(const IndexExpr& expression) {
   if (expression.hasStart()) operands.push_back(emitExpression(*expression.start()));
   if (expression.hasStop()) operands.push_back(emitExpression(*expression.stop()));
   return builder_->operation(expression.isSlice() ? "slice" : "index",
-                             lowerType(expression.resolvedType()), std::move(operands));
+                             lowerType(expression.resolvedType()), std::move(operands),
+                             {{"has.start", expression.hasStart() ? "true" : "false"},
+                              {"has.stop", expression.hasStop() ? "true" : "false"}});
 }
 
 serem::ValuePtr SeremGenerator::emitAggregate(const Expr& expression) {

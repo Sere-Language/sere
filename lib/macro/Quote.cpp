@@ -675,9 +675,22 @@ std::vector<std::unique_ptr<Stmt>> substStmts(const std::vector<std::unique_ptr<
                                               std::uint32_t mark,
                                               SourceRange callSite) {
   std::vector<std::unique_ptr<Stmt>> out;
+  // Hygiene covers the whole quote body: a name a quote introduces has to be
+  // renamed in every statement that declares or uses it, not just the one the
+  // declaration happens to sit in.
+  std::unordered_set<std::string> declared;
+  for (const std::unique_ptr<Stmt>& stmt : body) {
+    if (stmt != nullptr) {
+      collectDeclNames(*stmt, declared);
+    }
+  }
+  std::unordered_map<std::string, std::string> renames;
+  for (const std::string& name : declared) {
+    renames[name] = "__m" + std::to_string(mark) + "_" + name;
+  }
   for (const std::unique_ptr<Stmt>& stmt : body) {
     std::unique_ptr<Stmt> cloned = cloneStmt(*stmt);
-    applyHygiene(*cloned, mark);
+    rewriteNames(*cloned, renames);
     if (cloned->kind() == NodeKind::ExprStmt) {
       auto expr = substOne(static_cast<const ExprStmt&>(*cloned).expression(), env, callSite);
       out.push_back(std::make_unique<ExprStmt>(callSite, std::move(expr)));
