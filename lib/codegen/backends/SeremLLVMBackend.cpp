@@ -1788,8 +1788,18 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
   } else if (opcode == "return") {
     if (operands.empty() && currentFunctionName_ == "main") {
       builder_->builder.CreateRet(llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_), 0));
-    } else if (operands.empty()) builder_->builder.CreateRetVoid();
-    else builder_->builder.CreateRet(operand(0));
+    } else if (operands.empty()) {
+      // A bare `return` in a function that does return a value yields zero, so
+      // the instruction matches the function's own signature.
+      llvm::Function* function = builder_->builder.GetInsertBlock()->getParent();
+      if (function->getReturnType()->isVoidTy()) {
+        builder_->builder.CreateRetVoid();
+      } else {
+        builder_->builder.CreateRet(llvm::Constant::getNullValue(function->getReturnType()));
+      }
+    } else {
+      builder_->builder.CreateRet(operand(0));
+    }
   } else if (opcode == "unreachable")
     builder_->builder.CreateUnreachable();
   else if (opcode == "branch") {

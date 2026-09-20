@@ -1185,8 +1185,18 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
   case NodeKind::ReturnStmt: {
     const auto& result = static_cast<const ReturnStmt&>(statement);
     emitDeferred();
-    if (result.value() == nullptr) builder_->retVoid();
-    else builder_->ret(coerce(emitExpression(*result.value()), result.value()->resolvedType(), returnType_));
+    if (result.value() == nullptr) {
+      // A generator's frame is owned by its coroutine: a bare `return` suspends
+      // for the last time instead of returning a value the frame does not hold.
+      if (coroutineToken_ != nullptr) {
+        builder_->coroEnd();
+        return true;
+      }
+      builder_->retVoid();
+    } else {
+      builder_->ret(
+          coerce(emitExpression(*result.value()), result.value()->resolvedType(), returnType_));
+    }
     return true;
   }
   case NodeKind::ExprStmt:
@@ -2257,35 +2267,75 @@ serem::ValuePtr SeremGenerator::emitComprehension(const ComprehensionExpr& expre
   const Type* resultType = expression.resolvedType();
   const Type* elementType =
       resultType != nullptr && resultType->isList() ? resultType->elementType() : resultType;
+  if (elementType == nullptr) {
+    (void)unsupported(expression, "comprehension without a result element type");
+    return std::make_shared<serem::ConstantInt>(0, lowerType(resultType));
+  }
   const Type* iterableType = expression.iterable().resolvedType();
-  const Type* iterElement = iterableType == nullptr ? nullptr : iterableType->elementType();
-  if (elementType == nullptr || iterElement == nullptr) {
-    return nullptr;
+  // A class with `__iter__` yields a generator, which the coroutine protocol
+  // drives; a list or range is walked with the iterator helpers instead.
+  const Type* custom = iterableType == nullptr ? nullptr : iterableType->valueType();
+  serem::ValuePtr generator;
+  const Type* generatedElement = nullptr;
+  if (custom != nullptr && custom->isRecord() && custom->methodIndex("__iter__") >= 0) {
+    generator = callMethod(custom, "__iter__", emitExpression(expression.iterable()), {});
+    const Type* returned = custom->dunderReturn("__iter__");
+    if (returned != nullptr && returned->isGenericCtor("Iterator")) {
+      generatedElement = returned->genericArg(0);
+    }
+  }
+  const Type* iterElement = generatedElement != nullptr
+                                ? generatedElement
+                                : (iterableType == nullptr ? nullptr : iterableType->elementType());
+  if (iterElement == nullptr) {
+    (void)unsupported(expression, "comprehension over an iterable without an element type");
+    return std::make_shared<serem::ConstantInt>(0, lowerType(resultType));
   }
   std::unordered_map<std::string, std::string> listAttributes;
   listAttributes["element"] = elementType->display();
   listAttributes["element.kind"] = listElementKindText(elementType);
   const serem::ValuePtr list =
       builder_->operation("aggregate.list", lowerType(resultType), {}, listAttributes);
-  const serem::ValuePtr source = emitExpression(expression.iterable());
-  const std::unordered_map<std::string, std::string> iteratorAttributes{
+  serem::ValuePtr source;
+  serem::ValuePtr iterator;
+  if (generator == nullptr) {
+    source = emitExpression(expression.iterable());
+  }
+  std::unordered_map<std::string, std::string> iteratorAttributes{
       {"element", iterElement->display()}};
-  const serem::ValuePtr iterator = builder_->operation(
-      "iter.begin", serem::IRType::ptr(serem::IRType::i64()), {source}, iteratorAttributes);
+  if (generator == nullptr) {
+    iterator = builder_->operation(
+        "iter.begin", serem::IRType::ptr(serem::IRType::i64()), {source}, iteratorAttributes);
+  }
   serem::BasicBlock* condition = &function_->addBlock("comp.cond");
   serem::BasicBlock* body = &function_->addBlock("comp.body");
   serem::BasicBlock* exit = &function_->addBlock("comp.end");
   if (!builder_->currentBlock().isTerminated())
     (void)builder_->branch(*condition);
   builder_->setInsertBlock(*condition);
-  serem::ValuePtr hasNext = builder_->operation(
-      "iter.has_next", serem::IRType::boolType(), {source, iterator}, iteratorAttributes);
-  (void)builder_->conditionalBranch(std::move(hasNext), *body, *exit);
-  builder_->setInsertBlock(*body);
-  serem::ValuePtr next = builder_->operation(
-      "iter.next", lowerType(iterElement), {source, iterator}, iteratorAttributes);
-  serem::ValuePtr slot = builder_->alloca(next->type());
-  builder_->store(next, slot);
+  serem::ValuePtr element;
+  if (generator != nullptr) {
+    (void)builder_->operation(
+        "coro.resume", serem::IRType::voidType(), {generator}, iteratorAttributes);
+    serem::ValuePtr done = builder_->operation(
+        "coro.done", serem::IRType::boolType(), {generator}, iteratorAttributes);
+    (void)builder_->conditionalBranch(std::move(done), *exit, *body);
+    builder_->setInsertBlock(*body);
+    element = builder_->load(builder_->operation("coro.promise",
+                                                 serem::IRType::ptr(lowerType(iterElement)),
+                                                 {generator},
+                                                 iteratorAttributes),
+                             lowerType(iterElement));
+  } else {
+    serem::ValuePtr hasNext = builder_->operation(
+        "iter.has_next", serem::IRType::boolType(), {source, iterator}, iteratorAttributes);
+    (void)builder_->conditionalBranch(std::move(hasNext), *body, *exit);
+    builder_->setInsertBlock(*body);
+    element = builder_->operation(
+        "iter.next", lowerType(iterElement), {source, iterator}, iteratorAttributes);
+  }
+  serem::ValuePtr slot = builder_->alloca(lowerType(iterElement));
+  builder_->store(element, slot);
   // The loop variable only exists inside the comprehension.
   const auto previousLocal = locals_.find(expression.name());
   const auto previousType = localTypes_.find(expression.name());
@@ -2304,6 +2354,10 @@ serem::ValuePtr SeremGenerator::emitComprehension(const ComprehensionExpr& expre
   if (!builder_->currentBlock().isTerminated())
     (void)builder_->branch(*condition);
   builder_->setInsertBlock(*exit);
+  if (generator != nullptr) {
+    (void)builder_->operation(
+        "coro.destroy", serem::IRType::voidType(), {generator}, iteratorAttributes);
+  }
   if (hadLocal) {
     locals_[expression.name()] = savedLocal;
   } else {
