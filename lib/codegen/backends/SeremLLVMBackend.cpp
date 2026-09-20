@@ -887,6 +887,11 @@ std::unique_ptr<llvm::Module> SeremLLVMBackend::emit(const serem::IRModule& modu
   values_.clear();
   for (const auto& type : module.types()) (void)lowerType(type->type());
   for (const auto& function : module.functions()) {
+    // External declarations are materialized lazily by ensureExternal when a
+    // call actually references them, so unrelated externs (such as runtime
+    // intrinsics the frontend lowers to dedicated operations) never emit a
+    // declaration whose signature could clash with the runtime library.
+    if (function->isExternal()) continue;
     std::vector<llvm::Type*> params;
     for (const serem::IRType& param : function->parameters()) params.push_back(lowerType(param));
     llvm::Type* resultType = lowerType(function->resultType());
@@ -898,6 +903,7 @@ std::unique_ptr<llvm::Module> SeremLLVMBackend::emit(const serem::IRModule& modu
         functionType, llvm::Function::ExternalLinkage, function->name(), module_.get());
   }
   for (const auto& function : module.functions()) {
+    if (function->isExternal()) continue;
     currentFunctionName_ = function->name();
     llvm::Function* llvmFunction = functions_[function->name()];
     for (std::size_t index = 0; index < function->arguments().size(); ++index) {

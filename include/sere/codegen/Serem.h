@@ -125,12 +125,15 @@ private:
 class ConstantString final : public Value {
 public:
   explicit ConstantString(std::string value);
+  ConstantString(std::string value, std::string globalName);
   [[nodiscard]] const std::string& value() const;
   [[nodiscard]] ValueKind valueKind() const override;
   [[nodiscard]] std::string display() const override;
+  [[nodiscard]] std::string reference() const override;
 
 private:
   std::string value_;
+  std::string globalName_;
 };
 
 class Argument final : public Value {
@@ -209,6 +212,8 @@ public:
   [[nodiscard]] std::string nextValueName();
   void setAsync(bool value);
   void setGenerator(bool value);
+  void setExternal(bool value);
+  [[nodiscard]] bool isExternal() const;
   void setAttribute(std::string name, std::string value);
   [[nodiscard]] std::string display() const;
 
@@ -222,6 +227,7 @@ private:
   std::size_t nextValue_ = 0;
   bool async_ = false;
   bool generator_ = false;
+  bool external_ = false;
 };
 
 class TypeDef {

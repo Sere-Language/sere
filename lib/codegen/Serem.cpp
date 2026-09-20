@@ -110,9 +110,14 @@ std::string ConstantFloat::display() const {
 }
 
 ConstantString::ConstantString(std::string value) : Value(IRType::stringType()), value_(std::move(value)) {}
+ConstantString::ConstantString(std::string value, std::string globalName)
+    : Value(IRType::stringType()), value_(std::move(value)), globalName_(std::move(globalName)) {}
 const std::string& ConstantString::value() const { return value_; }
 ValueKind ConstantString::valueKind() const { return ValueKind::ConstantString; }
 std::string ConstantString::display() const { return "\"" + value_ + "\""; }
+std::string ConstantString::reference() const {
+  return globalName_.empty() ? display() : "@" + globalName_;
+}
 
 Argument::Argument(std::string name, IRType type) : Value(std::move(type)), name_(std::move(name)) {}
 const std::string& Argument::name() const { return name_; }
@@ -213,18 +218,19 @@ BasicBlock& IRFunction::addBlock(std::string label) {
 std::string IRFunction::nextValueName() { return std::to_string(nextValue_++); }
 void IRFunction::setAsync(bool value) { async_ = value; }
 void IRFunction::setGenerator(bool value) { generator_ = value; }
+void IRFunction::setExternal(bool value) { external_ = value; }
+bool IRFunction::isExternal() const { return external_; }
 void IRFunction::setAttribute(std::string name, std::string value) {
   attributes_.insert_or_assign(std::move(name), std::move(value));
 }
 std::string IRFunction::display() const {
-  std::string text = (async_ ? "async " : "") + std::string(generator_ ? "generator " : "") +
-                     "func @" + name_ + "(";
+  std::string text = (external_ ? "extern " : "") + (async_ ? "async " : "") +
+                     std::string(generator_ ? "generator " : "") + "func @" + name_ + "(";
   for (std::size_t index = 0; index < arguments_.size(); ++index) {
     if (index != 0) text += ", ";
     text += arguments_[index]->display() + ": " + arguments_[index]->type().display();
   }
-  text += ") -> " + result_.display();
-  if (!attributes_.empty()) {
+  text += ") -> " + result_.display();  if (external_) return text + "\n";  if (!attributes_.empty()) {
     text += " [";
     bool first = true;
     for (const auto& [key, value] : attributes_) {

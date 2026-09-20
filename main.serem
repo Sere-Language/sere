@@ -15,10 +15,17 @@ type @RecursionError = %RecursionError [class]
 type @NotImplementedError = %NotImplementedError [class]
 type @Person = %Person [class, field=name:0, field=age:1]
 type @Mayor = %Mayor [class, field=city:2]
-global @str.0 = str "Alice"
-global @str.1 = str "Bob"
-global @str.2 = str "Springfield"
-func @input(%arg0: str) -> str {
+global @str.0 = str "Hello, my name is "
+global @str.1 = str ", I am "
+global @str.2 = str " years old."
+global @str.3 = str "Hello, my name is "
+global @str.4 = str ", I am "
+global @str.5 = str " years old, and I am the mayor of "
+global @str.6 = str "."
+global @str.7 = str "Alice"
+global @str.8 = str "Bob"
+global @str.9 = str "Springfield"
+func @sere_input(%arg0: str) -> str {
 entry:
   unreachable
 }
@@ -99,7 +106,7 @@ func @Person.introduce(%arg0: %Person) -> str {
 entry:
   %0 = member.get str %arg0 {field = name, index = 0}
   %1 = member.get i32 %arg0 {field = age, index = 1}
-  %2 = string.concat str "Hello, my name is ", %0, ", I am ", %1, " years old."
+  %2 = string.concat str @str.0, %0, @str.1, %1, @str.2
   return %2
 }
 func @Mayor.__init__(%arg0: %Mayor, %arg1: str, %arg2: i32, %arg3: str) -> void {
@@ -113,7 +120,7 @@ entry:
   %0 = member.get str %arg0 {field = name, index = 0}
   %1 = member.get i32 %arg0 {field = age, index = 1}
   %2 = member.get str %arg0 {field = city, index = 2}
-  %3 = string.concat str "Hello, my name is ", %0, ", I am ", %1, " years old, and I am the mayor of ", %2, "."
+  %3 = string.concat str @str.3, %0, @str.4, %1, @str.5, %2, @str.6
   return %3
 }
 func @print_name(%arg0: %union) -> void {
@@ -134,7 +141,7 @@ if.body1:
 }
 func @main() -> void {
 entry:
-  %0 = construct %Person "Alice", 25 {type = Person}
+  %0 = construct %Person @str.7, 25 {type = Person}
   %1 = alloca Ptr[%Person]
   store %0, %1
   %2 = load %Person %1
@@ -143,7 +150,7 @@ entry:
   store %3, %4
   %5 = load str %4
   runtime.print %5
-  %6 = construct %Mayor "Bob", 45, "Springfield" {type = Mayor}
+  %6 = construct %Mayor @str.8, 45, @str.9 {type = Mayor}
   %7 = alloca Ptr[%Mayor]
   store %6, %7
   %8 = load %Mayor %7

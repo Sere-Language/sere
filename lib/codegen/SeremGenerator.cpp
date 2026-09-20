@@ -79,6 +79,7 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
                                                        const std::vector<std::string>* importedNames) {
   module_ = std::make_unique<serem::IRModule>(std::move(moduleName));
   functions_.clear();
+  functionSymbols_.clear();
   decorators_.clear();
   classBases_.clear();
   classFields_.clear();
@@ -107,7 +108,11 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
         decorators_[function.name()] = function.decorators().front();
       }
       const Type* type = functionType(function);
-      if (type != nullptr) functions_.insert_or_assign(functionName(function), lowerType(type));
+      if (type != nullptr) {
+        const std::string symbol = functionName(function);
+        functions_.insert_or_assign(symbol, lowerType(type));
+        functionSymbols_.insert_or_assign(function.name(), symbol);
+      }
     } else if (statement != nullptr && statement->kind() == NodeKind::ClassDef) {
       const auto& classDef = static_cast<const ClassDef&>(*statement);
       for (const std::unique_ptr<FunctionDef>& method : classDef.methods()) {
@@ -187,10 +192,24 @@ bool SeremGenerator::emitFunction(const FunctionDef& function) {
   for (const Type* param : type->paramTypes()) params.push_back(lowerType(param));
   auto irFunction = std::make_unique<serem::IRFunction>(functionName(function), std::move(params),
                                                         lowerType(type->returnType()));
+  if (function.isExtern() && function.body().empty()) {
+    // Extern declarations are defined by the runtime or a C library. Emitting a
+    // body here would clash with that definition at link time, so keep the
+    // function bodyless and let the backend emit a declaration.
+    irFunction->setExternal(true);
+    (void)module_->addFunction(std::move(irFunction));
+    return true;
+  }
   function_ = &module_->addFunction(std::move(irFunction));
   currentOwnerClass_ = function.ownerClass();
   function_->setAsync(function.isAsync());
   function_->setGenerator(function.isGenerator());
+  function_->setExternal(function.isExtern());
+  if (function.isExtern()) {
+    // External functions are declarations only: the implementation is supplied by
+    // the runtime library or a linked native library under the extern symbol.
+    return true;
+  }
   for (const std::string& decorator : function.decorators()) {
     function_->setAttribute("decorator." + decorator, "true");
   }
@@ -514,6 +533,14 @@ bool SeremGenerator::emitFor(const ForStmt& statement) {
   return true;
 }
 
+serem::ValuePtr SeremGenerator::stringValue(std::string_view value) {
+  const std::string text(value);
+  const std::string name = "str." + std::to_string(module_->globals().size());
+  (void)module_->addGlobal(std::make_unique<serem::GlobalConstant>(
+      name, serem::IRType::stringType(), serem::ConstantString(text).display()));
+  return std::make_shared<serem::ConstantString>(text, name);
+}
+
 serem::ValuePtr SeremGenerator::emitExpression(const Expr& expression) {
   switch (expression.kind()) {
   case NodeKind::IntegerLiteral: {
@@ -526,16 +553,13 @@ serem::ValuePtr SeremGenerator::emitExpression(const Expr& expression) {
   }
   case NodeKind::StringLiteral: {
     const std::string& value = static_cast<const StringLiteral&>(expression).value();
-    const std::string name = "str." + std::to_string(module_->globals().size());
-    (void)module_->addGlobal(std::make_unique<serem::GlobalConstant>(
-        name, serem::IRType::stringType(), serem::ConstantString(value).display()));
-    return std::make_shared<serem::ConstantString>(value);
+    return stringValue(value);
   }
   case NodeKind::InterpolatedStringExpr: {
     const auto& interpolated = static_cast<const InterpolatedStringExpr&>(expression);
     std::vector<serem::ValuePtr> parts;
     for (const StringPart& part : interpolated.parts()) {
-      if (!part.literal.empty()) parts.push_back(std::make_shared<serem::ConstantString>(part.literal));
+      if (!part.literal.empty()) parts.push_back(stringValue(part.literal));
       if (part.value != nullptr) {
         serem::ValuePtr value = emitExpression(*part.value);
         const Type* valueType = part.value->resolvedType();
@@ -546,7 +570,7 @@ serem::ValuePtr SeremGenerator::emitExpression(const Expr& expression) {
         parts.push_back(std::move(value));
       }
     }
-    if (parts.empty()) return std::make_shared<serem::ConstantString>("");
+    if (parts.empty()) return stringValue("");
     return builder_->operation("string.concat", serem::IRType::stringType(), std::move(parts));
   }
   case NodeKind::BooleanLiteral:
@@ -614,7 +638,11 @@ serem::ValuePtr SeremGenerator::emitName(const NameExpr& expression) {
     return builder_->load(value, type);
   }
   const auto found = functions_.find(expression.name());
-  if (found != functions_.end()) return std::make_shared<serem::FunctionRef>(expression.name(), found->second);
+  if (found != functions_.end()) {
+    const auto symbol = functionSymbols_.find(expression.name());
+    return std::make_shared<serem::FunctionRef>(
+        symbol == functionSymbols_.end() ? expression.name() : symbol->second, found->second);
+  }
   return std::make_shared<serem::FunctionRef>(expression.name(), lowerType(expression.resolvedType()));
 }
 
@@ -751,7 +779,7 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
                                          expression.arguments()[0]->resolvedType() == nullptr
                                      ? "Any"
                                      : expression.arguments()[0]->resolvedType()->display();
-    return std::make_shared<serem::ConstantString>(typeName);
+    return stringValue(typeName);
   }
   std::vector<serem::ValuePtr> args;
   if (expression.callee().kind() == NodeKind::NameExpr) {

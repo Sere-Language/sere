@@ -1,0 +1,93 @@
+module @docstrings
+type @Exception = %Exception [class, field=message:0]
+type @SyntaxError = %SyntaxError [class]
+type @IndentationError = %IndentationError [class]
+type @NameError = %NameError [class]
+type @AttributeError = %AttributeError [class]
+type @TypeError = %TypeError [class]
+type @IndexError = %IndexError [class]
+type @ImportError = %ImportError [class]
+type @ValueError = %ValueError [class]
+type @AssertionError = %AssertionError [class]
+type @PermissionError = %PermissionError [class]
+type @RuntimeError = %RuntimeError [class]
+type @RecursionError = %RecursionError [class]
+type @NotImplementedError = %NotImplementedError [class]
+type @Foo = %Foo [class]
+type @Point = %Point [struct, field=x:0, field=y:1]
+type @Color = %Color [enum, variant=Red, variant=Blue]
+func @sere_input(%arg0: str) -> str {
+entry:
+  unreachable
+}
+func @abs(%arg0: i32) -> i32 {
+entry:
+  %0 = cmp.lt i1 %arg0, 0
+  cond_branch %0 {true = if.body0, false = if.end}
+if.end:
+  return %arg0
+if.body0:
+  %1 = neg i32 %arg0
+  return %1
+}
+func @min(%arg0: i32, %arg1: i32) -> i32 {
+entry:
+  %0 = cmp.lt i1 %arg0, %arg1
+  cond_branch %0 {true = if.body0, false = if.body1}
+if.end:
+  unreachable
+if.body0:
+  return %arg0
+if.body1:
+  return %arg1
+}
+func @max(%arg0: i32, %arg1: i32) -> i32 {
+entry:
+  %0 = cmp.gt i1 %arg0, %arg1
+  cond_branch %0 {true = if.body0, false = if.body1}
+if.end:
+  unreachable
+if.body0:
+  return %arg0
+if.body1:
+  return %arg1
+}
+func @clamp(%arg0: i32, %arg1: i32, %arg2: i32) -> i32 {
+entry:
+  %0 = call i32 @max, %arg0, %arg1
+  %1 = call i32 @min, %0, %arg2
+  return %1
+}
+func @sign(%arg0: i32) -> i32 {
+entry:
+  %0 = cmp.gt i1 %arg0, 0
+  cond_branch %0 {true = if.body0, false = if.body1}
+if.end:
+  return 0
+if.body0:
+  return 1
+if.body1:
+  %1 = cmp.lt i1 %arg0, 0
+  cond_branch %1 {true = if.body1, false = if.end}
+  %2 = neg i32 1
+  return %2
+}
+func @prelude___init__(%arg0: %Exception, %arg1: str) -> void {
+entry:
+  member.set %arg0, %arg1 {field = message}
+  return
+}
+func @add(%arg0: i32, %arg1: i32) -> i32 {
+entry:
+  %0 = add i32 %arg0, %arg1
+  return %0
+}
+func @Foo.method(%arg0: %Foo, %arg1: str) -> str {
+entry:
+  %0 = builtin.method str %arg1 {name = str.upper}
+  return %0
+}
+func @main() -> i32 {
+entry:
+  return 0
+}

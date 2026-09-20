@@ -43,6 +43,7 @@ def main() -> None:
     mayor = Mayor("Bob", 45, "Springfield")
     mayor_introduction = mayor.introduce()
     print(mayor_introduction)
-    #print_name(mayor)
-    #print_name(person)
-    #print_name("Bob")
+
+    print_name(mayor)
+    print_name(person)
+    print_name("Bob")
