@@ -152,12 +152,14 @@ void appendExceptionType(std::string& chain, const Type* type) {
 } // namespace
 
 SeremGenerator::SeremGenerator(DiagnosticEngine& diagnostics, TypeContext& types)
-    : diagnostics_(&diagnostics) {
-  (void)types;
-}
+    : diagnostics_(&diagnostics), types_(&types) {}
 
 serem::IRType SeremGenerator::lowerType(const Type* type) const {
   if (type == nullptr || type->isVoidLike()) return serem::IRType::voidType();
+  if (!subst_.empty()) {
+    type = types_->substitute(type, subst_);
+    if (type == nullptr) return serem::IRType::ptr(serem::IRType::i8());
+  }
   type = type->canonical();
   if (type->isNamed("bool")) return serem::IRType::boolType();
   if (type->isInteger()) return integerType(type);
@@ -256,6 +258,13 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
     }
     }
   }
+  // Generic instantiations are emitted per concrete type argument, so a call
+  // site can name the specialized symbol directly.
+  for (const FunctionInstantiation& inst : types_->functionInstantiations()) {
+    if (inst.specializedType != nullptr && !functions_.contains(inst.llvmName)) {
+      functions_.insert_or_assign(inst.llvmName, lowerType(inst.specializedType));
+    }
+  }
   for (const Module* current : modules) {
     for (const auto& statement : current->statements()) {
       if (statement->kind() == NodeKind::FunctionDef &&
@@ -265,6 +274,38 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
           if (!emitFunction(*method)) return nullptr;
       }
     }
+  }
+  for (const FunctionInstantiation& inst : types_->functionInstantiations()) {
+    subst_.clear();
+    for (std::size_t index = 0; index < inst.typeParams.size() && index < inst.args.size();
+         ++index) {
+      subst_[inst.typeParams[index]] = inst.args[index];
+    }
+    const FunctionDef* source = nullptr;
+    for (const Module* current : modules) {
+      for (const auto& statement : current->statements()) {
+        if (statement->kind() == NodeKind::FunctionDef &&
+            static_cast<const FunctionDef&>(*statement).name() == inst.sourceName) {
+          source = static_cast<const FunctionDef*>(statement.get());
+          break;
+        }
+        if (statement->kind() == NodeKind::ClassDef) {
+          for (const auto& method : static_cast<const ClassDef&>(*statement).methods()) {
+            if (method->name() == inst.sourceName) {
+              source = method.get();
+              break;
+            }
+          }
+        }
+        if (source != nullptr) break;
+      }
+      if (source != nullptr) break;
+    }
+    if (source != nullptr && !emitFunction(*source, inst.llvmName)) {
+      subst_.clear();
+      return nullptr;
+    }
+    subst_.clear();
   }
   return std::move(module_);
 }
@@ -323,13 +364,18 @@ void SeremGenerator::declareEnum(const EnumDef& enumDef) {
       std::move(attributes)));
 }
 
-bool SeremGenerator::emitFunction(const FunctionDef& function) {
-  const Type* type = functionType(function);
-  if (type == nullptr) return unsupported(function, "function without a resolved type");
+bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbol) {
+  const Type* genericType = functionType(function);
+  if (genericType == nullptr) return unsupported(function, "function without a resolved type");
+  // A generic instantiation substitutes the caller's type arguments, so the
+  // emitted parameters, locals, and return type are concrete types.
+  const Type* type = subst_.empty() ? genericType : types_->substitute(genericType, subst_);
+  if (type == nullptr) type = genericType;
   std::vector<serem::IRType> params;
   for (const Type* param : type->paramTypes()) params.push_back(lowerType(param));
-  auto irFunction = std::make_unique<serem::IRFunction>(functionName(function), std::move(params),
-                                                        lowerType(type->returnType()));
+  auto irFunction = std::make_unique<serem::IRFunction>(
+      symbol.empty() ? functionName(function) : symbol, std::move(params),
+      lowerType(type->returnType()));
   if (function.isExtern() && function.body().empty()) {
     // Extern declarations are defined by the runtime or a C library. Emitting a
     // body here would clash with that definition at link time, so keep the
@@ -1428,7 +1474,18 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
     }
     return callMethod(callable, "__call__", emitExpression(expression.callee()), arguments);
   }
-  serem::ValuePtr callee = emitExpression(expression.callee());
+  serem::ValuePtr callee;
+  // A generic instantiation names its specialized symbol, which the type
+  // checker records on the call as the lowered name.
+  if (!expression.loweredName().empty() && expression.callee().kind() == NodeKind::NameExpr) {
+    const auto found = functions_.find(expression.loweredName());
+    if (found != functions_.end()) {
+      callee = std::make_shared<serem::FunctionRef>(expression.loweredName(), found->second);
+    }
+  }
+  if (callee == nullptr) {
+    callee = emitExpression(expression.callee());
+  }
   for (const std::unique_ptr<Expr>& argument : expression.arguments()) {
     const Type* expected = signature != nullptr && args.size() < signature->paramTypes().size()
                                ? signature->paramTypes()[args.size()] : argument->resolvedType();

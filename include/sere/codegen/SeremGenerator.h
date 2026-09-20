@@ -27,7 +27,7 @@ public:
 
 private:
   [[nodiscard]] serem::IRType lowerType(const Type* type) const;
-  [[nodiscard]] bool emitFunction(const FunctionDef& function);
+  [[nodiscard]] bool emitFunction(const FunctionDef& function, std::string symbol = {});
   [[nodiscard]] bool emitStatement(const Stmt& statement);
   [[nodiscard]] bool emitBlock(const std::vector<std::unique_ptr<Stmt>>& statements);
   [[nodiscard]] bool emitIf(const IfStmt& statement);
@@ -74,6 +74,7 @@ private:
   void emitDeferred();
 
   DiagnosticEngine* diagnostics_;
+  TypeContext* types_;
   std::unique_ptr<serem::IRModule> module_;
   serem::IRFunction* function_ = nullptr;
   std::unique_ptr<serem::IRBuilder> builder_;
@@ -102,6 +103,9 @@ private:
   std::vector<std::string> tryHandlers_;
   /// Pending `defer` bodies, innermost last; run in reverse order on scope exit.
   std::vector<const DeferStmt*> defers_;
+  /// Type-parameter substitution active while a generic instantiation is
+  /// emitted, mapping each parameter name to the caller's concrete type.
+  std::unordered_map<std::string, const Type*> subst_;
 };
 
 } // namespace sere

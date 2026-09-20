@@ -213,7 +213,6 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
   llvm::Value* result = nullptr;
   const std::string& opcode = operation.opcode();
   llvm::Type* type = lowerType(operation.type());
-  llvm::errs() << "[serem-lower] " << opcode << " :: " << operation.type().display() << "\n";
   auto& ir = builder_->builder;
   auto convert = [&](llvm::Value* value, llvm::Type* target, bool isSigned = true) -> llvm::Value* {
     llvm::Type* source = value->getType();
@@ -733,13 +732,13 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     }
   }
   else if (opcode == "runtime.print") {
-    llvm::Function* print = module_->getFunction("sere_print_str");
-    if (print == nullptr) {
-      llvm::FunctionType* printType = llvm::FunctionType::get(
+    llvm::Function* write = module_->getFunction("sere_write");
+    if (write == nullptr) {
+      llvm::FunctionType* writeType = llvm::FunctionType::get(
           llvm::Type::getVoidTy(*context_),
           {llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_)}, false);
-      print = llvm::Function::Create(printType, llvm::Function::ExternalLinkage,
-                                     "sere_print_str", module_.get());
+      write = llvm::Function::Create(writeType, llvm::Function::ExternalLinkage,
+                                     "sere_write", module_.get());
     }
     llvm::Function* length = module_->getFunction("strlen");
     if (length == nullptr) {
@@ -748,76 +747,80 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       length = llvm::Function::Create(lengthType, llvm::Function::ExternalLinkage,
                                       "strlen", module_.get());
     }
-    bool stringPrinted = false;
+    // Arguments are separated by a single space and the line ends with one
+    // newline, matching the direct backend's print().
     for (std::size_t index = 0; index < operands.size(); ++index) {
       llvm::Value* value = operand(index);
       if (value == nullptr) continue;
+      if (index != 0) {
+        builder_->builder.CreateCall(
+            write, {builder_->builder.CreateGlobalString(" ", "", 0, module_.get()),
+                    llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context_), 1)});
+      }
       if (value->getType()->isPointerTy()) {
         if (operands[index]->type().kind() == serem::IRType::Kind::String) {
-          builder_->builder.CreateCall(print, {value, builder_->builder.CreateCall(length, {value})});
-          stringPrinted = true;
+          builder_->builder.CreateCall(write,
+                                       {value, builder_->builder.CreateCall(length, {value})});
         } else {
-          llvm::Function* write = module_->getFunction("sere_write_ptr");
-          if (write == nullptr) {
-            llvm::FunctionType* writeType = llvm::FunctionType::get(
+          llvm::Function* ptrWrite = module_->getFunction("sere_write_ptr");
+          if (ptrWrite == nullptr) {
+            llvm::FunctionType* ptrWriteType = llvm::FunctionType::get(
                 llvm::Type::getVoidTy(*context_), {llvm::PointerType::getUnqual(*context_)}, false);
-            write = llvm::Function::Create(writeType, llvm::Function::ExternalLinkage,
-                                           "sere_write_ptr", module_.get());
+            ptrWrite = llvm::Function::Create(ptrWriteType, llvm::Function::ExternalLinkage,
+                                              "sere_write_ptr", module_.get());
           }
-          builder_->builder.CreateCall(write, {value});
+          builder_->builder.CreateCall(ptrWrite, {value});
         }
       } else if (value->getType()->isIntegerTy(32)) {
-        llvm::Function* write = module_->getFunction("sere_write_i32");
-        if (write == nullptr) {
+        llvm::Function* writeI32 = module_->getFunction("sere_write_i32");
+        if (writeI32 == nullptr) {
           llvm::FunctionType* writeType = llvm::FunctionType::get(
               llvm::Type::getVoidTy(*context_), {llvm::Type::getInt32Ty(*context_)}, false);
-          write = llvm::Function::Create(writeType, llvm::Function::ExternalLinkage,
-                                         "sere_write_i32", module_.get());
+          writeI32 = llvm::Function::Create(writeType, llvm::Function::ExternalLinkage,
+                                            "sere_write_i32", module_.get());
         }
-        builder_->builder.CreateCall(write, {value});
+        builder_->builder.CreateCall(writeI32, {value});
       } else if (value->getType()->isIntegerTy(64)) {
-        llvm::Function* write = module_->getFunction("sere_write_i64");
-        if (write == nullptr) {
+        llvm::Function* writeI64 = module_->getFunction("sere_write_i64");
+        if (writeI64 == nullptr) {
           llvm::FunctionType* writeType = llvm::FunctionType::get(
               llvm::Type::getVoidTy(*context_), {llvm::Type::getInt64Ty(*context_)}, false);
-          write = llvm::Function::Create(writeType, llvm::Function::ExternalLinkage,
-                                         "sere_write_i64", module_.get());
+          writeI64 = llvm::Function::Create(writeType, llvm::Function::ExternalLinkage,
+                                            "sere_write_i64", module_.get());
         }
-        builder_->builder.CreateCall(write, {value});
+        builder_->builder.CreateCall(writeI64, {value});
       } else if (value->getType()->isIntegerTy(1)) {
-        llvm::Function* write = module_->getFunction("sere_write_bool");
-        if (write == nullptr) {
+        llvm::Function* writeBool = module_->getFunction("sere_write_bool");
+        if (writeBool == nullptr) {
           llvm::FunctionType* writeType = llvm::FunctionType::get(
               llvm::Type::getVoidTy(*context_), {llvm::Type::getInt8Ty(*context_)}, false);
-          write = llvm::Function::Create(writeType, llvm::Function::ExternalLinkage,
-                                         "sere_write_bool", module_.get());
+          writeBool = llvm::Function::Create(writeType, llvm::Function::ExternalLinkage,
+                                             "sere_write_bool", module_.get());
         }
         builder_->builder.CreateCall(
-            write, {builder_->builder.CreateZExt(value, llvm::Type::getInt8Ty(*context_))});
+            writeBool, {builder_->builder.CreateZExt(value, llvm::Type::getInt8Ty(*context_))});
       } else if (value->getType()->isFloatTy() || value->getType()->isDoubleTy()) {
-        llvm::Function* write = module_->getFunction("sere_write_f64");
-        if (write == nullptr) {
+        llvm::Function* writeF64 = module_->getFunction("sere_write_f64");
+        if (writeF64 == nullptr) {
           llvm::FunctionType* writeType = llvm::FunctionType::get(
               llvm::Type::getVoidTy(*context_), {llvm::Type::getDoubleTy(*context_)}, false);
-          write = llvm::Function::Create(writeType, llvm::Function::ExternalLinkage,
-                                         "sere_write_f64", module_.get());
+          writeF64 = llvm::Function::Create(writeType, llvm::Function::ExternalLinkage,
+                                            "sere_write_f64", module_.get());
         }
         if (value->getType()->isFloatTy()) {
           value = builder_->builder.CreateFPExt(value, llvm::Type::getDoubleTy(*context_));
         }
-        builder_->builder.CreateCall(write, {value});
+        builder_->builder.CreateCall(writeF64, {value});
       }
     }
-    if (!stringPrinted) {
-      if (llvm::Function* newline = module_->getFunction("sere_write_nl")) {
-        builder_->builder.CreateCall(newline);
-      } else {
-        llvm::FunctionType* newlineType = llvm::FunctionType::get(
-            llvm::Type::getVoidTy(*context_), false);
-        llvm::Function* newlineFn = llvm::Function::Create(
-            newlineType, llvm::Function::ExternalLinkage, "sere_write_nl", module_.get());
-        builder_->builder.CreateCall(newlineFn);
-      }
+    if (llvm::Function* newline = module_->getFunction("sere_write_nl")) {
+      builder_->builder.CreateCall(newline);
+    } else {
+      llvm::FunctionType* newlineType = llvm::FunctionType::get(
+          llvm::Type::getVoidTy(*context_), false);
+      llvm::Function* newlineFn = llvm::Function::Create(
+          newlineType, llvm::Function::ExternalLinkage, "sere_write_nl", module_.get());
+      builder_->builder.CreateCall(newlineFn);
     }
   }
   else if (opcode == "shared.new" || opcode == "unique.new") {
@@ -1119,9 +1122,16 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       }
       if (record != nullptr && record->isStructTy() && field < record->getStructNumElements() &&
           object->getType()->isPointerTy()) {
-        llvm::Value* message = ir.CreateExtractValue(ir.CreateLoad(record, object), {field});
-        messagePtr = ir.CreateExtractValue(message, {0});
-        messageLen = ir.CreateExtractValue(message, {1});
+        // `str` is a null-terminated `char*` in the Serem ABI, so the message
+        // field is the pointer itself and its length comes from `strlen`.
+        messagePtr = ir.CreateExtractValue(ir.CreateLoad(record, object), {field});
+        llvm::Function* length = module_->getFunction("strlen");
+        if (length == nullptr) {
+          length = llvm::Function::Create(
+              llvm::FunctionType::get(ir.getInt64Ty(), {ir.getPtrTy()}, false),
+              llvm::Function::ExternalLinkage, "strlen", module_.get());
+        }
+        messageLen = ir.CreateCall(length, {messagePtr});
       }
       llvm::Function* raise = module_->getFunction("sere_raise");
       if (raise == nullptr) {
@@ -1134,7 +1144,9 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       ir.CreateCall(raise, {builder_->builder.CreateGlobalString(attribute(operation, "type")),
                             messagePtr, messageLen});
       if (record != nullptr && record->isStructTy() && object->getType()->isPointerTy()) {
-        llvm::Value* slot = ir.CreateAlloca(record);
+        // The exception object is a class reference: store the pointer itself so
+        // `except ... as e` can recover the instance and read its message field.
+        llvm::Value* slot = ir.CreateAlloca(ir.getPtrTy());
         ir.CreateStore(object, slot);
         llvm::Function* setObject = module_->getFunction("sere_error_set_object");
         if (setObject == nullptr) {
@@ -1143,7 +1155,7 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
               llvm::Function::ExternalLinkage, "sere_error_set_object", module_.get());
         }
         ir.CreateCall(setObject,
-                      {slot, ir.getInt64(module_->getDataLayout().getTypeAllocSize(record))});
+                      {slot, ir.getInt64(module_->getDataLayout().getTypeAllocSize(ir.getPtrTy()))});
       }
     }
     const std::string handler = attribute(operation, "handler");
@@ -1167,42 +1179,18 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
         ir.getInt32(0));
   }
   else if (opcode == "error.bind") {
-    llvm::Type* record =
-        operation.type().pointee() != nullptr ? lowerType(*operation.type().pointee()) : nullptr;
-    if (record != nullptr && record->isStructTy()) {
-      llvm::Value* slot = ir.CreateAlloca(record);
-      llvm::Function* copy = module_->getFunction("sere_error_copy_object");
-      if (copy == nullptr) {
-        copy = llvm::Function::Create(
-            llvm::FunctionType::get(ir.getVoidTy(), {ir.getPtrTy(), ir.getInt64Ty()}, false),
-            llvm::Function::ExternalLinkage, "sere_error_copy_object", module_.get());
-      }
-      ir.CreateCall(copy, {slot, ir.getInt64(module_->getDataLayout().getTypeAllocSize(record))});
-      unsigned field = 0;
-      const std::string fieldText = attribute(operation, "field");
-      if (!fieldText.empty() && fieldText != "-1") {
-        (void)std::from_chars(fieldText.data(), fieldText.data() + fieldText.size(), field);
-      }
-      if (field < record->getStructNumElements()) {
-        llvm::Function* message = module_->getFunction("sere_error_message");
-        if (message == nullptr) {
-          message = llvm::Function::Create(
-              llvm::FunctionType::get(ir.getPtrTy(), {ir.getPtrTy()}, false),
-              llvm::Function::ExternalLinkage, "sere_error_message", module_.get());
-        }
-        llvm::Value* length = ir.CreateAlloca(ir.getInt64Ty());
-        llvm::Value* data = ir.CreateCall(message, {length});
-        llvm::Value* packed = llvm::UndefValue::get(
-            llvm::StructType::get(*context_, {ir.getPtrTy(), ir.getInt64Ty()}));
-        packed = ir.CreateInsertValue(packed, data, {0});
-        packed = ir.CreateInsertValue(packed, ir.CreateLoad(ir.getInt64Ty(), length), {1});
-        llvm::Value* object = ir.CreateInsertValue(ir.CreateLoad(record, slot), packed, {field});
-        ir.CreateStore(object, slot);
-      }
-      result = slot;
-    } else {
-      report("Serem exception binding requires a record");
+    // The stored object is the exception instance pointer; recover it so the
+    // bound name is the same class reference `raise` stored.
+    llvm::Value* slot = ir.CreateAlloca(ir.getPtrTy());
+    llvm::Function* copy = module_->getFunction("sere_error_copy_object");
+    if (copy == nullptr) {
+      copy = llvm::Function::Create(
+          llvm::FunctionType::get(ir.getVoidTy(), {ir.getPtrTy(), ir.getInt64Ty()}, false),
+          llvm::Function::ExternalLinkage, "sere_error_copy_object", module_.get());
     }
+    ir.CreateCall(copy,
+                  {slot, ir.getInt64(module_->getDataLayout().getTypeAllocSize(ir.getPtrTy()))});
+    result = ir.CreateLoad(ir.getPtrTy(), slot);
   }
   else if (opcode == "error.enter") {
     llvm::Function* enter = module_->getFunction("sere_error_enter");
