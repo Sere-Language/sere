@@ -66,6 +66,21 @@ namespace {
   return index + 1;
 }
 
+/// Use the semantic symbol so inherited statics share storage while unrelated
+/// classes (including nested classes) keep their fields separate.
+[[nodiscard]] std::string staticFieldSymbol(const MemberExpr& member) {
+  const Type* record = member.object().resolvedType();
+  if (record == nullptr) return {};
+  record = record->canonical();
+  if (record->isTypeObject()) record = record->typeObjectInstance();
+  if (record == nullptr) return {};
+  const RecordField* field = record->findField(member.field());
+  if (field == nullptr || !field->isStatic || !field->stored) return {};
+  const std::string owner =
+      record->qualifier().empty() ? record->name() : record->qualifier() + "." + record->name();
+  return field->llvmName.empty() ? owner + "." + member.field() : field->llvmName;
+}
+
 /// Discriminant of the enum variant a constructor call names, or an empty
 /// string for a non-enum constructor. Enums store the variant index in the
 /// first word, so `Message.Goodbye(...)` must tag its payload with that index
@@ -502,6 +517,11 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
                                     assign.target().resolvedType());
     if (assign.target().kind() == NodeKind::MemberExpr) {
       const auto& member = static_cast<const MemberExpr&>(assign.target());
+      if (const std::string symbol = staticFieldSymbol(member); !symbol.empty()) {
+        (void)builder_->operation("static.set", serem::IRType::voidType(), {value},
+                                  {{"symbol", symbol}});
+        return true;
+      }
       (void)builder_->operation("member.set", serem::IRType::voidType(),
                                 {emitExpression(member.object()), value},
                                 {{"field", member.field()},
@@ -1605,6 +1625,10 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
 }
 
 serem::ValuePtr SeremGenerator::emitMember(const MemberExpr& expression) {
+  if (const std::string symbol = staticFieldSymbol(expression); !symbol.empty()) {
+    return builder_->operation("static.get", lowerType(expression.resolvedType()), {},
+                               {{"symbol", symbol}});
+  }
   if (expression.object().kind() == NodeKind::NameExpr &&
       functions_.contains(expression.field())) {
     return std::make_shared<serem::FunctionRef>(

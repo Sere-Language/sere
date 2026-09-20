@@ -332,7 +332,24 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     }
     return {left, right};
   };
-  if (opcode == "pointer.null") result = llvm::ConstantPointerNull::get(ir.getPtrTy());
+  if (opcode == "static.get" || opcode == "static.set") {
+    const std::string name = "sere.static." + attribute(operation, "symbol");
+    llvm::Type* fieldType = opcode == "static.get" ? type : lowerType(operands[0]->type());
+    // Include internal globals in the lookup: every read and write must use the
+    // same storage, including when a read is emitted before the first write.
+    llvm::GlobalVariable* slot = module_->getGlobalVariable(name, true);
+    if (slot == nullptr) {
+      slot = new llvm::GlobalVariable(*module_, fieldType, /*isConstant=*/false,
+                                      llvm::GlobalValue::InternalLinkage,
+                                      llvm::Constant::getNullValue(fieldType), name);
+    }
+    if (opcode == "static.get") {
+      result = ir.CreateLoad(fieldType, slot);
+    } else {
+      ir.CreateStore(operand(0), slot);
+    }
+  }
+  else if (opcode == "pointer.null") result = llvm::ConstantPointerNull::get(ir.getPtrTy());
   else if (opcode == "pointer.is_null") {
     result = ir.CreateIsNull(operand(0));
     if (attribute(operation, "negated") == "true") result = ir.CreateNot(result);

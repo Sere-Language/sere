@@ -135,6 +135,7 @@ dialect-specific opcode directly through `operation()`.
 | `value.repr` | Render a value the way `repr()` prints it; the element kind travels in an attribute |
 | `builtin.method` | A lowered built-in call such as `list.append`; the lowered name is an attribute |
 | `construct`, `member.get`, `member.set` | Record construction and field access |
+| `static.get`, `static.set` | Typed static field load/store; `symbol` identifies the declaring class's field. A get has no operands; a set takes the new value. |
 | `enum.tag`, `enum.payload` | Enum tag and payload access |
 | `union.pack`, `union.extract`, `union.is`, `object.isa` | Union and dynamic-type tests |
 | `iter.begin`, `iter.has_next`, `iter.next` | Iterator protocol |

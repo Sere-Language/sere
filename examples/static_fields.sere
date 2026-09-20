@@ -1,0 +1,51 @@
+class Object:
+    class Metadata:
+        @static name: str
+
+    def __init__(self, name: str) -> None:
+        self.Metadata.name = name
+
+class Other:
+    class Metadata:
+        @static name: str
+
+    def __init__(self, name: str) -> None:
+        self.Metadata.name = name
+
+class Values:
+    @static count: i32
+    @static ratio: f32
+    @static enabled: bool
+
+class Derived(Values):
+    pass
+
+def read_name() -> str:
+    return Object.Metadata.name
+
+def main() -> i32:
+    print(f"{10:05x}")
+    a = Object("A")
+    print(a.Metadata.name)
+    assert a.Metadata.name == "A"
+    b = Other("B")
+    assert a.Metadata.name == "A"
+    assert b.Metadata.name == "B"
+    assert read_name() == "A"
+    c = Object("C")
+    assert a.Metadata.name == "C"
+    assert c.Metadata.name == "C"
+    Object.Metadata.name = "D"
+    assert a.Metadata.name == "D"
+    assert read_name() == "D"
+    assert Values.count == 0
+    Values.count = -7
+    Values.ratio = 1.5
+    Values.enabled = True
+    assert Values.count == -7
+    assert Derived.count == -7
+    Derived.count = 8
+    assert Values.count == 8
+    assert Values.ratio == 1.5
+    assert Values.enabled
+    return 0
