@@ -54,6 +54,21 @@ int fail(const char* message) {
   return false;
 }
 
+/// True when the span carries a token that is not string text, which is how the
+/// code embedded in an interpolated string has to be highlighted.
+[[nodiscard]] bool hasCodeTokenAt(const std::vector<sere::SemanticToken>& tokens,
+                                  std::uint32_t line, std::uint32_t column,
+                                  std::uint32_t length) {
+  const auto text = static_cast<std::uint32_t>(sere::SemanticType::String);
+  for (const sere::SemanticToken& token : tokens) {
+    if (token.line == line && token.column == column && token.length == length &&
+        token.type != text) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 int main() {
@@ -202,6 +217,36 @@ int main() {
   }
   if (!sawScaleCall) {
     return fail("unclosed scale(1, should still parse as a call with parameter names");
+  }
+
+  // An interpolated string highlights the code it embeds: literal runs stay
+  // strings while `{...}` reads like the code around it.
+  const std::string interpolatedText =
+      "class Person:\n"
+      "    name: str\n"
+      "def main() -> void:\n"
+      "    person = Person()\n"
+      "    print(f\"Name: {person.name} total {1 + 2}\")\n";
+  sere::Frontend interpolated;
+  (void)interpolated.analyze("lsp_fstring.sere", interpolatedText, stdlibDir());
+  if (interpolated.checker() == nullptr) {
+    interpolated.diagnostics().printAll(*interpolated.source());
+    return fail("interpolated string sample should have a type checker");
+  }
+  std::vector<sere::SemanticToken> interpolatedTokens;
+  collectSemanticTokens(interpolated, interpolatedTokens);
+  if (!hasTokenAt(interpolatedTokens, 4, 12, 6, sere::SemanticType::String)) {
+    return fail("expected the literal run of an f-string to be a string token");
+  }
+  if (hasTokenAt(interpolatedTokens, 4, 12, 19, sere::SemanticType::String)) {
+    return fail("an interpolation must not be painted as string text");
+  }
+  if (!hasCodeTokenAt(interpolatedTokens, 4, 19, 6) ||
+      !hasCodeTokenAt(interpolatedTokens, 4, 26, 4)) {
+    return fail("expected the embedded expression to be highlighted as code");
+  }
+  if (!hasTokenAt(interpolatedTokens, 4, 39, 1, sere::SemanticType::Number)) {
+    return fail("expected the embedded number literal to be highlighted");
   }
 
   const std::filesystem::path preludePath = stdlibDir() / "prelude.sere";

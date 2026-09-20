@@ -6,6 +6,7 @@
 #include "sere/Version.h"
 #include "sere/ast/Query.h"
 #include "sere/diag/DiagnosticEngine.h"
+#include "sere/types/BuiltinMembers.h"
 
 #include <algorithm>
 #include <cctype>
@@ -2953,6 +2954,14 @@ bool TypeChecker::checkIf(IfStmt& statement, const Type* expectedReturn) {
             applyNarrowing(tested);
             return;
           }
+          // A type parameter stands for whatever instantiation the caller chose,
+          // so `value is i32` on a `T` pins the branch to i32 exactly like a
+          // union member would; any instantiation that reaches the branch is an
+          // i32 by construction.
+          if (member->isTypeParam()) {
+            applyNarrowing(tested);
+            return;
+          }
         }
         // Otherwise the test can still succeed through members that derive from
         // the tested type; that is all `is Person` promises for a `Mayor | str`.
@@ -3835,35 +3844,42 @@ const Type* TypeChecker::checkConstructor(CallExpr& expr, const Type* record) {
 
 const Type*
 TypeChecker::checkBuiltinMethod(CallExpr& expr, const Type* objectType, const std::string& name) {
-  auto finish =
-      [&](const Type* result, std::vector<std::string> params, const char* prefix) -> const Type* {
-    expr.setIntrinsic(IntrinsicKind::BuiltinMethod);
-    expr.setLoweredName(std::string(prefix) + name);
-    expr.setParamNames(std::move(params));
-    expr.setResolvedType(result);
-    return result;
-  };
-  auto argCount = [&](std::size_t n, const std::string& msg) -> bool {
+  // Built-in members are declared in one table, so the language server completes
+  // exactly the members that resolve here and a signature is written once.
+  BuiltinReceiver receiver = BuiltinReceiver::List;
+  if (!builtinReceiverOf(objectType, receiver)) {
+    return nullptr;
+  }
+  const BuiltinMember* member = builtinMember(receiver, name);
+  const auto argCount = [&](std::size_t n, const std::string& msg) -> bool {
     if (expr.arguments().size() != n) {
       diagnostics_->error(expr.range(), msg);
       return false;
     }
     return true;
   };
-  auto unknown = [&]() -> const Type* {
+  const auto unknown = [&]() -> const Type* {
     diagnostics_->error(expr.range(), "unknown method '" + name + "' on " + quoteType(objectType));
     return nullptr;
   };
+  if (member == nullptr) {
+    return unknown();
+  }
+  const auto finish = [&](const Type* result) -> const Type* {
+    expr.setIntrinsic(IntrinsicKind::BuiltinMethod);
+    expr.setLoweredName(std::string(builtinPrefix(receiver)) + name);
+    expr.setParamNames(member->parameterNames(expr.arguments().size()));
+    expr.setResolvedType(result);
+    return result;
+  };
   if (objectType->isGenericCtor("Iterator")) {
-    if (name != "close")
-      return unknown();
     if (!expr.typeArgs().empty() || !expr.keywordArguments().empty()) {
       diagnostics_->error(expr.range(), "close() takes no type or keyword arguments");
       return nullptr;
     }
     if (!argCount(0, "close() takes no arguments"))
       return nullptr;
-    return finish(types_->voidType(), {}, "iterator.");
+    return finish(types_->voidType());
   }
   if (objectType->isList()) {
     const Type* elem = objectType->elementType();
@@ -3874,7 +3890,7 @@ TypeChecker::checkBuiltinMethod(CallExpr& expr, const Type* objectType, const st
           !ensureLiteralFits(*expr.arguments()[0], elem)) {
         return nullptr;
       }
-      return finish(types_->voidType(), {"value"}, "list.");
+      return finish(types_->voidType());
     }
     if (name == "insert") {
       if (!argCount(2, "insert() takes index and value")) {
@@ -3887,7 +3903,7 @@ TypeChecker::checkBuiltinMethod(CallExpr& expr, const Type* objectType, const st
         diagnostics_->error(expr.range(), "insert() requires an integer index and a list element");
         return nullptr;
       }
-      return finish(types_->voidType(), {"index", "value"}, "list.");
+      return finish(types_->voidType());
     }
     if (name == "pop") {
       if (expr.arguments().size() > 1) {
@@ -3900,41 +3916,41 @@ TypeChecker::checkBuiltinMethod(CallExpr& expr, const Type* objectType, const st
           diagnostics_->error(expr.range(), "pop() index must be an integer");
           return nullptr;
         }
-        return finish(elem, {"index"}, "list.");
+        return finish(elem);
       }
-      return finish(elem, {}, "list.");
+      return finish(elem);
     }
     if (name == "remove") {
       if (!argCount(1, "remove() takes one value") || checkExpr(*expr.arguments()[0]) == nullptr ||
           !isAssignable(expr.arguments()[0]->resolvedType(), elem)) {
         return nullptr;
       }
-      return finish(types_->boolType(), {"value"}, "list.");
+      return finish(types_->boolType());
     }
     if (name == "find" || name == "index" || name == "count") {
       if (!argCount(1, name + "() takes one value") || checkExpr(*expr.arguments()[0]) == nullptr ||
           !isAssignable(expr.arguments()[0]->resolvedType(), elem)) {
         return nullptr;
       }
-      return finish(types_->i64Type(), {"value"}, "list.");
+      return finish(types_->i64Type());
     }
     if (name == "contains" || name == "has") {
       if (!argCount(1, name + "() takes one value") || checkExpr(*expr.arguments()[0]) == nullptr) {
         return nullptr;
       }
-      return finish(types_->boolType(), {"value"}, "list.");
+      return finish(types_->boolType());
     }
     if (name == "clear" || name == "reverse") {
       if (!argCount(0, name + "() takes no arguments")) {
         return nullptr;
       }
-      return finish(types_->voidType(), {}, "list.");
+      return finish(types_->voidType());
     }
     if (name == "copy" || name == "clone") {
       if (!argCount(0, "copy() takes no arguments")) {
         return nullptr;
       }
-      return finish(objectType, {}, "list.");
+      return finish(objectType);
     }
     if (name == "extend") {
       if (!argCount(1, "extend() takes one list") || checkExpr(*expr.arguments()[0]) == nullptr ||
@@ -3942,7 +3958,7 @@ TypeChecker::checkBuiltinMethod(CallExpr& expr, const Type* objectType, const st
         diagnostics_->error(expr.range(), "extend() requires a list of the same element type");
         return nullptr;
       }
-      return finish(types_->voidType(), {"items"}, "list.");
+      return finish(types_->voidType());
     }
     return unknown();
   }
@@ -3954,7 +3970,7 @@ TypeChecker::checkBuiltinMethod(CallExpr& expr, const Type* objectType, const st
           !isAssignable(expr.arguments()[0]->resolvedType(), key)) {
         return nullptr;
       }
-      return finish(value, {"key"}, "dict.");
+      return finish(value);
     }
     if (name == "set") {
       if (!argCount(2, "set() takes a key and a value")) {
@@ -3966,38 +3982,38 @@ TypeChecker::checkBuiltinMethod(CallExpr& expr, const Type* objectType, const st
           !isAssignable(expr.arguments()[1]->resolvedType(), value)) {
         return nullptr;
       }
-      return finish(types_->voidType(), {"key", "value"}, "dict.");
+      return finish(types_->voidType());
     }
     if (name == "remove" || name == "delete" || name == "contains" || name == "has") {
       if (!argCount(1, name + "() takes one key") || checkExpr(*expr.arguments()[0]) == nullptr ||
           !isAssignable(expr.arguments()[0]->resolvedType(), key)) {
         return nullptr;
       }
-      return finish(types_->boolType(), {"key"}, "dict.");
+      return finish(types_->boolType());
     }
     if (name == "keys") {
       if (!argCount(0, "keys() takes no arguments")) {
         return nullptr;
       }
-      return finish(types_->listType(key), {}, "dict.");
+      return finish(types_->listType(key));
     }
     if (name == "values") {
       if (!argCount(0, "values() takes no arguments")) {
         return nullptr;
       }
-      return finish(types_->listType(value), {}, "dict.");
+      return finish(types_->listType(value));
     }
     if (name == "clear") {
       if (!argCount(0, "clear() takes no arguments")) {
         return nullptr;
       }
-      return finish(types_->voidType(), {}, "dict.");
+      return finish(types_->voidType());
     }
     if (name == "copy" || name == "clone") {
       if (!argCount(0, "copy() takes no arguments")) {
         return nullptr;
       }
-      return finish(objectType, {}, "dict.");
+      return finish(objectType);
     }
     return unknown();
   }
@@ -4023,32 +4039,32 @@ TypeChecker::checkBuiltinMethod(CallExpr& expr, const Type* objectType, const st
       if (!argCount(0, name + "() takes no arguments")) {
         return nullptr;
       }
-      return finish(str, {}, "str.");
+      return finish(str);
     }
     if (name == "starts_with" || name == "endswith" || name == "ends_with" ||
         name == "startswith" || name == "contains" || name == "has") {
       if (!argCount(1, name + "() takes one string") || !strArg(0)) {
         return nullptr;
       }
-      return finish(types_->boolType(), {"text"}, "str.");
+      return finish(types_->boolType());
     }
     if (name == "find" || name == "rfind" || name == "count") {
       if (!argCount(1, name + "() takes one string") || !strArg(0)) {
         return nullptr;
       }
-      return finish(types_->i64Type(), {"text"}, "str.");
+      return finish(types_->i64Type());
     }
     if (name == "replace") {
       if (!argCount(2, "replace() takes old and new strings") || !strArg(0) || !strArg(1)) {
         return nullptr;
       }
-      return finish(str, {"old", "new"}, "str.");
+      return finish(str);
     }
     if (name == "split") {
       if (!argCount(1, "split() takes a separator") || !strArg(0)) {
         return nullptr;
       }
-      return finish(types_->listType(str), {"sep"}, "str.");
+      return finish(types_->listType(str));
     }
     if (name == "join") {
       if (!argCount(1, "join() takes a list of strings")) {
@@ -4059,7 +4075,7 @@ TypeChecker::checkBuiltinMethod(CallExpr& expr, const Type* objectType, const st
         diagnostics_->error(expr.range(), "join() requires list[str]");
         return nullptr;
       }
-      return finish(str, {"parts"}, "str.");
+      return finish(str);
     }
     if (name == "repeat") {
       if (!argCount(1, "repeat() takes a count")) {
@@ -4070,13 +4086,13 @@ TypeChecker::checkBuiltinMethod(CallExpr& expr, const Type* objectType, const st
         diagnostics_->error(expr.range(), "repeat() count must be an integer");
         return nullptr;
       }
-      return finish(str, {"count"}, "str.");
+      return finish(str);
     }
     if (name == "is_empty" || name == "is_digit" || name == "is_alpha" || name == "is_space") {
       if (!argCount(0, name + "() takes no arguments")) {
         return nullptr;
       }
-      return finish(types_->boolType(), {}, "str.");
+      return finish(types_->boolType());
     }
     return unknown();
   }

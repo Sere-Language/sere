@@ -1,0 +1,7 @@
+async def number() -> i32:
+    return 42
+
+async def main() -> i32:
+    a = await number()
+    print("async", a)
+    return 0

@@ -1,0 +1,122 @@
+class Named:
+    name: str
+
+class Animal:
+    @abstract
+    def speak(self) -> i32:
+        pass
+
+class Dog(Animal, Named):
+    @override
+    def speak(self) -> i32:
+        return 1
+
+class Pet:
+    name: str
+
+    def __init__(self, name: str) -> void:
+        self.name = name
+
+    def id(self) -> i32:
+        return 1
+
+class Cat(Pet):
+    def __init__(self, name: str) -> void:
+        super().__init__(name)
+
+    def id(self) -> i32:
+        return super().id() + 1
+
+class Box[T]:
+    value: T
+
+    def get(self) -> T:
+        return self.value
+
+class Vec2:
+    @private x: i32
+    @private y: i32
+
+    def __init__(self, x: i32, y: i32) -> void:
+        self.x = x
+        self.y = y
+
+    @public x.get:
+        return self.x
+
+    @public y.get:
+        return self.y
+
+    @public x.set(value: i32) -> void:
+        self.x = value
+
+    def __len__(self) -> i64:
+        return 2
+
+    def __getitem__(self, index: i32) -> i32:
+        return self.x if index == 0 else self.y
+
+    def __contains__(self, value: i32) -> bool:
+        return value == self.x or value == self.y
+
+    def __bool__(self) -> bool:
+        return self.x != 0 or self.y != 0
+
+    def __call__(self, scale: i32) -> i32:
+        return (self.x + self.y) * scale
+
+struct Point:
+    x: i32
+    y: i32
+
+    def length_sq(self) -> i32:
+        return self.x * self.x + self.y * self.y
+
+def identity[T](value: T) -> T:
+    return value
+
+static module_count: i32 = 0
+
+def bump() -> i32:
+    static n: i32 = 0
+    n = n + 1
+    return n
+
+def main() -> i32:
+    d: Dog = Dog()
+    assert d.speak() == 1
+
+    c: Cat = Cat("z")
+    assert c.id() == 2
+
+    boxed: Box[i32] = Box[i32](4)
+    assert boxed.get() == 4
+    assert identity(9) == 9
+    assert identity("text") == "text"
+
+    v: Vec2 = Vec2(1, 2)
+    v.x = 10
+    assert v.x == 10
+    assert v.y == 2
+    assert len(v) == 2
+    assert v[0] == 10
+    assert v[1] == 2
+    assert 10 in v
+    assert 3 not in v
+    assert bool(v)
+    assert v(2) == 24
+
+    p: Point = Point(1, 2)
+    q: Point = p
+    q.x = 9
+    assert p.x == 1
+    assert q.x == 9
+    assert p.length_sq() == 5
+
+    module_count += 1
+    assert bump() == 1
+    assert bump() == 2
+    assert module_count == 1
+
+    print("classes ok", d.speak(), c.id(), boxed.get(), v.x, v[0], v(2), p.length_sq(), bump())
+    return 0

@@ -5,7 +5,7 @@
 
 #include "sere/driver/Frontend.h"
 #include "sere/sema/TypeChecker.h"
-#include "sere/types/Type.h"
+#include "sere/types/BuiltinMembers.h"
 
 #include <cctype>
 #include <string>
@@ -263,59 +263,16 @@ std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type) {
     item.sortText = "0" + item.label;
     items.push_back(std::move(item));
   };
-  if (type->isGenericCtor("Iterator")) {
-    addMethod("close", "close()");
-  }
-  if (type->isList()) {
-    addMethod("append", "append(value)");
-    addMethod("push", "push(value)");
-    addMethod("insert", "insert(index, value)");
-    addMethod("pop", "pop(index?)");
-    addMethod("remove", "remove(value) -> bool");
-    addMethod("find", "find(value) -> i64");
-    addMethod("index", "index(value) -> i64");
-    addMethod("count", "count(value) -> i64");
-    addMethod("contains", "contains(value) -> bool");
-    addMethod("clear", "clear()");
-    addMethod("reverse", "reverse()");
-    addMethod("copy", "copy()");
-    addMethod("extend", "extend(items)");
-    return items;
-  }
-  if (type->isDict()) {
-    addMethod("get", "get(key)");
-    addMethod("set", "set(key, value)");
-    addMethod("pop", "pop(key)");
-    addMethod("remove", "remove(key) -> bool");
-    addMethod("contains", "contains(key) -> bool");
-    addMethod("keys", "keys()");
-    addMethod("values", "values()");
-    addMethod("clear", "clear()");
-    addMethod("copy", "copy()");
-    return items;
-  }
-  if (type->isStrLayout()) {
-    addMethod("join", "join(parts: list[str]) -> str");
-    addMethod("split", "split(sep) -> list[str]");
-    addMethod("replace", "replace(old, new) -> str");
-    addMethod("find", "find(text) -> i64");
-    addMethod("rfind", "rfind(text) -> i64");
-    addMethod("count", "count(text) -> i64");
-    addMethod("upper", "upper() -> str");
-    addMethod("lower", "lower() -> str");
-    addMethod("strip", "strip() -> str");
-    addMethod("lstrip", "lstrip() -> str");
-    addMethod("rstrip", "rstrip() -> str");
-    addMethod("capitalize", "capitalize() -> str");
-    addMethod("title", "title() -> str");
-    addMethod("starts_with", "starts_with(text) -> bool");
-    addMethod("ends_with", "ends_with(text) -> bool");
-    addMethod("contains", "contains(text) -> bool");
-    addMethod("repeat", "repeat(count) -> str");
-    addMethod("is_empty", "is_empty() -> bool");
-    addMethod("is_digit", "is_digit() -> bool");
-    addMethod("is_alpha", "is_alpha() -> bool");
-    addMethod("is_space", "is_space() -> bool");
+  // Built-in members come from the compiler's table, so the completion list is
+  // exactly what the checker resolves.
+  BuiltinReceiver receiver = BuiltinReceiver::List;
+  if (builtinReceiverOf(type, receiver)) {
+    for (const BuiltinMember& member : builtinMembers()) {
+      if (member.receiver != receiver) {
+        continue;
+      }
+      addMethod(member.name, member.signature);
+    }
     return items;
   }
   if (!(type->isRecord() || type->isModule())) {

@@ -26,6 +26,7 @@ add_library(sere_types
   types/Type.cpp
   types/TypeContext.cpp
   types/Intrinsic.cpp
+  types/BuiltinMembers.cpp
 )
 target_link_libraries(sere_types PUBLIC sere_headers)
 sere_apply_warnings(sere_types)

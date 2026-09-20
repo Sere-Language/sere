@@ -387,6 +387,110 @@ std::string_view stringLiteralInner(std::string_view spelling) {
   return spelling.substr(start + open, spelling.size() - start - open * 2);
 }
 
+std::size_t stringLiteralInnerOffset(std::string_view spelling) {
+  if (spelling.empty()) {
+    return 0;
+  }
+  const std::size_t start = (spelling[0] == 'f' || spelling[0] == 'F') ? 1 : 0;
+  if (start >= spelling.size()) {
+    return start;
+  }
+  if (spelling[start] == '`') {
+    return start + 1;
+  }
+  const char quote = spelling[start];
+  std::size_t open = 1;
+  while (start + open < spelling.size() && spelling[start + open] == quote && open < 3) {
+    ++open;
+  }
+  if (open == 2) {
+    open = 1;
+  }
+  return start + open;
+}
+
+FStringSplitStatus splitFStringSegments(std::string_view inner,
+                                       std::vector<FStringSegment>& out) {
+  out.clear();
+  std::size_t index = 0;
+  std::size_t literalStart = 0;
+  const auto flushLiteral = [&](std::size_t end) {
+    if (end <= literalStart) {
+      return;
+    }
+    FStringSegment segment;
+    segment.start = literalStart;
+    segment.end = end;
+    out.push_back(segment);
+  };
+  while (index < inner.size()) {
+    // `{{` and `}}` are escaped braces, not interpolation delimiters.
+    if ((inner[index] == '{' || inner[index] == '}') && index + 1 < inner.size() &&
+        inner[index + 1] == inner[index]) {
+      index += 2;
+      continue;
+    }
+    if (inner[index] == '}') {
+      return FStringSplitStatus::UnmatchedBrace;
+    }
+    if (inner[index] != '{') {
+      ++index;
+      continue;
+    }
+    flushLiteral(index);
+    ++index;
+    const std::size_t expressionStart = index;
+    const auto isQuote = [](char ch) { return ch == '"' || ch == '\''; };
+    std::size_t spec = std::string_view::npos;
+    // Scan to the matching `}` while tracking quotes so a `:` inside a slice,
+    // dict literal, or string does not start the format spec.
+    int depth = 1;
+    int brackets = 0;
+    char quote = '\0';
+    while (index < inner.size() && depth > 0) {
+      const char ch = inner[index];
+      if (quote != '\0') {
+        if (ch == '\\') {
+          index += 2;
+          continue;
+        }
+        if (ch == quote) {
+          quote = '\0';
+        }
+      } else if (isQuote(ch)) {
+        quote = ch;
+      } else if (ch == '(' || ch == '[') {
+        ++brackets;
+      } else if (ch == ')' || ch == ']') {
+        --brackets;
+      } else if (ch == '{') {
+        ++depth;
+      } else if (ch == '}') {
+        --depth;
+      } else if (ch == ':' && brackets == 0 && depth == 1 && spec == std::string_view::npos) {
+        spec = index;
+      }
+      if (depth > 0) {
+        ++index;
+      }
+    }
+    if (depth != 0) {
+      return FStringSplitStatus::UnterminatedInterpolation;
+    }
+    FStringSegment segment;
+    segment.expression = true;
+    segment.start = expressionStart;
+    segment.end = spec == std::string_view::npos ? index : spec;
+    segment.spec = spec;
+    segment.close = index;
+    out.push_back(segment);
+    ++index;
+    literalStart = index;
+  }
+  flushLiteral(inner.size());
+  return FStringSplitStatus::Ok;
+}
+
 DecodedString decodeStringToken(std::string_view spelling) {
   DecodedString decoded;
   decoded.regex = !spelling.empty() && spelling[0] == '`';

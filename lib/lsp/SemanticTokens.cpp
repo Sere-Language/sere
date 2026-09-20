@@ -300,13 +300,124 @@ std::size_t emitDecorator(const std::vector<Token>& tokens, std::size_t index,
 void emitLiteral(const Token& token, std::vector<SemanticToken>& out) {
   if (token.kind() == TokenKind::Integer || token.kind() == TokenKind::Float) {
     pushToken(out, token.range(), SemanticType::Number, 0);
-  } else if (token.kind() == TokenKind::String || token.kind() == TokenKind::FString) {
+  } else if (token.kind() == TokenKind::String) {
     pushToken(out, token.range(), SemanticType::String, 0);
   } else if (token.kind() == TokenKind::Regex) {
     pushToken(out, token.range(), SemanticType::Regexp, 0);
   } else if (isOperatorToken(token.kind())) {
     pushToken(out, token.range(), SemanticType::Operator, 0);
   }
+}
+
+/// Classifies one token of a stream; `index` advances past the tokens the
+/// classifier consumed as a unit (a decorator, a `@macro`, an f-string).
+void classifyToken(const std::vector<Token>& tokens,
+                   std::size_t& index,
+                   const TypeChecker* checker,
+                   const SourceManager& source,
+                   std::vector<SemanticToken>& out);
+
+/// Classifies the code embedded in an interpolated string. The literal runs are
+/// painted as strings, while each `{...}` is classified like the code around it,
+/// so `f"{self.name}"` highlights `self.name` as a member instead of as text.
+void emitInterpolatedText(std::string_view inner,
+                          std::uint32_t innerStart,
+                          const TypeChecker* checker,
+                          const SourceManager& source,
+                          std::vector<SemanticToken>& out) {
+  std::vector<FStringSegment> segments;
+  if (splitFStringSegments(inner, segments) != FStringSplitStatus::Ok) {
+    return;
+  }
+  const auto rangeOf = [&](std::size_t from, std::size_t to) {
+    SourceRange range;
+    range.start = source.location(innerStart + from);
+    range.end = source.location(innerStart + to);
+    return range;
+  };
+  for (const FStringSegment& segment : segments) {
+    if (!segment.expression) {
+      if (segment.end > segment.start) {
+        pushToken(out, rangeOf(segment.start, segment.end), SemanticType::String, 0);
+      }
+      continue;
+    }
+    if (segment.end > segment.start) {
+      const std::string text(inner.substr(segment.start, segment.end - segment.start));
+      DiagnosticEngine unused;
+      SourceManager nested("<fstring>", text);
+      Lexer lexer(nested, unused, true);
+      const std::vector<Token> local = lexer.tokenizeAll();
+      // Re-point the nested tokens at the real file: the classifier looks their
+      // symbols up by name and the ranges have to land where the user sees them.
+      std::vector<Token> shifted;
+      shifted.reserve(local.size());
+      const std::uint32_t base = innerStart + static_cast<std::uint32_t>(segment.start);
+      for (const Token& token : local) {
+        SourceRange range{source.location(base + token.range().start.offset),
+                          source.location(base + token.range().end.offset)};
+        shifted.emplace_back(token.kind(), range, std::string(token.spelling()));
+      }
+      for (std::size_t index = 0; index < shifted.size(); ++index) {
+        classifyToken(shifted, index, checker, source, out);
+      }
+    }
+    // A format spec is text, but it may embed its own placeholders
+    // (`f"{value:{width}}"`), which are code again.
+    if (segment.spec != std::string_view::npos && segment.close != std::string_view::npos) {
+      const std::size_t specStart = segment.spec + 1;
+      const std::size_t specEnd = segment.close;
+      if (specEnd > specStart) {
+        emitInterpolatedText(inner.substr(specStart, specEnd - specStart),
+                             innerStart + static_cast<std::uint32_t>(specStart), checker, source,
+                             out);
+      }
+    }
+  }
+}
+
+void emitInterpolatedString(const Token& token,
+                            const TypeChecker* checker,
+                            const SourceManager& source,
+                            std::vector<SemanticToken>& out) {
+  const std::string_view spelling = token.spelling();
+  const std::string_view inner = stringLiteralInner(spelling);
+  if (inner.empty()) {
+    pushToken(out, token.range(), SemanticType::String, 0);
+    return;
+  }
+  const std::uint32_t innerStart = token.range().start.offset +
+                                   static_cast<std::uint32_t>(stringLiteralInnerOffset(spelling));
+  emitInterpolatedText(inner, innerStart, checker, source, out);
+}
+
+void classifyToken(const std::vector<Token>& tokens,
+                   std::size_t& index,
+                   const TypeChecker* checker,
+                   const SourceManager& source,
+                   std::vector<SemanticToken>& out) {
+  const Token& token = tokens[index];
+  if (isModifierKeyword(token.kind())) {
+    pushToken(out, token.range(), SemanticType::Modifier, 0);
+    return;
+  }
+  if (isLanguageKeyword(token.kind())) {
+    pushToken(out, token.range(), SemanticType::Keyword, 0);
+    return;
+  }
+  if (token.kind() == TokenKind::At) {
+    index = emitDecorator(tokens, index, out);
+    return;
+  }
+  if (token.kind() == TokenKind::Identifier) {
+    emitIdentifier(tokens, index, checker, out);
+    return;
+  }
+  if (token.kind() == TokenKind::FString) {
+    emitInterpolatedString(token, checker, source, out);
+    return;
+  }
+  emitLiteral(token, out);
 }
 
 }  // namespace
@@ -324,23 +435,7 @@ void collectSemanticTokens(Frontend& frontend, std::vector<SemanticToken>& out) 
     if (isSkipped(token.kind())) {
       continue;
     }
-    if (isModifierKeyword(token.kind())) {
-      pushToken(out, token.range(), SemanticType::Modifier, 0);
-      continue;
-    }
-    if (isLanguageKeyword(token.kind())) {
-      pushToken(out, token.range(), SemanticType::Keyword, 0);
-      continue;
-    }
-    if (token.kind() == TokenKind::At) {
-      index = emitDecorator(tokens, index, out);
-      continue;
-    }
-    if (token.kind() == TokenKind::Identifier) {
-      emitIdentifier(tokens, index, checker, out);
-      continue;
-    }
-    emitLiteral(token, out);
+    classifyToken(tokens, index, checker, *frontend.source(), out);
   }
 }
 

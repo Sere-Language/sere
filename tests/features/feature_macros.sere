@@ -1,0 +1,52 @@
+macro twice(x):
+    quote:
+        ($x) + ($x)
+
+macro vec:
+    match:
+        ($($x:expr),*) => quote:
+            [$($x),*]
+
+macro debug_print(x):
+    typed: true
+    quote:
+        print($type)
+        print($x)
+
+macro hide(x):
+    quote:
+        tmp: i32 = $x
+        tmp
+
+macro pipeline:
+    syntax: pipeline
+
+def add2(n: i32) -> i32:
+    return n + 2
+
+def wrap(left: i32, right: i32) -> i32:
+    return left + right
+
+def main() -> i32:
+    n: i32 = 3
+    total: i32 = twice!(n)
+    assert total == 6
+
+    xs: list[i32] = vec!(1, 2, 3)
+    assert xs == [1, 2, 3]
+
+    tmp: i32 = 1
+    hidden: i32 = hide!(2)
+    assert hidden == 2
+    assert tmp == 1
+
+    debug_print!(n)
+
+    via_pipeline: i32 = pipeline:
+        1
+        |> add2
+        |> wrap(4)
+    assert via_pipeline == 7
+
+    print("macros ok", total, xs[2], hidden, via_pipeline)
+    return 0

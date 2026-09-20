@@ -260,17 +260,17 @@ int main() {
     return fail("expected dumpLlvmIrRaw from --dump-llvm-ir-raw");
   }
 
-  sere::CompilerOptions runOptions;
-  if (!parseArgs({"sere", "run", "--backend=serem", "-o", "out.exe", "data.txt"}, runOptions,
+  sere::CompilerOptions runProgramOptions;
+  if (!parseArgs({"sere", "run", "--backend=serem", "-o", "out.exe", "data.txt"}, runProgramOptions,
                  error)) {
     return fail("failed to parse 'sere run'");
   }
-  if (runOptions.projectCommand != sere::ProjectCommand::Run || runOptions.seremBackend ||
-      !runOptions.outputPath.empty()) {
+  if (runProgramOptions.projectCommand != sere::ProjectCommand::Run ||
+      runProgramOptions.seremBackend || !runProgramOptions.outputPath.empty()) {
     return fail("'sere run' must not consume the program's own arguments");
   }
   const std::vector<std::string> expectedRunArgs{"--backend=serem", "-o", "out.exe", "data.txt"};
-  if (runOptions.programArgs != expectedRunArgs) {
+  if (runProgramOptions.programArgs != expectedRunArgs) {
     return fail("expected every argument after 'run' to reach the program");
   }
   sere::CompilerOptions runWithSeparator;
@@ -280,15 +280,15 @@ int main() {
   if (runWithSeparator.programArgs.size() != 1 || runWithSeparator.programArgs.front() != "-v") {
     return fail("expected '--' to be dropped from the program arguments");
   }
-  sere::CompilerOptions buildOptions;
+  sere::CompilerOptions buildWithOptions;
   if (!parseArgs({"sere", "build", "--backend=serem", "--no-transformers", "--emit-asm", "-o",
                   "dist/app.s"},
-                 buildOptions, error)) {
+                 buildWithOptions, error)) {
     return fail("failed to parse 'sere build' with compiler options");
   }
-  if (buildOptions.projectCommand != sere::ProjectCommand::Build || !buildOptions.seremBackend ||
-      buildOptions.transformers || !buildOptions.emitAsm ||
-      buildOptions.outputPath.generic_string() != "dist/app.s") {
+  if (buildWithOptions.projectCommand != sere::ProjectCommand::Build ||
+      !buildWithOptions.seremBackend || buildWithOptions.transformers ||
+      !buildWithOptions.emitAsm || buildWithOptions.outputPath.generic_string() != "dist/app.s") {
     return fail("expected 'sere build' to take the compiler options");
   }
 

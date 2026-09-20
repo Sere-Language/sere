@@ -126,6 +126,23 @@ struct ParsedFloat {
   return out;
 }
 
+/// Turns the escaped brace pairs of a literal run into single braces, matching
+/// how an interpolated string's literal text is decoded.
+[[nodiscard]] std::string collapseDoubledBraces(std::string_view text) {
+  std::string out;
+  out.reserve(text.size());
+  for (std::size_t index = 0; index < text.size(); ++index) {
+    if ((text[index] == '{' || text[index] == '}') && index + 1 < text.size() &&
+        text[index + 1] == text[index]) {
+      out.push_back(text[index]);
+      ++index;
+      continue;
+    }
+    out.push_back(text[index]);
+  }
+  return out;
+}
+
 [[nodiscard]] UnaryOp prefixOp(TokenKind kind) {
   switch (kind) {
   case TokenKind::KeywordNot:
@@ -1248,111 +1265,47 @@ std::unique_ptr<Expr> Parser::parseFString() {
   const Token& token = previous();
   const std::string spelling(token.spelling());
   const std::string inner(stringLiteralInner(spelling));
-  std::size_t prefixLen = 1;
-  if (spelling.size() >= 2) {
-    std::size_t start = spelling[0] == 'f' || spelling[0] == 'F' ? 1 : 0;
-    const char quote = spelling[start];
-    std::size_t open = 1;
-    while (start + open < spelling.size() && spelling[start + open] == quote && open < 3) {
-      ++open;
-    }
-    if (open == 2) {
-      open = 1;
-    }
-    prefixLen = start + open;
-  }
   SourceLocation innerStart = token.range().start;
-  innerStart.offset += static_cast<std::uint32_t>(prefixLen);
-  innerStart.column += static_cast<std::uint32_t>(prefixLen);
+  const std::size_t innerOffset = stringLiteralInnerOffset(spelling);
+  innerStart.offset += static_cast<std::uint32_t>(innerOffset);
+  innerStart.column += static_cast<std::uint32_t>(innerOffset);
+  std::vector<FStringSegment> segments;
+  switch (splitFStringSegments(inner, segments)) {
+  case FStringSplitStatus::UnterminatedInterpolation:
+    diagnostics_->error(token.range().start, "unterminated interpolation");
+    return nullptr;
+  case FStringSplitStatus::UnmatchedBrace:
+    diagnostics_->error(token.range().start, "unmatched '}' in f-string");
+    return nullptr;
+  case FStringSplitStatus::Ok:
+    break;
+  }
   std::vector<StringPart> parts;
-  std::string literal;
-  std::size_t index = 0;
-  while (index < inner.size()) {
-    if (inner[index] == '{' && index + 1 < inner.size() && inner[index + 1] == '{') {
-      literal.push_back('{');
-      index += 2;
-      continue;
-    }
-    if (inner[index] == '}' && index + 1 < inner.size() && inner[index + 1] == '}') {
-      literal.push_back('}');
-      index += 2;
-      continue;
-    }
-    if (inner[index] == '{') {
-      if (!literal.empty()) {
-        StringPart part;
-        part.literal = unescapeStringBody(literal);
-        parts.push_back(std::move(part));
-        literal.clear();
-      }
-      ++index;
-      const std::size_t exprStart = index;
-      // Scan to the matching `}` while tracking quotes so a `:` inside a slice,
-      // dict literal, or string does not start the format spec.
-      std::size_t specStart = std::string::npos;
-      int depth = 1;
-      int brackets = 0;
-      char quote = '\0';
-      while (index < inner.size() && depth > 0) {
-        const char ch = inner[index];
-        if (quote != '\0') {
-          if (ch == '\\') {
-            index += 2;
-            continue;
-          }
-          if (ch == quote) {
-            quote = '\0';
-          }
-        } else if (ch == '"' || ch == '\'') {
-          quote = ch;
-        } else if (ch == '(' || ch == '[') {
-          ++brackets;
-        } else if (ch == ')' || ch == ']') {
-          --brackets;
-        } else if (ch == '{') {
-          ++depth;
-        } else if (ch == '}') {
-          --depth;
-        } else if (ch == ':' && brackets == 0 && depth == 1 &&
-                   specStart == std::string::npos) {
-          specStart = index;
-        }
-        if (depth > 0) {
-          ++index;
-        }
-      }
-      if (depth != 0) {
-        diagnostics_->error(token.range().start, "unterminated interpolation");
-        return nullptr;
-      }
-      const std::size_t exprEnd = specStart == std::string::npos ? index : specStart;
-      const std::string exprText = inner.substr(exprStart, exprEnd - exprStart);
-      SourceLocation base = innerStart;
-      base.offset += static_cast<std::uint32_t>(exprStart);
-      base.column += static_cast<std::uint32_t>(exprStart);
-      std::unique_ptr<Expr> expr = parseEmbeddedExpr(exprText, base);
-      if (expr == nullptr) {
-        return nullptr;
-      }
+  for (const FStringSegment& segment : segments) {
+    if (!segment.expression) {
       StringPart part;
-      if (specStart != std::string::npos) {
-        part.spec = inner.substr(specStart + 1, index - specStart - 1);
-      }
-      part.value = std::move(expr);
+      part.literal = unescapeStringBody(collapseDoubledBraces(
+          inner.substr(segment.start, segment.end - segment.start)));
       parts.push_back(std::move(part));
-      ++index;
       continue;
     }
-    if (inner[index] == '}') {
-      diagnostics_->error(token.range().start, "unmatched '}' in f-string");
+    SourceLocation base = innerStart;
+    base.offset += static_cast<std::uint32_t>(segment.start);
+    base.column += static_cast<std::uint32_t>(segment.start);
+    std::unique_ptr<Expr> expr =
+        parseEmbeddedExpr(inner.substr(segment.start, segment.end - segment.start), base);
+    if (expr == nullptr) {
       return nullptr;
     }
-    literal.push_back(inner[index]);
-    ++index;
-  }
-  if (!literal.empty() || parts.empty()) {
     StringPart part;
-    part.literal = unescapeStringBody(literal);
+    if (segment.spec != std::string_view::npos && segment.close != std::string_view::npos) {
+      part.spec = inner.substr(segment.spec + 1, segment.close - segment.spec - 1);
+    }
+    part.value = std::move(expr);
+    parts.push_back(std::move(part));
+  }
+  if (parts.empty()) {
+    StringPart part;
     parts.push_back(std::move(part));
   }
   return std::make_unique<InterpolatedStringExpr>(token.range(), std::move(parts));
