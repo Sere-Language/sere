@@ -1828,14 +1828,18 @@ const Type* TypeChecker::resolveNamedType(const std::string& name,
     }
     return nullptr;
   }
-  if (!resolvedArgs.empty()) {
-    diagnostics_->error(range, "type '" + name + "' is not generic");
-    return nullptr;
-  }
   if (const Type* primitive = types_->primitive(name)) {
+    if (!resolvedArgs.empty()) {
+      diagnostics_->error(range, "type '" + name + "' is not generic");
+      return nullptr;
+    }
     return primitive;
   }
   if (const Type* alias = types_->alias(name)) {
+    if (!resolvedArgs.empty()) {
+      diagnostics_->error(range, "type '" + name + "' is not generic");
+      return nullptr;
+    }
     return alias;
   }
   if (reportMissing) {
@@ -2620,7 +2624,11 @@ const Type* TypeChecker::checkBinary(BinaryExpr& expr) {
     const bool enums = left->isEnum() && right->isEnum() && left->canonical() == right->canonical();
     const bool enumInt =
         (left->isIntEnum() && right->isInteger()) || (right->isIntEnum() && left->isInteger());
-    if (!(same || ints || floats || mixedNum || strs || enums || enumInt)) {
+    const bool unionEquality =
+        (op == BinaryOp::Eq || op == BinaryOp::Ne) &&
+        ((left->isUnion() && (right->isUnion() || left->unionMemberIndex(right) >= 0)) ||
+         (right->isUnion() && right->unionMemberIndex(left) >= 0));
+    if (!(same || ints || floats || mixedNum || strs || enums || enumInt || unionEquality)) {
       diagnostics_->error(expr.range(),
                           "cannot compare " + quoteType(left) + " with " + quoteType(right));
       return nullptr;
@@ -4232,9 +4240,23 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
                                 " payload argument(s)");
         return nullptr;
       }
+      // Context fixes the complete payload type, including optional or nested payloads.
+      // Inferring first from `Ok(3)` would incorrectly choose Result[i32, E] when
+      // the destination is Result[i32 | None, E].
+      if (!objectType->typeParams().empty() && expr.typeArgs().empty() && expectedExprType_ != nullptr) {
+        std::unordered_map<std::string, const Type*> contextBindings;
+        if (bindRecordTypeArgs(objectType, expectedExprType_, contextBindings)) {
+          std::vector<const Type*> args;
+          for (const auto& parameter : objectType->typeParams())
+            args.push_back(contextBindings.at(parameter));
+          objectType = types_->instantiate(objectType, args);
+          variant = objectType->findField(member.field());
+        }
+      }
       std::vector<const Type*> argumentTypes;
       argumentTypes.reserve(expr.arguments().size());
       for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
+        ExpectedExprScope expected(expectedExprType_, variant->payloadTypes[argumentTypes.size()]);
         const Type* argType = checkExpr(*argument);
         if (argType == nullptr) {
           return nullptr;
@@ -4368,7 +4390,25 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
         if (argType == nullptr) {
           return nullptr;
         }
-        (void)inferTypeBindings(functionType->paramTypes()[argIdx + 1], argType, subst);
+        if (!inferTypeBindings(functionType->paramTypes()[argIdx + 1], argType, subst)) {
+          diagnostics_->error(expr.arguments()[argIdx]->range(), "conflicting generic argument types");
+          return nullptr;
+        }
+      }
+    }
+    if (expr.typeArgs().empty() && functionType != nullptr) {
+      for (const NamedArgument& argument : expr.keywordArguments()) {
+        const auto found = std::find(method.paramNames.begin(), method.paramNames.end(), argument.name);
+        if (found == method.paramNames.end())
+          continue; // Argument validation below reports unknown names.
+        const auto index = static_cast<std::size_t>(found - method.paramNames.begin());
+        const Type* actual = checkExpr(*argument.value);
+        if (actual == nullptr)
+          return nullptr;
+        if (!inferTypeBindings(functionType->paramTypes()[index], actual, subst)) {
+          diagnostics_->error(argument.value->range(), "conflicting generic argument types");
+          return nullptr;
+        }
       }
     }
     std::vector<const Type*> instArgs;
@@ -6136,6 +6176,7 @@ bool TypeChecker::collectMethods(Module& module) {
       RecordMethod info;
       info.name = method->name();
       info.type = fnType;
+      importMethod(record, *method);
       info.llvmName = enumDef.name() + "_" + method->name();
       info.typeParams = method->typeParams();
       info.typeConstraints = resolvedConstraints(method->typeConstraints());

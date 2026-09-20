@@ -133,6 +133,11 @@ private:
   llvm::Value* emitInterpolated(llvm::IRBuilder<>& builder, const InterpolatedStringExpr& expr);
   llvm::Value* emitLogical(llvm::IRBuilder<>& builder, const BinaryExpr& expr);
   llvm::Value* emitBinary(llvm::IRBuilder<>& builder, const BinaryExpr& expr);
+  llvm::Value* emitUnionEquality(llvm::IRBuilder<>& builder,
+                                 llvm::Value* left,
+                                 llvm::Value* right,
+                                 const Type* leftType,
+                                 const Type* rightType);
   /// Lowers operator overloading and the built-in string operators, which the
   /// numeric path in emitBinary cannot handle. Sets `handled` when the
   /// expression was recognised, even if lowering reported an error.

@@ -416,6 +416,8 @@ SeremGenerator::emit(const Module& module,
         // An enum's methods take the enum itself as the receiver, so they are
         // named after it the way a class names its own.
         const auto& enumDef = static_cast<const EnumDef&>(*statement);
+        if (!enumDef.typeParams().empty())
+          continue;
         for (const std::unique_ptr<FunctionDef>& method : enumDef.methods()) {
           const Type* type = functionType(*method);
           if (type == nullptr) {
@@ -433,25 +435,23 @@ SeremGenerator::emit(const Module& module,
   // Generic instantiations are emitted per concrete type argument, so a call
   // site can name the specialized symbol directly.
   for (const FunctionInstantiation& inst : types_->functionInstantiations()) {
-    if (inst.isMethod) {
-      // Methods are lowered once per instantiated class below.
-      continue;
-    }
     if (inst.specializedType != nullptr && !functions_.contains(inst.llvmName)) {
       functions_.insert_or_assign(inst.llvmName, lowerType(inst.specializedType));
     }
   }
   // A method of a generic class exists once per instantiated type argument, and
   // the instance owns the specialized symbol the call site has to name.
-  for (const auto& entry : types_->instantiations()) {
+  for (const auto& entry : std::vector(types_->instantiations())) {
     const Type* generic = entry.first;
     const Type* instance = entry.second;
+    if (instance->hasTypeParameters())
+      continue;
     if (generic == nullptr || instance == nullptr || generic->typeParams().empty() ||
         generic->typeParams().size() != instance->args().size()) {
       continue;
     }
     for (const RecordMethod& method : instance->methods()) {
-      if (method.llvmName.empty() || method.type == nullptr) {
+      if (method.llvmName.empty() || method.type == nullptr || !method.typeParams.empty()) {
         continue;
       }
       functions_.insert_or_assign(method.llvmName, lowerType(method.type));
@@ -473,6 +473,8 @@ SeremGenerator::emit(const Module& module,
             return nullptr;
       }
       if (statement->kind() == NodeKind::EnumDef) {
+        if (!static_cast<const EnumDef&>(*statement).typeParams().empty())
+          continue;
         for (const auto& method : static_cast<const EnumDef&>(*statement).methods())
           if (!emitFunction(*method))
             return nullptr;
@@ -480,18 +482,6 @@ SeremGenerator::emit(const Module& module,
     }
   }
   for (const FunctionInstantiation& inst : types_->functionInstantiations()) {
-    // A method of a generic class is emitted per instance below, with the
-    // instantiated receiver; emitting it here would use the generic layout.
-    bool specializedMethod = inst.isMethod;
-    for (const auto& entry : methodSymbols_) {
-      if (entry.second == inst.llvmName) {
-        specializedMethod = true;
-        break;
-      }
-    }
-    if (specializedMethod) {
-      continue;
-    }
     subst_.clear();
     for (std::size_t index = 0; index < inst.typeParams.size() && index < inst.args.size();
          ++index) {
@@ -505,10 +495,27 @@ SeremGenerator::emit(const Module& module,
           source = static_cast<const FunctionDef*>(statement.get());
           break;
         }
+        const std::vector<std::unique_ptr<FunctionDef>>* methods = nullptr;
+        const Type* owner = nullptr;
         if (statement->kind() == NodeKind::ClassDef) {
-          for (const auto& method : static_cast<const ClassDef&>(*statement).methods()) {
-            if (method->name() == inst.sourceName) {
+          const auto& def = static_cast<const ClassDef&>(*statement);
+          methods = &def.methods();
+          owner = def.resolvedType();
+        } else if (statement->kind() == NodeKind::EnumDef) {
+          const auto& def = static_cast<const EnumDef&>(*statement);
+          methods = &def.methods();
+          owner = def.resolvedType();
+        }
+        if (methods != nullptr && inst.isMethod) {
+          const Type* receiver = inst.specializedType->paramTypes()[0];
+          for (const auto& method : *methods) {
+            const int index = receiver->methodIndex(method->name());
+            if (index >= 0 && receiver->methods()[index].llvmName == inst.sourceName &&
+                receiver->name().substr(0, receiver->name().find('[')) == owner->name()) {
               source = method.get();
+              for (std::size_t i = 0; i < owner->typeParams().size(); ++i)
+                subst_[owner->typeParams()[i]] = receiver->args()[i];
+              receiverOverride_ = receiver;
               break;
             }
           }
@@ -523,13 +530,16 @@ SeremGenerator::emit(const Module& module,
       subst_.clear();
       return nullptr;
     }
+    receiverOverride_ = nullptr;
     subst_.clear();
   }
   // A generic class or enum has no body of its own: each instance is lowered
   // with its type arguments substituted, under the symbol the instance declares.
-  for (const auto& entry : types_->instantiations()) {
+  for (const auto& entry : std::vector(types_->instantiations())) {
     const Type* generic = entry.first;
     const Type* instance = entry.second;
+    if (instance->hasTypeParameters())
+      continue;
     if (generic == nullptr || instance == nullptr || generic->typeParams().empty() ||
         generic->typeParams().size() != instance->args().size()) {
       continue;
@@ -565,7 +575,7 @@ SeremGenerator::emit(const Module& module,
     const std::vector<RecordMethod>& methods = instance->methods();
     const std::size_t count = std::min(sourceMethods->size(), methods.size());
     for (std::size_t index = 0; index < count; ++index) {
-      if (methods[index].llvmName.empty()) {
+      if (methods[index].llvmName.empty() || !methods[index].typeParams.empty()) {
         continue;
       }
       const Type* previousReceiver = receiverOverride_;
@@ -631,9 +641,11 @@ void SeremGenerator::declareClass(const ClassDef& classDef) {
 }
 
 void SeremGenerator::declareInstances(const std::vector<const Module*>& modules) {
-  for (const auto& entry : types_->instantiations()) {
+  for (const auto& entry : std::vector(types_->instantiations())) {
     const Type* generic = entry.first;
     const Type* instance = entry.second;
+    if (instance->hasTypeParameters())
+      continue;
     if (generic == nullptr || instance == nullptr || generic->typeParams().empty() ||
         generic->typeParams().size() != instance->args().size()) {
       continue;
@@ -1883,8 +1895,12 @@ serem::ValuePtr SeremGenerator::emitExpression(const Expr& expression) {
     return emitBinary(static_cast<const BinaryExpr&>(expression));
   case NodeKind::UnaryExpr:
     return emitUnary(static_cast<const UnaryExpr&>(expression));
-  case NodeKind::CallExpr:
-    return emitCall(static_cast<const CallExpr&>(expression));
+  case NodeKind::CallExpr: {
+    auto result = emitCall(static_cast<const CallExpr&>(expression));
+    (void)builder_->operation("error.check", serem::IRType::voidType(), {},
+        {{"handler", tryHandlers_.empty() ? std::string{} : tryHandlers_.back()}});
+    return result;
+  }
   case NodeKind::AwaitExpr: {
     const auto& await = static_cast<const AwaitExpr&>(expression);
     return builder_->await(emitExpression(await.operand()), lowerType(expression.resolvedType()));
@@ -1941,6 +1957,8 @@ serem::ValuePtr SeremGenerator::emitExpression(const Expr& expression) {
 }
 
 serem::ValuePtr SeremGenerator::coerce(serem::ValuePtr value, const Type* from, const Type* to) {
+  from = types_->substitute(from, subst_);
+  to = types_->substitute(to, subst_);
   if (value == nullptr || from == nullptr || to == nullptr || from == to)
     return value;
   if (to->isAny() && !from->isAny()) {
@@ -2171,7 +2189,7 @@ serem::ValuePtr SeremGenerator::emitName(const NameExpr& expression) {
   const auto captured = captureSymbols_.find(expression.name());
   if (captured != captureSymbols_.end()) {
     return builder_->operation(
-        "static.get", serem::IRType::ptr(serem::IRType::i8()), {}, {{"symbol", captured->second}});
+        "static.get", lowerType(expression.resolvedType()), {}, {{"symbol", captured->second}});
   }
   const auto symbol = functionSymbols_.find(expression.name());
   const auto found =
@@ -2188,6 +2206,54 @@ serem::ValuePtr SeremGenerator::emitName(const NameExpr& expression) {
   }
   return std::make_shared<serem::FunctionRef>(expression.name(),
                                               lowerType(expression.resolvedType()));
+}
+
+serem::ValuePtr SeremGenerator::emitUnionEquality(serem::ValuePtr left,
+                                                  serem::ValuePtr right,
+                                                  const Type* leftType,
+                                                  const Type* rightType) {
+  const auto boolean = [](bool value) {
+    return std::make_shared<serem::ConstantInt>(value, serem::IRType::boolType());
+  };
+  if (!leftType->isUnion() && rightType->isUnion())
+    return emitUnionEquality(right, left, rightType, leftType);
+  if (leftType->isUnion()) {
+    const auto slot = builder_->alloca(serem::IRType::boolType());
+    builder_->store(boolean(false), slot);
+    auto* done = &function_->addBlock("union.eq.end");
+    for (std::size_t index = 0; index < leftType->args().size(); ++index) {
+      const Type* member = leftType->args()[index];
+      if (!rightType->isUnion() && member->canonical() != rightType->canonical())
+        continue;
+      auto* match = &function_->addBlock("union.eq.member");
+      auto* next = &function_->addBlock("union.eq.next");
+      auto tag = builder_->operation(
+          "union.is", serem::IRType::boolType(), {left}, {{"tag", std::to_string(index)}});
+      (void)builder_->conditionalBranch(tag, *match, *next);
+      builder_->setInsertBlock(*match);
+      auto payload = member->isVoidLike() ? boolean(false) : coerce(left, leftType, member);
+      builder_->store(emitUnionEquality(payload, right, member, rightType), slot);
+      (void)builder_->branch(*done);
+      builder_->setInsertBlock(*next);
+    }
+    (void)builder_->branch(*done);
+    builder_->setInsertBlock(*done);
+    return builder_->load(slot, serem::IRType::boolType());
+  }
+  if (leftType->canonical() != rightType->canonical())
+    return boolean(false);
+  if (leftType->isVoidLike())
+    return boolean(true);
+  if (leftType->isList()) {
+    const Type* element = leftType->elementType();
+    int kind = element->isNamed("str")   ? 1
+               : element->isNamed("f32") ? 2
+               : element->isNamed("f64") ? 3
+                                         : 0;
+    return builder_->operation(
+        "list.equal", serem::IRType::boolType(), {left, right}, {{"kind", std::to_string(kind)}});
+  }
+  return builder_->compare("eq", left, right);
 }
 
 serem::ValuePtr SeremGenerator::emitBinary(const BinaryExpr& expression) {
@@ -2275,6 +2341,15 @@ serem::ValuePtr SeremGenerator::emitBinary(const BinaryExpr& expression) {
   const serem::IRType type = lowerType(expression.resolvedType());
   const Type* lhsType = expression.left().resolvedType();
   const Type* rhsType = expression.right().resolvedType();
+  lhsType = types_->substitute(lhsType, subst_);
+  rhsType = types_->substitute(rhsType, subst_);
+  if ((expression.op() == BinaryOp::Eq || expression.op() == BinaryOp::Ne) &&
+      (lhsType->isUnion() || rhsType->isUnion())) {
+    auto equal = emitUnionEquality(left, right, lhsType, rhsType);
+    return expression.op() == BinaryOp::Ne
+               ? builder_->operation("not", serem::IRType::boolType(), {equal})
+               : equal;
+  }
   if (lhsType != nullptr && rhsType != nullptr && lhsType->isList() && rhsType->isList() &&
       (expression.op() == BinaryOp::Eq || expression.op() == BinaryOp::Ne)) {
     const Type* element = lhsType->elementType();
@@ -2448,6 +2523,21 @@ void SeremGenerator::appendDefaults(const std::string& symbol,
 }
 
 serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
+  if (expression.intrinsic() == IntrinsicKind::Str && !expression.arguments().empty()) {
+    const Expr& argument = *expression.arguments()[0];
+    const Type* source = types_->substitute(argument.resolvedType(), subst_);
+    auto value = emitExpression(argument);
+    if (source->isNamed("str"))
+      return value;
+    if (source->isVoidLike())
+      return stringValue("None");
+    if (source->methodIndex("__str__") >= 0)
+      return callMethod(source, "__str__", value, {});
+    return builder_->operation("string.convert",
+                               serem::IRType::stringType(),
+                               {value},
+                               {{"unsigned", source->isUnsignedInteger() ? "true" : "false"}});
+  }
   if (expression.isCast() && !expression.arguments().empty()) {
     const Expr& source = *expression.arguments()[0];
     if (expression.resolvedType()->isNamed("bool") &&
@@ -2734,6 +2824,16 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
         args.push_back(emitExpression(*argument));
       }
     }
+    const Type* record = types_->substitute(expression.resolvedType(), subst_);
+    if (record->isEnum() && expression.callee().kind() == NodeKind::MemberExpr) {
+      const auto& member = static_cast<const MemberExpr&>(expression.callee());
+      if (const auto* field = record->findField(member.field())) {
+        for (std::size_t index = 0; index < args.size() && index < field->payloadTypes.size(); ++index) {
+          args[index] = coerce(args[index], expression.arguments()[index]->resolvedType(),
+                               field->payloadTypes[index]);
+        }
+      }
+    }
     return builder_->operation(
         "construct",
         lowerType(expression.resolvedType()),
@@ -2795,8 +2895,11 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
       const std::string owner = member.object().resolvedType()->canonical()->name();
       const std::string qualified = owner + "." + member.field();
       const std::string method = methodSymbol(member.object().resolvedType(), member.field());
-      const std::string symbol =
-          !method.empty() ? method : (functions_.contains(qualified) ? qualified : member.field());
+      const std::string symbol = !expression.loweredName().empty() &&
+                                         functions_.contains(expression.loweredName())
+                                     ? expression.loweredName()
+                                     : !method.empty() ? method
+                                     : functions_.contains(qualified) ? qualified : member.field();
       serem::ValuePtr callee = std::make_shared<serem::FunctionRef>(
           symbol, lowerType(expression.callee().resolvedType()));
       args.push_back(emitExpression(member.object()));

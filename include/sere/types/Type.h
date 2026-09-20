@@ -104,6 +104,7 @@ public:
   [[nodiscard]] int fieldIndex(std::string_view fieldName) const;
   [[nodiscard]] int methodIndex(std::string_view methodName) const;
   [[nodiscard]] bool isTypeParam() const;
+  [[nodiscard]] bool hasTypeParameters() const;
   [[nodiscard]] bool isModule() const;
   [[nodiscard]] bool isAbstract() const;
   [[nodiscard]] bool isEnum() const;

@@ -106,6 +106,10 @@ private:
   void appendDefaults(const std::string& symbol, std::vector<serem::ValuePtr>& arguments);
   [[nodiscard]] serem::ValuePtr emitName(const NameExpr& expression);
   [[nodiscard]] serem::ValuePtr emitBinary(const BinaryExpr& expression);
+  [[nodiscard]] serem::ValuePtr emitUnionEquality(serem::ValuePtr left,
+                                                  serem::ValuePtr right,
+                                                  const Type* leftType,
+                                                  const Type* rightType);
   [[nodiscard]] serem::ValuePtr emitCall(const CallExpr& expression);
   [[nodiscard]] serem::ValuePtr emitUnary(const UnaryExpr& expression);
   [[nodiscard]] serem::ValuePtr emitMember(const MemberExpr& expression);

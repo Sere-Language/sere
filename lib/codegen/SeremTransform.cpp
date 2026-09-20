@@ -463,7 +463,7 @@ private:
           // A `throw` and a failed `assert` reach their handler through an
           // attribute rather than a branch edge, so the dispatch block has to
           // stay reachable.
-          if (opcode == "throw" || opcode == "assert") {
+          if (opcode == "throw" || opcode == "assert" || opcode == "error.check") {
             const std::string label = attributeAt(*operation, "handler");
             if (!label.empty() && labels.contains(label) && reachable.insert(label).second) {
               pending.push_back(label);

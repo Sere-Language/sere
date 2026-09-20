@@ -81,6 +81,21 @@ const Type* Type::valueType() const {
   return type;
 }
 
+bool Type::hasTypeParameters() const {
+  const Type* type = canonical();
+  if (type->isTypeParam() || !type->typeParams().empty())
+    return true;
+  for (const Type* arg : type->args()) {
+    if (arg->hasTypeParameters())
+      return true;
+  }
+  for (const Type* param : type->paramTypes()) {
+    if (param->hasTypeParameters())
+      return true;
+  }
+  return type->returnType() != nullptr && type->returnType()->hasTypeParameters();
+}
+
 bool Type::isTypeParam() const {
   return canonical()->kind_ == TypeKind::TypeParam;
 }

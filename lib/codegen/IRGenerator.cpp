@@ -3499,7 +3499,8 @@ llvm::Value* IRGenerator::emitConstruct(llvm::IRBuilder<>& builder, const CallEx
     llvm::Value* memory = builder.CreateCall(allocFn, {builder.getInt64(bytes == 0 ? 1 : bytes)});
     llvm::Value* typed = builder.CreateBitCast(memory, builder.getPtrTy());
     for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
-      llvm::Value* value = emitExpr(builder, *expr.arguments()[index]);
+      llvm::Value* value = emitCoerce(builder, emitExpr(builder, *expr.arguments()[index]),
+                                      expr.arguments()[index]->resolvedType(), field->payloadTypes[index]);
       llvm::Value* slot = builder.CreateStructGEP(payloadTy, typed, static_cast<unsigned>(index));
       builder.CreateStore(value, slot);
     }
@@ -3646,6 +3647,15 @@ llvm::Value* IRGenerator::emitMethodCall(llvm::IRBuilder<>& builder, const CallE
   }
   if (methodDef != nullptr) {
     appendBoundCallArgs(builder, expr, *methodDef, methodType, args, 1);
+  } else if (!expr.boundArguments().empty()) {
+    std::size_t paramIndex = 1;
+    for (const Expr* argument : expr.boundArguments()) {
+      if (argument != nullptr)
+        args.push_back(emitCallArgument(builder, *argument,
+            methodType != nullptr && paramIndex < methodType->paramTypes().size()
+                ? methodType->paramTypes()[paramIndex] : nullptr));
+      ++paramIndex;
+    }
   } else {
     std::size_t paramIndex = 1;
     for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
@@ -3774,6 +3784,67 @@ llvm::Value* IRGenerator::emitLogical(llvm::IRBuilder<>& builder, const BinaryEx
   phi->addIncoming(left, lhsBlock);
   phi->addIncoming(right, rhsEnd);
   return phi;
+}
+
+// Dispatch on tags before inspecting payloads: an absent string must never be dereferenced.
+llvm::Value* IRGenerator::emitUnionEquality(llvm::IRBuilder<>& builder,
+                                            llvm::Value* left,
+                                            llvm::Value* right,
+                                            const Type* leftType,
+                                            const Type* rightType) {
+  if (!leftType->isUnion() && rightType->isUnion())
+    return emitUnionEquality(builder, right, left, rightType, leftType);
+  if (leftType->isUnion()) {
+    auto* function = builder.GetInsertBlock()->getParent();
+    auto* done = llvm::BasicBlock::Create(*context_, "union.eq.end", function);
+    auto* slot = builder.CreateAlloca(builder.getInt1Ty());
+    builder.CreateStore(builder.getFalse(), slot);
+    auto* tag = builder.CreateExtractValue(left, {0});
+    for (std::size_t index = 0; index < leftType->args().size(); ++index) {
+      const Type* member = leftType->args()[index];
+      if (!rightType->isUnion() && member->canonical() != rightType->canonical())
+        continue;
+      auto* match = llvm::BasicBlock::Create(*context_, "union.eq.member", function);
+      auto* next = llvm::BasicBlock::Create(*context_, "union.eq.next", function);
+      builder.CreateCondBr(builder.CreateICmpEQ(tag, builder.getInt32(index)), match, next);
+      builder.SetInsertPoint(match);
+      auto* payload = member->isVoidLike() ? builder.getInt1(false)
+                                           : emitCoerce(builder, left, leftType, member);
+      builder.CreateStore(emitUnionEquality(builder, payload, right, member, rightType), slot);
+      builder.CreateBr(done);
+      builder.SetInsertPoint(next);
+    }
+    builder.CreateBr(done);
+    builder.SetInsertPoint(done);
+    return builder.CreateLoad(builder.getInt1Ty(), slot);
+  }
+  if (leftType->canonical() != rightType->canonical())
+    return builder.getFalse();
+  if (leftType->isVoidLike())
+    return builder.getTrue();
+  if (leftType->isNamed("str"))
+    return emitStrCompare(builder, BinaryOp::Eq, left, right);
+  if (leftType->isList()) {
+    const Type* element = leftType->elementType();
+    int kind = element->isNamed("str")   ? 1
+               : element->isNamed("f32") ? 2
+               : element->isNamed("f64") ? 3
+                                         : 0;
+    auto* equal = runtimeDecl("sere_list_equal",
+                              builder.getInt32Ty(),
+                              {builder.getPtrTy(), builder.getPtrTy(), builder.getInt32Ty()});
+    return builder.CreateICmpNE(builder.CreateCall(equal, {left, right, builder.getInt32(kind)}),
+                                builder.getInt32(0));
+  }
+  if (leftType->isEnum()) {
+    left = emitEnumTag(builder, left);
+    right = emitEnumTag(builder, right);
+  }
+  if (left->getType()->isFloatingPointTy())
+    return builder.CreateFCmpOEQ(left, right);
+  if (left->getType()->isIntegerTy() || left->getType()->isPointerTy())
+    return builder.CreateICmpEQ(left, right);
+  return builder.getFalse();
 }
 
 llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExpr& expr) {
@@ -3940,6 +4011,11 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
   }
   const Type* leftType = resolveType(expr.left().resolvedType());
   const Type* rightType = resolveType(expr.right().resolvedType());
+  if ((expr.op() == BinaryOp::Eq || expr.op() == BinaryOp::Ne) &&
+      (leftType->isUnion() || rightType->isUnion())) {
+    auto* equal = emitUnionEquality(builder, left, right, leftType, rightType);
+    return expr.op() == BinaryOp::Ne ? builder.CreateNot(equal) : equal;
+  }
   // Comparing a pointer-like value to None is a null check. None's type is
   // void-like, so emitCoerce below would drop the None operand to nullptr and
   // the generic compare path would dereference it. Handle identity/equality
@@ -5196,10 +5272,15 @@ llvm::Value* IRGenerator::emitExpr(llvm::IRBuilder<>& builder, const Expr& expr)
       llvm::Value* self = emitObjectPointer(builder, member.object(), objectType);
       return emitNamedMethod(builder, member.propertyGet(), self, {});
     }
-    llvm::Value* address = emitAddress(builder, expr);
-    if (address == nullptr) {
-      return nullptr;
+    llvm::Value* address = emitAddress(builder, expr, false);
+    if (address == nullptr && objectType != nullptr && objectType->isRecord()) {
+      const int index = objectType->fieldIndex(member.field());
+      llvm::Value* object = emitExpr(builder, member.object());
+      if (index >= 0 && object != nullptr && object->getType()->isStructTy())
+        return builder.CreateExtractValue(object, {llvmFieldIndex(objectType, index)});
     }
+    if (address == nullptr)
+      return nullptr;
     return builder.CreateLoad(lower(expr.resolvedType()), address);
   }
   case NodeKind::CallExpr: {
@@ -5843,6 +5924,9 @@ void IRGenerator::collectReachable(const std::vector<const Module*>& modules) {
         }
       } else if (statement->kind() == NodeKind::EnumDef) {
         const auto& enumDef = static_cast<const EnumDef&>(*statement);
+        if (!enumDef.typeParams().empty()) {
+          continue;
+        }
         for (const std::unique_ptr<FunctionDef>& method : enumDef.methods()) {
           defs[llvmNameFor(*method)] = method.get();
         }
@@ -6034,6 +6118,9 @@ void IRGenerator::declareFunctions(const Module& ast) {
     }
     if (statement->kind() == NodeKind::EnumDef) {
       const auto& enumDef = static_cast<const EnumDef&>(*statement);
+      if (!enumDef.typeParams().empty()) {
+        continue;
+      }
       for (const std::unique_ptr<FunctionDef>& method : enumDef.methods()) {
         functionDefs_[llvmNameFor(*method)] = method.get();
         if (!method->typeParams().empty() || !shouldEmit(*method)) {
@@ -6208,10 +6295,13 @@ void IRGenerator::declareInstantiations() {
         llvm::Function::Create(type, llvm::Function::ExternalLinkage, inst.llvmName, module_);
     functions_[inst.llvmName] = fn;
   }
-  for (const auto& entry : types_->instantiations()) {
+  for (const auto& entry : std::vector(types_->instantiations())) {
     const Type* instance = entry.second;
+    if (instance->hasTypeParameters())
+      continue;
     for (const RecordMethod& method : instance->methods()) {
-      if (method.type == nullptr || functions_.contains(method.llvmName)) {
+      if (method.type == nullptr || !method.typeParams.empty() ||
+          functions_.contains(method.llvmName)) {
         continue;
       }
       std::vector<llvm::Type*> params;
@@ -6250,20 +6340,36 @@ bool IRGenerator::emitInstantiations(const std::vector<const Module*>& modules) 
           source = static_cast<const FunctionDef*>(statement.get());
           break;
         }
+        const std::vector<std::unique_ptr<FunctionDef>>* methods = nullptr;
+        const Type* owner = nullptr;
         if (statement->kind() == NodeKind::ClassDef) {
-          const auto& classDef = static_cast<const ClassDef&>(*statement);
-          for (const std::unique_ptr<FunctionDef>& method : classDef.methods()) {
-            const std::string unqualified = classDef.name() + "_" + method->name();
-            const std::string qualified =
-                (method->modulePrefix().empty() ? "" : method->modulePrefix() + "_") + unqualified;
-            if (method->name() == inst.sourceName || unqualified == inst.sourceName ||
-                qualified == inst.sourceName) {
+          const auto& def = static_cast<const ClassDef&>(*statement);
+          methods = &def.methods();
+          owner = def.resolvedType();
+        } else if (statement->kind() == NodeKind::EnumDef) {
+          const auto& def = static_cast<const EnumDef&>(*statement);
+          methods = &def.methods();
+          owner = def.resolvedType();
+        }
+        if (methods != nullptr) {
+          const Type* receiver = inst.isMethod && !inst.specializedType->paramTypes().empty()
+                                     ? inst.specializedType->paramTypes()[0]
+                                     : nullptr;
+          for (const auto& method : *methods) {
+            std::string symbol = owner->name() + "_" + method->name();
+            if (receiver != nullptr) {
+              const int index = receiver->methodIndex(method->name());
+              if (index >= 0)
+                symbol = receiver->methods()[index].llvmName;
+            }
+            if (symbol == inst.sourceName && receiver != nullptr &&
+                receiver->name().substr(0, receiver->name().find('[')) == owner->name()) {
               source = method.get();
+              for (std::size_t i = 0; i < owner->typeParams().size(); ++i)
+                subst_[owner->typeParams()[i]] = receiver->args()[i];
+              subst_[owner->name()] = receiver;
               break;
             }
-          }
-          if (source != nullptr) {
-            break;
           }
         }
       }
@@ -6277,9 +6383,11 @@ bool IRGenerator::emitInstantiations(const std::vector<const Module*>& modules) 
     }
     subst_.clear();
   }
-  for (const auto& entry : types_->instantiations()) {
+  for (const auto& entry : std::vector(types_->instantiations())) {
     const Type* generic = entry.first;
     const Type* instance = entry.second;
+    if (instance->hasTypeParameters())
+      continue;
     subst_.clear();
     for (std::size_t index = 0;
          index < generic->typeParams().size() && index < instance->args().size();
@@ -6307,6 +6415,8 @@ bool IRGenerator::emitInstantiations(const std::vector<const Module*>& modules) 
       continue;
     }
     for (const std::unique_ptr<FunctionDef>& method : *sourceMethods) {
+      if (!method->typeParams().empty())
+        continue;
       const int index = instance->methodIndex(method->name());
       if (index < 0) {
         continue;
@@ -6673,6 +6783,9 @@ std::unique_ptr<llvm::Module> IRGenerator::emit(const Module& ast,
         }
       } else if (statement->kind() == NodeKind::EnumDef) {
         const auto& enumDef = static_cast<const EnumDef&>(*statement);
+        if (!enumDef.typeParams().empty()) {
+          continue;
+        }
         for (const std::unique_ptr<FunctionDef>& method : enumDef.methods()) {
           if (!method->typeParams().empty() || !shouldEmit(*method)) {
             continue;

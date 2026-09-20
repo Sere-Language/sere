@@ -16,67 +16,67 @@ def recover(error: str) -> Result[i32, i32]:
 def main() -> i32:
     good: Result[i32, str] = Result.Ok(21)
     bad: Result[i32, str] = Result.Err("bad")
-    assert good.is_ok()
-    assert not good.is_err()
-    assert bad.is_err()
-    assert not bad.is_ok()
-    assert good.unwrap() == 21
-    assert good.expect("value") == 21
-    assert i32(good.ok()) == 21
-    assert bad.ok() is None
-    assert good.err() is None
-    assert str(bad.err()) == "bad"
-    assert good.unwrap_or(7) == 21
-    assert bad.unwrap_or(7) == 7
-    assert good.unwrap_or_else(error_length) == 21
-    assert bad.unwrap_or_else(error_length) == 3
-    assert good.map(stringify).unwrap() == "21"
-    assert bad.map(stringify).contains_err("bad")
-    assert good.map_err(error_length).unwrap() == 21
-    assert bad.map_err(error_length).contains_err(3)
-    assert good.map_or(7, double) == 42
-    assert bad.map_or(7, double) == 7
-    assert good.map_or_else(error_length, double) == 42
-    assert bad.map_or_else(error_length, double) == 3
+    assert good.is_ok(), "feature_result:19"
+    assert not good.is_err(), "feature_result:20"
+    assert bad.is_err(), "feature_result:21"
+    assert not bad.is_ok(), "feature_result:22"
+    assert good.unwrap() == 21, "feature_result:23"
+    assert good.expect("value") == 21, "feature_result:24"
+    assert good.ok() == 21, "feature_result:25"
+    assert bad.ok() is None, "feature_result:26"
+    assert good.err() is None, "feature_result:27"
+    assert bad.err() == "bad", "feature_result:28"
+    assert good.unwrap_or(7) == 21, "feature_result:29"
+    assert bad.unwrap_or(7) == 7, "feature_result:30"
+    assert good.unwrap_or_else(error_length) == 21, "feature_result:31"
+    assert bad.unwrap_or_else(error_length) == 3, "feature_result:32"
+    assert good.map(stringify).unwrap() == "21", "feature_result:33"
+    assert bad.map(stringify).contains_err("bad"), "feature_result:34"
+    assert good.map_err(error_length).unwrap() == 21, "feature_result:35"
+    assert bad.map_err(error_length).contains_err(3), "feature_result:36"
+    assert good.map_or(7, double) == 42, "feature_result:37"
+    assert bad.map_or(7, double) == 7, "feature_result:38"
+    assert good.map_or_else(error_length, double) == 42, "feature_result:39"
+    assert bad.map_or_else(error_length, double) == 3, "feature_result:40"
     other: Result[str, str] = Result.Ok("other")
     other_bad: Result[str, str] = Result.Err("other error")
-    assert good.and_(other).unwrap() == "other"
-    assert good.and_(other_bad).contains_err("other error")
-    assert bad.and_(other).contains_err("bad")
-    assert bad.and_(other_bad).contains_err("bad")
-    assert good.and_then(next_result).unwrap() == "21"
-    assert bad.and_then(next_result).contains_err("bad")
+    assert good.and_(other).unwrap() == "other", "feature_result:43"
+    assert good.and_(other_bad).contains_err("other error"), "feature_result:44"
+    assert bad.and_(other).contains_err("bad"), "feature_result:45"
+    assert bad.and_(other_bad).contains_err("bad"), "feature_result:46"
+    assert good.and_then(next_result).unwrap() == "21", "feature_result:47"
+    assert bad.and_then(next_result).contains_err("bad"), "feature_result:48"
     fallback: Result[i32, i32] = Result.Ok(9)
     fallback_bad: Result[i32, i32] = Result.Err(404)
-    assert good.or_(fallback).unwrap() == 21
-    assert good.or_(fallback_bad).unwrap() == 21
-    assert bad.or_(fallback).unwrap() == 9
-    assert bad.or_(fallback_bad).contains_err(404)
-    assert good.or_else(recover).unwrap() == 21
-    assert bad.or_else(recover).unwrap() == 3
-    assert good.contains(21)
-    assert not good.contains(22)
-    assert not bad.contains(21)
-    assert bad.contains_err("bad")
-    assert not bad.contains_err("wrong")
-    assert not good.contains_err("bad")
+    assert good.or_(fallback).unwrap() == 21, "feature_result:51"
+    assert good.or_(fallback_bad).unwrap() == 21, "feature_result:52"
+    assert bad.or_(fallback).unwrap() == 9, "feature_result:53"
+    assert bad.or_(fallback_bad).contains_err(404), "feature_result:54"
+    assert good.or_else(recover).unwrap() == 21, "feature_result:55"
+    assert bad.or_else(recover).unwrap() == 3, "feature_result:56"
+    assert good.contains(21), "feature_result:57"
+    assert not good.contains(22), "feature_result:58"
+    assert not bad.contains(21), "feature_result:59"
+    assert bad.contains_err("bad"), "feature_result:60"
+    assert not bad.contains_err("wrong"), "feature_result:61"
+    assert not good.contains_err("bad"), "feature_result:62"
     caught: i32 = 0
     try:
         bad.unwrap()
     except ResultError as error:
-        assert error.message == "bad"
+        assert error.message == "bad", "feature_result:67"
         caught += 1
     try:
         bad.expect("failed")
     except ResultError as error:
-        assert error.message == "failed: bad"
+        assert error.message == "failed: bad", "feature_result:72"
         caught += 1
     numeric: Result[str, i32] = Result.Err(404)
     try:
         numeric.unwrap()
     except ResultError as error:
-        assert error.message == "404"
+        assert error.message == "404", "feature_result:78"
         caught += 1
-    assert caught == 3
+    assert caught == 3, "feature_result:80"
     print("result ok")
     return 0

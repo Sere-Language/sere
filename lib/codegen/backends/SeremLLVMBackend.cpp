@@ -1318,6 +1318,34 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
         alloc, {llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context_), 8)});
     if (!operands.empty())
       builder_->builder.CreateStore(operand(0), result);
+  } else if (opcode == "string.convert") {
+    llvm::Value* value = operand(0);
+    std::string name;
+    llvm::Type* parameter = nullptr;
+    if (value->getType()->isIntegerTy(1)) {
+      name = "sere_str_bool_data";
+      parameter = ir.getInt8Ty();
+    } else if (value->getType()->isIntegerTy()) {
+      name =
+          value->getType()->getIntegerBitWidth() <= 32 ? "sere_str_i32_data" : "sere_str_i64_data";
+      parameter = value->getType()->getIntegerBitWidth() <= 32 ? ir.getInt32Ty() : ir.getInt64Ty();
+    } else if (value->getType()->isFloatingPointTy()) {
+      name = "sere_str_f64_data";
+      parameter = ir.getDoubleTy();
+    } else if (value->getType()->isPointerTy()) {
+      name = "sere_str_ptr_data";
+      parameter = ir.getPtrTy();
+    }
+    if (parameter != nullptr) {
+      if (value->getType()->isIntegerTy())
+        value = ir.CreateIntCast(value, parameter, attribute(operation, "unsigned") != "true");
+      else if (value->getType()->isFloatTy())
+        value = ir.CreateFPExt(value, parameter);
+      auto convertString = module_->getOrInsertFunction(name, ir.getPtrTy(), parameter, ir.getPtrTy());
+      result = ir.CreateCall(convertString, {value, ir.CreateAlloca(ir.getInt64Ty())});
+    } else {
+      report("unsupported value in Serem string conversion");
+    }
   } else if (opcode == "string.concat") {
     llvm::Function* concat = module_->getFunction("sere_str_concat_data");
     if (concat == nullptr) {
@@ -1988,6 +2016,21 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     } else {
       ir.CreateRet(llvm::Constant::getNullValue(function->getReturnType()));
     }
+  } else if (opcode == "error.check") {
+    auto hasError = module_->getOrInsertFunction("sere_has_error", ir.getInt32Ty());
+    auto* function = ir.GetInsertBlock()->getParent();
+    auto* failed = llvm::BasicBlock::Create(*context_, "error.failed", function);
+    auto* continued = llvm::BasicBlock::Create(*context_, "error.ok", function);
+    ir.CreateCondBr(ir.CreateICmpNE(ir.CreateCall(hasError), ir.getInt32(0)), failed, continued);
+    ir.SetInsertPoint(failed);
+    const std::string handler = attribute(operation, "handler");
+    if (!handler.empty() && blockFor(handler) != nullptr)
+      ir.CreateBr(blockFor(handler));
+    else if (function->getReturnType()->isVoidTy())
+      ir.CreateRetVoid();
+    else
+      ir.CreateRet(llvm::Constant::getNullValue(function->getReturnType()));
+    ir.SetInsertPoint(continued);
   } else if (opcode == "error.isa") {
     llvm::Function* isa = module_->getFunction("sere_error_isa");
     if (isa == nullptr) {
