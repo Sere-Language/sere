@@ -194,6 +194,19 @@ std::shared_ptr<Argument> IRFunction::argument(std::size_t index) const {
   return arguments_[index];
 }
 BasicBlock& IRFunction::addBlock(std::string label) {
+  const std::string base = label;
+  std::size_t suffix = 0;
+  while (true) {
+    bool exists = false;
+    for (const auto& block : blocks_) {
+      if (block->label() == label) {
+        exists = true;
+        break;
+      }
+    }
+    if (!exists) break;
+    label = base + "." + std::to_string(++suffix);
+  }
   blocks_.push_back(std::make_unique<BasicBlock>(std::move(label)));
   return *blocks_.back();
 }

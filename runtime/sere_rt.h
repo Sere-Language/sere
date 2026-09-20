@@ -21,7 +21,7 @@ typedef struct SereList {
   int64_t stride;
 } SereList;
 
-const char* sere_input(const char* prompt, int64_t len);
+void sere_input(const char* prompt, int64_t prompt_len, const char** out_data, int64_t* out_len);
 void sere_print_str(const char* data, int64_t len);
 void sere_write(const char* data, int64_t len);
 void sere_write_nl(void);
@@ -385,6 +385,7 @@ void sere_string_replace(const char* data,
                          const char** out_data,
                          int64_t* out_len);
 void* sere_string_split(const char* data, int64_t len, const char* sep, int64_t sep_len);
+void sere_list_str_repr_data(void* list, const char** out_data, int64_t* out_len);
 void sere_string_join(
     const char* sep, int64_t sep_len, void* parts, const char** out_data, int64_t* out_len);
 int64_t sere_string_rfind(const char* data, int64_t len, const char* needle, int64_t needle_len);

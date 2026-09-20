@@ -1,22 +1,46 @@
 ﻿
-enum Animal:
-    Dog(name: str)
-    Cat(name: str)
+class Person:
+    @private name: str
+    @private age: i32
 
-def print_output(func: Callable[[], str]) -> Callable[[], str]:
-    result = func()
-    print(result)
-    return func
+    def __init__(self, name: str, age: i32) -> None:
+        self.name = name
+        self.age = age
 
-@print_output
-def foo() -> str:
-    return "Bar"
-def main() -> i32:
-    foo()
-    pet = Animal.Dog("Buddy")
-    match pet:
-        case Animal.Dog(name):
-            print(f"This is a dog named {name}.")
-        case Animal.Cat(name):
-            print(f"This is a cat named {name}.")
-    return 0
+    def get_name(self) -> str:
+        return self.name
+
+    def get_age(self) -> i32:
+        return self.age
+
+
+    def introduce(self) -> str:
+        return f"Hello, my name is {self.name}, I am {self.age} years old."
+
+
+class Mayor(Person):
+    @private city: str
+
+    def __init__(self, name: str, age: i32, city: str) -> None:
+        super().__init__(name, age)
+        self.city = city
+
+
+    def introduce(self) -> str:
+        return f"Hello, my name is {self.name}, I am {self.age} years old, and I am the mayor of {self.city}."
+
+def print_name(person: Person | str) -> None:
+    if person is str:
+        print(person)
+    else:
+        print(person.get_name())
+def main() -> None:
+    person = Person("Alice", 25)
+    introduction = person.introduce()
+    print(introduction)
+
+    mayor = Mayor("Bob", 45, "Springfield")
+    mayor_introduction = mayor.introduce()
+    print(mayor_introduction)
+    print(typeof(mayor))
+    print(typeof(person))

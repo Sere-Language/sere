@@ -1,4 +1,7 @@
 
 def main() -> i32:
-    print("Hello, world!")
+    ls = ["apple", "banana", "cherry"]
+    print(ls)
+    name = input("Enter your name: ")
+    print(f"Bye, {name.split('')}!")
     return 0

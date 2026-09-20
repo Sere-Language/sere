@@ -1079,9 +1079,25 @@ void* sere_string_split(const char* data, int64_t len, const char* sep, int64_t 
     data = "";
     len = 0;
   }
-  if (sep == NULL || sep_len <= 0) {
+  if (sep == NULL || sep_len < 0) {
     SereStr item = copyBytes(data, len);
     sere_list_push(list, &item);
+    return list;
+  }
+  if (sep_len == 0) {
+    for (int64_t index = 0; index < len;) {
+      unsigned char lead = (unsigned char)data[index];
+      int64_t width = lead < 0x80             ? 1
+                      : (lead & 0xE0) == 0xC0 ? 2
+                      : (lead & 0xF0) == 0xE0 ? 3
+                      : (lead & 0xF8) == 0xF0 ? 4
+                                              : 1;
+      if (index + width > len)
+        width = 1;
+      SereStr item = copyBytes(data + index, width);
+      sere_list_push(list, &item);
+      index += width;
+    }
     return list;
   }
   int64_t start = 0;
@@ -1098,6 +1114,48 @@ void* sere_string_split(const char* data, int64_t len, const char* sep, int64_t 
   SereStr tail = copyBytes(data + start, len - start);
   sere_list_push(list, &tail);
   return list;
+}
+
+void sere_list_str_repr_data(void* list, const char** out_data, int64_t* out_len) {
+  const SereList* typed = (const SereList*)list;
+  if (typed == NULL || typed->stride != (int64_t)sizeof(SereStr)) {
+    outStr(copyBytes("[]", 2), out_data, out_len);
+    return;
+  }
+  size_t capacity = 16;
+  size_t length = 1;
+  char* output = (char*)malloc(capacity);
+  if (output == NULL) {
+    outStr(emptyStr(), out_data, out_len);
+    return;
+  }
+  output[0] = '[';
+  for (int64_t index = 0; index < typed->len; ++index) {
+    const SereStr* item = (const SereStr*)((const char*)typed->data + index * typed->stride);
+    int64_t item_len = 0;
+    const char* item_data = sere_str_repr_data(item->data, item->len, &item_len);
+    size_t extra = (index == 0 ? 0 : 2) + (size_t)item_len;
+    while (length + extra + 2 > capacity)
+      capacity *= 2;
+    char* grown = (char*)realloc(output, capacity);
+    if (grown == NULL) {
+      free(output);
+      outStr(emptyStr(), out_data, out_len);
+      return;
+    }
+    output = grown;
+    if (index != 0) {
+      output[length++] = ',';
+      output[length++] = ' ';
+    }
+    if (item_len > 0) {
+      memcpy(output + length, item_data, (size_t)item_len);
+      length += (size_t)item_len;
+    }
+  }
+  output[length++] = ']';
+  output[length] = '\0';
+  outStr(ownBytes(output, (int64_t)length), out_data, out_len);
 }
 
 void sere_string_join(const char* sep, int64_t sep_len, void* parts, const char** out_data,

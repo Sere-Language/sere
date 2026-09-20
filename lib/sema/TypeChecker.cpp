@@ -2766,6 +2766,33 @@ std::optional<bool> TypeChecker::constBool(const Expr& expr) const {
 bool TypeChecker::checkIf(IfStmt& statement, const Type* expectedReturn) {
   bool ok = true;
   bool taken = false;
+  const BinaryExpr* previousTypeTest = nullptr;
+  const auto narrowTypeTest = [&](const BinaryExpr* test) {
+    if (test == nullptr) return;
+    const auto* name = test->left().kind() == NodeKind::NameExpr
+                           ? &static_cast<const NameExpr&>(test->left())
+                           : nullptr;
+    const Type* tested = resolveTypeFromExpr(const_cast<Expr&>(test->right()), false);
+    if (tested != nullptr && tested->isTypeObject() && tested->typeObjectInstance() != nullptr) {
+      tested = tested->typeObjectInstance();
+    }
+    if (name == nullptr || tested == nullptr) return;
+    Symbol* original = lookup(name->name());
+    if (original == nullptr || original->type == nullptr || !original->type->isUnion()) return;
+    std::vector<const Type*> remaining;
+    for (const Type* member : original->type->args()) {
+      const bool matches = member->canonical() == tested->canonical();
+      if ((test->op() == BinaryOp::Is && matches) ||
+          (test->op() == BinaryOp::IsNot && !matches)) {
+        remaining.push_back(member);
+      }
+    }
+    if (!remaining.empty()) {
+      Symbol narrowed = *original;
+      narrowed.type = remaining.size() == 1 ? remaining.front() : types_->unionType(remaining);
+      scopes_.back()[name->name()] = std::move(narrowed);
+    }
+  };
   for (IfBranch& branch : statement.branches()) {
     if (taken) {
       continue;
@@ -2790,6 +2817,21 @@ bool TypeChecker::checkIf(IfStmt& statement, const Type* expectedReturn) {
       taken = true;
     }
     pushScope(branch.range);
+    if (branch.condition != nullptr && branch.condition->kind() == NodeKind::BinaryExpr) {
+      const auto& test = static_cast<const BinaryExpr&>(*branch.condition);
+      if (test.op() == BinaryOp::Is || test.op() == BinaryOp::IsNot) narrowTypeTest(&test);
+    } else if (branch.condition == nullptr && previousTypeTest != nullptr) {
+      BinaryExpr inverse(previousTypeTest->range(),
+                         previousTypeTest->op() == BinaryOp::Is ? BinaryOp::IsNot : BinaryOp::Is,
+                         std::make_unique<NameExpr>(previousTypeTest->left().range(),
+                                                     static_cast<const NameExpr&>(previousTypeTest->left()).name()),
+                         std::make_unique<NameExpr>(previousTypeTest->right().range(),
+                                                     static_cast<const NameExpr&>(previousTypeTest->right()).name()));
+      narrowTypeTest(&inverse);
+    }
+    previousTypeTest = branch.condition != nullptr && branch.condition->kind() == NodeKind::BinaryExpr
+                           ? static_cast<const BinaryExpr*>(branch.condition.get())
+                           : nullptr;
     for (std::unique_ptr<Stmt>& bodyStmt : branch.body) {
       ok = checkStatement(*bodyStmt, expectedReturn) && ok;
     }

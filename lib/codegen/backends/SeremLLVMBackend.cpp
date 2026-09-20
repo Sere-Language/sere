@@ -173,7 +173,156 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
   }
   else if (opcode == "load") result = builder_->builder.CreateLoad(type, operand(0));
   else if (opcode == "store") builder_->builder.CreateStore(operand(0), operand(1));
+  else if (opcode == "store.indirect") builder_->builder.CreateStore(operand(0), operand(1));
+  else if (opcode == "deref") result = builder_->builder.CreateLoad(type, operand(0));
+  else if (opcode == "address.of") result = operand(0);
   else if (opcode == "select") result = builder_->builder.CreateSelect(operand(0), operand(1), operand(2));
+  else if (opcode == "runtime.input") {
+    llvm::Function* input = module_->getFunction("sere_input");
+    if (input == nullptr) {
+      llvm::FunctionType* inputType = llvm::FunctionType::get(
+          llvm::Type::getVoidTy(*context_),
+          {llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_),
+           llvm::PointerType::getUnqual(*context_), llvm::PointerType::getUnqual(*context_)},
+          false);
+      input = llvm::Function::Create(inputType, llvm::Function::ExternalLinkage,
+                                     "sere_input", module_.get());
+    }
+    llvm::Function* length = module_->getFunction("strlen");
+    if (length == nullptr) {
+      llvm::FunctionType* lengthType = llvm::FunctionType::get(
+          llvm::Type::getInt64Ty(*context_), {llvm::PointerType::getUnqual(*context_)}, false);
+      length = llvm::Function::Create(lengthType, llvm::Function::ExternalLinkage,
+                                      "strlen", module_.get());
+    }
+    llvm::Value* prompt = operand(0);
+    llvm::Value* data = builder_->builder.CreateAlloca(llvm::PointerType::getUnqual(*context_));
+    llvm::Value* lengthValue = builder_->builder.CreateAlloca(llvm::Type::getInt64Ty(*context_));
+    builder_->builder.CreateCall(input, {prompt, builder_->builder.CreateCall(length, {prompt}),
+                                         data, lengthValue});
+    result = builder_->builder.CreateLoad(llvm::PointerType::getUnqual(*context_), data);
+  }
+  else if (opcode == "builtin.method") {
+    const std::string name = attribute(operation, "name");
+    llvm::Value* value = operand(0);
+    llvm::Function* length = module_->getFunction("strlen");
+    if (length == nullptr) {
+      llvm::FunctionType* lengthType = llvm::FunctionType::get(
+          llvm::Type::getInt64Ty(*context_), {llvm::PointerType::getUnqual(*context_)}, false);
+      length = llvm::Function::Create(lengthType, llvm::Function::ExternalLinkage,
+                                      "strlen", module_.get());
+    }
+    llvm::Value* valueLength = builder_->builder.CreateCall(length, {value});
+    auto runtime = [&](const char* name, llvm::Type* returnType,
+                       std::initializer_list<llvm::Type*> params) {
+      llvm::Function* function = module_->getFunction(name);
+      if (function == nullptr) {
+        function = llvm::Function::Create(
+            llvm::FunctionType::get(returnType, params, false), llvm::Function::ExternalLinkage,
+            name, module_.get());
+      }
+      return function;
+    };
+    auto outputString = [&](llvm::Function* function, std::vector<llvm::Value*> args) {
+      llvm::Value* data = builder_->builder.CreateAlloca(
+          llvm::PointerType::getUnqual(*context_));
+      llvm::Value* outputLength =
+          builder_->builder.CreateAlloca(llvm::Type::getInt64Ty(*context_));
+      args.push_back(data);
+      args.push_back(outputLength);
+      builder_->builder.CreateCall(function, args);
+      return builder_->builder.CreateLoad(llvm::PointerType::getUnqual(*context_), data);
+    };
+    auto stringArgument = [&](std::size_t index) {
+      llvm::Value* argument = operand(index);
+      return std::array<llvm::Value*, 2>{argument,
+                                         builder_->builder.CreateCall(length, {argument})};
+    };
+    if (name == "str.upper" || name == "str.lower" || name == "str.strip" ||
+        name == "str.lstrip" || name == "str.rstrip" || name == "str.capitalize" ||
+        name == "str.title") {
+      const std::string runtimeName = "sere_string_" + name.substr(4);
+      llvm::Function* function = runtime(
+          runtimeName.c_str(), llvm::Type::getVoidTy(*context_),
+          {llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_),
+           llvm::PointerType::getUnqual(*context_), llvm::PointerType::getUnqual(*context_)});
+      result = outputString(function, {value, valueLength});
+    } else if (name == "str.starts_with" || name == "str.startswith" ||
+               name == "str.ends_with" || name == "str.endswith" ||
+               name == "str.contains" || name == "str.has") {
+      const auto argument = stringArgument(1);
+      const std::string runtimeName =
+          name == "str.contains" || name == "str.has"
+              ? "sere_str_contains"
+              : (name.find("ends") != std::string::npos ? "sere_string_ends_with"
+                                                           : "sere_string_starts_with");
+      llvm::Function* function = runtime(
+          runtimeName.c_str(), llvm::Type::getInt32Ty(*context_),
+          {llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_),
+           llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_)});
+      result = builder_->builder.CreateICmpNE(
+          builder_->builder.CreateCall(function, {value, valueLength, argument[0], argument[1]}),
+          llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_), 0));
+    } else if (name == "str.find" || name == "str.rfind" || name == "str.count") {
+      const auto argument = stringArgument(1);
+      const char* runtimeName = name == "str.find" ? "sere_string_find"
+                              : name == "str.rfind" ? "sere_string_rfind"
+                                                     : "sere_string_count";
+      llvm::Function* function = runtime(
+          runtimeName, llvm::Type::getInt64Ty(*context_),
+          {llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_),
+           llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_)});
+      result = builder_->builder.CreateCall(function, {value, valueLength, argument[0], argument[1]});
+    } else if (name == "str.replace") {
+      const auto oldString = stringArgument(1);
+      const auto newString = stringArgument(2);
+      llvm::Function* function = runtime(
+          "sere_string_replace", llvm::Type::getVoidTy(*context_),
+          {llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_),
+           llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_),
+           llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_),
+           llvm::PointerType::getUnqual(*context_), llvm::PointerType::getUnqual(*context_)});
+      result = outputString(function, {value, valueLength, oldString[0], oldString[1],
+                                       newString[0], newString[1]});
+    } else if (name == "str.split") {
+      const auto separator = stringArgument(1);
+      llvm::Function* function = runtime(
+          "sere_string_split", llvm::PointerType::getUnqual(*context_),
+          {llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_),
+           llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_)});
+      result = builder_->builder.CreateCall(
+          function, {value, valueLength, separator[0], separator[1]});
+    } else if (name == "str.join") {
+      llvm::Function* function = runtime(
+          "sere_string_join", llvm::Type::getVoidTy(*context_),
+          {llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_),
+           llvm::PointerType::getUnqual(*context_), llvm::PointerType::getUnqual(*context_),
+           llvm::PointerType::getUnqual(*context_)});
+      result = outputString(function, {value, valueLength, operand(1)});
+    } else if (name == "str.repeat") {
+      llvm::Function* function = runtime(
+          "sere_string_repeat", llvm::Type::getVoidTy(*context_),
+          {llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_),
+           llvm::Type::getInt64Ty(*context_), llvm::PointerType::getUnqual(*context_),
+           llvm::PointerType::getUnqual(*context_)});
+      llvm::Value* count = operand(1);
+      if (count->getType() != llvm::Type::getInt64Ty(*context_)) {
+        count = builder_->builder.CreateSExt(count, llvm::Type::getInt64Ty(*context_));
+      }
+      result = outputString(function, {value, valueLength, count});
+    } else if (name == "str.is_empty" || name == "str.is_digit" ||
+               name == "str.is_alpha" || name == "str.is_space") {
+      const std::string runtimeName = "sere_string_" + name.substr(4);
+      llvm::Function* function = runtime(
+          runtimeName.c_str(), llvm::Type::getInt32Ty(*context_),
+          {llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_)});
+      result = builder_->builder.CreateICmpNE(
+          builder_->builder.CreateCall(function, {value, valueLength}),
+          llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_), 0));
+    } else {
+      report("unsupported Serem string builtin method: " + name);
+    }
+  }
   else if (opcode == "runtime.print") {
     llvm::Function* print = module_->getFunction("sere_print_str");
     if (print == nullptr) {
@@ -195,8 +344,19 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       llvm::Value* value = operand(index);
       if (value == nullptr) continue;
       if (value->getType()->isPointerTy()) {
-        builder_->builder.CreateCall(print, {value, builder_->builder.CreateCall(length, {value})});
-        stringPrinted = true;
+        if (operands[index]->type().kind() == serem::IRType::Kind::String) {
+          builder_->builder.CreateCall(print, {value, builder_->builder.CreateCall(length, {value})});
+          stringPrinted = true;
+        } else {
+          llvm::Function* write = module_->getFunction("sere_write_ptr");
+          if (write == nullptr) {
+            llvm::FunctionType* writeType = llvm::FunctionType::get(
+                llvm::Type::getVoidTy(*context_), {llvm::PointerType::getUnqual(*context_)}, false);
+            write = llvm::Function::Create(writeType, llvm::Function::ExternalLinkage,
+                                           "sere_write_ptr", module_.get());
+          }
+          builder_->builder.CreateCall(write, {value});
+        }
       } else if (value->getType()->isIntegerTy(32)) {
         llvm::Function* write = module_->getFunction("sere_write_i32");
         if (write == nullptr) {
@@ -206,6 +366,25 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
                                          "sere_write_i32", module_.get());
         }
         builder_->builder.CreateCall(write, {value});
+      } else if (value->getType()->isIntegerTy(64)) {
+        llvm::Function* write = module_->getFunction("sere_write_i64");
+        if (write == nullptr) {
+          llvm::FunctionType* writeType = llvm::FunctionType::get(
+              llvm::Type::getVoidTy(*context_), {llvm::Type::getInt64Ty(*context_)}, false);
+          write = llvm::Function::Create(writeType, llvm::Function::ExternalLinkage,
+                                         "sere_write_i64", module_.get());
+        }
+        builder_->builder.CreateCall(write, {value});
+      } else if (value->getType()->isIntegerTy(1)) {
+        llvm::Function* write = module_->getFunction("sere_write_bool");
+        if (write == nullptr) {
+          llvm::FunctionType* writeType = llvm::FunctionType::get(
+              llvm::Type::getVoidTy(*context_), {llvm::Type::getInt8Ty(*context_)}, false);
+          write = llvm::Function::Create(writeType, llvm::Function::ExternalLinkage,
+                                         "sere_write_bool", module_.get());
+        }
+        builder_->builder.CreateCall(
+            write, {builder_->builder.CreateZExt(value, llvm::Type::getInt8Ty(*context_))});
       }
     }
     if (!stringPrinted) {
@@ -219,6 +398,18 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
         builder_->builder.CreateCall(newlineFn);
       }
     }
+  }
+  else if (opcode == "shared.new" || opcode == "unique.new") {
+    llvm::Function* alloc = module_->getFunction("sere_alloc");
+    if (alloc == nullptr) {
+      llvm::FunctionType* allocType = llvm::FunctionType::get(
+          llvm::PointerType::getUnqual(*context_), {llvm::Type::getInt64Ty(*context_)}, false);
+      alloc = llvm::Function::Create(allocType, llvm::Function::ExternalLinkage,
+                                     "sere_alloc", module_.get());
+    }
+    result = builder_->builder.CreateCall(
+        alloc, {llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context_), 8)});
+    if (!operands.empty()) builder_->builder.CreateStore(operand(0), result);
   }
   else if (opcode == "string.concat") {
     llvm::Function* concat = module_->getFunction("sere_str_concat_data");
@@ -243,6 +434,47 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     for (std::size_t index = 0; index < operands.size(); ++index) {
       llvm::Value* value = operand(index);
       if (value == nullptr) continue;
+      if (!value->getType()->isPointerTy()) {
+        llvm::Function* stringify = nullptr;
+        if (value->getType()->isIntegerTy(32)) {
+          stringify = module_->getFunction("sere_str_i32_data");
+          if (stringify == nullptr) {
+            llvm::FunctionType* type = llvm::FunctionType::get(
+                llvm::PointerType::getUnqual(*context_),
+                {llvm::Type::getInt32Ty(*context_), llvm::PointerType::getUnqual(*context_)}, false);
+            stringify = llvm::Function::Create(type, llvm::Function::ExternalLinkage,
+                                               "sere_str_i32_data", module_.get());
+          }
+        } else if (value->getType()->isIntegerTy(64)) {
+          stringify = module_->getFunction("sere_str_i64_data");
+          if (stringify == nullptr) {
+            llvm::FunctionType* type = llvm::FunctionType::get(
+                llvm::PointerType::getUnqual(*context_),
+                {llvm::Type::getInt64Ty(*context_), llvm::PointerType::getUnqual(*context_)}, false);
+            stringify = llvm::Function::Create(type, llvm::Function::ExternalLinkage,
+                                               "sere_str_i64_data", module_.get());
+          }
+        }
+        if (stringify != nullptr) {
+          llvm::AllocaInst* lengthSlot =
+              builder_->builder.CreateAlloca(llvm::Type::getInt64Ty(*context_));
+          value = builder_->builder.CreateCall(stringify, {value, lengthSlot});
+          llvm::Value* valueLength =
+              builder_->builder.CreateLoad(llvm::Type::getInt64Ty(*context_), lengthSlot);
+          if (current == nullptr) {
+            current = value;
+            currentLength = valueLength;
+          } else {
+            llvm::AllocaInst* outLength =
+                builder_->builder.CreateAlloca(llvm::Type::getInt64Ty(*context_));
+            current = builder_->builder.CreateCall(
+                concat, {current, currentLength, value, valueLength, outLength});
+            currentLength = builder_->builder.CreateLoad(
+                llvm::Type::getInt64Ty(*context_), outLength);
+          }
+          continue;
+        }
+      }
       llvm::Value* valueLength = builder_->builder.CreateCall(length, {value});
       if (current == nullptr) {
         current = value;
@@ -255,6 +487,22 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       }
     }
     result = current;
+  }
+  else if (opcode == "value.repr") {
+    llvm::Function* repr = module_->getFunction("sere_list_str_repr_data");
+    if (repr == nullptr) {
+      llvm::FunctionType* reprType = llvm::FunctionType::get(
+          llvm::Type::getVoidTy(*context_),
+          {llvm::PointerType::getUnqual(*context_), llvm::PointerType::getUnqual(*context_),
+           llvm::PointerType::getUnqual(*context_)},
+          false);
+      repr = llvm::Function::Create(reprType, llvm::Function::ExternalLinkage,
+                                    "sere_list_str_repr_data", module_.get());
+    }
+    llvm::Value* data = builder_->builder.CreateAlloca(llvm::PointerType::getUnqual(*context_));
+    llvm::Value* length = builder_->builder.CreateAlloca(llvm::Type::getInt64Ty(*context_));
+    builder_->builder.CreateCall(repr, {operand(0), data, length});
+    result = builder_->builder.CreateLoad(llvm::PointerType::getUnqual(*context_), data);
   }
   else if (opcode == "construct") {
     if (type->isStructTy()) {
@@ -338,7 +586,9 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       report("Serem call lowering requires a callable");
     }
   } else if (opcode == "return") {
-    if (operands.empty()) builder_->builder.CreateRetVoid();
+    if (operands.empty() && currentFunctionName_ == "main") {
+      builder_->builder.CreateRet(llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_), 0));
+    } else if (operands.empty()) builder_->builder.CreateRetVoid();
     else builder_->builder.CreateRet(operand(0));
   } else if (opcode == "unreachable") builder_->builder.CreateUnreachable();
   else if (opcode == "branch") {
@@ -391,7 +641,11 @@ std::unique_ptr<llvm::Module> SeremLLVMBackend::emit(const serem::IRModule& modu
   for (const auto& function : module.functions()) {
     std::vector<llvm::Type*> params;
     for (const serem::IRType& param : function->parameters()) params.push_back(lowerType(param));
-    auto* functionType = llvm::FunctionType::get(lowerType(function->resultType()), params, false);
+    llvm::Type* resultType = lowerType(function->resultType());
+    if (function->name() == "main" && function->resultType().isVoid()) {
+      resultType = llvm::Type::getInt32Ty(*context_);
+    }
+    auto* functionType = llvm::FunctionType::get(resultType, params, false);
     functions_[function->name()] = llvm::Function::Create(
         functionType, llvm::Function::ExternalLinkage, function->name(), module_.get());
   }
@@ -408,11 +662,17 @@ std::unique_ptr<llvm::Module> SeremLLVMBackend::emit(const serem::IRModule& modu
     }
     for (const auto& block : function->blocks()) {
       builder_->builder.SetInsertPoint(blockFor(function->name() + ":" + block->label()));
-      for (const auto& operation : block->operations()) (void)lowerOperation(*operation);
+      for (const auto& operation : block->operations()) {
+        (void)lowerOperation(*operation);
+        if (builder_->builder.GetInsertBlock()->getTerminator() != nullptr) break;
+      }
       if (builder_->builder.GetInsertBlock()->getTerminator() == nullptr && block->isTerminated()) {
         builder_->builder.CreateUnreachable();
       } else if (builder_->builder.GetInsertBlock()->getTerminator() == nullptr) {
-        if (function->resultType().isVoid()) builder_->builder.CreateRetVoid();
+        if (function->name() == "main" && function->resultType().isVoid()) {
+          builder_->builder.CreateRet(
+              llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_), 0));
+        } else if (function->resultType().isVoid()) builder_->builder.CreateRetVoid();
         else builder_->builder.CreateRet(llvm::UndefValue::get(lowerType(function->resultType())));
       }
     }
