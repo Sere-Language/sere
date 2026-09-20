@@ -1,0 +1,46 @@
+class Detail:
+    @public
+    code: i32
+
+    def __init__(self, code: i32) -> void:
+        self.code = code
+
+    def __str__(self) -> str:
+        return "detail " + str(self.code)
+
+def main() -> i32:
+    floating: Result[f64, bool] = Result.Ok(1.5)
+    assert floating.unwrap() == 1.5, "feature_result_payloads:13"
+    assert floating.ok() == 1.5, "feature_result_payloads:14"
+    assert floating.contains(1.5), "feature_result_payloads:15"
+    flag: Result[f64, bool] = Result.Err(False)
+    assert flag.contains_err(False), "feature_result_payloads:17"
+    assert flag.err() == False, "feature_result_payloads:18"
+    values: Result[list[i32], str] = Result.Ok([1, 2, 3])
+    assert values.unwrap()[1] == 2, "feature_result_payloads:20"
+    assert values.contains([1, 2, 3]), "feature_result_payloads:21"
+    assert values.ok() == [1, 2, 3], "feature_result_payloads:22"
+    obj: Result[Detail, str] = Result.Ok(Detail(12))
+    assert obj.unwrap().code == 12, "feature_result_payloads:24"
+    failure: Result[i32, Detail] = Result.Err(Detail(404))
+    caught: i32 = 0
+    try:
+        failure.unwrap()
+    except ResultError as error:
+        assert error.message == "detail 404", "feature_result_payloads:30"
+        caught += 1
+    try:
+        failure.expect("request failed")
+    except ResultError as error:
+        assert error.message == "request failed: detail 404", "feature_result_payloads:35"
+        caught += 1
+    assert caught == 2, "feature_result_payloads:37"
+    nested: Result[Result[i32, str], str] = Result.Ok(Result.Ok(42))
+    assert nested.unwrap().unwrap() == 42, "feature_result_payloads:39"
+    absent: Result[i32 | None, str] = Result.Ok(None)
+    present: Result[i32 | None, str] = Result.Ok(3)
+    assert absent.unwrap() is None, "feature_result_payloads:42"
+    assert present.unwrap() == 3, "feature_result_payloads:43"
+    assert present.ok() == 3, "feature_result_payloads:44"
+    print("result payloads ok")
+    return 0

@@ -1,0 +1,49 @@
+class Counter:
+    @public
+    calls: i32
+
+    def __init__(self) -> void:
+        self.calls = 0
+
+    def transform(self, value: i32) -> i32:
+        self.calls = self.calls + 1
+        return value + 10
+
+    def chain(self, value: i32) -> Result[i32, i32]:
+        self.calls = self.calls + 1
+        return Result.Err(value + 1)
+
+def main() -> i32:
+    counter = Counter()
+    good: Result[i32, i32] = Result.Ok(5)
+    bad: Result[i32, i32] = Result.Err(7)
+    assert good.unwrap_or_else(counter.transform) == 5, "feature_result_callbacks:20"
+    assert counter.calls == 0, "feature_result_callbacks:21"
+    assert bad.unwrap_or_else(counter.transform) == 17, "feature_result_callbacks:22"
+    assert counter.calls == 1, "feature_result_callbacks:23"
+    assert bad.map(counter.transform).contains_err(7), "feature_result_callbacks:24"
+    assert good.map_err(counter.transform).contains(5), "feature_result_callbacks:25"
+    assert counter.calls == 1, "feature_result_callbacks:26"
+    assert good.map(counter.transform).contains(15), "feature_result_callbacks:27"
+    assert bad.map_err(counter.transform).contains_err(17), "feature_result_callbacks:28"
+    assert counter.calls == 3, "feature_result_callbacks:29"
+    assert bad.map_or(99, counter.transform) == 99, "feature_result_callbacks:30"
+    assert counter.calls == 3, "feature_result_callbacks:31"
+    assert good.map_or_else(counter.transform, counter.transform) == 15, "feature_result_callbacks:32"
+    assert bad.map_or_else(counter.transform, counter.transform) == 17, "feature_result_callbacks:33"
+    assert counter.calls == 5, "feature_result_callbacks:34"
+    assert bad.and_then(counter.chain).contains_err(7), "feature_result_callbacks:35"
+    assert good.or_else(counter.chain).contains(5), "feature_result_callbacks:36"
+    assert counter.calls == 5, "feature_result_callbacks:37"
+    assert good.and_then(counter.chain).contains_err(6), "feature_result_callbacks:38"
+    assert bad.or_else(counter.chain).contains_err(8), "feature_result_callbacks:39"
+    assert counter.calls == 7, "feature_result_callbacks:40"
+    offset: i32 = 3
+    def increment(value: i32) -> i32:
+        return value + offset
+    assert good.map(increment).unwrap() == 8, "feature_result_callbacks:44"
+    assert bad.map_err(increment).contains_err(10), "feature_result_callbacks:45"
+    assert good.map[i32](increment).contains(8), "feature_result_callbacks:46"
+    assert good.map_or(fn=increment, default=0) == 8, "feature_result_callbacks:47"
+    print("result callbacks ok")
+    return 0

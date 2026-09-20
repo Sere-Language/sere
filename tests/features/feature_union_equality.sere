@@ -1,0 +1,35 @@
+def optional_number(present: bool) -> i32 | None:
+    if present:
+        return 21
+    return None
+
+def optional_text(present: bool) -> str | None:
+    if present:
+        return "hello"
+    return None
+
+def main() -> i32:
+    assert optional_number(True) == 21
+    assert 21 == optional_number(True)
+    assert optional_number(True) != 22
+    assert 22 != optional_number(True)
+    assert optional_number(False) != 21
+    assert 21 != optional_number(False)
+    assert not (optional_number(False) == 0)
+    assert optional_number(False) == None
+    assert None == optional_number(False)
+    assert optional_number(True) != None
+    assert optional_number(True) == optional_number(True)
+    assert optional_number(True) != optional_number(False)
+    assert optional_number(False) == optional_number(False)
+    assert optional_text(True) == "hello"
+    assert "hello" == optional_text(True)
+    assert optional_text(True) != "world"
+    assert optional_text(False) != "hello"
+    assert "hello" != optional_text(False)
+    assert optional_text(False) != ""
+    assert optional_text(True) == optional_text(True)
+    assert optional_text(False) == optional_text(False)
+    assert optional_text(True) != optional_text(False)
+    print("union equality ok")
+    return 0

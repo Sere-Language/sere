@@ -152,6 +152,13 @@ enum Result[T, E]:
             case Result.Err(error):
                 raise ResultError(str(error))
 
+    def try_unwrap(self) -> T | None:
+        match self:
+            case Result.Ok(value):
+                return value
+            case Result.Err(_):
+                return None
+
     def expect(self, message: str) -> T:
         match self:
             case Result.Ok(value):

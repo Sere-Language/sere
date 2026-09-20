@@ -62,6 +62,7 @@ constexpr int kSymbolFunction = 12;
 constexpr int kSymbolEnumMember = 22;
 constexpr int kSymbolStruct = 23;
 constexpr int kSymbolType = 26;
+constexpr int kInlayType = 1;
 constexpr int kInlayParameter = 2;
 
 void setStdioBinary() {
@@ -1942,6 +1943,7 @@ void LanguageSession::handleInlayHint(const llvm::json::Value* id,
     writeResult(id, std::move(hints));
     return;
   }
+  // Parameter name hints on call arguments.
   std::vector<const CallExpr*> calls;
   collectCalls(*frontend->module(), calls);
   for (const CallExpr* call : calls) {
@@ -1956,6 +1958,43 @@ void LanguageSession::handleInlayHint(const llvm::json::Value* id,
           {"label", names[index] + ": "},
           {"kind", kInlayParameter},
           {"paddingRight", false},
+      });
+    }
+  }
+  // Inferred variable type hints: `x = get_word().unwrap()` shows `: str`.
+  // The checker records one symbol per declaration, located at the bound name.
+  const TypeChecker* checker = frontend->checker();
+  const std::string& text = documents_[uri->str()];
+  if (checker != nullptr && !text.empty()) {
+    for (const SemanticSymbol& symbol : checker->symbols()) {
+      if (symbol.kind != "variable" || symbol.type == nullptr || symbol.name.empty() ||
+          symbol.location.offset >= text.size()) {
+        continue;
+      }
+      const SourceLocation location = symbol.location;
+      const bool loopVar = text.compare(location.offset, 3, "for") == 0;
+      const std::size_t nameStart = loopVar ? location.offset + 4 : location.offset;
+      if (nameStart + symbol.name.size() > text.size() ||
+          text.compare(nameStart, symbol.name.size(), symbol.name) != 0) {
+        continue;
+      }
+      // Explicit annotations already spell the type (`x: str = ...`).
+      std::size_t probe = nameStart + symbol.name.size();
+      while (probe < text.size() && (text[probe] == ' ' || text[probe] == '\t')) {
+        ++probe;
+      }
+      if (probe < text.size() && text[probe] == ':') {
+        continue;
+      }
+      SourceLocation end = location;
+      end.offset += static_cast<std::uint32_t>((loopVar ? 4 : 0) + symbol.name.size());
+      end.column += static_cast<std::uint32_t>((loopVar ? 4 : 0) + symbol.name.size());
+      hints.push_back(llvm::json::Object{
+          {"position", lspPosition(end)},
+          {"label", ": " + (symbol.typeDisplay.empty() ? symbol.type->display()
+                                                       : symbol.typeDisplay)},
+          {"kind", kInlayType},
+          {"paddingLeft", true},
       });
     }
   }
