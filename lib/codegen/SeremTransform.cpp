@@ -795,9 +795,13 @@ public:
   }
 };
 
-/// True for the pending-error operations a release build does not need.
+/// True for the pending-error operations a release build does not need. The
+/// `error.check` after a call would only observe a raise, so with the checks off
+/// it is bookkeeping too: nothing can dispatch, and the handler blocks it
+/// pointed at become unreachable for the next pass to drop.
 [[nodiscard]] bool isErrorBookkeeping(std::string_view opcode) {
-  return opcode == "error.enter" || opcode == "error.leave" || opcode == "error.bind";
+  return opcode == "error.enter" || opcode == "error.leave" || opcode == "error.bind" ||
+         opcode == "error.check";
 }
 
 class RuntimeCheckStripPass final : public TransformPass {

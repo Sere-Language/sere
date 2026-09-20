@@ -344,6 +344,22 @@ const Node* findNodeAt(const Node& root, std::uint32_t offset) {
   return found;
 }
 
+const MemberExpr* findMemberAccessAt(const Node& root, std::uint32_t offset) {
+  const Node* node = findNodeAt(root, offset);
+  if (node == nullptr || node->kind() != NodeKind::MemberExpr) {
+    return nullptr;
+  }
+  const auto& member = static_cast<const MemberExpr&>(*node);
+  const std::uint32_t size = static_cast<std::uint32_t>(member.field().size());
+  if (member.range().end.offset < size) {
+    return nullptr;
+  }
+  // The parser records the member expression ending at the field token (or at
+  // the dot when nothing follows it yet), so the dot ends just before it.
+  const std::uint32_t dotEnd = member.range().end.offset - size;
+  return offset >= dotEnd ? &member : nullptr;
+}
+
 const CallExpr* findCallAt(const Node& root, std::uint32_t offset) {
   std::vector<const CallExpr*> calls;
   collectCalls(root, calls);

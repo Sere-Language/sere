@@ -31,9 +31,25 @@ struct MemberCompletionItem {
   std::string sortText;
 };
 
+/// A member access read from the typed AST. This is what resolves receivers the
+/// textual scan cannot know the type of, such as the result of a call
+/// (`add(5, 4).`) or an index (`xs[0].`).
+struct AstMemberAccess {
+  bool active = false;
+  /// Type of the receiver expression; may be a type object for `Name.` access.
+  const Type* receiverType = nullptr;
+  /// What the cursor already typed after the dot.
+  std::string prefix;
+};
+
 [[nodiscard]] MemberAccessQuery detectMemberAccess(std::string_view text, std::uint32_t offset);
 
 [[nodiscard]] MemberAccessQuery detectMemberAccessLine(std::string_view line, std::size_t cursor);
+
+/// Reads the member access at `offset` from the analyzed module, if any.
+[[nodiscard]] AstMemberAccess resolveMemberAccessFromAst(Frontend* frontend,
+                                                         std::string_view text,
+                                                         std::uint32_t offset);
 
 [[nodiscard]] const Type* resolveMemberType(Frontend* frontend, const MemberAccessQuery& query);
 

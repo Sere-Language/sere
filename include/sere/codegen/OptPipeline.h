@@ -65,6 +65,22 @@ struct OptimizationOptions {
   bool vectorize = false;
   /// `--branch-opt` / `--no-branch-opt`.
   bool branchOpt = false;
+  /// `--jump-threading` / `--no-jump-threading`.
+  bool jumpThreading = false;
+  /// `--sroa` / `--no-sroa`: scalar replacement of aggregates.
+  bool sroa = false;
+  /// `--mem2reg` / `--no-mem2reg`: promote local allocas to SSA registers.
+  bool mem2reg = false;
+  /// `--sccp` / `--no-sccp`: globalopt, IPSCCP, SCCP, and float2int.
+  bool scalarSccp = false;
+  /// `--indvars` / `--no-indvars`: induction-variable simplification.
+  bool indvars = false;
+  /// `--unroll-and-jam` / `--no-unroll-and-jam`.
+  bool unrollAndJam = false;
+  /// `--sink` / `--no-sink`: common code sinking.
+  bool sink = false;
+  /// `--arg-promote` / `--no-arg-promote`: argument promotion.
+  bool argumentPromotion = false;
   /// `--lto`: prelink pipeline plus `-flto` on the native toolchain.
   bool lto = false;
 

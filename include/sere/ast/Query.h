@@ -23,6 +23,12 @@ struct MacroUse {
 [[nodiscard]] SourceRange identifierRange(SourceRange start, std::string_view name);
 [[nodiscard]] const Node* findNodeAt(const Node& root, std::uint32_t offset);
 [[nodiscard]] const CallExpr* findCallAt(const Node& root, std::uint32_t offset);
+/// The member access the cursor is completing behind, such as the `obj.` in
+/// `obj.` or `obj.pre|`. Unlike a textual scan this also matches call and index
+/// receivers (`add(1, 2).`, `xs[0].`), because the checker resolves the type of
+/// the receiver expression itself. Returns nullptr when the cursor is not
+/// directly after a member-access dot.
+[[nodiscard]] const MemberExpr* findMemberAccessAt(const Node& root, std::uint32_t offset);
 [[nodiscard]] const MacroUse* findMacroUseAt(const std::vector<MacroUse>& uses,
                                              std::uint32_t offset);
 [[nodiscard]] const MacroUse* findMacroNameAt(const std::vector<MacroUse>& uses,

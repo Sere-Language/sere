@@ -48,6 +48,14 @@ void copyPreset(const OptimizationOptions& preset, OptimizationOptions& options)
   options.loopInvariantHoist = preset.loopInvariantHoist;
   options.vectorize = preset.vectorize;
   options.branchOpt = preset.branchOpt;
+  options.jumpThreading = preset.jumpThreading;
+  options.sroa = preset.sroa;
+  options.mem2reg = preset.mem2reg;
+  options.scalarSccp = preset.scalarSccp;
+  options.indvars = preset.indvars;
+  options.unrollAndJam = preset.unrollAndJam;
+  options.sink = preset.sink;
+  options.argumentPromotion = preset.argumentPromotion;
   options.tailCalls = preset.tailCalls;
 }
 
@@ -89,17 +97,19 @@ void reportRewrites(const OptRewriteReport& report) {
   if (options.inlineAll) {
     appendPass(moduleStart, "always-inline");
   }
-  if (options.constFold) {
+  if (options.scalarSccp) {
     appendPass(moduleStart, "globalopt");
     appendPass(moduleStart, "ipsccp");
   }
 
   // ----- per function -----------------------------------------------------
-  if (tuned) {
+  if (options.sroa) {
     appendPass(functionPasses, "sroa");
+  }
+  if (options.mem2reg) {
     appendPass(functionPasses, "mem2reg");
   }
-  if (options.constFold) {
+  if (options.scalarSccp) {
     appendPass(functionPasses, "sccp");
   }
   if (options.peephole) {
@@ -126,7 +136,7 @@ void reportRewrites(const OptRewriteReport& report) {
     appendPass(functionPasses, "correlated-propagation");
     appendPass(functionPasses, "tailcallelim");
   }
-  if (options.constFold) {
+  if (options.scalarSccp) {
     appendPass(functionPasses, "float2int");
   }
   if (options.loopInvariantHoist) {
@@ -140,8 +150,18 @@ void reportRewrites(const OptRewriteReport& report) {
     appendPass(functionPasses, "loop-deletion");
     appendPass(functionPasses, "loop-instsimplify");
   }
+  if (options.indvars) {
+    appendPass(functionPasses, "indvars");
+  }
   if (options.loopUnroll) {
     appendPass(functionPasses, "loop-unroll");
+  }
+  if (options.unrollAndJam) {
+    // `loop-unroll-and-jam` wants canonical loop forms, so the simplify and
+    // LCSSA passes it depends on run right before it.
+    appendPass(functionPasses, "loop-simplify");
+    appendPass(functionPasses, "lcssa");
+    appendPass(functionPasses, "loop-unroll-and-jam");
   }
   if (options.vectorize) {
     appendPass(functionPasses, "loop-vectorize");
@@ -158,6 +178,9 @@ void reportRewrites(const OptRewriteReport& report) {
     appendPass(functionPasses, "adce");
     appendPass(functionPasses, "dce");
   }
+  if (options.sink) {
+    appendPass(functionPasses, "sink");
+  }
   if (options.peephole || options.constFold) {
     appendPass(functionPasses, "instcombine");
   }
@@ -166,7 +189,7 @@ void reportRewrites(const OptRewriteReport& report) {
   if (options.inlineExpansion) {
     appendPass(moduleMiddle, "inline");
   }
-  if (options.constFold) {
+  if (options.scalarSccp) {
     appendPass(moduleMiddle, "ipsccp");
   }
   if (options.inlineExpansion || options.inlineAll) {
@@ -181,8 +204,11 @@ void reportRewrites(const OptRewriteReport& report) {
   }
 
   // ----- cleanup ----------------------------------------------------------
-  if (options.branchOpt) {
+  if (options.jumpThreading) {
     appendPass(cleanupPasses, "jump-threading");
+  }
+  if (options.argumentPromotion) {
+    appendPass(cleanupPasses, "argpromotion");
   }
   if (tuned) {
     appendPass(cleanupPasses, "simplifycfg");
@@ -232,6 +258,10 @@ OptimizationOptions optimizationPreset(OptLevel level) {
     preset.strengthReduce = true;
     preset.loopInvariantHoist = true;
     preset.branchOpt = true;
+    preset.jumpThreading = true;
+    preset.sroa = true;
+    preset.mem2reg = true;
+    preset.scalarSccp = true;
     preset.tailCalls = true;
     break;
   case OptLevel::O2:
@@ -245,12 +275,17 @@ OptimizationOptions optimizationPreset(OptLevel level) {
     preset.level = OptLevel::O3;
     preset.inlineAll = true;
     preset.loopUnroll = true;
+    preset.indvars = true;
+    preset.unrollAndJam = true;
+    preset.sink = true;
+    preset.argumentPromotion = true;
     break;
   case OptLevel::Os:
     preset = optimizationPreset(OptLevel::O2);
     preset.level = OptLevel::Os;
     preset.loopUnroll = false;
     preset.inlineAll = false;
+    preset.indvars = true;
     break;
   case OptLevel::Oz:
     preset.level = OptLevel::Oz;
@@ -258,6 +293,11 @@ OptimizationOptions optimizationPreset(OptLevel level) {
     preset.constFold = true;
     preset.deadCode = true;
     preset.branchOpt = true;
+    // Oz keeps the cheap canonicalization every tuned level gets, so the
+    // switched-on flags run exactly what used to be bundled with the level.
+    preset.sroa = true;
+    preset.mem2reg = true;
+    preset.scalarSccp = true;
     break;
   }
   return preset;
@@ -414,7 +454,15 @@ bool parseOptimizationFlag(std::string_view argument,
       setFlagWithOff("--licm", "--no-licm", options.loopInvariantHoist) ||
       setFlagWithOff("--vectorize", "--no-vectorize", options.vectorize) ||
       setFlagWithOff("--branch-opt", "--no-branch-opt", options.branchOpt) ||
-      setFlagWithOff("--branch-optimize", "--no-branch-optimize", options.branchOpt)) {
+      setFlagWithOff("--branch-optimize", "--no-branch-optimize", options.branchOpt) ||
+      setFlagWithOff("--jump-threading", "--no-jump-threading", options.jumpThreading) ||
+      setFlagWithOff("--sroa", "--no-sroa", options.sroa) ||
+      setFlagWithOff("--mem2reg", "--no-mem2reg", options.mem2reg) ||
+      setFlagWithOff("--sccp", "--no-sccp", options.scalarSccp) ||
+      setFlagWithOff("--indvars", "--no-indvars", options.indvars) ||
+      setFlagWithOff("--unroll-and-jam", "--no-unroll-and-jam", options.unrollAndJam) ||
+      setFlagWithOff("--sink", "--no-sink", options.sink) ||
+      setFlagWithOff("--arg-promote", "--no-arg-promote", options.argumentPromotion)) {
     return true;
   }
   if (argument == "--tailcalls" || argument == "--tail-calls" || argument == "--tailcall-opt") {
@@ -578,6 +626,14 @@ std::string describeOptimization(const OptimizationOptions& options) {
   note("fast-math", options.fastMath);
   note("vectorize", options.vectorize);
   note("branch-opt", options.branchOpt);
+  note("jump-threading", options.jumpThreading);
+  note("sroa", options.sroa);
+  note("mem2reg", options.mem2reg);
+  note("sccp", options.scalarSccp);
+  note("indvars", options.indvars);
+  note("unroll-and-jam", options.unrollAndJam);
+  note("sink", options.sink);
+  note("arg-promote", options.argumentPromotion);
   note("lto", options.lto);
   note("stack-alloc", options.stackAlloc);
   note("arena-alloc", options.arenaAlloc);
