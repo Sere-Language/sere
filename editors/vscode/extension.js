@@ -532,6 +532,15 @@ class LspClient {
     this.send({ jsonrpc: "2.0", method, params });
   }
 
+  /// Fails every in-flight request instead of leaving it pending forever: a
+  /// request that never settles leaves the editor without IntelliSense.
+  dispose(reason) {
+    for (const { reject } of this.pending.values()) {
+      reject(new Error(reason || "language server stopped"));
+    }
+    this.pending.clear();
+  }
+
   async stop() {
     try {
       await this.request("shutdown", null);
@@ -646,6 +655,48 @@ function insideStringLiteral(document, lineNumber, column) {
   return Boolean(quote);
 }
 
+// LSP CodeAction -> vscode.CodeAction. Passing the raw JSON through makes the
+// editor throw inside its own code-action handling ("reading 'startsWith'"),
+// which shows up as `provider FAILED` and loses the quick fixes.
+function toCodeAction(item) {
+  if (!item || typeof item.title !== "string") {
+    return undefined;
+  }
+  const action = new vscode.CodeAction(item.title, fromLspCodeActionKind(item.kind));
+  if (item.edit) {
+    action.edit = fromWorkspaceEdit(item.edit);
+  }
+  if (item.command && item.command.command) {
+    action.command = {
+      title: item.command.title || item.title,
+      command: item.command.command,
+      arguments: Array.isArray(item.command.arguments) ? item.command.arguments : [],
+    };
+  }
+  if (Array.isArray(item.diagnostics)) {
+    action.diagnostics = item.diagnostics.map(
+      (diagnostic) =>
+        new vscode.Diagnostic(
+          fromRange(diagnostic.range),
+          diagnostic.message || "",
+          vscode.DiagnosticSeverity.Error,
+        ),
+    );
+  }
+  return action;
+}
+
+function fromLspCodeActionKind(kind) {
+  if (typeof kind !== "string" || kind.length === 0) {
+    return vscode.CodeActionKind.QuickFix;
+  }
+  try {
+    return vscode.CodeActionKind.fromValue(kind);
+  } catch (_error) {
+    return vscode.CodeActionKind.QuickFix;
+  }
+}
+
 function toCompletion(item, document, position) {
   const completion = new vscode.CompletionItem(item.label, fromLspCompletionKind(item.kind));
   completion.detail = item.detail || "";
@@ -684,6 +735,8 @@ class SereLanguageClient {
     this.client = null;
     this.child = null;
     this.stopping = false;
+    /// Consecutive automatic restarts, cleared once the server reports ready.
+    this.autoRestarts = 0;
     this.changeTimers = new Map();
     this.diagnostics = vscode.languages.createDiagnosticCollection("sere");
     this.semanticTokensEmitter = new vscode.EventEmitter();
@@ -693,7 +746,30 @@ class SereLanguageClient {
     this.status.text = "Sere";
     this.status.tooltip = "Sere language server — click to restart";
     this.status.show();
-    context.subscriptions.push(this.diagnostics, this.status, this.semanticTokensEmitter);
+    // A visible log: the status bar is easy to miss, and a silent language
+    // server failure otherwise looks like "no IntelliSense at all".
+    this.output = vscode.window.createOutputChannel("Sere");
+    // Once the server has been alive for a few seconds, clear the crash
+    // counter so an occasional transient failure does not exhaust the budget.
+    this.stableTimer = null;
+    context.subscriptions.push(
+      this.diagnostics,
+      this.status,
+      this.semanticTokensEmitter,
+      this.output,
+      { dispose: () => {
+        if (this.stableTimer) {
+          clearTimeout(this.stableTimer);
+          this.stableTimer = null;
+        }
+      }},
+    );
+  }
+
+  log(message) {
+    this.output.appendLine(
+      "[" + new Date().toISOString().slice(11, 19) + "] " + message,
+    );
   }
 
   workspaceFolder() {
@@ -724,20 +800,52 @@ class SereLanguageClient {
           "\nstdlib: " +
           (reported.stdlib || "")
         : "Sere language server: " + sere;
-      this.child = spawn(sere, ["--lsp"], {
-        stdio: ["pipe", "pipe", "pipe"],
-        env: compilerEnv(workspaceFolder, sere),
-      });
-      this.child.on("error", (error) => {
-      this.status.text = "Sere $(error)";
-      vscode.window.showErrorMessage(`Sere language server failed to start: ${error.message}`);
-    });
-    this.child.on("exit", (code) => {
-      if (!this.stopping && code !== 0 && code !== null) {
-        this.status.text = "Sere $(error)";
-        vscode.window.showWarningMessage(`Sere language server exited (${code}). Use Sere: Restart Language Server.`);
+      let child = null;
+      try {
+        child = spawn(sere, ["--lsp"], {
+          stdio: ["pipe", "pipe", "pipe"],
+          env: compilerEnv(workspaceFolder, sere),
+        });
+      } catch (error) {
+        this.reportFailure("cannot start " + sere + ": " + error.message);
+        return;
       }
-    });
+      this.child = child;
+      this.log(
+        "starting language server: " +
+          sere +
+          (reported && reported.version ? " (" + reported.version + ")" : "") +
+          (reported && reported.stdlib ? " stdlib=" + reported.stdlib : ""),
+      );
+      this.child.on("error", (error) => {
+        this.log("failed to start language server: " + error.message);
+        this.reportFailure(`Sere language server failed to start: ${error.message}`);
+      });
+      this.child.on("exit", (code) => {
+        if (this.stopping) {
+          return;
+        }
+        this.log("language server exited with code " + code);
+        if (this.client !== null) {
+          this.client.dispose("language server exited (" + code + ")");
+          this.client = null;
+        }
+        // IntelliSense is entirely server-backed, so bring it straight back
+        // rather than leaving the session with no providers at all.
+        if (this.autoRestarts < 5) {
+          this.autoRestarts += 1;
+          this.log("restarting language server (attempt " + this.autoRestarts + ")");
+          setTimeout(() => {
+            if (!this.stopping && this.client === null) {
+              this.start();
+            }
+          }, 500);
+          return;
+        }
+        this.reportFailure(
+          `Sere language server exited (${code}) and could not be restarted.`,
+        );
+      });
     this.client = new LspClient(this.child);
     this.client.onNotification = (method, params) => {
       if (method !== "textDocument/publishDiagnostics") {
@@ -784,21 +892,53 @@ class SereLanguageClient {
       })
       .then(() => {
         this.status.text = "Sere";
+        this.autoRestarts = 0;
+        if (this.stableTimer) {
+          clearTimeout(this.stableTimer);
+        }
+        this.stableTimer = setTimeout(() => {
+          this.autoRestarts = 0;
+          this.stableTimer = null;
+        }, 8000);
+        this.log("language server ready; opening " + vscode.workspace.textDocuments.length +
+          " document(s)");
         this.client.notify("initialized", {});
         for (const document of vscode.workspace.textDocuments) {
           this.openDocument(document);
         }
       })
       .catch((error) => {
-        this.status.text = "Sere $(error)";
-        vscode.window.showErrorMessage(`Sere language server initialize failed: ${error.message}`);
+        this.log("initialize failed: " + (error && error.message ? error.message : error));
+        this.reportFailure(
+          `Sere language server initialize failed: ${error.message}`,
+        );
       });
     };
     queryCompilerContext(sere).then(launch, () => launch(null));
   }
 
+  /// Every language feature comes from the server, so a failure has to be
+  /// visible (the status bar may be hidden) and offer the way out.
+  reportFailure(message) {
+    this.status.text = "Sere $(error)";
+    this.log(message);
+    vscode.window
+      .showErrorMessage("Sere: " + message, "Show Log", "Restart Language Server")
+      .then((choice) => {
+        if (choice === "Show Log") {
+          this.output.show();
+        } else if (choice === "Restart Language Server") {
+          this.restart();
+        }
+      });
+  }
+
   async stop() {
     this.stopping = true;
+    if (this.stableTimer) {
+      clearTimeout(this.stableTimer);
+      this.stableTimer = null;
+    }
     if (this.client !== null) {
       await this.client.stop();
       this.client = null;
@@ -1252,17 +1392,37 @@ function activate(context) {
           });
       },
     }),
-    vscode.languages.registerCodeActionsProvider("sere", {
-      provideCodeActions(document, range) {
-        return session
-          .request("textDocument/codeAction", {
-            textDocument: { uri: document.uri.toString() },
-            range: { start: toPosition(range.start), end: toPosition(range.end) },
-            context: { diagnostics: [] },
-          })
-          .then((result) => (Array.isArray(result) ? result : []));
+    vscode.languages.registerCodeActionsProvider(
+      "sere",
+      {
+        provideCodeActions(document, range, context) {
+          return session
+            .request("textDocument/codeAction", {
+              textDocument: { uri: document.uri.toString() },
+              range: { start: toPosition(range.start), end: toPosition(range.end) },
+              context: {
+                diagnostics: (context && context.diagnostics ? context.diagnostics : []).map(
+                  (diagnostic) => ({
+                    range: {
+                      start: toPosition(diagnostic.range.start),
+                      end: toPosition(diagnostic.range.end),
+                    },
+                    message: diagnostic.message,
+                    code: typeof diagnostic.code === "object" ? diagnostic.code.value : diagnostic.code,
+                    severity: 1,
+                  }),
+                ),
+                only: context && context.only ? [String(context.only)] : undefined,
+              },
+            })
+            .then((result) => {
+              const items = Array.isArray(result) ? result : [];
+              return items.map((item) => toCodeAction(item)).filter(Boolean);
+            });
+        },
       },
-    }),
+      { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] },
+    ),
     vscode.languages.registerDocumentSemanticTokensProvider(
       "sere",
       {

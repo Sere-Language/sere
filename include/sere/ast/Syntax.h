@@ -204,12 +204,15 @@ public:
   void setCompileTimeBool(bool value);
   [[nodiscard]] bool hasCompileTimeBool() const;
   [[nodiscard]] bool compileTimeBool() const;
+  void setLoweredName(std::string name);
+  [[nodiscard]] const std::string& loweredName() const;
 
 private:
   std::string name_;
   std::string compileTimeText_{};
   bool hasCompileTimeBool_ = false;
   bool compileTimeBool_ = false;
+  std::string loweredName_{};
 };
 
 enum class ParamKind { Normal, VarArg, KwArg };

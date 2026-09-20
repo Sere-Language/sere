@@ -1093,7 +1093,9 @@ void LanguageSession::analyzeDocument(const std::string& uri, bool publish) {
   const std::filesystem::path file = uriToPath(uri);
   applyLanguageContext(file);
   applyOverlays(*frontend);
-  (void)frontend->analyze(file.string(), found->second, stdlibDir_);
+  // Editors need types from a file that is mid-edit: an error on one line must
+  // not take away completion and highlighting for the rest of the document.
+  (void)frontend->analyze(file.string(), found->second, stdlibDir_, /*bestEffort=*/true);
   if (publish) {
     publishDiagnostics(uri, frontend->diagnostics());
   }

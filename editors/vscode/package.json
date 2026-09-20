@@ -2,7 +2,7 @@
   "name": "sere",
   "displayName": "Sere",
   "description": "Language support for Sere: diagnostics, hover, completion, macros, exceptions, smarter IntelliSense, and a clickable main() Run CodeLens.",
-  "version": "0.2.7",
+  "version": "0.2.9",
   "publisher": "sere",
   "private": true,
   "license": "UNLICENSED",
@@ -32,6 +32,7 @@
   ],
   "activationEvents": [
     "onLanguage:sere",
+    "onStartupFinished",
     "workspaceContains:**/*.sere",
     "workspaceContains:sere.toml"
   ],

@@ -23,8 +23,12 @@ class Frontend {
 public:
   [[nodiscard]] static std::string overlayKey(const std::filesystem::path& path);
   void setFileOverlay(std::unordered_map<std::string, std::string> overlay);
-  [[nodiscard]] bool
-  analyze(const std::string& path, const std::string& text, const std::filesystem::path& stdlibDir);
+  /// `bestEffort` keeps analyzing after an error so the editor still has types
+  /// for everything that resolved; the compiler leaves it off.
+  [[nodiscard]] bool analyze(const std::string& path,
+                             const std::string& text,
+                             const std::filesystem::path& stdlibDir,
+                             bool bestEffort = false);
 
   [[nodiscard]] DiagnosticEngine& diagnostics();
   [[nodiscard]] const DiagnosticEngine& diagnostics() const;
@@ -61,6 +65,8 @@ private:
   std::unordered_map<std::string, std::size_t> importIndex_{};
   std::vector<MacroUse> macroUses_{};
   std::unordered_map<std::string, std::string> overlay_{};
+  /// Editor mode: see `analyze`. Shared with every module this frontend checks.
+  bool bestEffort_ = false;
 };
 
 } // namespace sere

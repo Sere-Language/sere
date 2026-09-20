@@ -320,6 +320,12 @@ serem::IRType SeremGenerator::lowerType(const Type* type) const {
   return serem::IRType::ptr(serem::IRType::i8());
 }
 
+const Type* SeremGenerator::resolveType(const Type* type) const {
+  if (type == nullptr || subst_.empty())
+    return type;
+  return types_->substitute(type, subst_);
+}
+
 std::string SeremGenerator::functionName(const FunctionDef& function) const {
   const auto known = functionNames_.find(&function);
   if (known != functionNames_.end())
@@ -1144,9 +1150,9 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
       std::unordered_map<std::string, std::string> attributes;
       if (objectType != nullptr && objectType->isDict()) {
         attributes["container"] = "dict";
-        attributes["key.kind"] = listElementKindText(objectType->dictKeyType());
+        attributes["key.kind"] = listElementKindText(resolveType(objectType->dictKeyType()));
         attributes["key.dict.kind"] = dictKeyKindText(objectType->dictKeyType());
-        attributes["value.kind"] = listElementKindText(objectType->dictValueType());
+        attributes["value.kind"] = listElementKindText(resolveType(objectType->dictValueType()));
       }
       (void)builder_->operation(
           "index.set", serem::IRType::voidType(), std::move(operands), std::move(attributes));
@@ -1554,7 +1560,7 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
         std::unordered_map<std::string, std::string> attributes;
         if (objectType->isDict()) {
           attributes["container"] = "dict";
-          attributes["key.kind"] = listElementKindText(objectType->dictKeyType());
+          attributes["key.kind"] = listElementKindText(resolveType(objectType->dictKeyType()));
           attributes["key.dict.kind"] = dictKeyKindText(objectType->dictKeyType());
         }
         (void)builder_->operation(
@@ -2147,7 +2153,7 @@ serem::ValuePtr SeremGenerator::printable(serem::ValuePtr value, const Type* typ
   if (type->isList() || type->isArray()) {
     const Type* element = type->elementType();
     std::unordered_map<std::string, std::string> attributes{
-        {"kind", "list"}, {"element.kind", listElementKindText(element)}};
+          {"kind", "list"}, {"element.kind", listElementKindText(resolveType(element))}};
     if (element != nullptr && element->isRecord() && !element->isStruct() && !element->isEnum()) {
       attributes["element.name"] = element->name();
       attributes["element.repr"] = renderSymbol(element);
@@ -2190,6 +2196,14 @@ serem::ValuePtr SeremGenerator::emitName(const NameExpr& expression) {
   if (captured != captureSymbols_.end()) {
     return builder_->operation(
         "static.get", lowerType(expression.resolvedType()), {}, {{"symbol", captured->second}});
+  }
+  // A generic function used as a value resolves to its specialized instance
+  // (e.g. `words.map(stringify)`), named through the lowered name.
+  if (!expression.loweredName().empty()) {
+    const auto lowered = functions_.find(expression.loweredName());
+    if (lowered != functions_.end()) {
+      return std::make_shared<serem::FunctionRef>(expression.loweredName(), lowered->second);
+    }
   }
   const auto symbol = functionSymbols_.find(expression.name());
   const auto found =
@@ -2436,7 +2450,7 @@ serem::ValuePtr SeremGenerator::emitBinary(const BinaryExpr& expression) {
     }
     if (rightType != nullptr && rightType->isDict()) {
       attributes["container"] = "dict";
-      attributes["key.kind"] = listElementKindText(rightType->dictKeyType());
+      attributes["key.kind"] = listElementKindText(resolveType(rightType->dictKeyType()));
       attributes["key.dict.kind"] = dictKeyKindText(rightType->dictKeyType());
     }
     return builder_->operation(
@@ -2581,7 +2595,7 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
             lowerType(expression.resolvedType()),
             std::move(names),
             {{"element", element == nullptr ? std::string{} : element->display()},
-             {"element.kind", listElementKindText(element)}});
+             {"element.kind", listElementKindText(resolveType(element))}});
       }
     }
   }
@@ -2626,21 +2640,22 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
         expression.intrinsic() == IntrinsicKind::ArrayNew ? "aggregate.array" : "aggregate.range",
         lowerType(expression.resolvedType()),
         args,
-        {{"element.kind", listElementKindText(element)}});
+         {{"element.kind", listElementKindText(resolveType(element))}});
   }
   if (expression.intrinsic() == IntrinsicKind::ListNew) {
     std::vector<serem::ValuePtr> args;
     for (const std::unique_ptr<Expr>& argument : expression.arguments()) {
       args.push_back(emitExpression(*argument));
     }
-    const Type* element =
-        expression.resolvedType() == nullptr ? nullptr : expression.resolvedType()->elementType();
+    const Type* element = expression.resolvedType() == nullptr
+                              ? nullptr
+                              : resolveType(expression.resolvedType())->elementType();
     return builder_->operation(
         "aggregate.list",
         lowerType(expression.resolvedType()),
         std::move(args),
-        {{"element", element == nullptr ? std::string{} : element->display()},
-         {"element.kind", listElementKindText(element)}});
+         {{"element", element == nullptr ? std::string{} : element->display()},
+          {"element.kind", listElementKindText(resolveType(element))}});
   }
   if (expression.intrinsic() == IntrinsicKind::DictNew) {
     std::vector<serem::ValuePtr> args;
@@ -2654,10 +2669,10 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
                                lowerType(dict),
                                std::move(args),
                                {{"key", key == nullptr ? std::string{} : key->display()},
-                                {"key.kind", listElementKindText(key)},
+         {"key.kind", listElementKindText(resolveType(key))},
                                 {"key.dict.kind", dictKeyKindText(key)},
                                 {"value", value == nullptr ? std::string{} : value->display()},
-                                {"value.kind", listElementKindText(value)}});
+                                 {"value.kind", listElementKindText(resolveType(value))}});
   }
   if (expression.intrinsic() == IntrinsicKind::Len) {
     const Type* argumentType =
@@ -2686,9 +2701,10 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
       args.push_back(emitExpression(*argument));
     }
     std::unordered_map<std::string, std::string> attributes{{"name", expression.loweredName()}};
-    const Type* objectType = member.object().resolvedType();
+    const Type* objectType = resolveType(member.object().resolvedType());
     if (objectType != nullptr && objectType->isList() && objectType->elementType() != nullptr) {
       attributes["element"] = objectType->elementType()->display();
+      attributes["element.kind"] = listElementKindText(objectType->elementType());
     }
     return builder_->operation("builtin.method",
                                lowerType(expression.resolvedType()),
@@ -2892,9 +2908,15 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
       }
     }
     if (member.object().resolvedType() != nullptr) {
-      const std::string owner = member.object().resolvedType()->canonical()->name();
+      // Inside an instantiated generic body the receiver keeps the bare generic
+      // type, so its method lookup must use the substituted instance (mirrors
+      // IRGenerator::emitMethodCall).
+      const Type* receiver = types_->substitute(member.object().resolvedType(), subst_);
+      if (receiver == nullptr)
+        receiver = member.object().resolvedType();
+      const std::string owner = receiver->canonical()->name();
       const std::string qualified = owner + "." + member.field();
-      const std::string method = methodSymbol(member.object().resolvedType(), member.field());
+      const std::string method = methodSymbol(receiver, member.field());
       const std::string symbol = !expression.loweredName().empty() &&
                                          functions_.contains(expression.loweredName())
                                      ? expression.loweredName()
@@ -3050,9 +3072,9 @@ serem::ValuePtr SeremGenerator::emitIndex(const IndexExpr& expression) {
     const Type* key = objectType->dictKeyType();
     const Type* value = objectType->dictValueType();
     attributes["container"] = "dict";
-    attributes["key.kind"] = listElementKindText(key);
+    attributes["key.kind"] = listElementKindText(resolveType(key));
     attributes["key.dict.kind"] = dictKeyKindText(key);
-    attributes["value.kind"] = listElementKindText(value);
+    attributes["value.kind"] = listElementKindText(resolveType(value));
     attributes["value"] = value == nullptr ? std::string{} : value->display();
   }
   return builder_->operation(expression.isSlice() ? "slice" : "index",
@@ -3099,7 +3121,7 @@ serem::ValuePtr SeremGenerator::emitAggregate(const Expr& expression) {
       expression.resolvedType()->elementType() != nullptr) {
     const Type* element = expression.resolvedType()->elementType();
     attributes["element"] = element->display();
-    attributes["element.kind"] = listElementKindText(element);
+    attributes["element.kind"] = listElementKindText(resolveType(element));
   }
   // A dict literal carries the key and value layouts, which is what sizes its
   // bucket entries at runtime.
@@ -3107,10 +3129,10 @@ serem::ValuePtr SeremGenerator::emitAggregate(const Expr& expression) {
     const Type* key = expression.resolvedType()->dictKeyType();
     const Type* value = expression.resolvedType()->dictValueType();
     attributes["key"] = key == nullptr ? std::string{} : key->display();
-    attributes["key.kind"] = listElementKindText(key);
+    attributes["key.kind"] = listElementKindText(resolveType(key));
     attributes["key.dict.kind"] = dictKeyKindText(key);
     attributes["value"] = value == nullptr ? std::string{} : value->display();
-    attributes["value.kind"] = listElementKindText(value);
+    attributes["value.kind"] = listElementKindText(resolveType(value));
   }
   return builder_->operation("aggregate." + kind,
                              lowerType(expression.resolvedType()),
@@ -3148,7 +3170,7 @@ serem::ValuePtr SeremGenerator::emitComprehension(const ComprehensionExpr& expre
   }
   std::unordered_map<std::string, std::string> listAttributes;
   listAttributes["element"] = elementType->display();
-  listAttributes["element.kind"] = listElementKindText(elementType);
+  listAttributes["element.kind"] = listElementKindText(resolveType(elementType));
   const serem::ValuePtr list =
       builder_->operation("aggregate.list", lowerType(resultType), {}, listAttributes);
   serem::ValuePtr source;

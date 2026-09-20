@@ -183,6 +183,14 @@ void NameExpr::setName(std::string name) {
   name_ = std::move(name);
 }
 
+void NameExpr::setLoweredName(std::string name) {
+  loweredName_ = std::move(name);
+}
+
+const std::string& NameExpr::loweredName() const {
+  return loweredName_;
+}
+
 void NameExpr::setCompileTimeText(std::string text) {
   compileTimeText_ = std::move(text);
 }

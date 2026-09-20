@@ -264,8 +264,15 @@ llvm::Value* SeremLLVMBackend::lowerValue(const serem::ValuePtr& value) {
     return nullptr;
   case serem::ValueKind::FunctionRef:
     return functionFor(*static_cast<const serem::FunctionRef*>(value.get()));
-  case serem::ValueKind::Operation:
-    return lowerOperation(*static_cast<const serem::Operation*>(value.get()));
+  case serem::ValueKind::Operation: {
+    const auto* op = static_cast<const serem::Operation*>(value.get());
+    const auto found = values_.find(op);
+    if (found != values_.end())
+      return found->second;
+    llvm::Value* produced = lowerOperation(*op);
+    values_[op] = produced;
+    return produced;
+  }
   }
   return nullptr;
 }
@@ -1010,6 +1017,12 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
         builder_->builder.CreateStore(item, storage);
         return static_cast<llvm::Value*>(storage);
       };
+      const auto asI64 = [&](llvm::Value* value) -> llvm::Value* {
+        if (value->getType() == llvm::Type::getInt64Ty(*context_)) {
+          return value;
+        }
+        return builder_->builder.CreateSExt(value, llvm::Type::getInt64Ty(*context_));
+      };
       llvm::Value* item = operands.size() > 1 ? operand(1) : nullptr;
       if (name == "list.append" || name == "list.push") {
         if (item != nullptr)
@@ -1048,7 +1061,7 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
                                              {llvm::PointerType::getUnqual(*context_),
                                               llvm::Type::getInt64Ty(*context_),
                                               llvm::PointerType::getUnqual(*context_)}),
-                                     {value, operand(1), slot(operand(2))});
+                                     {value, asI64(operand(1)), slot(operand(2))});
         return nullptr;
       }
       if (name == "list.remove" || name == "list.find" || name == "list.index" ||
@@ -1073,7 +1086,13 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
                    : call;
       }
       if (name == "list.pop") {
-        llvm::AllocaInst* output = builder_->builder.CreateAlloca(type);
+        llvm::Type* storageType = type;
+        if (attribute(operation, "element") == "str") {
+          storageType = llvm::StructType::get(
+              *context_,
+              {llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_)});
+        }
+        llvm::AllocaInst* output = builder_->builder.CreateAlloca(storageType);
         if (operands.size() == 1) {
           builder_->builder.CreateCall(runtime("sere_list_pop",
                                                llvm::Type::getVoidTy(*context_),
@@ -1081,14 +1100,27 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
                                                 llvm::PointerType::getUnqual(*context_)}),
                                        {value, output});
         } else {
+          llvm::Value* index = asI64(operand(1));
+          llvm::Value* length = builder_->builder.CreateCall(
+              runtime("sere_list_len",
+                      llvm::Type::getInt64Ty(*context_),
+                      {llvm::PointerType::getUnqual(*context_)}),
+              {value});
+          llvm::Value* isNegative = builder_->builder.CreateICmpSLT(
+              index, llvm::ConstantInt::get(index->getType(), 0));
+          index = builder_->builder.CreateSelect(
+              isNegative, builder_->builder.CreateAdd(index, length), index);
           builder_->builder.CreateCall(runtime("sere_list_pop_at",
                                                llvm::Type::getVoidTy(*context_),
                                                {llvm::PointerType::getUnqual(*context_),
                                                 llvm::Type::getInt64Ty(*context_),
                                                 llvm::PointerType::getUnqual(*context_)}),
-                                       {value, operand(1), output});
+                                       {value, index, output});
         }
-        return builder_->builder.CreateLoad(type, output);
+        if (storageType == type)
+          return builder_->builder.CreateLoad(type, output);
+        llvm::Value* dataSlot = builder_->builder.CreateStructGEP(storageType, output, 0);
+        return builder_->builder.CreateLoad(type, dataSlot);
       }
     }
     llvm::Function* length = module_->getFunction("strlen");
@@ -2560,7 +2592,7 @@ std::unique_ptr<llvm::Module> SeremLLVMBackend::emit(const serem::IRModule& modu
     for (const auto& block : function->blocks()) {
       builder_->builder.SetInsertPoint(blockFor(function->name() + ":" + block->label()));
       for (const auto& operation : block->operations()) {
-        (void)lowerOperation(*operation);
+        (void)lowerValue(std::static_pointer_cast<serem::Value>(operation));
         if (builder_->builder.GetInsertBlock()->getTerminator() != nullptr)
           break;
       }
@@ -2582,6 +2614,32 @@ std::unique_ptr<llvm::Module> SeremLLVMBackend::emit(const serem::IRModule& modu
   std::string verificationError;
   llvm::raw_string_ostream errors(verificationError);
   if (llvm::verifyModule(*module_, &errors)) {
+    const auto typeText = [](const llvm::Type* type) {
+      std::string text;
+      llvm::raw_string_ostream out(text);
+      type->print(out);
+      return out.str();
+    };
+    for (llvm::Function& function : *module_) {
+      const llvm::Type* returnType = function.getReturnType();
+      for (const llvm::BasicBlock& block : function) {
+        for (const llvm::Instruction& inst : block) {
+          if (const auto* ret = llvm::dyn_cast<llvm::ReturnInst>(&inst)) {
+            if (ret->getReturnValue() != nullptr &&
+                ret->getReturnValue()->getType() != returnType) {
+              fprintf(stderr, "[DBG] ret-type mismatch in function: @%s declared-return=%s bound-return=%s\n",
+                      function.getName().str().c_str(), typeText(returnType).c_str(),
+                      typeText(ret->getReturnValue()->getType()).c_str());
+              std::string body;
+              llvm::raw_string_ostream bodyOut(body);
+              function.print(bodyOut);
+              fwrite(body.data(), 1, body.size(), stderr);
+              fprintf(stderr, "\n[DBG] END FUNCTION\n");
+            }
+          }
+        }
+      }
+    }
     report("invalid Serem LLVM module: " + verificationError);
     return nullptr;
   }

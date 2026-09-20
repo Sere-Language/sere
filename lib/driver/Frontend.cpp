@@ -435,7 +435,9 @@ std::optional<std::string> Frontend::readFile(const std::filesystem::path& path)
 
 bool Frontend::analyze(const std::string& path,
                        const std::string& text,
-                       const std::filesystem::path& stdlibDir) {
+                       const std::filesystem::path& stdlibDir,
+                       bool bestEffort) {
+  bestEffort_ = bestEffort;
   diagnostics_ = DiagnosticEngine();
   ast_.reset();
   types_.reset();
@@ -486,12 +488,14 @@ bool Frontend::analyze(const std::string& path,
     preludeChecked = parsePrelude(diagnostics_, stdlib, preludeText);
     if (preludeChecked != nullptr) {
       TypeChecker preludeChecker(*types_, diagnostics_);
+      preludeChecker.setBestEffort(bestEffort);
       preludeChecker.setModuleInfo((stdlib / "prelude.sere").string(), "prelude", "", "", true);
       (void)preludeChecker.check(*preludeChecked);
     }
   }
   (void)typecheckImported(preludeChecked.get());
   checker_ = std::make_unique<TypeChecker>(*types_, diagnostics_);
+  checker_->setBestEffort(bestEffort);
   checker_->setModuleInfo(absolutePath(path), "__main__", "", moduleDocstring(*ast_), true);
   std::vector<const ImportStmt*> imports;
   collectImportStmts(*ast_, imports);
@@ -591,6 +595,7 @@ bool Frontend::importsReady(std::size_t index, const std::vector<char>& done) co
 bool Frontend::typecheckOneImported(std::size_t index, Module* prelude) {
   DiagnosticSourceScope scope(diagnostics_, importSources_[index].get());
   TypeChecker checker(*types_, diagnostics_);
+  checker.setBestEffort(bestEffort_);
   const std::string file = absolutePath(importPaths_[index].string());
   const std::string name = importNames_[index];
   checker.setModuleInfo(file, name, "", moduleDocstring(*imported_[index]), true);

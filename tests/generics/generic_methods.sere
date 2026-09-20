@@ -10,13 +10,13 @@ class Stack[T]:
     def pop(self) -> T:
         return self.items.pop(-1)
 
-    def map[U](f: Callable[[T], U]) -> list[U]:
+    def map[U](self, f: Callable[[T], U]) -> list[U]:
         result: list[U] = []
         for item in self.items:
             result.append(f(item))
         return result
 
-    def filter_into[U](f: Callable[[T], bool], convert: Callable[[T], U]) -> list[U]:
+    def filter_into[U](self, f: Callable[[T], bool], convert: Callable[[T], U]) -> list[U]:
         result: list[U] = []
         for item in self.items:
             if f(item):
@@ -29,7 +29,7 @@ class Stack[T]:
 def bump(value: i32) -> i32:
     return value + 1
 
-def stringify(value: i32) -> str:
+def stringify[T: i32 | str](value: T) -> str:
     return "#" + str(value)
 
 def is_even(value: i32) -> bool:

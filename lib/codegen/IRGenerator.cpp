@@ -1980,11 +1980,16 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
             "sere_list_pop", builder.getVoidTy(), {builder.getPtrTy(), builder.getPtrTy()});
         builder.CreateCall(fn, {object, out});
       } else {
+        llvm::Value* index = toI64(emitExpr(builder, *expr.arguments()[0]));
+        llvm::Value* length = builder.CreateCall(
+            runtimeDecl("sere_list_len", builder.getInt64Ty(), {builder.getPtrTy()}), {object});
+        llvm::Value* negative = builder.CreateICmpSLT(index, builder.getInt64(0));
+        index = builder.CreateSelect(negative, builder.CreateAdd(index, length), index);
         llvm::Function* fn =
             runtimeDecl("sere_list_pop_at",
                         builder.getVoidTy(),
                         {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy()});
-        builder.CreateCall(fn, {object, toI64(emitExpr(builder, *expr.arguments()[0])), out});
+        builder.CreateCall(fn, {object, index, out});
       }
       return builder.CreateLoad(lower(elem), out);
     }
@@ -5276,7 +5281,11 @@ llvm::Value* IRGenerator::emitExpr(llvm::IRBuilder<>& builder, const Expr& expr)
       if (llvm::Value* address = emitAddress(builder, expr, false)) {
         return builder.CreateLoad(lower(type), address);
       }
-      const auto found = functions_.find(name.name());
+      // A generic function used as a value resolves to its specialized
+      // instance (e.g. `words.map(stringify)`), named through loweredName.
+      const std::string fnName =
+          name.loweredName().empty() ? name.name() : name.loweredName();
+      const auto found = functions_.find(fnName);
       if (found != functions_.end()) {
         const auto defFound = functionDefs_.find(name.name());
         if (defFound != functionDefs_.end() && defFound->second != nullptr &&

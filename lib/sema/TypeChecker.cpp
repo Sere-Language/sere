@@ -242,13 +242,32 @@ resolvedConstraints(const std::vector<std::unique_ptr<TypeExpr>>& expressions) {
   }
   if (pattern->isRecord() && actual->isRecord() &&
       pattern->name().substr(0, pattern->name().find('[')) ==
-          actual->name().substr(0, actual->name().find('[')) &&
-      pattern->args().size() == actual->args().size()) {
-    for (std::size_t index = 0; index < pattern->args().size(); ++index) {
-      if (!inferTypeBindings(pattern->args()[index], actual->args()[index], bindings))
-        return false;
+          actual->name().substr(0, actual->name().find('['))) {
+    const std::vector<const Type*>& patternArgs = pattern->args();
+    const std::vector<const Type*>& actualArgs = actual->args();
+    if (patternArgs.size() == actualArgs.size()) {
+      for (std::size_t index = 0; index < patternArgs.size(); ++index) {
+        if (!inferTypeBindings(patternArgs[index], actualArgs[index], bindings))
+          return false;
+      }
+      return true;
     }
-    return true;
+    // A bare generic record pattern carries its type parameters by name only,
+    // e.g. `Box` used as `Box[T]` in a signature resolves to the generic
+    // template itself. Bind each parameter against the instance's arguments.
+    if (patternArgs.empty() && !pattern->typeParams().empty() &&
+        pattern->typeParams().size() == actualArgs.size()) {
+      for (std::size_t index = 0; index < actualArgs.size(); ++index) {
+        const std::string& param = pattern->typeParams()[index];
+        const auto found = bindings.find(param);
+        if (found == bindings.end()) {
+          bindings[param] = actualArgs[index];
+        } else if (found->second->canonical() != actualArgs[index]->canonical()) {
+          return false;
+        }
+      }
+      return true;
+    }
   }
   if (pattern->kind() == TypeKind::Generic && actual->kind() == TypeKind::Generic &&
       pattern->name() == actual->name() && pattern->args().size() == actual->args().size()) {
@@ -260,6 +279,16 @@ resolvedConstraints(const std::vector<std::unique_ptr<TypeExpr>>& expressions) {
     return true;
   }
   return true;
+}
+
+/// Whether `type` is an integer, float, or int-enum scalar, or a type parameter
+/// whose active constraint is limited to such numeric types.
+[[nodiscard]] bool isNumericScalar(const Type* type) {
+  if (type == nullptr) {
+    return false;
+  }
+  type = type->canonical();
+  return type->isInteger() || type->isFloat() || type->isIntEnum();
 }
 
 /// Binds a generic record's type parameters from a concrete instance of the same
@@ -2172,6 +2201,32 @@ const Type* TypeChecker::checkMember(MemberExpr& expr) {
     return exported;
   }
   const RecordField* field = objectType->findField(expr.field());
+  if (field != nullptr && field->isStatic && objectType->isEnum() &&
+      !objectType->typeParams().empty() && expectedExprType_ != nullptr) {
+    // `Value.Empty` on a generic enum specializes from the expected type so
+    // that `empty: Value[str] = Value.Empty` yields `Value[str]`.
+    std::unordered_map<std::string, const Type*> contextBindings;
+    if (bindRecordTypeArgs(objectType, expectedExprType_, contextBindings)) {
+      bool complete = true;
+      std::vector<const Type*> args;
+      for (const std::string& param : objectType->typeParams()) {
+        const auto found = contextBindings.find(param);
+        if (found == contextBindings.end()) {
+          complete = false;
+          break;
+        }
+        args.push_back(found->second);
+      }
+      if (complete) {
+        if (const Type* specialized = types_->instantiate(objectType, args)) {
+          if (const RecordField* specializedField = specialized->findField(expr.field())) {
+            objectType = specialized;
+            field = specializedField;
+          }
+        }
+      }
+    }
+  }
   if (field == nullptr) {
     const int methodIndex = objectType->methodIndex(expr.field());
     if (methodIndex >= 0) {
@@ -2657,8 +2712,27 @@ const Type* TypeChecker::checkBinary(BinaryExpr& expr) {
     expr.setResolvedType(result);
     return result;
   }
-  const bool leftNum = left->isInteger() || left->isFloat() || left->isIntEnum();
-  const bool rightNum = right->isInteger() || right->isFloat() || right->isIntEnum();
+  // A constrained type parameter (e.g. `T: i32 | f64`) may be used with
+  // arithmetic operators when every permitted specialization is numeric.
+  const auto numericallyAllowed = [this](const Type* type) {
+    if (isNumericScalar(type)) {
+      return true;
+    }
+    if (type->isTypeParam()) {
+      const auto found = activeTypeConstraints_.find(type->name());
+      if (found == activeTypeConstraints_.end() || found->second == nullptr) {
+        return false;
+      }
+      const Type* allowed = found->second->canonical();
+      return allowed->isUnion() ? std::all_of(allowed->args().begin(),
+                                              allowed->args().end(),
+                                              isNumericScalar)
+                                : isNumericScalar(allowed);
+    }
+    return false;
+  };
+  const bool leftNum = numericallyAllowed(left);
+  const bool rightNum = numericallyAllowed(right);
   if (!leftNum || !rightNum) {
     if (left->isEnum() || right->isEnum()) {
       diagnostics_->error(expr.range(),
@@ -3502,6 +3576,18 @@ const Type* TypeChecker::specializeCall(CallExpr& expr, const Symbol& symbol) {
     }
   } else if (expr.arguments().size() == functionType->paramTypes().size()) {
     for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
+      const Expr& argument = *expr.arguments()[index];
+      // An empty collection literal carries no element types, so it cannot
+      // contribute bindings here; checkFunctionArguments later binds it to the
+      // finalized parameter type (e.g. `first_or([], "none")` infers list[str]).
+      const bool emptyCollection =
+          (argument.kind() == NodeKind::ListLiteral &&
+           static_cast<const ListLiteral&>(argument).elements().empty()) ||
+          (argument.kind() == NodeKind::DictLiteral &&
+           static_cast<const DictLiteral&>(argument).values().empty());
+      if (emptyCollection) {
+        continue;
+      }
       const Type* argType = checkExpr(*expr.arguments()[index]);
       if (argType == nullptr) {
         return nullptr;
@@ -4115,7 +4201,12 @@ TypeChecker::checkBuiltinMethod(CallExpr& expr, const Type* objectType, const st
         return nullptr;
       }
       const Type* parts = checkExpr(*expr.arguments()[0]);
-      if (parts == nullptr || !parts->isList() || !isAssignable(parts->elementType(), str)) {
+      const Type* partElement = parts == nullptr ? nullptr : parts->elementType();
+      // A generic class body checks `self.items: list[T]` without knowing T;
+      // allow type parameters here since the instantiated element is str.
+      if (parts == nullptr || !parts->isList() ||
+          !(partElement != nullptr &&
+            (isAssignable(partElement, str) || partElement->isTypeParam()))) {
         diagnostics_->error(expr.range(), "join() requires list[str]");
         return nullptr;
       }
@@ -5099,7 +5190,7 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
       activeTypeConstraints_,
       owner == nullptr ? std::vector<std::string>{} : owner->typeParams(),
       owner == nullptr ? std::vector<const Type*>{} : owner->typeConstraints());
-  if (!resolveTypeConstraints(function.typeConstraints()))
+  if (!resolveTypeConstraints(function.typeConstraints()) && !bestEffort_)
     return false;
   TypeConstraintScope functionConstraints(activeTypeConstraints_,
                                           function.typeParams(),
@@ -5110,7 +5201,7 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
   for (const std::string& param : function.typeParams()) {
     (void)types_->defineTypeParam(param);
   }
-  if (!validateParamList(function.params(), function.range())) {
+  if (!validateParamList(function.params(), function.range()) && !bestEffort_) {
     return false;
   }
   const std::string savedClass = currentClass_;
@@ -5134,6 +5225,13 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
     Symbol symbol;
     symbol.kind = SymbolKind::Variable;
     symbol.type = type;
+    if (type == nullptr && bestEffort_) {
+      // The editor still wants the body checked: an unresolvable parameter type
+      // must not cost the rest of the function its IntelliSense.
+      symbol.type = types_->anyType();
+      (void)declare(param.name, symbol, param.range.start);
+      continue;
+    }
     if (type == nullptr || !declare(param.name, symbol, param.range.start)) {
       popScope();
       currentClass_ = savedClass;
@@ -5148,6 +5246,9 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
       const Type* defaultType = checkExpr(*param.defaultValue);
       if (defaultType == nullptr || !isAssignable(defaultType, type)) {
         diagnostics_->error(param.range, "default value type mismatch for '" + param.name + "'");
+        if (bestEffort_) {
+          continue;
+        }
         popScope();
         currentClass_ = savedClass;
         currentFunctionName_ = savedFunction;
@@ -5398,6 +5499,72 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
     if (argType == nullptr) {
       return false;
     }
+    // A generic function passed as a first-class value specializes against the
+    // expected callable shape, e.g. `words.map(stringify)` with
+    // `stringify[T: i32 | str]`: the callable's parameter types bind T.
+    if (expected != nullptr && expected->isCallableConstraint() &&
+        argument.kind() == NodeKind::NameExpr) {
+      Symbol* symbol = lookup(static_cast<NameExpr&>(argument).name());
+      if (symbol != nullptr && isCallableSymbol(*symbol) && symbol->function != nullptr &&
+          !symbol->function->typeParams().empty()) {
+        std::unordered_map<std::string, const Type*> bindings;
+        CallableShape shape;
+        bool matched = fillCallableShape(expected, shape);
+        const Type* functionType = symbol->type;
+        const auto bindType = [&](const Type* actualParam, const Type* expectedParam) -> bool {
+          if (actualParam == nullptr || expectedParam == nullptr) {
+            return false;
+          }
+          const Type* a = actualParam->canonical();
+          const Type* e = expectedParam->canonical();
+          if (a->isTypeParam()) {
+            const auto bound = bindings.find(a->name());
+            if (bound == bindings.end()) {
+              bindings[a->name()] = e;
+              return true;
+            }
+            return bound->second->canonical() == e;
+          }
+          return a == e;
+        };
+        if (matched && shape.hasParams) {
+          if (functionType == nullptr ||
+              shape.params.size() != functionType->paramTypes().size()) {
+            matched = false;
+          } else {
+            for (std::size_t index = 0; matched && index < shape.params.size(); ++index)
+              matched = bindType(functionType->paramTypes()[index], shape.params[index]);
+          }
+        }
+        if (matched && shape.hasReturn)
+          matched = bindType(functionType->returnType(), shape.returnType);
+        if (matched) {
+          std::vector<const Type*> instArgs;
+          bool missing = false;
+          for (const std::string& param : symbol->function->typeParams()) {
+            const auto found = bindings.find(param);
+            if (found == bindings.end()) {
+              missing = true;
+              break;
+            }
+            instArgs.push_back(found->second);
+          }
+          if (!missing &&
+              checkTypeConstraints(symbol->function->typeParams(),
+                                   resolvedConstraints(symbol->function->typeConstraints()),
+                                   instArgs,
+                                   argument.range())) {
+            const FunctionInstantiation* inst = types_->instantiateFunction(
+                symbol->function->name(), symbol->function->typeParams(), symbol->type, instArgs);
+            if (inst != nullptr && inst->specializedType != nullptr) {
+              argType = inst->specializedType;
+              argument.setResolvedType(argType);
+              static_cast<NameExpr&>(argument).setLoweredName(inst->llvmName);
+            }
+          }
+        }
+      }
+    }
     if (!isAssignable(argType, expected)) {
       diagnostics_->error(argument.range(),
                           label + " type mismatch: expected " + quoteType(expected) + ", found " +
@@ -5593,7 +5760,8 @@ bool TypeChecker::collectClassNames(Module& module) {
     symbol.kind = SymbolKind::Class;
     symbol.type = record;
     symbol.fromPrelude = classDef.fromPrelude();
-    if (!declare(classDef.name(), symbol, classDef.range().start, !classDef.fromPrelude())) {
+    if (!declare(classDef.name(), symbol, classDef.range().start, !classDef.fromPrelude()) &&
+        !bestEffort_) {
       return false;
     }
   }
@@ -5622,7 +5790,8 @@ bool TypeChecker::collectEnumNames(Module& module) {
     symbol.kind = SymbolKind::Class;
     symbol.type = record;
     symbol.fromPrelude = enumDef.fromPrelude();
-    if (!declare(enumDef.name(), symbol, enumDef.range().start, !enumDef.fromPrelude())) {
+    if (!declare(enumDef.name(), symbol, enumDef.range().start, !enumDef.fromPrelude()) &&
+        !bestEffort_) {
       return false;
     }
   }
@@ -5636,8 +5805,11 @@ bool TypeChecker::collectEnums(Module& module) {
     }
     auto& enumDef = static_cast<EnumDef&>(*statement);
     const Type* record = enumDef.resolvedType();
-    if (!ensureRecordConstraints(record))
+    if (!ensureRecordConstraints(record) && !bestEffort_)
       return false;
+    if (record == nullptr) {
+      continue;
+    }
     TypeConstraintScope constraintScope(
         activeTypeConstraints_, enumDef.typeParams(), record->typeConstraints());
     types_->setRecordEnum(record, true);
@@ -5649,9 +5821,12 @@ bool TypeChecker::collectEnums(Module& module) {
         const std::optional<std::int64_t> value = evalEnumInt(*variant.value);
         if (!value.has_value()) {
           diagnostics_->error(variant.range, "enum values must be integer literals");
-          return false;
+          if (!bestEffort_) {
+            return false;
+          }
+        } else {
+          next = *value;
         }
-        next = *value;
       }
       RecordField field;
       field.name = variant.name;
@@ -5662,7 +5837,7 @@ bool TypeChecker::collectEnums(Module& module) {
       for (EnumPayloadField& payload : variant.payload) {
         const Type* payloadType =
             payload.type == nullptr ? nullptr : resolveTypeExpr(*payload.type);
-        if (payloadType == nullptr && payload.type != nullptr) {
+        if (payloadType == nullptr && payload.type != nullptr && !bestEffort_) {
           return false;
         }
         field.payloadTypes.push_back(payloadType);
@@ -5691,12 +5866,15 @@ bool TypeChecker::collectAliases(Module& module) {
     for (const std::string& param : alias.typeParams()) {
       (void)types_->defineTypeParam(param);
     }
-    if (!resolveTypeConstraints(alias.typeConstraints())) {
+    if (!resolveTypeConstraints(alias.typeConstraints()) && !bestEffort_) {
       return false;
     }
     const Type* underlying = resolveTypeExpr(alias.type());
     if (underlying == nullptr) {
-      return false;
+      if (!bestEffort_) {
+        return false;
+      }
+      continue;
     }
     const Type* type = alias.typeParams().empty()
                            ? types_->defineAlias(alias.name(), underlying)
@@ -5709,7 +5887,8 @@ bool TypeChecker::collectAliases(Module& module) {
     symbol.kind = SymbolKind::Type;
     symbol.type = type;
     symbol.fromPrelude = alias.fromPrelude();
-    if (!declare(alias.name(), symbol, alias.range().start, !alias.fromPrelude())) {
+    if (!declare(alias.name(), symbol, alias.range().start, !alias.fromPrelude()) &&
+        !bestEffort_) {
       return false;
     }
   }
@@ -5717,8 +5896,9 @@ bool TypeChecker::collectAliases(Module& module) {
 }
 
 bool TypeChecker::flattenClass(ClassDef& classDef) {
-  if (!ensureRecordConstraints(classDef.resolvedType()))
+  if (!ensureRecordConstraints(classDef.resolvedType()) && !bestEffort_) {
     return false;
+  }
   TypeConstraintScope constraintScope(
       activeTypeConstraints_, classDef.typeParams(), classDef.resolvedType()->typeConstraints());
   // Keyed by the record's qualified name: a module-level class that shadows a
@@ -5830,8 +6010,12 @@ bool TypeChecker::flattenClass(ClassDef& classDef) {
 
 bool TypeChecker::collectClassFields(Module& module) {
   for (const std::unique_ptr<Stmt>& statement : module.statements()) {
-    if (statement->kind() == NodeKind::ClassDef &&
-        !flattenClass(static_cast<ClassDef&>(*statement))) {
+    if (statement->kind() != NodeKind::ClassDef) {
+      continue;
+    }
+    // The editor keeps collecting: a broken class must not strip the fields of
+    // the classes declared after it.
+    if (!flattenClass(static_cast<ClassDef&>(*statement)) && !bestEffort_) {
       return false;
     }
   }
@@ -5859,7 +6043,7 @@ bool TypeChecker::collectFunctions(Module& module) {
       continue;
     }
     auto& function = static_cast<FunctionDef&>(*statement);
-    if (!resolveTypeConstraints(function.typeConstraints()))
+    if (!resolveTypeConstraints(function.typeConstraints()) && !bestEffort_)
       return false;
     TypeConstraintScope constraintScope(activeTypeConstraints_,
                                         function.typeParams(),
@@ -5920,7 +6104,7 @@ bool TypeChecker::collectMacros(Module& module) {
     const SourceLocation location = def.nameRange().end.offset > def.nameRange().start.offset
                                         ? def.nameRange().start
                                         : def.range().start;
-    if (!declare(def.name(), symbol, location, !def.fromPrelude())) {
+    if (!declare(def.name(), symbol, location, !def.fromPrelude()) && !bestEffort_) {
       return false;
     }
   }
@@ -5940,7 +6124,7 @@ bool TypeChecker::collectMethods(Module& module) {
     TypeConstraintScope classConstraints(
         activeTypeConstraints_, classDef.typeParams(), record->typeConstraints());
     for (std::unique_ptr<FunctionDef>& method : classDef.methods()) {
-      if (!resolveTypeConstraints(method->typeConstraints()))
+      if (!resolveTypeConstraints(method->typeConstraints()) && !bestEffort_)
         return false;
       TypeConstraintScope methodConstraints(activeTypeConstraints_,
                                             method->typeParams(),
@@ -6153,7 +6337,7 @@ bool TypeChecker::collectMethods(Module& module) {
     TypeConstraintScope classConstraints(
         activeTypeConstraints_, enumDef.typeParams(), record->typeConstraints());
     for (std::unique_ptr<FunctionDef>& method : enumDef.methods()) {
-      if (!resolveTypeConstraints(method->typeConstraints()))
+      if (!resolveTypeConstraints(method->typeConstraints()) && !bestEffort_)
         return false;
       TypeConstraintScope methodConstraints(activeTypeConstraints_,
                                             method->typeParams(),
@@ -6232,7 +6416,9 @@ bool TypeChecker::bindLocalClassImports(Module& module) {
       }
       if (!imported) {
         diagnostics_->error(import.range(), "cannot find module or class '" + className + "'");
-        return false;
+        if (!bestEffort_) {
+          return false;
+        }
       }
       continue;
     }
@@ -6287,7 +6473,10 @@ bool TypeChecker::collectExports(Module& module) {
     }
     if (assign.value().kind() != NodeKind::ListLiteral) {
       diagnostics_->error(assign.range(), "__exports__ must be a list of names");
-      return false;
+      if (!bestEffort_) {
+        return false;
+      }
+      continue;
     }
     std::vector<std::string> names;
     bool namesOk = true;
@@ -6296,7 +6485,8 @@ bool TypeChecker::collectExports(Module& module) {
       const NameExpr* name = asName(*item);
       if (name == nullptr) {
         diagnostics_->error(item->range(), "__exports__ entries must be names");
-        return false;
+        namesOk = false;
+        continue;
       }
       names.push_back(name->name());
       const Symbol* symbol = lookup(name->name());
@@ -6320,10 +6510,12 @@ bool TypeChecker::collectExports(Module& module) {
         assign.op() == AssignOp::Add ? ModuleExportMode::Append : ModuleExportMode::Replace;
     if (assign.op() != AssignOp::Assign && assign.op() != AssignOp::Add) {
       diagnostics_->error(assign.range(), "use __exports__ = [...] or __exports__ += [...]");
-      return false;
+      if (!bestEffort_) {
+        return false;
+      }
     }
     module.setExportList(mode, std::move(names));
-    if (!namesOk) {
+    if (!namesOk && !bestEffort_) {
       return false;
     }
   }
@@ -6345,7 +6537,7 @@ bool TypeChecker::checkBodies(Module& module) {
   }
   // Decorator expressions can reference module variables (for example @app.route).
   // Bind those variables first, then expose decorated signatures to body checking.
-  if (!ok || !applyDecorators(module)) {
+  if (!applyDecorators(module) && !bestEffort_) {
     return false;
   }
   for (const std::unique_ptr<Stmt>& statement : module.statements()) {
@@ -7156,37 +7348,45 @@ bool TypeChecker::check(Module& module) {
                      [](const std::unique_ptr<Stmt>& item) { return item == nullptr; }),
       statements.end());
   injectModuleGlobals();
-  if (!collectClassNames(module)) {
+  // A failed phase normally ends the check. The editor instead carries on: the
+  // declarations that were collected still carry types, which is what keeps
+  // completion, hover, and semantic tokens working next to an error.
+  bool ok = true;
+  const auto run = [&](bool result) {
+    ok = result && ok;
+    return ok || bestEffort_;
+  };
+  if (!run(collectClassNames(module))) {
     return false;
   }
-  if (!collectEnumNames(module)) {
+  if (!run(collectEnumNames(module))) {
     return false;
   }
-  if (!collectAliases(module)) {
+  if (!run(collectAliases(module))) {
     return false;
   }
-  if (!collectEnums(module)) {
+  if (!run(collectEnums(module))) {
     return false;
   }
-  if (!collectClassFields(module)) {
+  if (!run(collectClassFields(module))) {
     return false;
   }
-  if (!collectFunctions(module)) {
+  if (!run(collectFunctions(module))) {
     return false;
   }
-  if (!collectMacros(module)) {
+  if (!run(collectMacros(module))) {
     return false;
   }
-  if (!collectMethods(module)) {
+  if (!run(collectMethods(module))) {
     return false;
   }
-  if (!bindLocalClassImports(module)) {
+  if (!run(bindLocalClassImports(module))) {
     return false;
   }
-  if (!collectExports(module)) {
+  if (!run(collectExports(module))) {
     return false;
   }
-  if (!checkBodies(module)) {
+  if (!run(checkBodies(module))) {
     return false;
   }
   return !diagnostics_->hasErrors();

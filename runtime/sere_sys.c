@@ -1291,6 +1291,42 @@ void sere_string_join(const char* sep, int64_t sep_len, void* parts, const char*
     sep = "";
     sep_len = 0;
   }
+  if (list->stride == (int64_t)sizeof(int32_t)) {
+    int64_t total = 0;
+    for (int64_t index = 0; index < list->len; ++index) {
+      char buffer[32];
+      const int32_t item = *(const int32_t*)((const char*)list->data +
+                                             (size_t)(index * list->stride));
+      const int length = snprintf(buffer, sizeof(buffer), "%d", (int)item);
+      if (length > 0)
+        total += length;
+      if (index + 1 < list->len)
+        total += sep_len;
+    }
+    char* out = (char*)malloc((size_t)total + 1);
+    if (out == NULL) {
+      outStr(emptyStr(), out_data, out_len);
+      return;
+    }
+    int64_t n = 0;
+    for (int64_t index = 0; index < list->len; ++index) {
+      char buffer[32];
+      const int32_t item = *(const int32_t*)((const char*)list->data +
+                                             (size_t)(index * list->stride));
+      const int length = snprintf(buffer, sizeof(buffer), "%d", (int)item);
+      if (length > 0) {
+        memcpy(out + n, buffer, (size_t)length);
+        n += length;
+      }
+      if (index + 1 < list->len && sep_len > 0) {
+        memcpy(out + n, sep, (size_t)sep_len);
+        n += sep_len;
+      }
+    }
+    out[n] = '\0';
+    outStr(ownBytes(out, n), out_data, out_len);
+    return;
+  }
   int64_t total = 0;
   for (int64_t index = 0; index < list->len; ++index) {
     const SereStr* item = (const SereStr*)((char*)list->data + (size_t)(index * list->stride));

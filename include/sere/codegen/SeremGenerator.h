@@ -27,6 +27,7 @@ public:
 
 private:
   [[nodiscard]] serem::IRType lowerType(const Type* type) const;
+  [[nodiscard]] const Type* resolveType(const Type* type) const;
   [[nodiscard]] bool emitFunction(const FunctionDef& function, std::string symbol = {});
   [[nodiscard]] bool emitStatement(const Stmt& statement);
   [[nodiscard]] bool emitBlock(const std::vector<std::unique_ptr<Stmt>>& statements);

@@ -78,6 +78,10 @@ public:
   TypeChecker(TypeContext& types, DiagnosticEngine& diagnostics);
 
   [[nodiscard]] bool check(Module& module);
+  /// Best-effort checking for the language server: phases that fail no longer
+  /// abort the rest of the module, so a single error does not take away
+  /// completion, hover, and semantic tokens for the whole file.
+  void setBestEffort(bool value) { bestEffort_ = value; }
   void setModuleInfo(
       std::string file, std::string name, std::string package, std::string doc, bool debug);
   [[nodiscard]] const std::vector<SemanticSymbol>& symbols() const;
@@ -235,6 +239,10 @@ private:
   /// Type narrowings kept after their scope is popped, so a query that carries
   /// a cursor offset can still resolve them.
   std::vector<NarrowedBinding> narrowedBindings_{};
+  /// Editor mode: keep checking after an error so the types of everything that
+  /// did resolve survive for completion, hover, and highlighting. The compiler
+  /// leaves this off and stops at the first failing phase.
+  bool bestEffort_ = false;
   int loopDepth_ = 0;
   std::string currentClass_{};
   [[nodiscard]] bool canAccessPrivate(const Type* owner) const;

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.8
+
+- Member completion now resolves call and index receivers: `add(5, 4).` and `xs[0].` list the members of the returned type, including generic substitutions such as `unwrap() -> i32`
+- `Type.` completion offers variant constructors with payload snippets, the constructor signature, and static members instead of instance fields
+- Enum values complete their variant `name`/`value`
+- Method and module completions show parameter names, type parameters, and declaration docstrings
+- An error no longer disables the rest of the file: analysis is best-effort, so completion, hover, and semantic highlighting keep working next to diagnostics
+- Request handlers always answer from the text the editor sent, so highlighting no longer goes stale or blank after edits
+- Opening or editing a file only re-analyzes the documents that can observe the change, instead of every open tab
+- Empty completion results fall back to the editor's own suggestions rather than an empty list
+
 ## 0.2.7
 
 - Scope-aware completion hides locals and parameters from unrelated functions and blocks
