@@ -1,5 +1,5 @@
 module @test
-type @Exception = %Exception [class, field=message:0]
+type @Exception = %Exception [class, field=message:1]
 type @SyntaxError = %SyntaxError [class]
 type @IndentationError = %IndentationError [class]
 type @NameError = %NameError [class]
@@ -13,7 +13,7 @@ type @PermissionError = %PermissionError [class]
 type @RuntimeError = %RuntimeError [class]
 type @RecursionError = %RecursionError [class]
 type @NotImplementedError = %NotImplementedError [class]
-type @File = %File [class, field=_handle:0, field=_mode:1, field=_path:2]
+type @File = %File [class, field=_handle:1, field=_mode:2, field=_path:3]
 global @str.0 = str "aeiou"
 global @str.1 = str "Vowel identifier!"
 global @str.2 = str "Input your sentence or word: "
@@ -78,20 +78,21 @@ entry:
 func @sign(%arg0: i32) -> i32 {
 entry:
   %0 = cmp.gt i1 %arg0, 0
-  cond_branch %0 {true = if.body0, false = if.body1}
+  cond_branch %0 {true = if.body0, false = if.test1}
 if.end:
   return 0
 if.body0:
   return 1
-if.body1:
+if.test1:
   %1 = cmp.lt i1 %arg0, 0
   cond_branch %1 {true = if.body1, false = if.end}
+if.body1:
   %2 = neg i32 1
   return %2
 }
 func @prelude___init__(%arg0: Ptr[%Exception], %arg1: str) -> void {
 entry:
-  member.set %arg0, %arg1 {field = message, index = 0}
+  member.set %arg0, %arg1 {field = message, index = 1}
   return
 }
 func @main() -> i32 {
@@ -182,19 +183,19 @@ extern func @sere_fs_write_bytes(%arg0: Ptr[i8], %arg1: Ptr[i8], %arg2: i64) -> 
 extern func @sere_fs_seek(%arg0: Ptr[i8], %arg1: i64, %arg2: i32) -> void
 func @fs_fs___init__(%arg0: Ptr[%File], %arg1: str, %arg2: str) -> void {
 entry:
-  member.set %arg0, %arg1 {field = _path, index = 2}
-  member.set %arg0, %arg2 {field = _mode, index = 1}
+  member.set %arg0, %arg1 {field = _path, index = 3}
+  member.set %arg0, %arg2 {field = _mode, index = 2}
   %0 = call Ptr[i8] @sere_fs_open, %arg1, %arg2
-  member.set %arg0, %0 {field = _handle, index = 0}
+  member.set %arg0, %0 {field = _handle, index = 1}
   return
 }
 func @fs_fs_read(%arg0: Ptr[%File]) -> str {
 entry:
-  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 0}
+  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
   %1 = pointer.is_null i1 %0 {negated = false}
   cond_branch %1 {true = if.body0, false = if.end}
 if.end:
-  %2 = member.get Ptr[i8] %arg0 {field = _handle, index = 0}
+  %2 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
   %3 = call str @sere_fs_read_all, %2
   return %3
 if.body0:
@@ -202,11 +203,11 @@ if.body0:
 }
 func @fs_fs_write(%arg0: Ptr[%File], %arg1: str) -> i1 {
 entry:
-  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 0}
+  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
   %1 = pointer.is_null i1 %0 {negated = false}
   cond_branch %1 {true = if.body0, false = if.end}
 if.end:
-  %2 = member.get Ptr[i8] %arg0 {field = _handle, index = 0}
+  %2 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
   %3 = call i32 @sere_fs_write_all, %2, %arg1
   %4 = alloca Ptr[i32]
   store %3, %4
@@ -218,14 +219,14 @@ if.body0:
 }
 func @fs_fs_read_bytes(%arg0: Ptr[%File], %arg1: i64) -> Ptr[i8] {
 entry:
-  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 0}
+  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
   %1 = pointer.is_null i1 %0 {negated = false}
   cond_branch %1 {true = if.body0, false = if.end}
 if.end:
   %3 = alloca Ptr[Ptr[i8]]
   %4 = aggregate.array Ptr[i8] %arg1 {element.kind = 7}
   store %4, %3
-  %5 = member.get Ptr[i8] %arg0 {field = _handle, index = 0}
+  %5 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
   %6 = load Ptr[i8] %3
   %7 = index.address Ptr[i8] %6, 0
   %8 = call i32 @sere_fs_read_bytes, %5, %7, %arg1
@@ -266,13 +267,13 @@ for.end:
 }
 func @fs_fs_write_bytes(%arg0: Ptr[%File], %arg1: Ptr[i8]) -> i1 {
 entry:
-  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 0}
+  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
   %1 = pointer.is_null i1 %0 {negated = false}
   %2 = alloca Ptr[i1]
   store %1, %2
   cond_branch %1 {true = logic.end, false = logic.rhs}
 if.end:
-  %6 = member.get Ptr[i8] %arg0 {field = _handle, index = 0}
+  %6 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
   %7 = index.address Ptr[i8] %arg1, 0
   %8 = runtime.len i64 %arg1 {kind = list[i8]}
   %9 = call i32 @sere_fs_write_bytes, %6, %7, %8
@@ -294,23 +295,23 @@ logic.end:
 }
 func @fs_fs_seek(%arg0: Ptr[%File], %arg1: i64, %arg2: i32) -> void {
 entry:
-  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 0}
+  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
   %1 = pointer.is_null i1 %0 {negated = true}
   cond_branch %1 {true = if.body0, false = if.end}
 if.end:
   return
 if.body0:
-  %2 = member.get Ptr[i8] %arg0 {field = _handle, index = 0}
+  %2 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
   call @sere_fs_seek, %2, %arg1, %arg2
   branch {target = if.end}
 }
 func @fs_fs_close(%arg0: Ptr[%File]) -> i1 {
 entry:
-  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 0}
+  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
   %1 = pointer.is_null i1 %0 {negated = false}
   cond_branch %1 {true = if.body0, false = if.end}
 if.end:
-  %2 = member.get Ptr[i8] %arg0 {field = _handle, index = 0}
+  %2 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
   %3 = call i32 @sere_fs_close, %2
   %4 = cast.value i1 %3 {unsigned = false}
   %5 = alloca Ptr[i1]
@@ -324,7 +325,7 @@ if.end.1:
   return %8
 if.body0.1:
   %7 = pointer.null Ptr[i8]
-  member.set %arg0, %7 {field = _handle, index = 0}
+  member.set %arg0, %7 {field = _handle, index = 1}
   branch {target = if.end.1}
 }
 func @fs_fs___enter__(%arg0: Ptr[%File]) -> Ptr[%File] {
@@ -338,23 +339,23 @@ entry:
 }
 func @fs_fs___repr__(%arg0: Ptr[%File]) -> str {
 entry:
-  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 0}
+  %0 = member.get Ptr[i8] %arg0 {field = _handle, index = 1}
   %1 = pointer.is_null i1 %0 {negated = false}
   cond_branch %1 {true = if.body0, false = if.end}
 if.end:
-  %5 = member.get str %arg0 {field = _path, index = 2}
-  %6 = member.get str %arg0 {field = _mode, index = 1}
+  %5 = member.get str %arg0 {field = _path, index = 3}
+  %6 = member.get str %arg0 {field = _mode, index = 2}
   %7 = string.concat str @str.17, %5, @str.18, %6, @str.19
   return %7
 if.body0:
-  %2 = member.get str %arg0 {field = _path, index = 2}
-  %3 = member.get str %arg0 {field = _mode, index = 1}
+  %2 = member.get str %arg0 {field = _path, index = 3}
+  %3 = member.get str %arg0 {field = _mode, index = 2}
   %4 = string.concat str @str.14, %2, @str.15, %3, @str.16
   return %4
 }
 func @fs_open(%arg0: str, %arg1: str) -> Ptr[%File] {
 entry:
-  %0 = construct Ptr[%File] %arg0, %arg1 {type = File, init = fs_fs___init__}
+  %0 = construct Ptr[%File] %arg0, %arg1 {type = File, type.id = 723007075, init = fs_fs___init__}
   return %0
 }
 func @fs_write_text(%arg0: str, %arg1: str) -> i1 {

@@ -28,6 +28,9 @@ public:
 /// Keeps only the definitions reachable from the module entry point.
 [[nodiscard]] std::unique_ptr<TransformPass> makeDeadCodePass();
 
+/// Removes blocks no branch can reach, such as the arm of a folded branch.
+[[nodiscard]] std::unique_ptr<TransformPass> makeUnreachableBlockPass();
+
 /// Drops string literals no surviving function still references.
 [[nodiscard]] std::unique_ptr<TransformPass> makeUnusedGlobalPass();
 

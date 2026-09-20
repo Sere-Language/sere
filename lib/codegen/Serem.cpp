@@ -220,6 +220,15 @@ BasicBlock& IRFunction::addBlock(std::string label) {
   blocks_.push_back(std::make_unique<BasicBlock>(std::move(label)));
   return *blocks_.back();
 }
+bool IRFunction::removeBlock(std::string_view label) {
+  for (auto iterator = blocks_.begin(); iterator != blocks_.end(); ++iterator) {
+    if ((*iterator)->label() == label) {
+      blocks_.erase(iterator);
+      return true;
+    }
+  }
+  return false;
+}
 std::string IRFunction::nextValueName() { return std::to_string(nextValue_++); }
 void IRFunction::setAsync(bool value) { async_ = value; }
 void IRFunction::setGenerator(bool value) { generator_ = value; }

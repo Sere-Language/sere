@@ -382,6 +382,83 @@ public:
   }
 };
 
+/// Removes blocks nothing can branch to.
+///
+/// Folding a branch on a constant leaves the arm it can never take behind, and
+/// printing that arm suggests the program still tests something at runtime.
+class UnreachableBlockPass final : public TransformPass {
+public:
+  [[nodiscard]] std::string_view name() const override { return "unreachable-blocks"; }
+  bool run(IRModule& module) override {
+    bool changed = false;
+    for (const std::unique_ptr<IRFunction>& function : module.functions()) {
+      if (function->isExternal()) {
+        continue;
+      }
+      changed = pruneFunction(*function) || changed;
+    }
+    return changed;
+  }
+
+private:
+  [[nodiscard]] static bool pruneFunction(IRFunction& function) {
+    const std::vector<std::unique_ptr<BasicBlock>>& blocks = function.blocks();
+    if (blocks.empty()) {
+      return false;
+    }
+    // The first block is the entry: the backend lowers the blocks in this order
+    // and LLVM treats the first one it is given as the entry too.
+    std::unordered_set<std::string> labels;
+    for (const std::unique_ptr<BasicBlock>& block : blocks) {
+      labels.insert(block->label());
+    }
+    std::unordered_set<std::string> reachable;
+    std::vector<std::string> pending;
+    reachable.insert(blocks.front()->label());
+    pending.push_back(blocks.front()->label());
+    while (!pending.empty()) {
+      const std::string current = pending.back();
+      pending.pop_back();
+      const BasicBlock* block = nullptr;
+      for (const std::unique_ptr<BasicBlock>& candidate : blocks) {
+        if (candidate->label() == current) {
+          block = candidate.get();
+          break;
+        }
+      }
+      if (block == nullptr) {
+        continue;
+      }
+      for (const std::shared_ptr<Operation>& operation : block->operations()) {
+        if (operation == nullptr) {
+          continue;
+        }
+        const std::string& opcode = operation->opcode();
+        if (opcode != "branch" && opcode != "cond_branch") {
+          continue;
+        }
+        for (const char* key : {"target", "true", "false"}) {
+          const std::string label = attributeAt(*operation, key);
+          if (!label.empty() && labels.contains(label) && reachable.insert(label).second) {
+            pending.push_back(label);
+          }
+        }
+      }
+    }
+    std::vector<std::string> dead;
+    for (const std::unique_ptr<BasicBlock>& block : blocks) {
+      if (!reachable.contains(block->label())) {
+        dead.push_back(block->label());
+      }
+    }
+    bool changed = false;
+    for (const std::string& label : dead) {
+      changed = function.removeBlock(label) || changed;
+    }
+    return changed;
+  }
+};
+
 /// Drops string literals no surviving function references. Literals are named
 /// globals, so a folded branch or a removed function leaves them behind.
 class UnusedGlobalPass final : public TransformPass {
@@ -432,6 +509,10 @@ std::unique_ptr<TransformPass> makeConstantFoldPass() {
 
 std::unique_ptr<TransformPass> makeDeadCodePass() { return std::make_unique<DeadCodePass>(); }
 
+std::unique_ptr<TransformPass> makeUnreachableBlockPass() {
+  return std::make_unique<UnreachableBlockPass>();
+}
+
 std::unique_ptr<TransformPass> makeUnusedGlobalPass() {
   return std::make_unique<UnusedGlobalPass>();
 }
@@ -440,6 +521,7 @@ std::vector<std::unique_ptr<TransformPass>> defaultTransformPasses() {
   std::vector<std::unique_ptr<TransformPass>> passes;
   passes.push_back(makeDeadCodePass());
   passes.push_back(makeConstantFoldPass());
+  passes.push_back(makeUnreachableBlockPass());
   passes.push_back(makeUnusedGlobalPass());
   return passes;
 }

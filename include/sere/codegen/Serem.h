@@ -255,6 +255,9 @@ public:
   [[nodiscard]] const std::vector<std::unique_ptr<BasicBlock>>& blocks() const;
   [[nodiscard]] std::shared_ptr<Argument> argument(std::size_t index) const;
   [[nodiscard]] BasicBlock& addBlock(std::string label);
+  /// Drops the named block, reporting whether anything was removed. Only safe
+  /// once no branch still targets it.
+  bool removeBlock(std::string_view label);
   [[nodiscard]] std::string nextValueName();
   void setAsync(bool value);
   void setGenerator(bool value);
