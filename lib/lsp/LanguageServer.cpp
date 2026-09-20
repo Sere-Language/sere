@@ -32,6 +32,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -897,6 +898,9 @@ private:
   /// from an earlier revision produces missing or misplaced semantic tokens.
   [[nodiscard]] Frontend* freshFrontend(const std::string& uri);
   void analyzeDocument(const std::string& uri, bool publish = true);
+  /// Re-analyzes `uri` and the open documents whose analysis read it, and
+  /// returns the documents that were analyzed.
+  std::vector<std::string> analyzeAffected(const std::string& uri);
   [[nodiscard]] std::optional<std::pair<std::string, std::uint32_t>>
   documentOffset(const llvm::json::Object& params) const;
 
@@ -908,6 +912,9 @@ private:
   /// Text each cached frontend was built from, so `freshFrontend` can tell
   /// whether a re-analysis is needed.
   std::unordered_map<std::string, std::string> analyzedText_{};
+  /// Overlay keys of the files each cached analysis read, so a change only
+  /// invalidates the analyses that could observe it.
+  std::unordered_map<std::string, std::unordered_set<std::string>> dependencies_{};
   bool shutdown_ = false;
 };
 
@@ -1091,7 +1098,41 @@ void LanguageSession::analyzeDocument(const std::string& uri, bool publish) {
     publishDiagnostics(uri, frontend->diagnostics());
   }
   analyzedText_[uri] = found->second;
+  std::unordered_set<std::string> dependencies;
+  for (const std::filesystem::path& imported : frontend->importedModulePaths()) {
+    dependencies.insert(Frontend::overlayKey(imported));
+  }
+  dependencies_[uri] = std::move(dependencies);
   frontends_[uri] = std::move(frontend);
+}
+
+std::vector<std::string> LanguageSession::analyzeAffected(const std::string& uri) {
+  std::vector<std::string> analyzed;
+  // A change to a library file (the stdlib, the prelude, or a file outside the
+  // open documents) can alter every analysis, so those still refresh broadly.
+  if (isLibraryFile(uriToPath(uri))) {
+    refreshOpenDocuments();
+    for (const auto& [other, _] : documents_) {
+      analyzed.push_back(other);
+    }
+    return analyzed;
+  }
+  const std::string key = Frontend::overlayKey(uriToPath(uri));
+  for (const auto& [other, _] : documents_) {
+    if (other == uri) {
+      analyzeDocument(other);
+      analyzed.push_back(other);
+      continue;
+    }
+    // Only a document that imported the changed file can see a difference.
+    const auto dependencies = dependencies_.find(other);
+    if (dependencies == dependencies_.end() || dependencies->second.count(key) == 0) {
+      continue;
+    }
+    analyzeDocument(other);
+    analyzed.push_back(other);
+  }
+  return analyzed;
 }
 
 void LanguageSession::applyOverlays(Frontend& frontend) const {
@@ -1366,11 +1407,8 @@ void LanguageSession::handleDidOpen(const llvm::json::Object& params) {
     return;
   }
   documents_[uri->str()] = text->str();
-  if (documents_.size() > 1 || isLibraryFile(uriToPath(uri->str()))) {
-    refreshOpenDocuments();
-  } else {
-    analyzeDocument(uri->str());
-  }
+  // Working on one file must not cost an analysis of every other open tab.
+  analyzeAffected(uri->str());
 }
 
 void LanguageSession::handleDidChange(const llvm::json::Object& params) {
@@ -1394,11 +1432,7 @@ void LanguageSession::handleDidChange(const llvm::json::Object& params) {
   if (skipAnalyze) {
     return;
   }
-  if (documents_.size() > 1 || isLibraryFile(uriToPath(uri->str()))) {
-    refreshOpenDocuments();
-  } else {
-    analyzeDocument(uri->str());
-  }
+  analyzeAffected(uri->str());
 }
 
 void LanguageSession::handleDidClose(const llvm::json::Object& params) {

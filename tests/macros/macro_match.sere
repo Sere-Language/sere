@@ -7,7 +7,7 @@ macro sum:
     match:
         ($($x:expr),*) => quote:
             add_all([$($x),*])
-
+            
 macro single(x):
     match:
         ($x:expr) => quote:
