@@ -701,79 +701,7 @@ void IRGenerator::emitModuleInitFn(const Module& ast, const std::vector<const Mo
     if (slot == nullptr || raw == nullptr) {
       return;
     }
-    const Type* decoratedType = function.decoratedType();
     if (function.isMethod()) {
-      // A decorated method keeps its full (self, args...) ABI at call sites.
-      // Build a dedicated wrapper that binds self, applies the decorator chain
-      // to the unbound callable, and finally invokes the result.
-      llvm::FunctionType* methodFnType = llvmFunctionTypeFrom(decoratedType);
-      std::string wrapName = "sere.method.deco." + llvmNameFor(function);
-      llvm::Function* wrapper = llvm::Function::Create(
-          methodFnType, llvm::Function::InternalLinkage, wrapName, module_);
-      llvm::BasicBlock* entry = llvm::BasicBlock::Create(*context_, "entry", wrapper);
-      llvm::IRBuilder<> wb(entry);
-      llvm::Function::arg_iterator arg = wrapper->arg_begin();
-      llvm::Value* selfArg = &*arg;
-      std::vector<llvm::Value*> valueArgs;
-      std::vector<llvm::Type*> valueTypes;
-      for (std::size_t index = 1; index < decoratedType->paramTypes().size(); ++index) {
-        ++arg;
-        valueArgs.push_back(&*arg);
-        valueTypes.push_back(arg->getType());
-      }
-      llvm::Value* current = packCallable(wb, raw, selfArg);
-      const Type* currentType = function.resolvedType();
-      const std::vector<std::unique_ptr<Expr>>& exprs = function.decoratorExprs();
-      for (int index = static_cast<int>(exprs.size()) - 1; index >= 0; --index) {
-        if (exprs[static_cast<std::size_t>(index)] == nullptr) {
-          continue;
-        }
-        Expr& deco = *exprs[static_cast<std::size_t>(index)];
-        if (isReservedDecoratorExpr(deco)) {
-          continue;
-        }
-        llvm::Value* wrapperValue = emitExpr(wb, deco);
-        const Type* wrapperType = deco.resolvedType();
-        llvm::FunctionType* llvmFn = nullptr;
-        if (wrapperType != nullptr && wrapperType->kind() == TypeKind::Function) {
-          llvmFn = llvmFunctionTypeFrom(wrapperType);
-        } else if (wrapperType != nullptr) {
-          const Type* resultType = wrapperType->returnType();
-          llvm::Type* ret = nullptr;
-          if (resultType != nullptr && !resultType->isVoidLike() && !resultType->isAny()) {
-            ret = lower(resultType);
-          }
-          if (ret == nullptr && currentType != nullptr) {
-            ret = lower(currentType);
-          }
-          if (ret == nullptr) {
-            ret = llvm::Type::getVoidTy(*context_);
-          }
-          llvmFn = llvm::FunctionType::get(ret, {lower(currentType)}, false);
-        }
-        if (wrapperValue == nullptr || llvmFn == nullptr) {
-          continue;
-        }
-        if (wrapperType != nullptr && wrapperType->kind() == TypeKind::Function &&
-            !wrapperType->paramTypes().empty()) {
-          current = emitCoerce(wb, current, currentType, wrapperType->paramTypes()[0]);
-          currentType = wrapperType->returnType();
-        }
-        current = emitIndirectCallable(wb, wrapperValue, llvmFn, {current});
-      }
-      llvm::FunctionType* unboundType =
-          llvm::FunctionType::get(methodFnType->getReturnType(), valueTypes, false);
-      if (unboundType->getReturnType()->isVoidTy()) {
-        emitIndirectCallable(wb, current, unboundType, valueArgs);
-        wb.CreateRetVoid();
-      } else {
-        llvm::Value* result = emitIndirectCallable(wb, current, unboundType, valueArgs);
-        wb.CreateRet(result);
-      }
-      llvm::Value* packedWrapper = packCallable(builder, wrapper, nullptr);
-      if (packedWrapper != nullptr) {
-        builder.CreateStore(packedWrapper, slot);
-      }
       return;
     }
     llvm::Value* current = packCallable(builder, raw, nullptr);
@@ -3753,12 +3681,31 @@ llvm::Value* IRGenerator::emitMethodCall(llvm::IRBuilder<>& builder, const CallE
     }
   }
   if (methodDef != nullptr && methodDef->decoratedType() != nullptr) {
-    llvm::Value* slot = decoratorSlots_[expr.loweredName()];
-    if (slot != nullptr) {
-      llvm::Value* packed = builder.CreateLoad(lower(methodDef->decoratedType()), slot);
-      llvm::FunctionType* llvmFn = llvmFunctionTypeFrom(methodDef->decoratedType());
-      return emitIndirectCallable(builder, packed, llvmFn, args);
+    llvm::Value* current = packCallable(builder, found->second, thisPtr);
+    const Type* rawType = methodDef->resolvedType();
+    std::vector<llvm::Type*> valueTypes;
+    for (std::size_t index = 1; rawType != nullptr && index < rawType->paramTypes().size(); ++index)
+      valueTypes.push_back(lower(rawType->paramTypes()[index]));
+    llvm::FunctionType* valueType = llvm::FunctionType::get(
+        rawType == nullptr || rawType->returnType() == nullptr
+            ? llvm::Type::getVoidTy(*context_)
+            : lower(rawType->returnType()),
+        valueTypes,
+        false);
+    for (int index = static_cast<int>(methodDef->decoratorExprs().size()) - 1; index >= 0;
+         --index) {
+      Expr& decorator = *methodDef->decoratorExprs()[static_cast<std::size_t>(index)];
+      if (isReservedDecoratorExpr(decorator))
+        continue;
+      llvm::Value* wrapper = emitExpr(builder, decorator);
+      const Type* wrapperType = decorator.resolvedType();
+      if (wrapper == nullptr || wrapperType == nullptr || wrapperType->kind() != TypeKind::Function)
+        continue;
+      llvm::FunctionType* decoratorType = llvmFunctionTypeFrom(wrapperType);
+      current = emitIndirectCallable(builder, wrapper, decoratorType, {current});
     }
+    std::vector<llvm::Value*> valueArgs(args.begin() + 1, args.end());
+    return emitIndirectCallable(builder, current, valueType, valueArgs);
   }
   llvm::Function* callee = found->second;
   const Type* staticType = resolveType(member.object().resolvedType());

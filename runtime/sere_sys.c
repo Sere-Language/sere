@@ -1129,6 +1129,9 @@ enum {
   SERE_LIST_I16 = 8,
   SERE_LIST_U8 = 9,
   SERE_LIST_U16 = 10,
+  /* A boxed `Any`: the slot holds a `SereAnyBox*`, which carries its own
+     renderer, so the slot can be formatted without knowing the program. */
+  SERE_LIST_ANY = 11,
 };
 
 static void
@@ -1152,6 +1155,138 @@ reprAppend(char** output, size_t* length, size_t* capacity, const char* text, si
   *length += text_len;
 }
 
+const char* sere_any_repr_data(void* box) {
+  const SereAnyBox* typed = (const SereAnyBox*)box;
+  if (typed == NULL || typed->data == NULL) {
+    return "None";
+  }
+  // Every box carries the renderer the generator emitted for its type, so the
+  // runtime never has to map a type name onto a formatter of its own.
+  if (typed->repr != NULL) {
+    const char* text = typed->repr(box);
+    if (text != NULL) {
+      return text;
+    }
+  }
+  return typed->name == NULL ? "None" : typed->name;
+}
+
+typedef struct {
+  const char* text;
+  int64_t len;
+} SlotText;
+
+/// Renders one container slot. Numeric renderings land in `scratch` and do not
+/// outlive the call; the string, box, and object renderers hand back storage of
+/// their own, like the rest of the runtime's formatting helpers.
+static SlotText slotText(const char* item,
+                         int32_t kind,
+                         const SereSlotRepr* formatter,
+                         char* scratch,
+                         size_t scratchSize) {
+  SlotText result;
+  result.text = scratch;
+  result.len = 0;
+  switch (kind) {
+  case SERE_LIST_STR: {
+    const SereStr* value = (const SereStr*)item;
+    int64_t rendered_len = 0;
+    result.text = sere_str_repr_data(value->data, value->len, &rendered_len);
+    result.len = rendered_len;
+    return result;
+  }
+  case SERE_LIST_I8: {
+    int8_t value = 0;
+    memcpy(&value, item, sizeof(value));
+    result.len = snprintf(scratch, scratchSize, "%d", (int)value);
+    break;
+  }
+  case SERE_LIST_I16: {
+    int16_t value = 0;
+    memcpy(&value, item, sizeof(value));
+    result.len = snprintf(scratch, scratchSize, "%d", (int)value);
+    break;
+  }
+  case SERE_LIST_U8: {
+    uint8_t value = 0;
+    memcpy(&value, item, sizeof(value));
+    result.len = snprintf(scratch, scratchSize, "%u", (unsigned)value);
+    break;
+  }
+  case SERE_LIST_U16: {
+    uint16_t value = 0;
+    memcpy(&value, item, sizeof(value));
+    result.len = snprintf(scratch, scratchSize, "%u", (unsigned)value);
+    break;
+  }
+  case SERE_LIST_I32: {
+    int32_t value = 0;
+    memcpy(&value, item, sizeof(value));
+    result.len = snprintf(scratch, scratchSize, "%d", (int)value);
+    break;
+  }
+  case SERE_LIST_I64: {
+    int64_t value = 0;
+    memcpy(&value, item, sizeof(value));
+    result.len = snprintf(scratch, scratchSize, "%lld", (long long)value);
+    break;
+  }
+  case SERE_LIST_F64: {
+    double value = 0;
+    memcpy(&value, item, sizeof(value));
+    result.len = snprintf(scratch, scratchSize, "%g", value);
+    break;
+  }
+  case SERE_LIST_F32: {
+    float value = 0;
+    memcpy(&value, item, sizeof(value));
+    result.len = snprintf(scratch, scratchSize, "%g", (double)value);
+    break;
+  }
+  case SERE_LIST_BOOL: {
+    int8_t value = 0;
+    memcpy(&value, item, sizeof(value));
+    result.text = value ? "True" : "False";
+    result.len = value ? 4 : 5;
+    return result;
+  }
+  case SERE_LIST_ANY: {
+    void* box = NULL;
+    memcpy(&box, item, sizeof(box));
+    result.text = sere_any_repr_data(box);
+    result.len = (int64_t)strlen(result.text);
+    return result;
+  }
+  default: {
+    void* value = NULL;
+    memcpy(&value, item, sizeof(value));
+    if (value == NULL) {
+      result.text = "None";
+      result.len = 4;
+    } else if (formatter != NULL && formatter->object != NULL) {
+      const char* text = formatter->object(value);
+      if (text == NULL)
+        text = formatter->name == NULL ? "None" : formatter->name;
+      result.text = text;
+      result.len = (int64_t)strlen(text);
+    } else if (formatter != NULL && formatter->name != NULL) {
+      // A record with no renderer still names its type, which is what a nested
+      // value that has no `__str__` or `__repr__` prints as.
+      result.text = formatter->name;
+      result.len = (int64_t)strlen(formatter->name);
+    } else {
+      result.len =
+          snprintf(scratch, scratchSize, "0x%llx", (unsigned long long)(uintptr_t)value);
+    }
+    return result;
+  }
+  }
+  if (result.len < 0) {
+    result.len = 0;
+  }
+  return result;
+}
+
 void sere_list_repr_data(void* list, int32_t kind, const char** out_data, int64_t* out_len) {
   const SereList* typed = (const SereList*)list;
   const int64_t stride = (typed == NULL || typed->stride <= 0) ? 1 : typed->stride;
@@ -1166,91 +1301,54 @@ void sere_list_repr_data(void* list, int32_t kind, const char** out_data, int64_
   reprAppend(&output, &length, &capacity, "[", 1);
   for (int64_t index = 0; index < count; ++index) {
     const char* item = (const char*)typed->data + (size_t)(index * stride);
-    char text[64];
-    const char* rendered = text;
-    int64_t rendered_len = 0;
-    switch (kind) {
-    case SERE_LIST_STR: {
-      const SereStr* value = (const SereStr*)item;
-      rendered = sere_str_repr_data(value->data, value->len, &rendered_len);
-      break;
-    }
-    case SERE_LIST_I8: {
-      int8_t value = 0;
-      memcpy(&value, item, sizeof(value));
-      rendered_len = snprintf(text, sizeof(text), "%d", (int)value);
-      break;
-    }
-    case SERE_LIST_I16: {
-      int16_t value = 0;
-      memcpy(&value, item, sizeof(value));
-      rendered_len = snprintf(text, sizeof(text), "%d", (int)value);
-      break;
-    }
-    case SERE_LIST_U8: {
-      uint8_t value = 0;
-      memcpy(&value, item, sizeof(value));
-      rendered_len = snprintf(text, sizeof(text), "%u", (unsigned)value);
-      break;
-    }
-    case SERE_LIST_U16: {
-      uint16_t value = 0;
-      memcpy(&value, item, sizeof(value));
-      rendered_len = snprintf(text, sizeof(text), "%u", (unsigned)value);
-      break;
-    }
-    case SERE_LIST_I32: {
-      int32_t value = 0;
-      memcpy(&value, item, sizeof(value));
-      rendered_len = snprintf(text, sizeof(text), "%d", (int)value);
-      break;
-    }
-    case SERE_LIST_I64: {
-      int64_t value = 0;
-      memcpy(&value, item, sizeof(value));
-      rendered_len = snprintf(text, sizeof(text), "%lld", (long long)value);
-      break;
-    }
-    case SERE_LIST_F64: {
-      double value = 0;
-      memcpy(&value, item, sizeof(value));
-      rendered_len = snprintf(text, sizeof(text), "%g", value);
-      break;
-    }
-    case SERE_LIST_F32: {
-      float value = 0;
-      memcpy(&value, item, sizeof(value));
-      rendered_len = snprintf(text, sizeof(text), "%g", (double)value);
-      break;
-    }
-    case SERE_LIST_BOOL: {
-      int8_t value = 0;
-      memcpy(&value, item, sizeof(value));
-      rendered = value ? "True" : "False";
-      rendered_len = value ? 4 : 5;
-      break;
-    }
-    default: {
-      void* value = NULL;
-      memcpy(&value, item, sizeof(value));
-      if (value == NULL) {
-        rendered = "None";
-        rendered_len = 4;
-      } else {
-        rendered_len = snprintf(text, sizeof(text), "0x%llx", (unsigned long long)(uintptr_t)value);
-      }
-      break;
-    }
-    }
-    if (rendered_len < 0) {
-      rendered_len = 0;
-    }
+    char scratch[64];
+    const SlotText text = slotText(item, kind, NULL, scratch, sizeof(scratch));
     if (index != 0) {
       reprAppend(&output, &length, &capacity, ", ", 2);
     }
-    reprAppend(&output, &length, &capacity, rendered, (size_t)rendered_len);
+    reprAppend(&output, &length, &capacity, text.text, (size_t)text.len);
   }
   reprAppend(&output, &length, &capacity, "]", 1);
+  output[length] = '\0';
+  outStr(ownBytes(output, (int64_t)length), out_data, out_len);
+}
+
+void sere_dict_repr_data(void* dict,
+                         const SereSlotRepr* key,
+                         const SereSlotRepr* value,
+                         const char** out_data,
+                         int64_t* out_len) {
+  const SereList* keys = (const SereList*)sere_dict_keys(dict);
+  const SereList* values = (const SereList*)sere_dict_values(dict);
+  const int64_t count = keys == NULL ? 0 : keys->len;
+  size_t capacity = 32;
+  size_t length = 0;
+  char* output = (char*)malloc(capacity);
+  if (output == NULL) {
+    outStr(emptyStr(), out_data, out_len);
+    return;
+  }
+  reprAppend(&output, &length, &capacity, "{", 1);
+  for (int64_t index = 0; index < count; ++index) {
+    char keyScratch[64];
+    char valueScratch[64];
+    const char* keySlot = (const char*)keys->data + (size_t)(index * keys->stride);
+    const char* valueSlot = (const char*)values->data + (size_t)(index * values->stride);
+    const SlotText keyText =
+        slotText(keySlot, key == NULL ? SERE_LIST_STR : key->kind, key, keyScratch, sizeof(keyScratch));
+    const SlotText valueText = slotText(valueSlot,
+                                        value == NULL ? SERE_LIST_STR : value->kind,
+                                        value,
+                                        valueScratch,
+                                        sizeof(valueScratch));
+    if (index != 0) {
+      reprAppend(&output, &length, &capacity, ", ", 2);
+    }
+    reprAppend(&output, &length, &capacity, keyText.text, (size_t)keyText.len);
+    reprAppend(&output, &length, &capacity, ": ", 2);
+    reprAppend(&output, &length, &capacity, valueText.text, (size_t)valueText.len);
+  }
+  reprAppend(&output, &length, &capacity, "}", 1);
   output[length] = '\0';
   outStr(ownBytes(output, (int64_t)length), out_data, out_len);
 }

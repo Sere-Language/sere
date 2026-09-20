@@ -32,6 +32,7 @@ enum class ListElementKind : std::int32_t {
   Int16 = 8,
   UInt8 = 9,
   UInt16 = 10,
+  AnyBox = 11, // a boxed `Any`, which carries its own renderer
 };
 
 /// Identity of a record type, stored in the first word of every class value.

@@ -33,6 +33,23 @@ namespace {
       context, {llvm::PointerType::getUnqual(context), llvm::Type::getInt64Ty(context)});
 }
 
+/// Storage of a boxed `Any`: the type's tag, the payload address, the type's
+/// display name, and the renderer the generator emitted for that type. It mirrors
+/// `SereAnyBox` in the runtime, which calls the renderer to format the value.
+[[nodiscard]] llvm::StructType* anyBoxType(llvm::LLVMContext& context) {
+  llvm::PointerType* pointer = llvm::PointerType::getUnqual(context);
+  return llvm::StructType::get(
+      context, {llvm::Type::getInt32Ty(context), pointer, pointer, pointer});
+}
+
+/// A dict slot's formatter: the element kind, the renderer a record slot uses,
+/// and the record's name. It mirrors `SereSlotRepr` in the runtime.
+[[nodiscard]] llvm::StructType* slotReprType(llvm::LLVMContext& context) {
+  llvm::PointerType* pointer = llvm::PointerType::getUnqual(context);
+  return llvm::StructType::get(
+      context, {llvm::Type::getInt32Ty(context), pointer, pointer});
+}
+
 /// Storage layout for one list element kind: the LLVM type actually stored and
 /// the byte stride the runtime uses to index items. Both must agree with the
 /// runtime formatter, which reads the same kind code.
@@ -59,6 +76,9 @@ namespace {
   // room for both words.
   case 0:
     return {stringSlotType(context), 16};
+  // A boxed `Any` is stored as the address of its box.
+  case 11:
+    return {llvm::PointerType::getUnqual(context), 8};
   default:
     return {llvm::PointerType::getUnqual(context), 8};
   }
@@ -436,21 +456,31 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     ir.CreateCall(module_->getOrInsertFunction("sere_free", ir.getVoidTy(), ir.getPtrTy()),
                   {operand(0)});
   } else if (opcode.starts_with("any.")) {
-    auto* boxType =
-        llvm::StructType::get(*context_, {ir.getInt32Ty(), ir.getPtrTy(), ir.getPtrTy()});
+    llvm::StructType* boxType = anyBoxType(*context_);
     std::uint32_t tag = 0;
     const std::string tagText = attribute(operation, "tag");
     (void)std::from_chars(tagText.data(), tagText.data() + tagText.size(), tag);
     if (opcode == "any.box") {
       auto alloc = module_->getOrInsertFunction("sere_alloc", ir.getPtrTy(), ir.getInt64Ty());
       llvm::Value* value = operand(0);
-      llvm::Value* data = ir.CreateCall(alloc, {llvm::ConstantExpr::getSizeOf(value->getType())});
-      ir.CreateStore(value, data);
+      llvm::Value* data = llvm::ConstantPointerNull::get(ir.getPtrTy());
+      if (value != nullptr) {
+        data = ir.CreateCall(alloc, {llvm::ConstantExpr::getSizeOf(value->getType())});
+        ir.CreateStore(value, data);
+      }
       result = ir.CreateCall(alloc, {llvm::ConstantExpr::getSizeOf(boxType)});
       ir.CreateStore(ir.getInt32(tag), ir.CreateStructGEP(boxType, result, 0));
       ir.CreateStore(data, ir.CreateStructGEP(boxType, result, 1));
       ir.CreateStore(ir.CreateGlobalString(attribute(operation, "name")),
                      ir.CreateStructGEP(boxType, result, 2));
+      // The renderer travels with the box, so formatting a boxed value needs no
+      // type table in the runtime.
+      llvm::Value* renderer = llvm::ConstantPointerNull::get(ir.getPtrTy());
+      const auto repr = functions_.find(attribute(operation, "repr"));
+      if (repr != functions_.end() && repr->second != nullptr) {
+        renderer = repr->second;
+      }
+      ir.CreateStore(renderer, ir.CreateStructGEP(boxType, result, 3));
     } else if (opcode == "any.is") {
       result = ir.CreateICmpEQ(
           ir.CreateLoad(ir.getInt32Ty(), ir.CreateStructGEP(boxType, operand(0), 0)),
@@ -1513,7 +1543,56 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
                                                    static_cast<std::uint64_t>(spec.size())),
                             outLength});
   } else if (opcode == "value.repr") {
-    if (!attribute(operation, "element.name").empty()) {
+    const std::string reprKind = attribute(operation, "kind");
+    if (reprKind == "any") {
+      // Every box carries the renderer its type was emitted with, so formatting
+      // a boxed value needs no per-type dispatch here.
+      auto format =
+          module_->getOrInsertFunction("sere_any_repr_data", ir.getPtrTy(), ir.getPtrTy());
+      result = ir.CreateCall(format, {operand(0)});
+    } else if (reprKind == "str") {
+      // A string nested in a container keeps its quotes, the way the direct
+      // backend's `sere_str_repr_data` renders it.
+      auto length = module_->getOrInsertFunction("strlen", ir.getInt64Ty(), ir.getPtrTy());
+      auto quote = module_->getOrInsertFunction(
+          "sere_str_repr_data", ir.getPtrTy(), ir.getPtrTy(), ir.getInt64Ty(), ir.getPtrTy());
+      result = ir.CreateCall(
+          quote,
+          {operand(0), ir.CreateCall(length, {operand(0)}), ir.CreateAlloca(ir.getInt64Ty())});
+    } else if (reprKind == "dict") {
+      // Each slot travels with its kind and, for a class slot, the renderer and
+      // name that stand in for the kind code the runtime cannot express.
+      llvm::StructType* slotType = slotReprType(*context_);
+      const auto descriptor = [&](std::string_view prefix) {
+        llvm::Value* slot = ir.CreateAlloca(slotType);
+        ir.CreateStore(
+            ir.getInt32(elementKindCode(attribute(operation, std::string(prefix) + ".kind"))),
+            ir.CreateStructGEP(slotType, slot, 0));
+        llvm::Value* object = llvm::ConstantPointerNull::get(ir.getPtrTy());
+        const auto found = functions_.find(attribute(operation, std::string(prefix) + ".repr"));
+        if (found != functions_.end() && found->second != nullptr)
+          object = found->second;
+        ir.CreateStore(object, ir.CreateStructGEP(slotType, slot, 1));
+        const std::string name = attribute(operation, std::string(prefix) + ".name");
+        ir.CreateStore(name.empty() ? static_cast<llvm::Value*>(llvm::ConstantPointerNull::get(
+                                          ir.getPtrTy()))
+                                    : ir.CreateGlobalString(name),
+                       ir.CreateStructGEP(slotType, slot, 2));
+        return slot;
+      };
+      llvm::Value* key = descriptor("key");
+      llvm::Value* item = descriptor("value");
+      auto format = module_->getOrInsertFunction("sere_dict_repr_data",
+                                                 ir.getVoidTy(),
+                                                 ir.getPtrTy(),
+                                                 ir.getPtrTy(),
+                                                 ir.getPtrTy(),
+                                                 ir.getPtrTy(),
+                                                 ir.getPtrTy());
+      llvm::Value* data = ir.CreateAlloca(ir.getPtrTy());
+      ir.CreateCall(format, {operand(0), key, item, data, ir.CreateAlloca(ir.getInt64Ty())});
+      result = ir.CreateLoad(ir.getPtrTy(), data);
+    } else if (!attribute(operation, "element.name").empty()) {
       llvm::Value* callback = llvm::ConstantPointerNull::get(ir.getPtrTy());
       const auto repr = functions_.find(attribute(operation, "element.repr"));
       if (repr != functions_.end())
@@ -1525,29 +1604,30 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
           {operand(0), callback, ir.CreateGlobalString(attribute(operation, "element.name"))});
       values_[&operation] = result;
       return result;
+    } else {
+      llvm::Function* repr = module_->getFunction("sere_list_repr_data");
+      if (repr == nullptr) {
+        llvm::FunctionType* reprType =
+            llvm::FunctionType::get(llvm::Type::getVoidTy(*context_),
+                                    {llvm::PointerType::getUnqual(*context_),
+                                     llvm::Type::getInt32Ty(*context_),
+                                     llvm::PointerType::getUnqual(*context_),
+                                     llvm::PointerType::getUnqual(*context_)},
+                                    false);
+        repr = llvm::Function::Create(
+            reprType, llvm::Function::ExternalLinkage, "sere_list_repr_data", module_.get());
+      }
+      llvm::Value* data = builder_->builder.CreateAlloca(llvm::PointerType::getUnqual(*context_));
+      llvm::Value* length = builder_->builder.CreateAlloca(llvm::Type::getInt64Ty(*context_));
+      builder_->builder.CreateCall(
+          repr,
+          {operand(0),
+           llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_),
+                                  elementKindCode(attribute(operation, "element.kind"))),
+           data,
+           length});
+      result = builder_->builder.CreateLoad(llvm::PointerType::getUnqual(*context_), data);
     }
-    llvm::Function* repr = module_->getFunction("sere_list_repr_data");
-    if (repr == nullptr) {
-      llvm::FunctionType* reprType =
-          llvm::FunctionType::get(llvm::Type::getVoidTy(*context_),
-                                  {llvm::PointerType::getUnqual(*context_),
-                                   llvm::Type::getInt32Ty(*context_),
-                                   llvm::PointerType::getUnqual(*context_),
-                                   llvm::PointerType::getUnqual(*context_)},
-                                  false);
-      repr = llvm::Function::Create(
-          reprType, llvm::Function::ExternalLinkage, "sere_list_repr_data", module_.get());
-    }
-    llvm::Value* data = builder_->builder.CreateAlloca(llvm::PointerType::getUnqual(*context_));
-    llvm::Value* length = builder_->builder.CreateAlloca(llvm::Type::getInt64Ty(*context_));
-    builder_->builder.CreateCall(
-        repr,
-        {operand(0),
-         llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_),
-                                elementKindCode(attribute(operation, "element.kind"))),
-         data,
-         length});
-    result = builder_->builder.CreateLoad(llvm::PointerType::getUnqual(*context_), data);
   } else if (opcode == "extract") {
     unsigned index = 0;
     const std::string indexText = attribute(operation, "index");
@@ -2445,6 +2525,16 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
                                     : llvm::Type::getInt32Ty(*context_);
       const unsigned align = module_->getDataLayout().getABITypeAlign(elementType).value();
       result = ir.CreateCall(promiseFn, {handle, ir.getInt32(align), ir.getFalse()});
+    }
+  } else if (opcode == "decorated.apply") {
+    if (operands.size() >= 2) {
+      llvm::Value* decorator = lowerValue(operands[0]);
+      llvm::Value* target = lowerValue(operands[1]);
+      llvm::FunctionType* decoratorType =
+          llvm::FunctionType::get(llvm::PointerType::getUnqual(*context_),
+                                  {llvm::PointerType::getUnqual(*context_)},
+                                  false);
+      result = builder_->builder.CreateCall(decoratorType, decorator, {target});
     }
   } else if (opcode == "decorated.call") {
     if (operands.size() >= 2) {

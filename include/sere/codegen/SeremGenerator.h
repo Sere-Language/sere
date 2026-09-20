@@ -85,6 +85,27 @@ private:
   /// name when the record has no `__str__`, and a formatted rendering for a
   /// container.
   [[nodiscard]] serem::ValuePtr printable(serem::ValuePtr value, const Type* type);
+  /// `printable`, but the result is always a `str`: a scalar is converted with
+  /// the runtime's own formatter, which is what the direct backend's
+  /// `emitScalarToStr` does. This is how a value nested in a container renders,
+  /// so a class goes through `__repr__` before `__str__`.
+  [[nodiscard]] serem::ValuePtr textOf(serem::ValuePtr value, const Type* type);
+  /// Renderer and fallback name a container slot of `type` uses when its element
+  /// kind cannot format it, which is the case for a class and for a container
+  /// nested in another container. Both are empty when the kind suffices.
+  [[nodiscard]] std::pair<std::string, std::string> slotRenderer(const Type* type);
+  /// Serem symbol of the function that renders a boxed value of `type`, emitted
+  /// once per module by `emitPendingRenderers`. Every boxed type names one, so a
+  /// container holding an `Any` needs no knowledge of the program's types.
+  [[nodiscard]] std::string anyReprSymbol(const Type* type);
+  /// Serem symbol of the function that renders a `type` value a container holds
+  /// directly, which is the renderer its own slots point at.
+  [[nodiscard]] std::string valueReprSymbol(const Type* type);
+  /// Records one renderer request under `symbol` and yields the symbol.
+  [[nodiscard]] std::string registerRenderer(std::string symbol, const Type* type, bool boxed);
+  /// Emits the renderers the two symbols above named while the module was
+  /// lowered.
+  void emitPendingRenderers();
   /// Renders an enum's variant name from its discriminant, qualified as
   /// `Type.Variant` when the caller asks for the long form.
   [[nodiscard]] serem::ValuePtr
@@ -112,6 +133,8 @@ private:
                                                   const Type* leftType,
                                                   const Type* rightType);
   [[nodiscard]] serem::ValuePtr emitCall(const CallExpr& expression);
+  [[nodiscard]] serem::ValuePtr emitDecoratorClosure(const Expr& decorator,
+                                                      serem::ValuePtr target);
   [[nodiscard]] serem::ValuePtr emitUnary(const UnaryExpr& expression);
   [[nodiscard]] serem::ValuePtr emitMember(const MemberExpr& expression);
   [[nodiscard]] serem::ValuePtr emitIndex(const IndexExpr& expression);
@@ -176,8 +199,18 @@ private:
   /// Captured outer locals the body being lowered reads through a global, keyed
   /// by the name the body uses for them.
   std::unordered_map<std::string, std::string> captureSymbols_;
+  std::size_t nestedFunctionCounter_ = 0;
   /// Number of bound-method thunks emitted, used to name each one uniquely.
   std::size_t boundThunks_ = 0;
+  /// A renderer waiting to be emitted: the type it formats and whether it
+  /// receives the box or the value itself, which is how a container slot calls
+  /// it. Keyed by symbol, in request order.
+  struct RendererRequest {
+    const Type* type = nullptr;
+    bool boxed = false;
+  };
+  std::unordered_map<std::string, RendererRequest> renderers_;
+  std::vector<std::string> rendererOrder_;
 };
 
 } // namespace sere

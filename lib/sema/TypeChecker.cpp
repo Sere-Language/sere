@@ -2267,8 +2267,8 @@ const Type* TypeChecker::checkMember(MemberExpr& expr) {
   const bool initBacking =
       currentClass_ == objectType->name() && currentFunctionName_ == "__init__" && field->stored;
   const bool assignThroughSetter = !expr.propertySet().empty() && !ownAccessor && !initBacking;
-  bool useBacking =
-      ownAccessor || initBacking || (field->getterLlvm.empty() && !assignThroughSetter);
+  bool useBacking = expr.usesBackingField() || ownAccessor || initBacking ||
+                    (field->getterLlvm.empty() && !assignThroughSetter);
   if (useBacking && !field->stored) {
     useBacking = !field->getterLlvm.empty() ? false : useBacking;
   }

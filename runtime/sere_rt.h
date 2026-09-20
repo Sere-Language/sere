@@ -21,6 +21,41 @@ typedef struct SereList {
   int64_t stride;
 } SereList;
 
+/// Storage of a boxed `Any`, mirroring the Serem dialect's `any.box` layout: the
+/// type's tag, the address of the payload, the type's display name, and the
+/// renderer the generator emits for every boxed type. Keeping the renderer in the
+/// box lets the runtime format a boxed value without knowing the program's types.
+/// A null `repr` (or a null payload) renders as `None`.
+typedef struct {
+  int32_t tag;
+  void* data;
+  const char* name;
+  const char* (*repr)(void* box);
+} SereAnyBox;
+
+/// Renderer a container slot uses when its element kind has no built-in
+/// rendering, such as a class value whose `__str__` the generator emitted.
+typedef const char* (*SereObjectRepr)(void* value);
+
+/// How one dict slot is rendered: the container element kind, plus the renderer
+/// and fallback name a record slot uses. `object` and `name` are ignored for
+/// every other kind.
+typedef struct {
+  int32_t kind;
+  SereObjectRepr object;
+  const char* name;
+} SereSlotRepr;
+
+/// Text for a boxed `Any`, owned by the runtime.
+const char* sere_any_repr_data(void* box);
+
+/// Text for `{key: value, ...}`, owned by the runtime.
+void sere_dict_repr_data(void* dict,
+                         const SereSlotRepr* key,
+                         const SereSlotRepr* value,
+                         const char** out_data,
+                         int64_t* out_len);
+
 void sere_input(const char* prompt, int64_t prompt_len, const char** out_data, int64_t* out_len);
 void sere_print_str(const char* data, int64_t len);
 void sere_write(const char* data, int64_t len);
@@ -104,6 +139,9 @@ int64_t sere_dict_len(void* dict);
 int32_t sere_dict_has(void* dict, const void* key);
 void sere_dict_clear(void* dict);
 void* sere_dict_copy(void* dict);
+/// Keys and values in insertion order, as lists a caller can index.
+void* sere_dict_keys(void* dict);
+void* sere_dict_values(void* dict);
 
 // Cooperative async executor (see sere_async.c). Wakers are scheduled with a
 // function pointer + opaque argument; generated coroutine glue posts wakeups

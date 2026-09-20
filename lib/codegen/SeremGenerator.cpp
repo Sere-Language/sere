@@ -46,6 +46,8 @@ namespace {
   const Type* canonical = type->canonical();
   if (canonical->isNamed("str"))
     return serem::ListElementKind::Str;
+  if (canonical->isAny())
+    return serem::ListElementKind::AnyBox;
   if (canonical->isNamed("bool"))
     return serem::ListElementKind::Bool;
   if (canonical->isNamed("f32"))
@@ -64,11 +66,28 @@ namespace {
     return serem::ListElementKind::UInt16;
   if (canonical->isInteger())
     return serem::ListElementKind::Int64;
+  // A payload-free enum lowers to its discriminant, so its slot is an i32. The
+  // payload-carrying form is an aggregate, which no element kind stores by value.
+  if (canonical->isEnum() && !canonical->hasEnumPayload())
+    return serem::ListElementKind::Int32;
   return serem::ListElementKind::Ptr;
 }
 
 [[nodiscard]] std::string listElementKindText(const Type* type) {
   return std::to_string(static_cast<std::int32_t>(listElementKindOf(type)));
+}
+
+[[nodiscard]] const FunctionDef* findNestedWrapper(const FunctionDef& function) {
+  for (const std::unique_ptr<Stmt>& statement : function.body()) {
+    if (statement == nullptr || statement->kind() != NodeKind::FunctionDef)
+      continue;
+    const auto& nested = static_cast<const FunctionDef&>(*statement);
+    if (nested.name() == "wrapper")
+      return &nested;
+    if (const FunctionDef* found = findNestedWrapper(nested))
+      return found;
+  }
+  return nullptr;
 }
 
 /// Key interpretation the runtime dict hashes with: 1 int32, 2 int64, 3 string.
@@ -360,6 +379,9 @@ SeremGenerator::emit(const Module& module,
   classFields_.clear();
   classes_.clear();
   functionNames_.clear();
+  renderers_.clear();
+  rendererOrder_.clear();
+  nestedFunctionCounter_ = 0;
   std::vector<const Module*> modules{&module};
   if (imported != nullptr)
     modules.insert(modules.end(), imported->begin(), imported->end());
@@ -595,6 +617,10 @@ SeremGenerator::emit(const Module& module,
     }
     subst_.clear();
   }
+  // The renderers every boxed value and every container slot points at are
+  // emitted last: the boxes are created while the bodies above are lowered, and a
+  // renderer can name any class method the module declared.
+  emitPendingRenderers();
   return std::move(module_);
 }
 
@@ -906,7 +932,8 @@ bool SeremGenerator::emitNestedFunction(const FunctionDef& function) {
   const Type* type = functionType(function);
   if (type == nullptr)
     return unsupported(function, "nested function without a resolved type");
-  const std::string symbol = function.name();
+  const std::string symbol = function.name() + "$nested$" +
+                             std::to_string(nestedFunctionCounter_++);
   // A nested body reaches an outer local through a module global, which is what
   // a function value passed between them can carry in this ABI.
   std::unordered_map<std::string, std::string> captures;
@@ -916,6 +943,13 @@ bool SeremGenerator::emitNestedFunction(const FunctionDef& function) {
     const Type* stored = known == localTypes_.end() ? capture.type : known->second;
     const serem::IRType irType = lowerType(stored);
     serem::ValuePtr value = local(capture.name);
+    if (value == nullptr) {
+      const auto outerCapture = captureSymbols_.find(capture.name);
+      if (outerCapture != captureSymbols_.end()) {
+        value = builder_->operation(
+            "static.get", irType, {}, {{"symbol", outerCapture->second}});
+      }
+    }
     if (value != nullptr && value->valueKind() != serem::ValueKind::Argument) {
       value = builder_->load(value, irType);
     }
@@ -936,6 +970,7 @@ bool SeremGenerator::emitNestedFunction(const FunctionDef& function) {
   const bool ok = emitFunction(function, symbol);
   popFunctionState();
   if (ok) {
+    functionSymbols_[function.name()] = symbol;
     functionNames_[&function] = symbol;
     functions_.insert_or_assign(symbol, lowerType(type));
   }
@@ -1097,6 +1132,33 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
     if (assign.target().kind() == NodeKind::MemberExpr) {
       const auto& member = static_cast<const MemberExpr&>(assign.target());
       if (const std::string symbol = staticFieldSymbol(member); !symbol.empty()) {
+        if (assign.op() != AssignOp::Assign) {
+          const serem::IRType irType = lowerType(assign.target().resolvedType());
+          const serem::ValuePtr current =
+              builder_->operation("static.get", irType, {}, {{"symbol", symbol}});
+          BinaryOp binaryOp = BinaryOp::Add;
+          if (binaryOpForAssign(assign.op(), binaryOp)) {
+            switch (binaryOp) {
+            case BinaryOp::Add:
+              value = builder_->add(current, value, irType);
+              break;
+            case BinaryOp::Sub:
+              value = builder_->sub(current, value, irType);
+              break;
+            case BinaryOp::Mul:
+              value = builder_->mul(current, value, irType);
+              break;
+            case BinaryOp::Div:
+              value = builder_->div(current, value, irType);
+              break;
+            case BinaryOp::Mod:
+              value = builder_->rem(current, value, irType);
+              break;
+            default:
+              break;
+            }
+          }
+        }
         (void)builder_->operation(
             "static.set", serem::IRType::voidType(), {value}, {{"symbol", symbol}});
         return true;
@@ -1968,11 +2030,15 @@ serem::ValuePtr SeremGenerator::coerce(serem::ValuePtr value, const Type* from, 
   if (value == nullptr || from == nullptr || to == nullptr || from == to)
     return value;
   if (to->isAny() && !from->isAny()) {
-    return builder_->operation(
-        "any.box",
-        lowerType(to),
-        {value},
-        {{"name", from->display()}, {"tag", std::to_string(serem::recordTypeId(from->display()))}});
+    std::unordered_map<std::string, std::string> attributes{
+        {"name", from->display()},
+        {"tag", std::to_string(serem::recordTypeId(from->display()))}};
+    // Every box names the renderer that turns its payload back into text, so a
+    // container holding it can be formatted without knowing the program's types.
+    if (!from->isVoidLike()) {
+      attributes["repr"] = anyReprSymbol(from);
+    }
+    return builder_->operation("any.box", lowerType(to), {value}, std::move(attributes));
   }
   if (from->isAny() && !to->isAny()) {
     return builder_->operation(
@@ -2143,8 +2209,14 @@ SeremGenerator::enumNameValue(const Type* record, serem::ValuePtr value, bool qu
 }
 
 serem::ValuePtr SeremGenerator::printable(serem::ValuePtr value, const Type* type) {
-  if (type == nullptr)
+  if (type == nullptr || value == nullptr)
     return value;
+  if (type->isAny()) {
+    // A boxed value renders through the renderer its own box carries, which is
+    // the per-type selection the direct backend generates as `__sere_repr_any`.
+    return builder_->operation(
+        "value.repr", serem::IRType::stringType(), {std::move(value)}, {{"kind", "any"}});
+  }
   if (type->isEnum()) {
     // An enum renders as its variant name, so `Message.Write("x")` reads back
     // the way it was written.
@@ -2153,12 +2225,35 @@ serem::ValuePtr SeremGenerator::printable(serem::ValuePtr value, const Type* typ
   if (type->isList() || type->isArray()) {
     const Type* element = type->elementType();
     std::unordered_map<std::string, std::string> attributes{
-          {"kind", "list"}, {"element.kind", listElementKindText(resolveType(element))}};
-    if (element != nullptr && element->isRecord() && !element->isStruct() && !element->isEnum()) {
-      attributes["element.name"] = element->name();
-      attributes["element.repr"] = renderSymbol(element);
+        {"kind", "list"}, {"element.kind", listElementKindText(resolveType(element))}};
+    const auto [elementRepr, elementName] = slotRenderer(resolveType(element));
+    if (!elementRepr.empty() || !elementName.empty()) {
+      attributes["element.repr"] = elementRepr;
+      attributes["element.name"] = elementName;
     }
     return builder_->operation("value.repr", serem::IRType::stringType(), {value}, attributes);
+  }
+  if (type->isDict()) {
+    const Type* key = resolveType(type->dictKeyType());
+    const Type* item = resolveType(type->dictValueType());
+    std::unordered_map<std::string, std::string> attributes{
+        {"kind", "dict"},
+        {"key.kind", listElementKindText(key)},
+        {"value.kind", listElementKindText(item)}};
+    // A class and a nested container have no kind of their own, so the renderer
+    // that formats their slot travels with the request.
+    const auto [keyRepr, keyName] = slotRenderer(key);
+    if (!keyRepr.empty() || !keyName.empty()) {
+      attributes["key.repr"] = keyRepr;
+      attributes["key.name"] = keyName;
+    }
+    const auto [valueRepr, valueName] = slotRenderer(item);
+    if (!valueRepr.empty() || !valueName.empty()) {
+      attributes["value.repr"] = valueRepr;
+      attributes["value.name"] = valueName;
+    }
+    return builder_->operation(
+        "value.repr", serem::IRType::stringType(), {std::move(value)}, std::move(attributes));
   }
   if (type->isRecord() && !type->isEnum()) {
     const std::string symbol = methodSymbol(type, "__str__");
@@ -2170,6 +2265,119 @@ serem::ValuePtr SeremGenerator::printable(serem::ValuePtr value, const Type* typ
     return stringValue(type->name());
   }
   return value;
+}
+
+serem::ValuePtr SeremGenerator::textOf(serem::ValuePtr value, const Type* type) {
+  if (value == nullptr || type == nullptr)
+    return value;
+  const Type* canonical = type->canonical();
+  if (canonical->isNamed("str")) {
+    // A string nested in a container is quoted, the way the direct backend's
+    // `sere_str_repr_data` renders it.
+    return builder_->operation(
+        "value.repr", serem::IRType::stringType(), {std::move(value)}, {{"kind", "str"}});
+  }
+  if (canonical->isEnum()) {
+    // A container renders an enum as its type name, matching the direct
+    // backend's `emitValueRepr` rather than the variant name `str()` prints.
+    return stringValue(canonical->name());
+  }
+  if (canonical->isNamed("bool") || canonical->isInteger() || canonical->isFloat() ||
+      canonical->isPointerLike()) {
+    return builder_->operation(
+        "string.convert",
+        serem::IRType::stringType(),
+        {std::move(value)},
+        {{"unsigned", canonical->isUnsignedInteger() ? "true" : "false"}});
+  }
+  // A class nested in a container renders through `__repr__` before `__str__`,
+  // which is the order the direct backend's `emitValueRepr` uses.
+  if (canonical->isRecord() && !canonical->isStruct()) {
+    const std::string symbol = renderSymbol(canonical);
+    if (!symbol.empty()) {
+      return builder_->call(std::make_shared<serem::FunctionRef>(symbol, functions_.at(symbol)),
+                            {std::move(value)},
+                            serem::IRType::stringType());
+    }
+    return stringValue(canonical->name());
+  }
+  return printable(std::move(value), type);
+}
+
+std::string SeremGenerator::anyReprSymbol(const Type* type) {
+  return registerRenderer("sere.any.repr." + type->display(), type, /*boxed=*/true);
+}
+
+std::string SeremGenerator::valueReprSymbol(const Type* type) {
+  return registerRenderer("sere.repr." + type->display(), type, /*boxed=*/false);
+}
+
+std::string SeremGenerator::registerRenderer(std::string symbol, const Type* type, bool boxed) {
+  if (renderers_.emplace(symbol, RendererRequest{type, boxed}).second) {
+    rendererOrder_.push_back(symbol);
+  }
+  return symbol;
+}
+
+std::pair<std::string, std::string> SeremGenerator::slotRenderer(const Type* type) {
+  if (type == nullptr)
+    return {};
+  // A class is a pointer the element kind cannot describe, so it renders through
+  // its own `__repr__`/`__str__`, and through its name when it has neither.
+  if (type->isRecord() && !type->isStruct() && !type->isEnum()) {
+    return {renderSymbol(type), type->name()};
+  }
+  // A container nested in another container is a pointer too, and only a
+  // generator-emitted renderer knows the element layouts it holds.
+  if (type->isDict() || type->isList() || type->isArray()) {
+    return {valueReprSymbol(type), type->name()};
+  }
+  return {};
+}
+
+void SeremGenerator::emitPendingRenderers() {
+  // A renderer body can ask for the renderer of a container it holds, which is
+  // why the loop re-reads the order it is appending to.
+  for (std::size_t index = 0; index < rendererOrder_.size(); ++index) {
+    const std::string symbol = rendererOrder_[index];
+    const auto found = renderers_.find(symbol);
+    if (found == renderers_.end() || found->second.type == nullptr ||
+        module_->findFunction(symbol) != nullptr) {
+      continue;
+    }
+    const Type* type = found->second.type;
+    const bool boxed = found->second.boxed;
+    if (type->isVoidLike()) {
+      continue;
+    }
+    pushFunctionState();
+    const serem::IRType valueType = lowerType(type);
+    const serem::IRType boxType = serem::IRType::ptr(serem::IRType::i8());
+    std::vector<serem::IRType> params{boxed ? boxType : valueType};
+    auto irFunction = std::make_unique<serem::IRFunction>(
+        symbol, params, serem::IRType::stringType());
+    function_ = &module_->addFunction(std::move(irFunction));
+    builder_ = std::make_unique<serem::IRBuilder>(*function_);
+    returnType_ = types_->strType();
+    serem::ValuePtr value = function_->argument(0);
+    if (boxed) {
+      // The payload is stored under the type the box was created with, so
+      // reading it back is the same unboxing a cast to the type performs.
+      value = builder_->operation("any.unbox",
+                                  valueType,
+                                  {value},
+                                  {{"name", type->display()},
+                                   {"tag", std::to_string(serem::recordTypeId(type->display()))}});
+    }
+    serem::ValuePtr text = textOf(std::move(value), type);
+    if (text == nullptr || text->type().kind() != serem::IRType::Kind::String) {
+      text = stringValue(type->name());
+    }
+    builder_->ret(std::move(text));
+    popFunctionState();
+    functions_.insert_or_assign(
+        symbol, serem::IRType::function(serem::IRType::stringType(), std::move(params)));
+  }
 }
 
 serem::ValuePtr SeremGenerator::emitName(const NameExpr& expression) {
@@ -2536,17 +2744,101 @@ void SeremGenerator::appendDefaults(const std::string& symbol,
   }
 }
 
+serem::ValuePtr SeremGenerator::emitDecoratorClosure(const Expr& decorator,
+                                                     serem::ValuePtr target) {
+  const FunctionDef* factory = nullptr;
+  std::vector<serem::ValuePtr> factoryArguments;
+  if (decorator.kind() == NodeKind::NameExpr) {
+    const auto& name = static_cast<const NameExpr&>(decorator);
+    const auto symbol = functionSymbols_.find(name.name());
+    const auto found = symbol == functionSymbols_.end() ? definitions_.end()
+                                                        : definitions_.find(symbol->second);
+    if (found != definitions_.end())
+      factory = found->second;
+  } else if (decorator.kind() == NodeKind::CallExpr) {
+    const auto& call = static_cast<const CallExpr&>(decorator);
+    if (call.callee().kind() == NodeKind::NameExpr) {
+      const auto& name = static_cast<const NameExpr&>(call.callee());
+      const auto symbol = functionSymbols_.find(name.name());
+      const auto found = symbol == functionSymbols_.end() ? definitions_.end()
+                                                          : definitions_.find(symbol->second);
+      if (found != definitions_.end())
+        factory = found->second;
+      for (const std::unique_ptr<Expr>& argument : call.arguments())
+        factoryArguments.push_back(emitExpression(*argument));
+    }
+  }
+  if (factory == nullptr)
+    return nullptr;
+  const FunctionDef* wrapper = findNestedWrapper(*factory);
+  if (wrapper == nullptr)
+    return nullptr;
+
+  std::unordered_map<std::string, serem::ValuePtr> captures;
+  for (const FunctionDef::Capture& capture : wrapper->captures()) {
+    if (capture.name == "fn") {
+      captures[capture.name] = target;
+      continue;
+    }
+    for (std::size_t index = 0; index < factory->params().size(); ++index) {
+      if (factory->params()[index].name == capture.name && index < factoryArguments.size()) {
+        captures[capture.name] = factoryArguments[index];
+        break;
+      }
+    }
+  }
+  if (captures.size() != wrapper->captures().size())
+    return nullptr;
+
+  const std::string symbol = wrapper->name() + "$decorator$" +
+                             std::to_string(nestedFunctionCounter_++);
+  std::unordered_map<std::string, std::string> captureSymbols;
+  for (const FunctionDef::Capture& capture : wrapper->captures()) {
+    const std::string slot = "sere.capture." + symbol + "." + capture.name;
+    const auto value = captures.find(capture.name);
+    const Type* captureType = capture.type;
+    serem::ValuePtr stored = coerce(value->second, captureType, captureType);
+    if (capture.name == "fn" && stored != nullptr &&
+        stored->type().kind() == serem::IRType::Kind::Function) {
+      stored = builder_->operation("cast.value",
+                                   serem::IRType::ptr(serem::IRType::i8()),
+                                   {std::move(stored)},
+                                   {{"unsigned", "false"}});
+    }
+    (void)builder_->operation(
+        "static.set", serem::IRType::voidType(), {std::move(stored)}, {{"symbol", slot}});
+    captureSymbols[capture.name] = slot;
+  }
+
+  pushFunctionState();
+  captureSymbols_ = std::move(captureSymbols);
+  const bool emitted = emitFunction(*wrapper, symbol);
+  popFunctionState();
+  if (!emitted)
+    return nullptr;
+  const Type* wrapperType = wrapper->resolvedType();
+  functions_.insert_or_assign(symbol, lowerType(wrapperType));
+  return std::make_shared<serem::FunctionRef>(symbol, lowerType(wrapperType));
+}
+
 serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
   if (expression.intrinsic() == IntrinsicKind::Str && !expression.arguments().empty()) {
     const Expr& argument = *expression.arguments()[0];
     const Type* source = types_->substitute(argument.resolvedType(), subst_);
     auto value = emitExpression(argument);
+    if (source == nullptr)
+      return value;
     if (source->isNamed("str"))
       return value;
     if (source->isVoidLike())
       return stringValue("None");
     if (source->methodIndex("__str__") >= 0)
       return callMethod(source, "__str__", value, {});
+    // A container, a boxed value, and a class all have a renderer of their own;
+    // only a scalar goes through the runtime's scalar formatter.
+    if (source->isEnum() || source->isAny() || source->isSequence() || source->isDict() ||
+        (source->isRecord() && !source->isStruct()))
+      return printable(std::move(value), source);
     return builder_->operation("string.convert",
                                serem::IRType::stringType(),
                                {value},
@@ -2806,28 +3098,34 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
   std::vector<serem::ValuePtr> args;
   if (expression.callee().kind() == NodeKind::NameExpr) {
     const std::string& name = static_cast<const NameExpr&>(expression.callee()).name();
-    const auto decorated = decorators_.find(name);
-    if (decorated != decorators_.end()) {
-      std::vector<serem::ValuePtr> decoratedArgs;
-      decoratedArgs.push_back(std::make_shared<serem::FunctionRef>(
-          decorated->second,
-          serem::IRType::function(serem::IRType::ptr(serem::IRType::i8()),
-                                  {serem::IRType::ptr(serem::IRType::i8())})));
-      decoratedArgs.push_back(std::make_shared<serem::FunctionRef>(
-          name, serem::IRType::function(lowerType(expression.resolvedType()), {})));
-      // Sema reorders a call with keyword or default arguments, so the bound
-      // list is what the callee expects positionally.
+    const auto symbol = functionSymbols_.find(name);
+    const auto definition = symbol == functionSymbols_.end() ? definitions_.end()
+                                                              : definitions_.find(symbol->second);
+    if (definition != definitions_.end() && definition->second != nullptr &&
+        !definition->second->decoratorExprs().empty()) {
+      const FunctionDef& function = *definition->second;
+      serem::ValuePtr callee = std::make_shared<serem::FunctionRef>(
+          symbol->second, lowerType(function.resolvedType()));
+      for (int index = static_cast<int>(function.decoratorExprs().size()) - 1; index >= 0;
+           --index) {
+        const std::unique_ptr<Expr>& decorator =
+            function.decoratorExprs()[static_cast<std::size_t>(index)];
+        if (decorator == nullptr || isReservedDecoratorExpr(*decorator))
+          continue;
+        callee = emitDecoratorClosure(*decorator, std::move(callee));
+        if (callee == nullptr)
+          return nullptr;
+      }
       if (!expression.boundArguments().empty()) {
         for (const Expr* argument : expression.boundArguments()) {
-          decoratedArgs.push_back(argument == nullptr ? nullptr : emitExpression(*argument));
+          if (argument != nullptr)
+            args.push_back(emitExpression(*argument));
         }
       } else {
-        for (const std::unique_ptr<Expr>& argument : expression.arguments()) {
-          decoratedArgs.push_back(emitExpression(*argument));
-        }
+        for (const std::unique_ptr<Expr>& argument : expression.arguments())
+          args.push_back(emitExpression(*argument));
       }
-      return builder_->operation(
-          "decorated.call", lowerType(expression.resolvedType()), std::move(decoratedArgs));
+      return builder_->call(std::move(callee), std::move(args), lowerType(expression.resolvedType()));
     }
   }
   if (expression.isConstructor()) {
@@ -2922,6 +3220,25 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
                                      ? expression.loweredName()
                                      : !method.empty() ? method
                                      : functions_.contains(qualified) ? qualified : member.field();
+      const auto methodDefinition = definitions_.find(symbol);
+      if (methodDefinition != definitions_.end() && methodDefinition->second != nullptr &&
+          !methodDefinition->second->decoratorExprs().empty()) {
+        const FunctionDef& function = *methodDefinition->second;
+        serem::ValuePtr callee = emitBoundMethod(receiver, member.field(), member.object());
+        for (int index = static_cast<int>(function.decoratorExprs().size()) - 1; index >= 0;
+             --index) {
+          const std::unique_ptr<Expr>& decorator =
+              function.decoratorExprs()[static_cast<std::size_t>(index)];
+          if (decorator == nullptr || isReservedDecoratorExpr(*decorator))
+            continue;
+          callee = emitDecoratorClosure(*decorator, std::move(callee));
+          if (callee == nullptr)
+            return nullptr;
+        }
+        for (const std::unique_ptr<Expr>& argument : expression.arguments())
+          args.push_back(emitExpression(*argument));
+        return builder_->call(std::move(callee), std::move(args), lowerType(expression.resolvedType()));
+      }
       serem::ValuePtr callee = std::make_shared<serem::FunctionRef>(
           symbol, lowerType(expression.callee().resolvedType()));
       args.push_back(emitExpression(member.object()));
