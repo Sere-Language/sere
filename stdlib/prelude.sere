@@ -127,23 +127,9 @@ class NotImplementedError(Exception):
 class ResultError(Exception):
     pass
 
-enum Result[T]:
+enum Result[T, E]:
     Ok(value: T)
-    Err(message: str)
-
-    def unwrap(self) -> T:
-        match self:
-            case Result.Ok(value):
-                return value
-            case Result.Err(message):
-                raise ResultError(message)
-
-    def try_unwrap(self) -> T | None:
-        match self:
-            case Result.Ok(value):
-                return value
-            case Result.Err(_):
-                return None
+    Err(error: E)
 
     def is_ok(self) -> bool:
         match self:
@@ -152,7 +138,126 @@ enum Result[T]:
             case Result.Err(_):
                 return False
 
-    
+    def is_err(self) -> bool:
+        match self:
+            case Result.Ok(_):
+                return False
+            case Result.Err(_):
+                return True
+
+    def unwrap(self) -> T:
+        match self:
+            case Result.Ok(value):
+                return value
+            case Result.Err(error):
+                raise ResultError(str(error))
+
+    def expect(self, message: str) -> T:
+        match self:
+            case Result.Ok(value):
+                return value
+            case Result.Err(error):
+                raise ResultError(message + ": " + str(error))
+
+    def ok(self) -> T | None:
+        match self:
+            case Result.Ok(value):
+                return value
+            case Result.Err(_):
+                return None
+
+    def err(self) -> E | None:
+        match self:
+            case Result.Ok(_):
+                return None
+            case Result.Err(error):
+                return error
+
+    def unwrap_or(self, default: T) -> T:
+        match self:
+            case Result.Ok(value):
+                return value
+            case Result.Err(_):
+                return default
+
+    def unwrap_or_else(self, fn: Callable[[E], T]) -> T:
+        match self:
+            case Result.Ok(value):
+                return value
+            case Result.Err(error):
+                return fn(error)
+
+    def map[U](self, fn: Callable[[T], U]) -> Result[U, E]:
+        match self:
+            case Result.Ok(value):
+                return Result.Ok(fn(value))
+            case Result.Err(error):
+                return Result.Err(error)
+
+    def map_err[F](self, fn: Callable[[E], F]) -> Result[T, F]:
+        match self:
+            case Result.Ok(value):
+                return Result.Ok(value)
+            case Result.Err(error):
+                return Result.Err(fn(error))
+
+    def map_or[U](self, default: U, fn: Callable[[T], U]) -> U:
+        match self:
+            case Result.Ok(value):
+                return fn(value)
+            case Result.Err(_):
+                return default
+
+    def map_or_else[U](self, default_fn: Callable[[E], U], fn: Callable[[T], U]) -> U:
+        match self:
+            case Result.Ok(value):
+                return fn(value)
+            case Result.Err(error):
+                return default_fn(error)
+
+    def and_[U](self, other: Result[U, E]) -> Result[U, E]:
+        match self:
+            case Result.Ok(_):
+                return other
+            case Result.Err(error):
+                return Result.Err(error)
+
+    def and_then[U](self, fn: Callable[[T], Result[U, E]]) -> Result[U, E]:
+        match self:
+            case Result.Ok(value):
+                return fn(value)
+            case Result.Err(error):
+                return Result.Err(error)
+
+    def or_[F](self, other: Result[T, F]) -> Result[T, F]:
+        match self:
+            case Result.Ok(value):
+                return Result.Ok(value)
+            case Result.Err(_):
+                return other
+
+    def or_else[F](self, fn: Callable[[E], Result[T, F]]) -> Result[T, F]:
+        match self:
+            case Result.Ok(value):
+                return Result.Ok(value)
+            case Result.Err(error):
+                return fn(error)
+
+    def contains(self, expected: T) -> bool:
+        match self:
+            case Result.Ok(value):
+                return value == expected
+            case Result.Err(_):
+                return False
+
+    def contains_err(self, expected: E) -> bool:
+        match self:
+            case Result.Ok(_):
+                return False
+            case Result.Err(error):
+                return error == expected
+
+
 macro dbg(x):
     quote:
         print($x)

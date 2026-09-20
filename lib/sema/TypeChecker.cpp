@@ -223,6 +223,32 @@ resolvedConstraints(const std::vector<std::unique_ptr<TypeExpr>>& expressions) {
     }
     return found->second->canonical() == actual;
   }
+  if (pattern->isCallableConstraint() && actual->kind() == TypeKind::Function) {
+    if (pattern->args().empty())
+      return true;
+    if (!inferTypeBindings(pattern->args().back(), actual->returnType(), bindings))
+      return false;
+    if (pattern->args().size() == 2 && pattern->args()[0]->isParamList()) {
+      const auto& params = pattern->args()[0]->args();
+      if (params.size() != actual->paramTypes().size())
+        return false;
+      for (std::size_t index = 0; index < params.size(); ++index) {
+        if (!inferTypeBindings(params[index], actual->paramTypes()[index], bindings))
+          return false;
+      }
+    }
+    return true;
+  }
+  if (pattern->isRecord() && actual->isRecord() &&
+      pattern->name().substr(0, pattern->name().find('[')) ==
+          actual->name().substr(0, actual->name().find('[')) &&
+      pattern->args().size() == actual->args().size()) {
+    for (std::size_t index = 0; index < pattern->args().size(); ++index) {
+      if (!inferTypeBindings(pattern->args()[index], actual->args()[index], bindings))
+        return false;
+    }
+    return true;
+  }
   if (pattern->kind() == TypeKind::Generic && actual->kind() == TypeKind::Generic &&
       pattern->name() == actual->name() && pattern->args().size() == actual->args().size()) {
     for (std::size_t index = 0; index < pattern->args().size(); ++index) {

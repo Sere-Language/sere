@@ -320,6 +320,27 @@ const Type* TypeContext::substitute(const Type* type,
     const auto found = subst.find(type->name());
     return found == subst.end() ? type : found->second;
   }
+  if (type->isRecord()) {
+    const Type* base = type;
+    for (const auto& entry : instantiations_) {
+      if (entry.second == type) {
+        base = entry.first;
+        break;
+      }
+    }
+    std::vector<const Type*> args;
+    if (base != type) {
+      for (const Type* arg : type->args())
+        args.push_back(substitute(arg, subst));
+    } else {
+      for (const std::string& param : base->typeParams()) {
+        const auto found = subst.find(param);
+        args.push_back(found == subst.end() ? typeParam(param) : found->second);
+      }
+    }
+    if (!args.empty())
+      return instantiate(base, args);
+  }
   if (type->kind() == TypeKind::Generic) {
     std::vector<const Type*> args;
     for (const Type* arg : type->args()) {
@@ -413,8 +434,8 @@ const Type* TypeContext::instantiate(const Type* generic, const std::vector<cons
   if (Type* writableInstance = writable(instance)) {
     writableInstance->args_ = args;
   }
-  specializeMethods(generic, instance);
   instantiations_.emplace_back(generic, instance);
+  specializeMethods(generic, instance);
   return instance;
 }
 
