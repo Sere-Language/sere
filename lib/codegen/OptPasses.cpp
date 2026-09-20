@@ -516,6 +516,13 @@ std::uint32_t promoteNonEscapingAllocations(llvm::Module& module) {
                                llvm::ConstantInt::get(size->getType(), size->getZExtValue()),
                                call->getName());
       slot->setAlignment(llvm::Align(16));
+      // The runtime hands out calloc'ed memory, so a fresh cell reads as zero.
+      // A bare alloca would be stack garbage, so zero the slot to match the
+      // runtime's fresh-memory guarantee before the user code sees it.
+      builder.CreateMemSet(slot,
+                           llvm::ConstantInt::get(llvm::Type::getInt8Ty(module.getContext()), 0),
+                           llvm::ConstantInt::get(size->getType(), size->getZExtValue()),
+                           llvm::Align(16));
       call->replaceAllUsesWith(slot);
       call->eraseFromParent();
       ++promoted;

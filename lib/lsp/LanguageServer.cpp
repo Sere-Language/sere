@@ -712,6 +712,22 @@ void addCompletion(llvm::json::Array& items,
   items.push_back(std::move(item));
 }
 
+/// Adds every member of `type`, filtered by what the cursor already typed.
+void addMemberCompletions(llvm::json::Array& items,
+                          const Type* type,
+                          const std::string& prefix) {
+  for (const MemberCompletionItem& member : collectMemberCompletions(type)) {
+    addCompletion(items,
+                  member.label,
+                  member.kind,
+                  member.detail,
+                  prefix,
+                  member.insertText,
+                  member.sortText,
+                  true);
+  }
+}
+
 [[nodiscard]] int completionKind(ImportItemKind kind) {
   switch (kind) {
   case ImportItemKind::Module:
@@ -1523,18 +1539,16 @@ void LanguageSession::handleCompletion(const llvm::json::Value* id,
   }
   analyzeDocument(located->first);
   Frontend* frontend = analyzeCached(located->first);
+  // The typed AST resolves receivers the textual scan cannot type, such as the
+  // result of a call (`add(5, 4).`) or an index (`xs[0].`).
+  const AstMemberAccess astAccess = resolveMemberAccessFromAst(frontend, text, located->second);
+  if (astAccess.active && astAccess.receiverType != nullptr) {
+    addMemberCompletions(items, astAccess.receiverType, astAccess.prefix);
+    writeResult(id, std::move(items));
+    return;
+  }
   if (access.active) {
-    const Type* record = resolveMemberType(frontend, access);
-    for (const MemberCompletionItem& item : collectMemberCompletions(record)) {
-      addCompletion(items,
-                    item.label,
-                    item.kind,
-                    item.detail,
-                    access.prefix,
-                    item.insertText,
-                    item.sortText,
-                    true);
-    }
+    addMemberCompletions(items, resolveMemberType(frontend, access), access.prefix);
     writeResult(id, std::move(items));
     return;
   }

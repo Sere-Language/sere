@@ -6028,6 +6028,7 @@ bool TypeChecker::collectMethods(Module& module) {
       RecordMethod info;
       info.name = method->name();
       info.type = fnType;
+      info.docstring = method->docstring();
       const std::string methodModule = classDef.fromPrelude() ? "prelude" : moduleName_;
       if (methodModule != "__main__" && !methodModule.empty()) {
         method->setModulePrefix(methodModule);
@@ -6177,6 +6178,7 @@ bool TypeChecker::collectMethods(Module& module) {
       RecordMethod info;
       info.name = method->name();
       info.type = fnType;
+      info.docstring = method->docstring();
       importMethod(record, *method);
       info.llvmName = enumDef.name() + "_" + method->name();
       info.typeParams = method->typeParams();

@@ -193,6 +193,46 @@ constexpr int kCompletionEnumMember = 20;
   return text;
 }
 
+/// `sqrt(x: f64) -> f64` for a callable field such as a module export.
+[[nodiscard]] std::string formatCallableField(const RecordField& field) {
+  std::string text = field.name + "(";
+  const Type* fn = field.type;
+  if (fn != nullptr) {
+    for (std::size_t index = 0; index < fn->paramTypes().size(); ++index) {
+      if (index != 0) {
+        text += ", ";
+      }
+      if (index < field.paramNames.size() && !field.paramNames[index].empty()) {
+        text += field.paramNames[index] + ": ";
+      }
+      const Type* param = fn->paramTypes()[index];
+      text += param == nullptr ? "?" : param->display();
+    }
+    text += ") -> ";
+    text += fn->returnType() == nullptr ? "void" : fn->returnType()->display();
+  } else {
+    text += ")";
+  }
+  return text;
+}
+
+/// `Account(owner: str) -> Account` — a type object used as a constructor.
+[[nodiscard]] std::string formatConstructor(const std::string& name,
+                                            const RecordMethod& init,
+                                            const std::string& owner) {
+  std::string text = formatMethod(init);
+  const std::size_t open = text.find('(');
+  if (open == std::string::npos) {
+    return name + "() -> " + owner;
+  }
+  text = name + text.substr(open);
+  const std::size_t arrow = text.find(" -> ");
+  if (arrow != std::string::npos) {
+    text = text.substr(0, arrow);
+  }
+  return text + " -> " + owner;
+}
+
 [[nodiscard]] std::string methodSnippet(std::string_view label, std::string_view detail) {
   std::string snippet(label);
   snippet += '(';
@@ -313,7 +353,7 @@ AstMemberAccess resolveMemberAccessFromAst(Frontend* frontend,
     return access;
   }
   const std::uint32_t dotEnd = member->range().end.offset - size;
-  if (offset < dotEnd) {
+  if (offset < dotEnd || dotEnd > text.size()) {
     return access;
   }
   const std::uint32_t stop =
@@ -417,13 +457,8 @@ std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type) {
       const RecordMethod& init = type->methods()[static_cast<std::size_t>(initIndex)];
       MemberCompletionItem item;
       item.label = type->name();
-      item.detail = formatMethod(init);
-      const std::size_t arrow = item.detail.find(" -> ");
-      if (arrow != std::string::npos) {
-        item.detail = item.detail.substr(0, arrow);
-      }
+      item.detail = formatConstructor(item.label, init, owner);
       item.insertText = methodSnippet(item.label, item.detail);
-      item.detail += " -> " + owner;
       item.kind = kCompletionConstructor;
       item.sortText = "0" + item.label;
       addItem(std::move(item));
@@ -447,7 +482,7 @@ std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type) {
     const bool isFn = field.type != nullptr && field.type->kind() == TypeKind::Function;
     if (isFn) {
       // Module exports and callable fields read better with parameter names.
-      item.detail = field.name + field.type->display();
+      item.detail = formatCallableField(field);
       item.insertText = methodSnippet(field.name, item.detail);
       item.kind = kCompletionFunction;
     } else {

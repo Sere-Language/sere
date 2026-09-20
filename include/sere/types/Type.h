@@ -36,6 +36,8 @@ struct RecordField {
   std::vector<std::string> paramNames{};
   std::vector<const Type*> payloadTypes{};
   std::size_t requiredArgs = 0;
+  /// Declaration docstring, surfaced by completion and hover.
+  std::string docstring{};
 };
 
 struct RecordMethod {
@@ -48,6 +50,8 @@ struct RecordMethod {
   std::size_t requiredAfterSelf = 0;
   bool isAbstract = false;
   bool isPublic = true;
+  /// Declaration docstring, surfaced by completion and hover.
+  std::string docstring{};
 };
 
 class Type {
