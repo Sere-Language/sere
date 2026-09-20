@@ -954,10 +954,12 @@ serem::ValuePtr SeremGenerator::emitExpression(const Expr& expression) {
     for (const StringPart& part : interpolated.parts()) {
       if (!part.literal.empty()) parts.push_back(stringValue(part.literal));
       if (part.value != nullptr) {
-        serem::ValuePtr value = emitExpression(*part.value);
-        const Type* valueType = part.value->resolvedType();
-        value = printable(value, valueType);
-        parts.push_back(std::move(value));
+        // Every interpolated value goes through the runtime formatter, with an
+        // empty spec when the f-string names none, so a number renders as text
+        // instead of reaching `string.concat` as a raw word.
+        serem::ValuePtr formatted = formatValue(*part.value, part.spec);
+        if (formatted == nullptr) return nullptr;
+        parts.push_back(std::move(formatted));
       }
     }
     if (parts.empty()) return stringValue("");
@@ -1087,6 +1089,40 @@ serem::ValuePtr SeremGenerator::callMethod(const Type* record,
 std::string SeremGenerator::renderSymbol(const Type* record) const {
   std::string symbol = methodSymbol(record, "__repr__");
   return symbol.empty() ? methodSymbol(record, "__str__") : symbol;
+}
+
+serem::ValuePtr SeremGenerator::formatValue(const Expr& expression, const std::string& spec) {
+  const Type* type = expression.resolvedType();
+  std::unordered_map<std::string, std::string> attributes{{"spec", spec}};
+  std::vector<serem::ValuePtr> operands;
+  // Kinds match runtime/sere_rt.c: 0 int, 1 float, 2 str, 3 bool. The runtime
+  // reads the operand out of the matching slot, so only one is ever live.
+  if (type != nullptr && type->isNamed("bool")) {
+    attributes["kind"] = "3";
+    operands.push_back(coerce(emitExpression(expression), type, types_->i64Type()));
+  } else if (type != nullptr && (type->isInteger() || type->isIntEnum())) {
+    attributes["kind"] = "0";
+    operands.push_back(coerce(emitExpression(expression), type, types_->i64Type()));
+  } else if (type != nullptr && type->isFloat()) {
+    attributes["kind"] = "1";
+    operands.push_back(coerce(emitExpression(expression), type, types_->f64Type()));
+  } else {
+    // Everything else formats from its text form, `__str__` and container
+    // rendering included.
+    serem::ValuePtr text = printable(emitExpression(expression), type);
+    if (text == nullptr) return nullptr;
+    if (text->type().kind() != serem::IRType::Kind::String) {
+      // A value with no textual form still has to reach `string.concat` as a
+      // string, so its type name stands in, the way a record without `__str__`
+      // renders as its class name.
+      text = stringValue(type == nullptr ? std::string("None") : type->name());
+    }
+    attributes["kind"] = "2";
+    operands.push_back(std::move(text));
+  }
+  if (operands.empty() || operands[0] == nullptr) return nullptr;
+  return builder_->operation("runtime.format", serem::IRType::stringType(), std::move(operands),
+                             std::move(attributes));
 }
 
 serem::ValuePtr SeremGenerator::printable(serem::ValuePtr value, const Type* type) {

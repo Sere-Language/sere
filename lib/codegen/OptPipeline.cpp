@@ -134,7 +134,9 @@ void reportRewrites(const OptRewriteReport& report) {
     appendPass(functionPasses, "lcssa");
     appendPass(functionPasses, "loop-rotate");
     appendPass(functionPasses, "loop-idiom");
-    appendPass(functionPasses, "licm");
+    // LICM reads MemorySSA, so it must be spelled with the loop-mssa adaptor;
+    // a bare `licm` aborts the pipeline.
+    appendPass(functionPasses, "loop-mssa(licm)");
     appendPass(functionPasses, "loop-deletion");
     appendPass(functionPasses, "loop-instsimplify");
   }

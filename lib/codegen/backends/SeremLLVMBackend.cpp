@@ -927,6 +927,49 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     }
     result = current;
   }
+  else if (opcode == "runtime.format") {
+    // `f"{value:spec}"`: the runtime parses the spec so both backends render a
+    // formatted value identically. Kinds match runtime/sere_rt.c: 0 int,
+    // 1 float, 2 str, 3 bool; only the matching argument is read.
+    const std::string kindText = attribute(operation, "kind");
+    const std::int32_t kind =
+        kindText.empty() ? 2 : static_cast<std::int32_t>(kindText[0] - '0');
+    const std::string spec = attribute(operation, "spec");
+    llvm::Value* intValue = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context_), 0);
+    llvm::Value* floatValue =
+        llvm::ConstantFP::get(llvm::Type::getDoubleTy(*context_), 0.0);
+    llvm::Value* data = llvm::ConstantPointerNull::get(ir.getPtrTy());
+    llvm::Value* length = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context_), 0);
+    llvm::Value* value = operand(0);
+    if (kind == 1) {
+      floatValue = value;
+    } else if (kind == 0 || kind == 3) {
+      intValue = value;
+    } else {
+      data = value;
+      llvm::Function* lengthFn = module_->getFunction("strlen");
+      if (lengthFn == nullptr) {
+        lengthFn = llvm::Function::Create(
+            llvm::FunctionType::get(llvm::Type::getInt64Ty(*context_), {ir.getPtrTy()}, false),
+            llvm::Function::ExternalLinkage, "strlen", module_.get());
+      }
+      length = ir.CreateCall(lengthFn, {value});
+    }
+    auto format = module_->getOrInsertFunction(
+        "sere_format_value", ir.getPtrTy(), llvm::Type::getInt32Ty(*context_),
+        llvm::Type::getInt64Ty(*context_), llvm::Type::getDoubleTy(*context_), ir.getPtrTy(),
+        llvm::Type::getInt64Ty(*context_), ir.getPtrTy(), llvm::Type::getInt64Ty(*context_),
+        ir.getPtrTy());
+    llvm::AllocaInst* outLength = ir.CreateAlloca(llvm::Type::getInt64Ty(*context_));
+    // The formatter returns NUL-terminated text, which is how Serem strings are
+    // represented, so the pointer is the result.
+    result = ir.CreateCall(
+        format, {llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_), kind), intValue,
+                 floatValue, data, length, ir.CreateGlobalString(spec, "", 0, module_.get()),
+                 llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context_),
+                                        static_cast<std::uint64_t>(spec.size())),
+                 outLength});
+  }
   else if (opcode == "value.repr") {
     if (!attribute(operation, "element.name").empty()) {
       llvm::Value* callback = llvm::ConstantPointerNull::get(ir.getPtrTy());

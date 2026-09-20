@@ -45,6 +45,9 @@ private:
   /// name when the record has no `__str__`, and a formatted rendering for a
   /// container.
   [[nodiscard]] serem::ValuePtr printable(serem::ValuePtr value, const Type* type);
+  /// Lowers `f"{value:spec}"` to the runtime formatter. The kind code is the
+  /// one `sere_format_value` expects: 0 int, 1 float, 2 str, 3 bool.
+  [[nodiscard]] serem::ValuePtr formatValue(const Expr& value, const std::string& spec);
   /// Serem symbol of `name` implemented by `record` or one of its base classes,
   /// or an empty string when the class does not implement it.
   [[nodiscard]] std::string methodSymbol(const Type* record, std::string_view name) const;
