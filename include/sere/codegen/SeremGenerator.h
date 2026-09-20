@@ -35,6 +35,9 @@ private:
   [[nodiscard]] bool emitFor(const ForStmt& statement);
   void declareTypes(const Module& module);
   void declareClass(const ClassDef& classDef);
+  /// Declares a Serem record type for every instantiated generic class, so the
+  /// layout of `Box[i32]` matches the specialised method bodies.
+  void declareInstances(const std::vector<const Module*>& modules);
   void declareEnum(const EnumDef& enumDef);
   [[nodiscard]] serem::ValuePtr emitExpression(const Expr& expression);
   /// Converts one lowered value between Sere types: numeric widths, a base-class
@@ -109,6 +112,9 @@ private:
   /// Type-parameter substitution active while a generic instantiation is
   /// emitted, mapping each parameter name to the caller's concrete type.
   std::unordered_map<std::string, const Type*> subst_;
+  /// Receiver type of the method being lowered: the instantiated class when a
+  /// generic class is specialised, so the body reads the instance's layout.
+  const Type* receiverOverride_ = nullptr;
 };
 
 } // namespace sere

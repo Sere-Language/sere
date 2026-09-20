@@ -189,7 +189,14 @@ serem::IRType SeremGenerator::lowerType(const Type* type) const {
     type = types_->substitute(type, subst_);
     if (type == nullptr) return serem::IRType::ptr(serem::IRType::i8());
   }
-  type = type->canonical();
+  // An instantiated generic record is named after its type arguments, which the
+  // record branches below keep, so the instance's layout is not confused with
+  // the generic one.
+  const bool instanceRecord =
+      type->isRecord() && (type->name().find('[') != std::string::npos);
+  if (!instanceRecord) {
+    type = type->canonical();
+  }
   if (type->isNamed("bool")) return serem::IRType::boolType();
   if (type->isInteger()) return integerType(type);
   if (type->isNamed("f32")) return serem::IRType::f32();
@@ -252,6 +259,7 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
   std::vector<const Module*> modules{&module};
   if (imported != nullptr) modules.insert(modules.end(), imported->begin(), imported->end());
   for (const Module* current : modules) declareTypes(*current);
+  declareInstances(modules);
   for (const Module* current : modules) for (const std::unique_ptr<Stmt>& statement : current->statements()) {
     if (statement != nullptr && statement->kind() == NodeKind::ClassDef) {
       const auto& classDef = static_cast<const ClassDef&>(*statement);
@@ -325,8 +333,6 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
       if (method.llvmName.empty() || method.type == nullptr) {
         continue;
       }
-      std::fprintf(stderr, "DBG inst %s method %s -> %s\n", instance->name().c_str(),
-                   method.name.c_str(), method.llvmName.c_str());
       functions_.insert_or_assign(method.llvmName, lowerType(method.type));
       methodSymbols_[instance->name() + "::" + method.name] = method.llvmName;
     }
@@ -347,7 +353,16 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
     }
   }
   for (const FunctionInstantiation& inst : types_->functionInstantiations()) {
-    if (inst.isMethod) {
+    // A method of a generic class is emitted per instance below, with the
+    // instantiated receiver; emitting it here would use the generic layout.
+    bool specializedMethod = inst.isMethod;
+    for (const auto& entry : methodSymbols_) {
+      if (entry.second == inst.llvmName) {
+        specializedMethod = true;
+        break;
+      }
+    }
+    if (specializedMethod) {
       continue;
     }
     subst_.clear();
@@ -416,7 +431,11 @@ std::unique_ptr<serem::IRModule> SeremGenerator::emit(const Module& module,
       if (methods[index].llvmName.empty()) {
         continue;
       }
-      if (!emitFunction(*classDef->methods()[index], methods[index].llvmName)) {
+      const Type* previousReceiver = receiverOverride_;
+      receiverOverride_ = instance;
+      const bool ok = emitFunction(*classDef->methods()[index], methods[index].llvmName);
+      receiverOverride_ = previousReceiver;
+      if (!ok) {
         subst_.clear();
         return nullptr;
       }
@@ -469,6 +488,57 @@ void SeremGenerator::declareClass(const ClassDef& classDef) {
       std::move(attributes)));
 }
 
+void SeremGenerator::declareInstances(const std::vector<const Module*>& modules) {
+  for (const auto& entry : types_->instantiations()) {
+    const Type* generic = entry.first;
+    const Type* instance = entry.second;
+    if (generic == nullptr || instance == nullptr || generic->typeParams().empty() ||
+        generic->typeParams().size() != instance->args().size()) {
+      continue;
+    }
+    const ClassDef* classDef = nullptr;
+    for (const Module* current : modules) {
+      for (const std::unique_ptr<Stmt>& statement : current->statements()) {
+        if (statement != nullptr && statement->kind() == NodeKind::ClassDef &&
+            static_cast<const ClassDef&>(*statement).resolvedType() == generic) {
+          classDef = static_cast<const ClassDef*>(statement.get());
+          break;
+        }
+      }
+      if (classDef != nullptr) {
+        break;
+      }
+    }
+    if (classDef == nullptr) {
+      continue;
+    }
+    std::vector<serem::IRType> fields;
+    std::vector<std::string> attributes;
+    attributes.push_back(classDef->isStruct() ? "struct" : "class");
+    // The layout mirrors the generic declaration, with the type arguments
+    // substituted, so both see the same slot numbers.
+    if (!classDef->isStruct()) {
+      fields.push_back(serem::IRType::i32());
+    }
+    if (!classDef->bases().empty()) {
+      const auto base = classFields_.find(classDef->bases().front());
+      if (base != classFields_.end()) fields = base->second;
+    }
+    std::size_t fieldIndex = fields.size();
+    for (const RecordField& field : instance->fields()) {
+      if (field.isStatic) {
+        continue;
+      }
+      fields.push_back(lowerType(field.type));
+      attributes.push_back("field=" + field.name + ":" + std::to_string(fieldIndex));
+      ++fieldIndex;
+    }
+    (void)module_->addType(std::make_unique<serem::TypeDef>(
+        instance->name(), serem::IRType::structType(instance->name(), std::move(fields)),
+        std::move(attributes)));
+  }
+}
+
 void SeremGenerator::declareEnum(const EnumDef& enumDef) {
   std::vector<std::string> attributes;
   attributes.push_back("enum");
@@ -487,6 +557,15 @@ bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbo
   // emitted parameters, locals, and return type are concrete types.
   const Type* type = subst_.empty() ? genericType : types_->substitute(genericType, subst_);
   if (type == nullptr) type = genericType;
+  // A specialised method is lowered against the instantiated class, so its
+  // receiver reads the instance's layout instead of the generic one.
+  if (receiverOverride_ != nullptr && !type->paramTypes().empty()) {
+    std::vector<const Type*> params = type->paramTypes();
+    params[0] = receiverOverride_;
+    const Type* replaced = types_->functionType(params, type->returnType());
+    if (replaced != nullptr) type = replaced;
+  }
+
   std::vector<serem::IRType> params;
   for (const Type* param : type->paramTypes()) params.push_back(lowerType(param));
   auto irFunction = std::make_unique<serem::IRFunction>(
@@ -1190,6 +1269,10 @@ serem::ValuePtr SeremGenerator::coerce(serem::ValuePtr value, const Type* from, 
 
 std::string SeremGenerator::methodSymbol(const Type* record, std::string_view name) const {
   if (record == nullptr) return {};
+  // An instantiated generic class owns the symbol of its specialised method, so
+  // the exact type name is tried before the generic one.
+  const auto exact = methodSymbols_.find(record->name() + "::" + std::string(name));
+  if (exact != methodSymbols_.end()) return exact->second;
   // Candidate class names: the type's own name, its bare name without generic
   // arguments, and the same without a module qualifier, then each base class.
   std::vector<std::string> candidates;

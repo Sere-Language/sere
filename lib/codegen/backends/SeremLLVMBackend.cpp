@@ -1342,6 +1342,17 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
           args.push_back(convert(operand(index), init->second->getFunctionType()->getParamType(index + 1)));
         }
         ir.CreateCall(init->second, args);
+      } else {
+        // A class without `__init__` is built field by field; slot 0 holds the
+        // type id, so the arguments start at slot 1.
+        for (std::size_t index = 0; index < operands.size(); ++index) {
+          const unsigned slot = static_cast<unsigned>(index) + 1;
+          if (slot >= record->getStructNumElements()) {
+            break;
+          }
+          ir.CreateStore(convert(operand(index), record->getStructElementType(slot)),
+                         ir.CreateStructGEP(record, result, slot));
+        }
       }
     } else if (type->isStructTy()) {
       result = llvm::UndefValue::get(type);
