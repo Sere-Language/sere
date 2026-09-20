@@ -1038,8 +1038,15 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       result = llvm::UndefValue::get(type);
       unsigned field = 0;
       if (type->getStructNumElements() == 2 && operands.size() == 1) {
+        // An enum's first word is the variant discriminant; the generator tags
+        // the constructor with the variant's index, not its arm position.
+        std::int32_t tag = 0;
+        const std::string tagText = attribute(operation, "tag");
+        if (!tagText.empty()) {
+          (void)std::from_chars(tagText.data(), tagText.data() + tagText.size(), tag);
+        }
         result = builder_->builder.CreateInsertValue(
-            result, llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_), 0), {0});
+            result, llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_), tag), {0});
         field = 1;
       }
       for (std::size_t index = 0; index < operands.size(); ++index) {
@@ -1440,6 +1447,15 @@ void SeremLLVMBackend::emitEntryPoint(const serem::IRFunction& userMain,
         fromArgv, {wrapper->getArg(0), wrapper->getArg(1)}));
   }
   llvm::Value* result = builder_->builder.CreateCall(userEntry, arguments);
+  // An uncaught exception prints its message and exits nonzero, matching the
+  // direct backend's entry wrapper.
+  llvm::Function* unhandled = module_->getFunction("sere_error_unhandled");
+  if (unhandled == nullptr) {
+    unhandled = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(*context_), false),
+        llvm::Function::ExternalLinkage, "sere_error_unhandled", module_.get());
+  }
+  builder_->builder.CreateCall(unhandled, {});
   if (result->getType()->isVoidTy()) {
     builder_->builder.CreateRet(llvm::ConstantInt::get(countType, 0));
   } else {

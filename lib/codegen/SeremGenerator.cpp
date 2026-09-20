@@ -66,6 +66,20 @@ namespace {
   return index + 1;
 }
 
+/// Discriminant of the enum variant a constructor call names, or an empty
+/// string for a non-enum constructor. Enums store the variant index in the
+/// first word, so `Message.Goodbye(...)` must tag its payload with that index
+/// rather than the arm position it happens to match against.
+[[nodiscard]] std::string enumVariantTag(const CallExpr& expression) {
+  const Type* type = expression.resolvedType();
+  if (type == nullptr || !type->isEnum() || expression.callee().kind() != NodeKind::MemberExpr) {
+    return {};
+  }
+  const auto& member = static_cast<const MemberExpr&>(expression.callee());
+  const RecordField* field = type->canonical()->findField(member.field());
+  return field == nullptr ? std::string{} : field->llvmName;
+}
+
 /// Tag a value of `type` is stored under inside `unionType`, mirroring the
 /// boxing side: a class the union does not list verbatim takes the tag of the
 /// member it derives from.
@@ -1159,6 +1173,9 @@ serem::ValuePtr SeremGenerator::emitBinary(const BinaryExpr& expression) {
   case BinaryOp::Is:
   case BinaryOp::IsNot: {
     const Type* tested = expression.right().resolvedType();
+    if (!subst_.empty() && tested != nullptr) {
+      tested = types_->substitute(tested, subst_);
+    }
     if (tested != nullptr && tested->isTypeObject() && tested->typeObjectInstance() != nullptr) {
       tested = tested->typeObjectInstance();
     }
@@ -1167,6 +1184,9 @@ serem::ValuePtr SeremGenerator::emitBinary(const BinaryExpr& expression) {
           {{"negated", expression.op() == BinaryOp::IsNot ? "true" : "false"}});
     }
     const Type* source = expression.left().resolvedType();
+    if (!subst_.empty() && source != nullptr) {
+      source = types_->substitute(source, subst_);
+    }
     if (source != nullptr && source->isUnion()) {
       std::unordered_map<std::string, std::string> attributes{
           {"negated", expression.op() == BinaryOp::IsNot ? "true" : "false"}};
@@ -1406,6 +1426,7 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
                                                       serem::recordTypeId(
                                                           expression.resolvedType()->name())))
                                                 : std::string{}},
+                                {"tag", enumVariantTag(expression)},
                                 {"init", methodSymbol(expression.resolvedType(), "__init__")}});
   }
   if (expression.callee().kind() == NodeKind::MemberExpr && !expression.isMethod()) {
