@@ -1,0 +1,5 @@
+def g() -> Iterator[i32]:
+    yield 1
+
+def main() -> i32:
+    return 0

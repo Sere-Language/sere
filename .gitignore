@@ -45,6 +45,18 @@ compile_commands.json
 *.obj
 *.o
 *.a
+*.ll
+*.s
+output.txt
+main.sere
+test.sere
+main.exe
+test.exe
+test.c
+perf.py
+test-c.exe
+test-llvm.exe
+*.serem
 
 # Scratch IR / objects at the repo root
 /*.ll

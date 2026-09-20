@@ -58,6 +58,18 @@ listElementLayout(llvm::LLVMContext& context, std::int32_t kind) {
 /// point takes the `main` symbol.
 constexpr const char* kEntrySymbol = "sere_main";
 
+/// True when the Serem integer kind is unsigned, so a widening cast zero-extends
+/// instead of sign-extending it.
+[[nodiscard]] bool isUnsignedKind(serem::IRType::Kind kind) {
+  switch (kind) {
+  case serem::IRType::Kind::U8:
+  case serem::IRType::Kind::U16:
+  case serem::IRType::Kind::U32:
+  case serem::IRType::Kind::U64: return true;
+  default: return false;
+  }
+}
+
 } // namespace
 
 class SeremLLVMBackend::IRBuilderHolder {
@@ -201,6 +213,7 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
   llvm::Value* result = nullptr;
   const std::string& opcode = operation.opcode();
   llvm::Type* type = lowerType(operation.type());
+  llvm::errs() << "[serem-lower] " << opcode << " :: " << operation.type().display() << "\n";
   auto& ir = builder_->builder;
   auto convert = [&](llvm::Value* value, llvm::Type* target, bool isSigned = true) -> llvm::Value* {
     llvm::Type* source = value->getType();
@@ -219,42 +232,95 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     report("unsupported Serem value conversion");
     return llvm::UndefValue::get(target);
   };
+  // Converts both operands to a shared type before a binary operation. Integer
+  // operands widen to the larger width, mixed integer/float operands promote the
+  // integer to the float, and mixed float widths promote to the wider one. Each
+  // operand's own Serem type decides whether an integer extension sign- or
+  // zero-extends.
+  auto binary = [&](std::size_t leftIndex,
+                    std::size_t rightIndex) -> std::pair<llvm::Value*, llvm::Value*> {
+    llvm::Value* left = operand(leftIndex);
+    llvm::Value* right = operand(rightIndex);
+    if (left == nullptr || right == nullptr || left->getType() == right->getType()) {
+      return {left, right};
+    }
+    const bool leftUnsigned =
+        leftIndex < operands.size() && isUnsignedKind(operands[leftIndex]->type().kind());
+    const bool rightUnsigned =
+        rightIndex < operands.size() && isUnsignedKind(operands[rightIndex]->type().kind());
+    llvm::Type* leftType = left->getType();
+    llvm::Type* rightType = right->getType();
+    if (leftType->isIntegerTy() && rightType->isIntegerTy()) {
+      llvm::Type* common = ir.getIntNTy(std::max(leftType->getIntegerBitWidth(),
+                                                 rightType->getIntegerBitWidth()));
+      left = convert(left, common, !leftUnsigned);
+      right = convert(right, common, !rightUnsigned);
+    } else if (leftType->isFloatingPointTy() && rightType->isFloatingPointTy()) {
+      llvm::Type* common = leftType->isDoubleTy() || rightType->isDoubleTy() ? ir.getDoubleTy()
+                                                                             : ir.getFloatTy();
+      left = convert(left, common, true);
+      right = convert(right, common, true);
+    } else if (leftType->isIntegerTy() && rightType->isFloatingPointTy()) {
+      left = convert(left, rightType, !leftUnsigned);
+    } else if (leftType->isFloatingPointTy() && rightType->isIntegerTy()) {
+      right = convert(right, leftType, !rightUnsigned);
+    }
+    return {left, right};
+  };
   if (opcode == "pointer.null") result = llvm::ConstantPointerNull::get(ir.getPtrTy());
   else if (opcode == "pointer.is_null") {
     result = ir.CreateIsNull(operand(0));
     if (attribute(operation, "negated") == "true") result = ir.CreateNot(result);
   }
-  else if (opcode == "add") result = builder_->builder.CreateAdd(operand(0), operand(1));
-  else if (opcode == "sub") result = builder_->builder.CreateSub(operand(0), operand(1));
-  else if (opcode == "mul") result = builder_->builder.CreateMul(operand(0), operand(1));
-  else if (opcode == "div") result = builder_->builder.CreateSDiv(operand(0), operand(1));
-  else if (opcode == "rem") result = builder_->builder.CreateSRem(operand(0), operand(1));
-  else if (opcode == "fadd") result = builder_->builder.CreateFAdd(operand(0), operand(1));
-  else if (opcode == "fsub") result = builder_->builder.CreateFSub(operand(0), operand(1));
-  else if (opcode == "fmul") result = builder_->builder.CreateFMul(operand(0), operand(1));
-  else if (opcode == "fdiv") result = builder_->builder.CreateFDiv(operand(0), operand(1));
-  else if (opcode == "and") result = builder_->builder.CreateAnd(operand(0), operand(1));
-  else if (opcode == "or") result = builder_->builder.CreateOr(operand(0), operand(1));
-  else if (opcode == "xor") result = builder_->builder.CreateXor(operand(0), operand(1));
-  else if (opcode == "shl") result = builder_->builder.CreateShl(operand(0), operand(1));
-  else if (opcode == "shr") result = builder_->builder.CreateAShr(operand(0), operand(1));
+  else if (opcode == "add" || opcode == "fadd" || opcode == "sub" || opcode == "fsub" ||
+           opcode == "mul" || opcode == "fmul" || opcode == "div" || opcode == "fdiv" ||
+           opcode == "rem" || opcode == "and" || opcode == "or" || opcode == "xor" ||
+           opcode == "shl" || opcode == "shr") {
+    auto [left, right] = binary(0, 1);
+    if (left != nullptr && right != nullptr) {
+      const bool floating = left->getType()->isFloatingPointTy();
+      if (opcode == "add" || opcode == "fadd")
+        result = floating ? builder_->builder.CreateFAdd(left, right)
+                          : builder_->builder.CreateAdd(left, right);
+      else if (opcode == "sub" || opcode == "fsub")
+        result = floating ? builder_->builder.CreateFSub(left, right)
+                          : builder_->builder.CreateSub(left, right);
+      else if (opcode == "mul" || opcode == "fmul")
+        result = floating ? builder_->builder.CreateFMul(left, right)
+                          : builder_->builder.CreateMul(left, right);
+      else if (opcode == "div" || opcode == "fdiv")
+        result = floating ? builder_->builder.CreateFDiv(left, right)
+                          : builder_->builder.CreateSDiv(left, right);
+      else if (opcode == "rem")
+        result = floating ? builder_->builder.CreateFRem(left, right)
+                          : builder_->builder.CreateSRem(left, right);
+      else if (opcode == "and") result = builder_->builder.CreateAnd(left, right);
+      else if (opcode == "or") result = builder_->builder.CreateOr(left, right);
+      else if (opcode == "xor") result = builder_->builder.CreateXor(left, right);
+      else if (opcode == "shl") result = builder_->builder.CreateShl(left, right);
+      else if (opcode == "shr") result = builder_->builder.CreateAShr(left, right);
+    }
+  }
   else if (opcode.starts_with("cmp.")) {
     const std::string predicate = opcode.substr(4);
-    llvm::CmpInst::Predicate comparison = llvm::CmpInst::ICMP_EQ;
-    if (predicate == "ne") comparison = llvm::CmpInst::ICMP_NE;
-    else if (predicate == "lt") comparison = llvm::CmpInst::ICMP_SLT;
-    else if (predicate == "le") comparison = llvm::CmpInst::ICMP_SLE;
-    else if (predicate == "gt") comparison = llvm::CmpInst::ICMP_SGT;
-    else if (predicate == "ge") comparison = llvm::CmpInst::ICMP_SGE;
-    llvm::Value* left = operand(0);
-    llvm::Value* right = operand(1);
-    if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
-      llvm::Type* common = ir.getIntNTy(std::max(left->getType()->getIntegerBitWidth(),
-                                                right->getType()->getIntegerBitWidth()));
-      left = convert(left, common);
-      right = convert(right, common);
+    auto [left, right] = binary(0, 1);
+    if (left != nullptr && right != nullptr) {
+      const bool floating = left->getType()->isFloatingPointTy();
+      llvm::CmpInst::Predicate comparison =
+          floating ? llvm::CmpInst::FCMP_OEQ : llvm::CmpInst::ICMP_EQ;
+      if (predicate == "ne")
+        comparison = floating ? llvm::CmpInst::FCMP_UNE : llvm::CmpInst::ICMP_NE;
+      else if (predicate == "lt")
+        comparison = floating ? llvm::CmpInst::FCMP_OLT : llvm::CmpInst::ICMP_SLT;
+      else if (predicate == "le")
+        comparison = floating ? llvm::CmpInst::FCMP_OLE : llvm::CmpInst::ICMP_SLE;
+      else if (predicate == "gt")
+        comparison = floating ? llvm::CmpInst::FCMP_OGT : llvm::CmpInst::ICMP_SGT;
+      else if (predicate == "ge")
+        comparison = floating ? llvm::CmpInst::FCMP_OGE : llvm::CmpInst::ICMP_SGE;
+      result = floating ? builder_->builder.CreateFCmp(comparison, left, right)
+                        : builder_->builder.CreateICmp(comparison, left, right);
     }
-    result = builder_->builder.CreateICmp(comparison, left, right);
   } else if (opcode == "neg") result = builder_->builder.CreateNeg(operand(0));
   else if (opcode == "not" || opcode == "invert") result = builder_->builder.CreateNot(operand(0));
   else if (opcode == "alloca") {
@@ -1028,6 +1094,133 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     } else {
       result = operand(0);
     }
+  }
+  else if (opcode == "throw") {
+    llvm::Function* function = ir.GetInsertBlock()->getParent();
+    if (operands.empty() || operand(0) == nullptr) {
+      llvm::Function* rer = module_->getFunction("sere_reraise");
+      if (rer == nullptr) {
+        rer = llvm::Function::Create(llvm::FunctionType::get(ir.getVoidTy(), false),
+                                     llvm::Function::ExternalLinkage, "sere_reraise",
+                                     module_.get());
+      }
+      ir.CreateCall(rer, {});
+    } else {
+      llvm::Value* object = operand(0);
+      llvm::Type* record = object->getType()->isPointerTy() && operands[0]->type().pointee() != nullptr
+                               ? lowerType(*operands[0]->type().pointee())
+                               : nullptr;
+      llvm::Value* messagePtr = nullptr;
+      llvm::Value* messageLen = ir.getInt64(0);
+      unsigned field = 0;
+      const std::string fieldText = attribute(operation, "field");
+      if (!fieldText.empty() && fieldText != "-1") {
+        (void)std::from_chars(fieldText.data(), fieldText.data() + fieldText.size(), field);
+      }
+      if (record != nullptr && record->isStructTy() && field < record->getStructNumElements() &&
+          object->getType()->isPointerTy()) {
+        llvm::Value* message = ir.CreateExtractValue(ir.CreateLoad(record, object), {field});
+        messagePtr = ir.CreateExtractValue(message, {0});
+        messageLen = ir.CreateExtractValue(message, {1});
+      }
+      llvm::Function* raise = module_->getFunction("sere_raise");
+      if (raise == nullptr) {
+        raise = llvm::Function::Create(
+            llvm::FunctionType::get(ir.getVoidTy(), {ir.getPtrTy(), ir.getPtrTy(), ir.getInt64Ty()},
+                                    false),
+            llvm::Function::ExternalLinkage, "sere_raise", module_.get());
+      }
+      if (messagePtr == nullptr) messagePtr = llvm::ConstantPointerNull::get(ir.getPtrTy());
+      ir.CreateCall(raise, {builder_->builder.CreateGlobalString(attribute(operation, "type")),
+                            messagePtr, messageLen});
+      if (record != nullptr && record->isStructTy() && object->getType()->isPointerTy()) {
+        llvm::Value* slot = ir.CreateAlloca(record);
+        ir.CreateStore(object, slot);
+        llvm::Function* setObject = module_->getFunction("sere_error_set_object");
+        if (setObject == nullptr) {
+          setObject = llvm::Function::Create(
+              llvm::FunctionType::get(ir.getVoidTy(), {ir.getPtrTy(), ir.getInt64Ty()}, false),
+              llvm::Function::ExternalLinkage, "sere_error_set_object", module_.get());
+        }
+        ir.CreateCall(setObject,
+                      {slot, ir.getInt64(module_->getDataLayout().getTypeAllocSize(record))});
+      }
+    }
+    const std::string handler = attribute(operation, "handler");
+    if (!handler.empty() && blockFor(handler) != nullptr) {
+      ir.CreateBr(blockFor(handler));
+    } else if (function->getReturnType()->isVoidTy()) {
+      ir.CreateRetVoid();
+    } else {
+      ir.CreateRet(llvm::Constant::getNullValue(function->getReturnType()));
+    }
+  }
+  else if (opcode == "error.isa") {
+    llvm::Function* isa = module_->getFunction("sere_error_isa");
+    if (isa == nullptr) {
+      isa = llvm::Function::Create(llvm::FunctionType::get(ir.getInt32Ty(), {ir.getPtrTy()}, false),
+                                   llvm::Function::ExternalLinkage, "sere_error_isa",
+                                   module_.get());
+    }
+    result = ir.CreateICmpNE(
+        ir.CreateCall(isa, {builder_->builder.CreateGlobalString(attribute(operation, "type"))}),
+        ir.getInt32(0));
+  }
+  else if (opcode == "error.bind") {
+    llvm::Type* record =
+        operation.type().pointee() != nullptr ? lowerType(*operation.type().pointee()) : nullptr;
+    if (record != nullptr && record->isStructTy()) {
+      llvm::Value* slot = ir.CreateAlloca(record);
+      llvm::Function* copy = module_->getFunction("sere_error_copy_object");
+      if (copy == nullptr) {
+        copy = llvm::Function::Create(
+            llvm::FunctionType::get(ir.getVoidTy(), {ir.getPtrTy(), ir.getInt64Ty()}, false),
+            llvm::Function::ExternalLinkage, "sere_error_copy_object", module_.get());
+      }
+      ir.CreateCall(copy, {slot, ir.getInt64(module_->getDataLayout().getTypeAllocSize(record))});
+      unsigned field = 0;
+      const std::string fieldText = attribute(operation, "field");
+      if (!fieldText.empty() && fieldText != "-1") {
+        (void)std::from_chars(fieldText.data(), fieldText.data() + fieldText.size(), field);
+      }
+      if (field < record->getStructNumElements()) {
+        llvm::Function* message = module_->getFunction("sere_error_message");
+        if (message == nullptr) {
+          message = llvm::Function::Create(
+              llvm::FunctionType::get(ir.getPtrTy(), {ir.getPtrTy()}, false),
+              llvm::Function::ExternalLinkage, "sere_error_message", module_.get());
+        }
+        llvm::Value* length = ir.CreateAlloca(ir.getInt64Ty());
+        llvm::Value* data = ir.CreateCall(message, {length});
+        llvm::Value* packed = llvm::UndefValue::get(
+            llvm::StructType::get(*context_, {ir.getPtrTy(), ir.getInt64Ty()}));
+        packed = ir.CreateInsertValue(packed, data, {0});
+        packed = ir.CreateInsertValue(packed, ir.CreateLoad(ir.getInt64Ty(), length), {1});
+        llvm::Value* object = ir.CreateInsertValue(ir.CreateLoad(record, slot), packed, {field});
+        ir.CreateStore(object, slot);
+      }
+      result = slot;
+    } else {
+      report("Serem exception binding requires a record");
+    }
+  }
+  else if (opcode == "error.enter") {
+    llvm::Function* enter = module_->getFunction("sere_error_enter");
+    if (enter == nullptr) {
+      enter = llvm::Function::Create(llvm::FunctionType::get(ir.getVoidTy(), false),
+                                     llvm::Function::ExternalLinkage, "sere_error_enter",
+                                     module_.get());
+    }
+    ir.CreateCall(enter, {});
+  }
+  else if (opcode == "error.leave") {
+    llvm::Function* leave = module_->getFunction("sere_error_leave");
+    if (leave == nullptr) {
+      leave = llvm::Function::Create(
+          llvm::FunctionType::get(ir.getVoidTy(), {ir.getInt32Ty()}, false),
+          llvm::Function::ExternalLinkage, "sere_error_leave", module_.get());
+    }
+    ir.CreateCall(leave, {ir.getInt32(attribute(operation, "restore") == "true" ? 1 : 0)});
   }
   else if (opcode == "call" || opcode == "invoke") {
     llvm::Function* function = nullptr;

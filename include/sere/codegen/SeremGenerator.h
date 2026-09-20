@@ -70,6 +70,8 @@ private:
   [[nodiscard]] serem::ValuePtr local(const std::string& name) const;
   [[nodiscard]] bool unsupported(const Node& node, std::string_view feature);
   [[nodiscard]] std::string functionName(const FunctionDef& function) const;
+  /// Emits every pending `defer` body, innermost first, before a scope exits.
+  void emitDeferred();
 
   DiagnosticEngine* diagnostics_;
   std::unique_ptr<serem::IRModule> module_;
@@ -95,6 +97,11 @@ private:
   std::vector<serem::BasicBlock*> breakTargets_;
   std::vector<serem::BasicBlock*> continueTargets_;
   serem::ValuePtr coroutineToken_;
+  /// Innermost exception dispatch block, so a `raise` branches to the handler
+  /// that catches it. Parallel to `defers_` below.
+  std::vector<std::string> tryHandlers_;
+  /// Pending `defer` bodies, innermost last; run in reverse order on scope exit.
+  std::vector<const DeferStmt*> defers_;
 };
 
 } // namespace sere

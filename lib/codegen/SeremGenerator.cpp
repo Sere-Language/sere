@@ -108,6 +108,47 @@ namespace {
   return tags;
 }
 
+/// Appends one class name to an exception chain without duplicating a name that
+/// already appears through a shared base.
+void appendExceptionName(std::string& chain, const std::string& name) {
+  if (name.empty()) {
+    return;
+  }
+  std::size_t pos = 0;
+  while (pos < chain.size()) {
+    const std::size_t stop = chain.find(';', pos);
+    const std::size_t end = stop == std::string::npos ? chain.size() : stop;
+    if (end - pos == name.size() && chain.compare(pos, end - pos, name) == 0) {
+      return;
+    }
+    if (stop == std::string::npos) {
+      break;
+    }
+    pos = stop + 1;
+  }
+  if (!chain.empty()) {
+    chain += ';';
+  }
+  chain.append(name);
+}
+
+/// Builds the `Sub;Base;Exception` chain the runtime matches `sere_error_isa`
+/// against, so `except Base` catches an instance of `Sub`.
+void appendExceptionType(std::string& chain, const Type* type) {
+  if (type == nullptr) {
+    return;
+  }
+  appendExceptionName(chain, type->name());
+  const Type* canonical = type->canonical();
+  if (canonical != nullptr && canonical != type) {
+    appendExceptionName(chain, canonical->name());
+    type = canonical;
+  }
+  for (const Type* base : type->bases()) {
+    appendExceptionType(chain, base);
+  }
+}
+
 } // namespace
 
 SeremGenerator::SeremGenerator(DiagnosticEngine& diagnostics, TypeContext& types)
@@ -313,6 +354,8 @@ bool SeremGenerator::emitFunction(const FunctionDef& function) {
   builder_ = std::make_unique<serem::IRBuilder>(*function_);
   locals_.clear();
   localTypes_.clear();
+  defers_.clear();
+  tryHandlers_.clear();
   returnType_ = type->returnType();
   coroutineToken_.reset();
   if (function.isAsync() || function.isGenerator()) coroutineToken_ = builder_->coroBegin();
@@ -324,6 +367,7 @@ bool SeremGenerator::emitFunction(const FunctionDef& function) {
   }
   if (!emitBlock(function.body())) return false;
   if (!builder_->currentBlock().isTerminated()) {
+    emitDeferred();
     if (type->returnType() != nullptr && type->returnType()->isVoidLike()) {
       builder_->retVoid();
     } else {
@@ -335,6 +379,8 @@ bool SeremGenerator::emitFunction(const FunctionDef& function) {
   function_ = nullptr;
   currentOwnerClass_.clear();
   locals_.clear();
+  defers_.clear();
+  tryHandlers_.clear();
   return true;
 }
 
@@ -343,6 +389,15 @@ bool SeremGenerator::emitBlock(const std::vector<std::unique_ptr<Stmt>>& stateme
     if (statement != nullptr && !emitStatement(*statement)) return false;
   }
   return true;
+}
+
+void SeremGenerator::emitDeferred() {
+  // Snapshot the pending defers so a defer body that itself defers cannot
+  // invalidate the walk; the nested body runs on the next scope exit.
+  const std::vector<const DeferStmt*> pending = defers_;
+  for (auto it = pending.rbegin(); it != pending.rend(); ++it) {
+    if (*it != nullptr && !emitBlock((*it)->body())) return;
+  }
 }
 
 bool SeremGenerator::emitStatement(const Stmt& statement) {
@@ -506,11 +561,24 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
   }
   case NodeKind::RaiseStmt: {
     const auto& raise = static_cast<const RaiseStmt&>(statement);
+    const std::string handler = tryHandlers_.empty() ? std::string{} : tryHandlers_.back();
     if (raise.value() == nullptr) {
-      (void)builder_->operation("throw", serem::IRType::voidType());
-    } else {
-      builder_->throwValue(emitExpression(*raise.value()));
+      (void)builder_->operation("throw", serem::IRType::voidType(), {},
+                                {{"handler", handler}, {"rethrow", "true"}});
+      return true;
     }
+    const Expr& value = *raise.value();
+    const Type* type = value.resolvedType();
+    if (type != nullptr && type->isTypeObject() && type->typeObjectInstance() != nullptr) {
+      type = type->typeObjectInstance();
+    }
+    std::string chain;
+    appendExceptionType(chain, type);
+    const int messageIndex = type == nullptr ? -1 : fieldSlot(type, type->fieldIndex("message"));
+    (void)builder_->operation("throw", serem::IRType::voidType(), {emitExpression(value)},
+                              {{"handler", handler},
+                               {"type", chain},
+                               {"field", std::to_string(messageIndex)}});
     return true;
   }
   case NodeKind::AssertStmt: {
@@ -545,30 +613,80 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
   }
   case NodeKind::TryStmt: {
     const auto& tryStatement = static_cast<const TryStmt&>(statement);
-    (void)builder_->operation("try.begin", serem::IRType::voidType());
-    if (!emitBlock(tryStatement.body())) return false;
-    for (const ExceptHandler& handler : tryStatement.handlers()) {
-      (void)builder_->operation("catch", serem::IRType::voidType(), {},
-                                {{"type", handler.type == nullptr ? "" : handler.type->name()}});
-      if (!emitBlock(handler.body)) return false;
+    // The try body runs inline: a raise inside it branches to the dispatch block
+    // while normal completion falls through to the else body and then finally.
+    serem::BasicBlock* dispatch = &function_->addBlock("try.dispatch");
+    serem::BasicBlock* finallyBlock = &function_->addBlock("try.finally");
+    serem::BasicBlock* after = &function_->addBlock("try.after");
+    tryHandlers_.push_back(dispatch->label());
+    const bool okBody = emitBlock(tryStatement.body());
+    tryHandlers_.pop_back();
+    if (!okBody) return false;
+    if (!builder_->currentBlock().isTerminated()) {
+      if (!emitBlock(tryStatement.elseBody())) return false;
+      if (!builder_->currentBlock().isTerminated()) (void)builder_->branch(*finallyBlock);
     }
-    if (!emitBlock(tryStatement.elseBody()) || !emitBlock(tryStatement.finallyBody())) return false;
-    (void)builder_->operation("try.end", serem::IRType::voidType());
+    // Dispatch the pending error against each handler in source order.
+    builder_->setInsertBlock(*dispatch);
+    for (const ExceptHandler& handler : tryStatement.handlers()) {
+      serem::BasicBlock* taken = &function_->addBlock("try.except");
+      serem::BasicBlock* next = &function_->addBlock("try.next");
+      if (handler.type == nullptr) {
+        (void)builder_->branch(*taken);
+      } else {
+        const Type* caught = handler.type->resolvedType();
+        const Type* canonical = caught == nullptr ? nullptr : caught->canonical();
+        const serem::ValuePtr matched =
+            builder_->operation("error.isa", serem::IRType::boolType(), {},
+                                {{"type", canonical == nullptr ? std::string{} : canonical->name()}});
+        (void)builder_->conditionalBranch(matched, *taken, *next);
+      }
+      builder_->setInsertBlock(*taken);
+      if (!handler.name.empty()) {
+        const Type* caught = handler.type == nullptr ? nullptr : handler.type->resolvedType();
+        const serem::ValuePtr object =
+            builder_->operation("error.bind", lowerType(caught), {},
+                                {{"field", std::to_string(caught == nullptr
+                                                              ? -1
+                                                              : fieldSlot(caught, caught->fieldIndex("message")))}});
+        auto slot = builder_->alloca(object->type());
+        builder_->store(object, slot);
+        locals_[handler.name] = slot;
+        localTypes_[handler.name] = caught;
+      }
+      if (!emitBlock(handler.body)) return false;
+      if (!builder_->currentBlock().isTerminated()) {
+        // The exception was handled: release the error before running finally.
+        (void)builder_->operation("error.leave", serem::IRType::voidType(), {},
+                                  {{"restore", "false"}});
+        (void)builder_->branch(*finallyBlock);
+      }
+      builder_->setInsertBlock(*next);
+    }
+    if (!builder_->currentBlock().isTerminated()) (void)builder_->branch(*finallyBlock);
+    // Finally suspends any pending error so its own body starts clean, then
+    // restores it on the way out.
+    builder_->setInsertBlock(*finallyBlock);
+    (void)builder_->operation("error.enter", serem::IRType::voidType());
+    if (!emitBlock(tryStatement.finallyBody())) return false;
+    if (!builder_->currentBlock().isTerminated()) {
+      (void)builder_->operation("error.leave", serem::IRType::voidType(), {},
+                                {{"restore", "true"}});
+      (void)builder_->branch(*after);
+    }
+    builder_->setInsertBlock(*after);
     return true;
   }
-  case NodeKind::DeferStmt: {
-    const auto& defer = static_cast<const DeferStmt&>(statement);
-    (void)builder_->operation("defer.begin", serem::IRType::voidType());
-    if (!emitBlock(defer.body())) return false;
-    (void)builder_->operation("defer.end", serem::IRType::voidType());
+  case NodeKind::DeferStmt:
+    defers_.push_back(&static_cast<const DeferStmt&>(statement));
     return true;
-  }
   case NodeKind::DelStmt:
     (void)builder_->operation("destroy", serem::IRType::voidType(),
                               {emitExpression(static_cast<const DelStmt&>(statement).target())});
     return true;
   case NodeKind::ReturnStmt: {
     const auto& result = static_cast<const ReturnStmt&>(statement);
+    emitDeferred();
     if (result.value() == nullptr) builder_->retVoid();
     else builder_->ret(coerce(emitExpression(*result.value()), result.value()->resolvedType(), returnType_));
     return true;
@@ -657,9 +775,18 @@ bool SeremGenerator::emitFor(const ForStmt& statement) {
   if (custom != nullptr && custom->isRecord() && custom->methodIndex("__iter__") >= 0) {
     return unsupported(statement, "for-in over a class __iter__");
   }
+  // A generator function call is a coroutine too, and its element type cannot be
+  // derived from the list/array layout the iterator operations assume. Reject it
+  // here instead of emitting an iterator over an unknown element kind.
+  if (iterable != nullptr && iterable->isGenericCtor("Iterator")) {
+    return unsupported(statement, "for-in over a generator");
+  }
   const serem::ValuePtr source = emitExpression(statement.iterable());
   const Type* iterableType = statement.iterable().resolvedType();
   const Type* elementType = iterableType == nullptr ? nullptr : iterableType->elementType();
+  if (elementType == nullptr) {
+    return unsupported(statement, "for-in over an iterable without an element type");
+  }
   const std::unordered_map<std::string, std::string> iteratorAttributes{
       {"element", elementType == nullptr ? std::string{} : elementType->display()}};
   const serem::ValuePtr iterator =

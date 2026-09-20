@@ -76,40 +76,69 @@
     },
     "fstring": {
       "name": "string.interpolated.sere",
-      "begin": "f(\"|')",
-      "end": "\\1",
+      "begin": "([fF])(\"|')",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.sere" },
+        "2": { "name": "punctuation.definition.string.begin.sere" }
+      },
+      "end": "\\2",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.sere" }
+      },
       "patterns": [
         {
           "name": "constant.character.escape.sere",
           "match": "\\\\."
         },
-        {
-          "name": "meta.interpolation.sere",
-          "begin": "\\{",
-          "end": "\\}",
-          "patterns": [
-            { "include": "$self" }
-          ]
-        }
+        { "name": "constant.character.escape.sere", "match": "\\{\\{|\\}\\}" },
+        { "include": "#interpolation" }
       ]
     },
     "fstringTriple": {
       "name": "string.interpolated.triple.sere",
-      "begin": "f(\"\"\"|''')",
-      "end": "\\1",
+      "begin": "([fF])(\"\"\"|''')",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.sere" },
+        "2": { "name": "punctuation.definition.string.begin.sere" }
+      },
+      "end": "\\2",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.sere" }
+      },
       "patterns": [
         {
           "name": "constant.character.escape.sere",
           "match": "\\\\."
         },
-        {
-          "name": "meta.interpolation.sere",
-          "begin": "\\{",
-          "end": "\\}",
-          "patterns": [
-            { "include": "$self" }
-          ]
-        }
+        { "name": "constant.character.escape.sere", "match": "\\{\\{|\\}\\}" },
+        { "include": "#interpolation" }
+      ]
+    },
+    "interpolation": {
+      "name": "meta.interpolation.sere",
+      "begin": "(?<!\\{)\\{",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.interpolation.begin.sere" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.interpolation.end.sere" }
+      },
+      "patterns": [
+        { "include": "#fstringFormatSpec" },
+        { "name": "constant.other.conversion.sere", "match": "![sra]" },
+        { "include": "$self" }
+      ]
+    },
+    "fstringFormatSpec": {
+      "name": "meta.format-spec.sere",
+      "begin": ":(?![=])",
+      "beginCaptures": {
+        "0": { "name": "punctuation.separator.format-spec.sere" }
+      },
+      "end": "(?=\\}|!)",
+      "patterns": [
+        { "name": "constant.other.format-spec.sere", "match": "." }
       ]
     },
     "keyword": {
@@ -179,7 +208,7 @@
       }
     },
     "macroInvoke": {
-      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*!",
+      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*!(?=\\s*[([{])",
       "captures": {
         "1": { "name": "entity.name.function.macro.sere" }
       }
