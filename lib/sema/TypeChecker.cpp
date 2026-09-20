@@ -5646,10 +5646,17 @@ bool TypeChecker::flattenClass(ClassDef& classDef) {
     return false;
   TypeConstraintScope constraintScope(
       activeTypeConstraints_, classDef.typeParams(), classDef.resolvedType()->typeConstraints());
-  if (flattened_[classDef.name()]) {
+  // Keyed by the record's qualified name: a module-level class that shadows a
+  // prelude class of the same name is a distinct record, so it must still get
+  // its own fields and bases instead of being skipped as already flattened.
+  const Type* record = classDef.resolvedType();
+  const std::string flattenedKey = record == nullptr || record->qualifier().empty()
+                                       ? classDef.name()
+                                       : record->qualifier() + "." + record->name();
+  if (flattened_[flattenedKey]) {
     return true;
   }
-  flattened_[classDef.name()] = true;
+  flattened_[flattenedKey] = true;
   std::vector<RecordField> fields;
   std::vector<const Type*> bases;
   const auto inheritFields = [&](const Type* base) {

@@ -112,14 +112,15 @@ Identifiers: ASCII letters, digits, and `_`. Keywords are reserved.
 ```
 False  None  True
 and  as  assert  async  await  break  case  class  const  continue
-def  defer  del  elif  else  enum  except  extern  finally
+def  defer  del  do  elif  else  enum  except  extern  finally
 for  from  if  import  in  is  lambda  macro  match
 not  or  pass  raise  return  static  struct  super
 try  type  while  with
 ```
 
-`const` binds a readonly name. `lambda` is an anonymous function. `with`
-requires `__enter__` / `__exit__` on the context type. `async` and `await`
+`const` binds a readonly name. `lambda` is an anonymous function. `do`
+introduces a block expression (see [`do` block expression](#do-block-expression)).
+`with` requires `__enter__` / `__exit__` on the context type. `async` and `await`
 are supported â€” see [Async / await status](#async-await-status).
 
 ### Literals
@@ -350,6 +351,49 @@ type:
 if (n := next()) > 0:
     print(n)
 ```
+
+### `do` block expression
+
+`do:` turns a statement block into an expression. The statements run in their
+own scope and the value of the **trailing expression statement** becomes the
+value of the whole expression. A trailing `if` / `elif` / `else` works the same
+way when every branch produces a value of the same type.
+
+```sere
+x = do:
+    y = 10
+    y += 2
+    x = 5
+    x + y   # 17: the last expression is the value
+# `y` goes out of scope here
+
+label = do:
+    if x > 10:
+        "big"
+    else:
+        "small"
+```
+
+Rules:
+
+- A name first bound inside the block lives only inside it and is dropped when
+  the block ends. Assigning to a name that already exists in an enclosing scope
+  updates that binding, exactly as it does inside an `if` block.
+- A block whose last statement is not an expression evaluates to `None`, so the
+  value can be discarded:
+
+  ```sere
+  do:
+      print("side effect only")
+  ```
+
+- An `if` used as the trailing statement of a `do:` block must have an `else`
+  branch and every branch must produce the same type; otherwise the block
+  evaluates to `None`.
+- `return`, `raise`, `break`, and `continue` inside a `do:` block act on the
+  enclosing function or loop.
+- The `do:` keyword and its indented block must begin where a statement can
+  start (for example the right-hand side of `=`), not inside parentheses.
 
 ---
 

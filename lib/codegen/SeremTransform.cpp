@@ -49,16 +49,22 @@ constexpr int kMaxRounds = 8;
 /// Bit width of an integer type, or 0 when the type is not an integer.
 [[nodiscard]] int bitWidth(const IRType& type) {
   switch (type.kind()) {
-  case IRType::Kind::Bool: return 1;
+  case IRType::Kind::Bool:
+    return 1;
   case IRType::Kind::I8:
-  case IRType::Kind::U8: return 8;
+  case IRType::Kind::U8:
+    return 8;
   case IRType::Kind::I16:
-  case IRType::Kind::U16: return 16;
+  case IRType::Kind::U16:
+    return 16;
   case IRType::Kind::I32:
-  case IRType::Kind::U32: return 32;
+  case IRType::Kind::U32:
+    return 32;
   case IRType::Kind::I64:
-  case IRType::Kind::U64: return 64;
-  default: return 0;
+  case IRType::Kind::U64:
+    return 64;
+  default:
+    return 0;
   }
 }
 
@@ -161,23 +167,33 @@ constexpr int kMaxRounds = 8;
     // declared signedness, so folding has to read the constants the same way.
     const std::int64_t lhs = signedAt(leftInt->value(), first->type());
     const std::int64_t rhs = signedAt(rightInt->value(), second->type());
-    if (predicate == "eq") return boolConstant(lhs == rhs);
-    if (predicate == "ne") return boolConstant(lhs != rhs);
-    if (predicate == "lt") return boolConstant(lhs < rhs);
-    if (predicate == "le") return boolConstant(lhs <= rhs);
-    if (predicate == "gt") return boolConstant(lhs > rhs);
-    if (predicate == "ge") return boolConstant(lhs >= rhs);
+    if (predicate == "eq")
+      return boolConstant(lhs == rhs);
+    if (predicate == "ne")
+      return boolConstant(lhs != rhs);
+    if (predicate == "lt")
+      return boolConstant(lhs < rhs);
+    if (predicate == "le")
+      return boolConstant(lhs <= rhs);
+    if (predicate == "gt")
+      return boolConstant(lhs > rhs);
+    if (predicate == "ge")
+      return boolConstant(lhs >= rhs);
     return nullptr;
   }
 
   if (leftFloat != nullptr && rightFloat != nullptr) {
     const double lhs = leftFloat->value();
     const double rhs = rightFloat->value();
-    if (opcode == "fadd") return std::make_shared<ConstantFloat>(lhs + rhs, type);
-    if (opcode == "fsub") return std::make_shared<ConstantFloat>(lhs - rhs, type);
-    if (opcode == "fmul") return std::make_shared<ConstantFloat>(lhs * rhs, type);
+    if (opcode == "fadd")
+      return std::make_shared<ConstantFloat>(lhs + rhs, type);
+    if (opcode == "fsub")
+      return std::make_shared<ConstantFloat>(lhs - rhs, type);
+    if (opcode == "fmul")
+      return std::make_shared<ConstantFloat>(lhs * rhs, type);
     // A zero divisor would fold to an infinity the printer cannot round-trip.
-    if (opcode == "fdiv" && rhs != 0.0) return std::make_shared<ConstantFloat>(lhs / rhs, type);
+    if (opcode == "fdiv" && rhs != 0.0)
+      return std::make_shared<ConstantFloat>(lhs / rhs, type);
     return nullptr;
   }
 
@@ -186,12 +202,18 @@ constexpr int kMaxRounds = 8;
   }
   const std::int64_t lhs = leftInt->value();
   const std::int64_t rhs = rightInt->value();
-  if (opcode == "add") return std::make_shared<ConstantInt>(wrapTo(lhs + rhs, type), type);
-  if (opcode == "sub") return std::make_shared<ConstantInt>(wrapTo(lhs - rhs, type), type);
-  if (opcode == "mul") return std::make_shared<ConstantInt>(wrapTo(lhs * rhs, type), type);
-  if (opcode == "and") return std::make_shared<ConstantInt>(wrapTo(lhs & rhs, type), type);
-  if (opcode == "or") return std::make_shared<ConstantInt>(wrapTo(lhs | rhs, type), type);
-  if (opcode == "xor") return std::make_shared<ConstantInt>(wrapTo(lhs ^ rhs, type), type);
+  if (opcode == "add")
+    return std::make_shared<ConstantInt>(wrapTo(lhs + rhs, type), type);
+  if (opcode == "sub")
+    return std::make_shared<ConstantInt>(wrapTo(lhs - rhs, type), type);
+  if (opcode == "mul")
+    return std::make_shared<ConstantInt>(wrapTo(lhs * rhs, type), type);
+  if (opcode == "and")
+    return std::make_shared<ConstantInt>(wrapTo(lhs & rhs, type), type);
+  if (opcode == "or")
+    return std::make_shared<ConstantInt>(wrapTo(lhs | rhs, type), type);
+  if (opcode == "xor")
+    return std::make_shared<ConstantInt>(wrapTo(lhs ^ rhs, type), type);
   if (opcode == "shl" || opcode == "shr") {
     const int bits = bitWidth(type);
     if (bits <= 0 || rhs < 0 || rhs >= bits) {
@@ -288,7 +310,10 @@ constexpr int kMaxRounds = 8;
             const std::string target = condition->value() != 0 ? attributeAt(*operation, "true")
                                                                : attributeAt(*operation, "false");
             kept.push_back(std::make_shared<Operation>(
-                "branch", IRType::voidType(), std::string{}, std::vector<ValuePtr>{},
+                "branch",
+                IRType::voidType(),
+                std::string{},
+                std::vector<ValuePtr>{},
                 std::unordered_map<std::string, std::string>{{"target", target}}));
             changed = true;
             continue;
@@ -513,8 +538,9 @@ public:
 /// Rewrites every operand through `replacements` and drops the replaced
 /// operations from their block, so a rewrite is visible to the printer and to
 /// both backends.
-[[nodiscard]] bool applyReplacements(IRModule& module,
-                                     const std::unordered_map<const Value*, ValuePtr>& replacements) {
+[[nodiscard]] bool
+applyReplacements(IRModule& module,
+                  const std::unordered_map<const Value*, ValuePtr>& replacements) {
   const auto substitute = [&replacements](const ValuePtr& value) -> ValuePtr {
     if (value == nullptr) {
       return value;
@@ -568,8 +594,10 @@ public:
   case IRType::Kind::U8:
   case IRType::Kind::U16:
   case IRType::Kind::U32:
-  case IRType::Kind::U64: return true;
-  default: return false;
+  case IRType::Kind::U64:
+    return true;
+  default:
+    return false;
   }
 }
 
@@ -599,10 +627,12 @@ public:
   const ConstantInt* leftInt = intValue(left);
   const ConstantInt* rightInt = intValue(right);
   const auto zero = [&type]() { return std::make_shared<ConstantInt>(0, type); };
-  const auto shiftBy = [&operation, &type](const ValuePtr& value, int shift,
-                                           const char* opcodeName) {
+  const auto shiftBy = [&operation,
+                        &type](const ValuePtr& value, int shift, const char* opcodeName) {
     return std::make_shared<Operation>(
-        opcodeName, type, operation.resultName(),
+        opcodeName,
+        type,
+        operation.resultName(),
         std::vector<ValuePtr>{value, std::make_shared<ConstantInt>(shift, type)},
         std::unordered_map<std::string, std::string>{});
   };
@@ -674,7 +704,9 @@ public:
           return shiftBy(left, shift, "shr");
         }
         return std::make_shared<Operation>(
-            "and", type, operation.resultName(),
+            "and",
+            type,
+            operation.resultName(),
             std::vector<ValuePtr>{left, std::make_shared<ConstantInt>(rightInt->value() - 1, type)},
             std::unordered_map<std::string, std::string>{});
       }
@@ -828,7 +860,9 @@ std::unique_ptr<TransformPass> makeConstantFoldPass() {
   return std::make_unique<ConstantFoldPass>();
 }
 
-std::unique_ptr<TransformPass> makeDeadCodePass() { return std::make_unique<DeadCodePass>(); }
+std::unique_ptr<TransformPass> makeDeadCodePass() {
+  return std::make_unique<DeadCodePass>();
+}
 
 std::unique_ptr<TransformPass> makeUnreachableBlockPass() {
   return std::make_unique<UnreachableBlockPass>();

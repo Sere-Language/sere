@@ -338,6 +338,13 @@ void writeNullResult(const llvm::json::Value* id) {
     }
     return text;
   }
+  if (node.kind() == NodeKind::DoExpr) {
+    std::string text = "do";
+    if (node.resolvedType() != nullptr) {
+      text += ": " + node.resolvedType()->display();
+    }
+    return text;
+  }
   if (node.kind() == NodeKind::WithStmt) {
     return "with";
   }
@@ -744,63 +751,19 @@ void addImportCompletionItems(llvm::json::Array& items,
 }
 
 void addKeywordCompletions(llvm::json::Array& items, const std::string& prefix) {
-  const char* keywords[] = {"def",
-                            "class",
-                            "struct",
-                            "type",
-                            "return",
-                            "if",
-                            "elif",
-                            "else",
-                            "while",
-                            "pass",
-                            "and",
-                            "or",
-                            "not",
-                            "True",
-                            "False",
-                            "None",
-                            "extern",
-                            "break",
-                            "continue",
-                            "import",
-                            "from",
-                            "as",
-                            "static",
-                            "abstract",
-                            "override",
-                            "enum",
-                            "for",
-                            "in",
-                            "is",
-                            "assert",
-                            "try",
-                            "except",
-                            "finally",
-                            "raise",
-                            "match",
-                            "case",
-                            "lambda",
-                            "with",
-                            "defer",
-                            "del",
-                            "const",
-                            "macro",
-                            "quote",
-                            "__name__",
-                            "__file__",
-                            "__package__",
-                            "__doc__",
-                            "__debug__",
-                            "__sere_version__",
-                            "__windows__",
-                            "__linux__",
-                            "__macos__",
-                            "__unix__",
-                            "__x86_64__",
-                            "__arm64__",
-                            "__platform__",
-                            "__arch__"};
+  const char* keywords[] = {
+      "def",         "class",        "struct",    "type",      "return",
+      "if",          "elif",         "else",      "while",     "pass",
+      "and",         "or",           "not",       "True",      "False",
+      "None",        "extern",       "break",     "continue",  "import",
+      "from",        "as",           "static",    "abstract",  "override",
+      "enum",        "for",          "in",        "is",        "assert",
+      "try",         "except",       "finally",   "raise",     "match",
+      "case",        "lambda",       "with",      "defer",     "del",
+      "do",          "const",        "macro",     "quote",     "__name__",
+      "__file__",    "__package__",  "__doc__",   "__debug__", "__sere_version__",
+      "__windows__", "__linux__",    "__macos__", "__unix__",  "__x86_64__",
+      "__arm64__",   "__platform__", "__arch__"};
   for (const char* keyword : keywords) {
     addCompletion(
         items, keyword, kCompletionKeyword, "keyword", prefix, {}, "1" + std::string(keyword));

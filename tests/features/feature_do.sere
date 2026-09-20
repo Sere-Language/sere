@@ -1,0 +1,119 @@
+class Box:
+    value: i32
+
+    def __init__(self, value: i32) -> void:
+        self.value = value
+
+    def get(self) -> i32:
+        return self.value
+
+def pick(flag: bool) -> i32:
+    # A `do:` block is a valid return value.
+    return do:
+        base = 100
+        if flag:
+            base + 1
+        else:
+            base + 2
+
+def classify(n: i32) -> str:
+    return do:
+        if n < 0:
+            "negative"
+        elif n == 0:
+            "zero"
+        else:
+            "positive"
+
+def main() -> i32:
+    # The trailing expression statement is the value of the block.
+    total = do:
+        a = 10
+        b = 2
+        a * b
+    assert total == 20
+
+    # Names first bound in the block do not leak out.
+    outer = do:
+        inner = 5
+        inner + 1
+    assert outer == 6
+
+    # The block may end with a trailing comment after its last expression.
+    commented = do:
+        step = 3
+        step * 4  # twelve
+    assert commented == 12
+
+    # A block whose last statement is not an expression evaluates to None.
+    do:
+        ignored = 1
+        ignored += 1
+
+    # `if` / `elif` / `else` yields a value when every branch agrees.
+    picked = do:
+        if total > 5:
+            1
+        else:
+            2
+    assert picked == 1
+
+    assert pick(True) == 101
+    assert pick(False) == 102
+    assert classify(-4) == "negative"
+    assert classify(0) == "zero"
+    assert classify(9) == "positive"
+
+    # Compound assignment inside the block.
+    accumulated = do:
+        running = 0
+        running += 4
+        running *= 3
+        running
+    assert accumulated == 12
+
+    # String and list values flow out of the block.
+    text = do:
+        prefix = "ab"
+        prefix + "cd"
+    assert text == "abcd"
+
+    items = do:
+        xs: list[i32] = [1, 2]
+        xs.append(3)
+        xs
+    assert len(items) == 3
+    assert items[2] == 3
+
+    # Records and method calls inside the block.
+    boxed = do:
+        box = Box(41)
+        box.get() + 1
+    assert boxed == 42
+
+    # The block may read enclosing locals.
+    base = 7
+    scaled = do:
+        base * 3
+    assert scaled == 21
+
+    # Nested blocks.
+    nested = do:
+        step = do:
+            seed = 2
+            seed + 3
+        step * 2
+    assert nested == 10
+
+    # `return` inside a block returns from the enclosing function.
+    assert early(False) == 1
+    assert early(True) == 2
+
+    return 0
+
+def early(flag: bool) -> i32:
+    value = do:
+        if flag:
+            return 2
+        1
+    return value

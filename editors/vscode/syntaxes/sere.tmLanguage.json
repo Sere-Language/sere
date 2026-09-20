@@ -143,7 +143,7 @@
     },
     "keyword": {
       "name": "keyword.control.sere",
-      "match": "\\b(and|as|assert|await|break|case|continue|defer|del|elif|else|except|finally|for|from|if|import|in|is|lambda|match|not|or|pass|quote|raise|return|yield|super|try|while|with|syntax|interpolate|wrapper|typed)\\b"
+      "match": "\\b(and|as|assert|await|break|case|continue|defer|del|do|elif|else|except|finally|for|from|if|import|in|is|lambda|match|not|or|pass|quote|raise|return|yield|super|try|while|with|syntax|interpolate|wrapper|typed)\\b"
     },
     "modifier": {
       "name": "storage.modifier.sere",

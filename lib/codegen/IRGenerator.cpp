@@ -39,8 +39,8 @@
 #include <queue>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace sere {
@@ -216,8 +216,7 @@ matchParamType(llvm::IRBuilder<>& builder, llvm::Value* value, llvm::Type* wante
   if (value->getType()->isIntegerTy() && wanted->isIntegerTy()) {
     return builder.CreateIntCast(value, wanted, true);
   }
-  if (wanted->isPointerTy() && !value->getType()->isPointerTy() &&
-      !value->getType()->isVoidTy()) {
+  if (wanted->isPointerTy() && !value->getType()->isPointerTy() && !value->getType()->isVoidTy()) {
     // The parameter is passed by reference, so hand over the storage instead of
     // reinterpreting the value's first word as a pointer.
     llvm::Value* slot = builder.CreateAlloca(value->getType(), nullptr, "arg.ref");
@@ -1534,9 +1533,9 @@ llvm::Value* IRGenerator::emitNarrowedAddress(llvm::IRBuilder<>& builder,
   llvm::Value* packed = builder.CreateLoad(packedLlvm, storage);
   // A tagged union is lowered to { i32 tag, i64 payload }.
   const auto* layout = llvm::dyn_cast<llvm::StructType>(packedLlvm);
-  const bool tagged =
-      layout != nullptr && layout->getNumElements() == 2 &&
-      layout->getElementType(0)->isIntegerTy(32) && layout->getElementType(1)->isIntegerTy(64);
+  const bool tagged = layout != nullptr && layout->getNumElements() == 2 &&
+                      layout->getElementType(0)->isIntegerTy(32) &&
+                      layout->getElementType(1)->isIntegerTy(64);
   llvm::Value* value = nullptr;
   if (tagged && narrowed->isRecord() && !narrowed->isEnum()) {
     // A record travels through the payload as a pointer to its storage, so pass
@@ -1568,7 +1567,8 @@ llvm::Value* IRGenerator::emitNarrowedAddress(llvm::IRBuilder<>& builder,
     builder.CreateBr(merge);
     builder.SetInsertPoint(merge);
     llvm::Value* repacked = llvm::UndefValue::get(narrowedLlvm);
-    repacked = builder.CreateInsertValue(repacked, builder.CreateLoad(builder.getInt32Ty(), slot), {0});
+    repacked =
+        builder.CreateInsertValue(repacked, builder.CreateLoad(builder.getInt32Ty(), slot), {0});
     value = builder.CreateInsertValue(repacked, builder.CreateExtractValue(packed, {1}), {1});
   } else {
     value = emitCoerce(builder, packed, storageType, narrowed);
@@ -1582,8 +1582,7 @@ llvm::Value* IRGenerator::emitNarrowedAddress(llvm::IRBuilder<>& builder,
 }
 
 llvm::Value* IRGenerator::emitIndex(llvm::IRBuilder<>& builder, const IndexExpr& expr) {
-  const Type* objectType =
-      resolveType(expr.object().resolvedType());
+  const Type* objectType = resolveType(expr.object().resolvedType());
   if (objectType != nullptr && objectType->methodIndex("__getitem__") < 0) {
     objectType = objectType->valueType();
   }
@@ -1670,13 +1669,15 @@ llvm::Value* IRGenerator::emitIndex(llvm::IRBuilder<>& builder, const IndexExpr&
                    builder.CreateLoad(builder.getInt64Ty(), lenSlot));
   }
   if (objectType != nullptr && objectType->methodIndex("__getitem__") >= 0 && expr.hasStart()) {
-    return emitDunderCall(builder, expr.object(), "__getitem__",
-                          {emitDunderArgument(builder,
-                                             objectType,
-                                             static_cast<std::size_t>(
-                                                 objectType->methodIndex("__getitem__")),
-                                             1,
-                                             *expr.start())});
+    return emitDunderCall(
+        builder,
+        expr.object(),
+        "__getitem__",
+        {emitDunderArgument(builder,
+                            objectType,
+                            static_cast<std::size_t>(objectType->methodIndex("__getitem__")),
+                            1,
+                            *expr.start())});
   }
   llvm::Value* address = emitAddress(builder, expr);
   if (address == nullptr) {
@@ -2313,12 +2314,11 @@ llvm::Value* IRGenerator::emitIntrinsic(llvm::IRBuilder<>& builder, const CallEx
         llvm::Value* got = builder.CreateLoad(builder.getInt32Ty(), object);
         llvm::Value* match = nullptr;
         for (const Type* record : classTypes_) {
-          if (record == nullptr || !recordHasTypeId(record) ||
-              !record->isSubtypeOf(target) || !record->isSubtypeOf(valueType)) {
+          if (record == nullptr || !recordHasTypeId(record) || !record->isSubtypeOf(target) ||
+              !record->isSubtypeOf(valueType)) {
             continue;
           }
-          llvm::Value* current =
-              builder.CreateICmpEQ(got, builder.getInt32(recordTypeId(record)));
+          llvm::Value* current = builder.CreateICmpEQ(got, builder.getInt32(recordTypeId(record)));
           match = match == nullptr ? current : builder.CreateOr(match, current);
         }
         return match == nullptr ? builder.getInt1(false) : match;
@@ -2491,17 +2491,15 @@ IRGenerator::emitStrRepeat(llvm::IRBuilder<>& builder, llvm::Value* str, llvm::V
                  builder.CreateLoad(builder.getInt64Ty(), lenSlot));
 }
 
-llvm::Value* IRGenerator::emitListConcat(llvm::IRBuilder<>& builder,
-                                         llvm::Value* left,
-                                         llvm::Value* right) {
+llvm::Value*
+IRGenerator::emitListConcat(llvm::IRBuilder<>& builder, llvm::Value* left, llvm::Value* right) {
   llvm::Function* fn =
       runtimeDecl("sere_list_concat", builder.getPtrTy(), {builder.getPtrTy(), builder.getPtrTy()});
   return builder.CreateCall(fn, {left, right});
 }
 
-llvm::Value* IRGenerator::emitListRepeat(llvm::IRBuilder<>& builder,
-                                         llvm::Value* list,
-                                         llvm::Value* count) {
+llvm::Value*
+IRGenerator::emitListRepeat(llvm::IRBuilder<>& builder, llvm::Value* list, llvm::Value* count) {
   if (!count->getType()->isIntegerTy(64)) {
     count = builder.CreateSExt(count, builder.getInt64Ty());
   }
@@ -2511,8 +2509,7 @@ llvm::Value* IRGenerator::emitListRepeat(llvm::IRBuilder<>& builder,
 }
 
 llvm::Value* IRGenerator::emitRecordStr(llvm::IRBuilder<>& builder, const Expr& object) {
-  const Type* record =
-      resolveType(object.resolvedType());
+  const Type* record = resolveType(object.resolvedType());
   if (record == nullptr) {
     return emitStrLiteral(builder, "?");
   }
@@ -3180,13 +3177,13 @@ llvm::Value* IRGenerator::emitInterpolated(llvm::IRBuilder<>& builder,
 }
 
 llvm::Value* IRGenerator::emitAnyToStr(llvm::IRBuilder<>& builder, llvm::Value* value) {
-  if (value == nullptr) return emitStrLiteral(builder, "?");
+  if (value == nullptr)
+    return emitStrLiteral(builder, "?");
   return emitValueRepr(builder, value, types_->anyType());
 }
 
-llvm::Value* IRGenerator::emitFormatted(llvm::IRBuilder<>& builder,
-                                        const Expr& value,
-                                        const std::string& spec) {
+llvm::Value*
+IRGenerator::emitFormatted(llvm::IRBuilder<>& builder, const Expr& value, const std::string& spec) {
   const Type* type = resolveType(value.resolvedType());
   if (type == nullptr) {
     return emitToStr(builder, value);
@@ -3593,12 +3590,12 @@ llvm::Value* IRGenerator::emitInitConstruct(llvm::IRBuilder<>& builder, const Ca
   } else {
     std::size_t paramIndex = 1;
     for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
-      llvm::Value* value = emitCallArgument(
-          builder,
-          *argument,
-          initType != nullptr && paramIndex < initType->paramTypes().size()
-              ? initType->paramTypes()[paramIndex]
-              : nullptr);
+      llvm::Value* value =
+          emitCallArgument(builder,
+                           *argument,
+                           initType != nullptr && paramIndex < initType->paramTypes().size()
+                               ? initType->paramTypes()[paramIndex]
+                               : nullptr);
       args.push_back(value);
       ++paramIndex;
     }
@@ -3652,12 +3649,12 @@ llvm::Value* IRGenerator::emitMethodCall(llvm::IRBuilder<>& builder, const CallE
   } else {
     std::size_t paramIndex = 1;
     for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
-      llvm::Value* value = emitCallArgument(
-          builder,
-          *argument,
-          methodType != nullptr && paramIndex < methodType->paramTypes().size()
-              ? methodType->paramTypes()[paramIndex]
-              : nullptr);
+      llvm::Value* value =
+          emitCallArgument(builder,
+                           *argument,
+                           methodType != nullptr && paramIndex < methodType->paramTypes().size()
+                               ? methodType->paramTypes()[paramIndex]
+                               : nullptr);
       args.push_back(value);
       ++paramIndex;
     }
@@ -3829,8 +3826,8 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
       if (field != nullptr && !field->llvmName.empty()) {
         llvm::Value* left = emitExpr(builder, expr.left());
         if (left != nullptr) {
-          llvm::Value* match = builder.CreateICmpEQ(
-              emitEnumTag(builder, left), builder.getInt32(enumTagFromField(field)));
+          llvm::Value* match = builder.CreateICmpEQ(emitEnumTag(builder, left),
+                                                    builder.getInt32(enumTagFromField(field)));
           return expr.op() == BinaryOp::Is ? match : builder.CreateNot(match);
         }
       }
@@ -3838,11 +3835,9 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
   }
   if ((expr.op() == BinaryOp::Is || expr.op() == BinaryOp::IsNot) &&
       asName(expr.right()) != nullptr) {
-    const Type* target =
-        resolveType(expr.right().resolvedType());
+    const Type* target = resolveType(expr.right().resolvedType());
     const Type* valueType = resolveType(expr.left().resolvedType());
-    if (target != nullptr && valueType != nullptr && !valueType->isAny() &&
-        !valueType->isUnion()) {
+    if (target != nullptr && valueType != nullptr && !valueType->isAny() && !valueType->isUnion()) {
       const bool match = valueType->matchesInstance(target);
       return builder.getInt1(expr.op() == BinaryOp::Is ? match : !match);
     }
@@ -3862,11 +3857,12 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
         llvm::Value* match =
             builder.CreateICmpEQ(tag, builder.getInt32(member >= 0 ? member : base));
         if (base >= 0) {
-          llvm::Value* boxed = builder.CreateIntToPtr(builder.CreateExtractValue(packed, {1}),
-                                                      builder.getPtrTy());
+          llvm::Value* boxed =
+              builder.CreateIntToPtr(builder.CreateExtractValue(packed, {1}), builder.getPtrTy());
           match = builder.CreateAnd(
-              match, builder.CreateICmpEQ(builder.CreateLoad(builder.getInt32Ty(), boxed),
-                                          builder.getInt32(recordTypeId(target))));
+              match,
+              builder.CreateICmpEQ(builder.CreateLoad(builder.getInt32Ty(), boxed),
+                                   builder.getInt32(recordTypeId(target))));
         }
         return expr.op() == BinaryOp::Is ? match : builder.CreateNot(match);
       }
@@ -3900,6 +3896,30 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
       return expr.op() == BinaryOp::Is ? match : builder.CreateNot(match);
     }
   }
+  // `value is None` on an optional tests the union's tag, exactly like `is`
+  // against a named member: `None` lowers to a plain pointer, so the generic
+  // comparison path would otherwise see two different shapes and answer `false`.
+  if ((expr.op() == BinaryOp::Is || expr.op() == BinaryOp::IsNot || expr.op() == BinaryOp::Eq ||
+       expr.op() == BinaryOp::Ne) &&
+      expr.right().kind() == NodeKind::NoneLiteral) {
+    const Type* valueType = resolveType(expr.left().resolvedType());
+    if (valueType != nullptr && valueType->isUnion()) {
+      const int member = valueType->unionMemberIndex(types_->noneType());
+      if (member >= 0) {
+        llvm::Value* packed = emitExpr(builder, expr.left());
+        if (packed == nullptr) {
+          return nullptr;
+        }
+        llvm::Value* tag = builder.CreateExtractValue(packed, {0});
+        llvm::Value* match = builder.CreateICmpEQ(tag, builder.getInt32(member));
+        const bool negated = expr.op() == BinaryOp::IsNot || expr.op() == BinaryOp::Ne;
+        return negated ? builder.CreateNot(match) : match;
+      }
+    }
+    if (valueType != nullptr && valueType->isVoidLike()) {
+      return builder.getInt1(expr.op() == BinaryOp::Is || expr.op() == BinaryOp::Eq);
+    }
+  }
   // Operator overloading and the built-in string operators are lowered before
   // the numeric path, which cannot represent either of them.
   bool overloaded = false;
@@ -3911,19 +3931,15 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
   llvm::Value* right = emitExpr(builder, expr.right());
   if (left == nullptr || right == nullptr) {
     if (left == nullptr) {
-      diagnostics_->error(expr.left().range(),
-                          "cannot lower the left operand of this operator");
+      diagnostics_->error(expr.left().range(), "cannot lower the left operand of this operator");
     }
     if (right == nullptr) {
-      diagnostics_->error(expr.right().range(),
-                          "cannot lower the right operand of this operator");
+      diagnostics_->error(expr.right().range(), "cannot lower the right operand of this operator");
     }
     return nullptr;
   }
-  const Type* leftType =
-      resolveType(expr.left().resolvedType());
-  const Type* rightType =
-      resolveType(expr.right().resolvedType());
+  const Type* leftType = resolveType(expr.left().resolvedType());
+  const Type* rightType = resolveType(expr.right().resolvedType());
   // Comparing a pointer-like value to None is a null check. None's type is
   // void-like, so emitCoerce below would drop the None operand to nullptr and
   // the generic compare path would dereference it. Handle identity/equality
@@ -3931,9 +3947,8 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
   const bool leftIsNone = leftType != nullptr && leftType->isVoidLike();
   const bool rightIsNone = rightType != nullptr && rightType->isVoidLike();
   const bool noneCompare =
-      (leftIsNone != rightIsNone) &&
-      (expr.op() == BinaryOp::Is || expr.op() == BinaryOp::IsNot ||
-       expr.op() == BinaryOp::Eq || expr.op() == BinaryOp::Ne);
+      (leftIsNone != rightIsNone) && (expr.op() == BinaryOp::Is || expr.op() == BinaryOp::IsNot ||
+                                      expr.op() == BinaryOp::Eq || expr.op() == BinaryOp::Ne);
   if (noneCompare) {
     llvm::Value* operand = leftIsNone ? right : left;
     const Type* operandType = leftIsNone ? rightType : leftType;
@@ -3941,8 +3956,7 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
         (operandType->isPointerLike() || operandType->isAny() ||
          operand->getType()->isPointerTy() || operand->getType()->isIntegerTy())) {
       llvm::Value* isNull = builder.CreateIsNull(operand);
-      const bool positive =
-          expr.op() == BinaryOp::Is || expr.op() == BinaryOp::Eq;
+      const bool positive = expr.op() == BinaryOp::Is || expr.op() == BinaryOp::Eq;
       return positive ? isNull : builder.CreateNot(isNull);
     }
   }
@@ -3975,13 +3989,17 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
       rightType != nullptr && rightType->isList()) {
     return emitListConcat(builder, left, right);
   }
-  if ((expr.op() == BinaryOp::Eq || expr.op() == BinaryOp::Ne) &&
-      leftType != nullptr && rightType != nullptr && leftType->isList() && rightType->isList()) {
+  if ((expr.op() == BinaryOp::Eq || expr.op() == BinaryOp::Ne) && leftType != nullptr &&
+      rightType != nullptr && leftType->isList() && rightType->isList()) {
     const Type* element = leftType->elementType();
-    int kind = element->isNamed("str") ? 1 : element->isNamed("f32") ? 2
-                                          : element->isNamed("f64") ? 3 : 0;
-    llvm::Function* equal = runtimeDecl("sere_list_equal", builder.getInt32Ty(),
-                                       {builder.getPtrTy(), builder.getPtrTy(), builder.getInt32Ty()});
+    int kind = element->isNamed("str")   ? 1
+               : element->isNamed("f32") ? 2
+               : element->isNamed("f64") ? 3
+                                         : 0;
+    llvm::Function* equal =
+        runtimeDecl("sere_list_equal",
+                    builder.getInt32Ty(),
+                    {builder.getPtrTy(), builder.getPtrTy(), builder.getInt32Ty()});
     llvm::Value* result = builder.CreateICmpNE(
         builder.CreateCall(equal, {left, right, builder.getInt32(kind)}), builder.getInt32(0));
     return expr.op() == BinaryOp::Eq ? result : builder.CreateNot(result);
@@ -4280,8 +4298,8 @@ llvm::Value* IRGenerator::emitDunderRecordCall(llvm::IRBuilder<>& builder,
   if (signature != nullptr && signature->paramTypes().size() >= 2) {
     const Type* parameter = signature->paramTypes()[1];
     // A by-reference class parameter already arrives as the object's address.
-    if (!(parameter != nullptr && recordHasTypeId(parameter) &&
-          argument != nullptr && argument->getType()->isPointerTy())) {
+    if (!(parameter != nullptr && recordHasTypeId(parameter) && argument != nullptr &&
+          argument->getType()->isPointerTy())) {
       argument = emitCoerce(builder, argument, argumentType, parameter);
     }
   }
@@ -4437,8 +4455,7 @@ llvm::Value* IRGenerator::emitUnary(llvm::IRBuilder<>& builder, const UnaryExpr&
   // and `-v` calls `__neg__`. Emitting the LLVM instruction on a record value
   // would build invalid IR.
   const Type* operandType = resolveType(expr.operand().resolvedType());
-  const Type* recordType =
-      operandType == nullptr ? nullptr : resolveType(operandType->valueType());
+  const Type* recordType = operandType == nullptr ? nullptr : resolveType(operandType->valueType());
   const char* dunder = nullptr;
   switch (expr.op()) {
   case UnaryOp::Not:
@@ -5287,8 +5304,7 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
         const std::size_t setItem =
             static_cast<std::size_t>(objectType->methodIndex("__setitem__"));
         llvm::Value* key = emitDunderArgument(builder, objectType, setItem, 1, *index.start());
-        llvm::Value* stored =
-            emitDunderArgument(builder, objectType, setItem, 2, assign.value());
+        llvm::Value* stored = emitDunderArgument(builder, objectType, setItem, 2, assign.value());
         emitDunderCall(builder, index.object(), "__setitem__", {key, stored});
         return true;
       }
@@ -5506,8 +5522,8 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
                               "internal: missing captured local '" + capture.name + "'");
           return false;
         }
-        llvm::Value* dst = builder.CreateStructGEP(
-            environmentType, environment, static_cast<unsigned>(index));
+        llvm::Value* dst =
+            builder.CreateStructGEP(environmentType, environment, static_cast<unsigned>(index));
         const Type* captureType = capture.type == nullptr ? nullptr : capture.type->canonical();
         if (captureType != nullptr && captureType->isRecord() && !captureType->isEnum()) {
           llvm::Value* object = local->second;
@@ -5938,8 +5954,7 @@ llvm::Value* IRGenerator::emitAwait(llvm::IRBuilder<>& builder, const AwaitExpr&
     inner = operandType->args()[0];
   }
   if (inner == nullptr) {
-    const Type* resultType =
-        resolveType(expr.resolvedType());
+    const Type* resultType = resolveType(expr.resolvedType());
     if (resultType != nullptr && !resultType->isGenericCtor("Task")) {
       inner = resultType;
     }
@@ -6096,8 +6111,7 @@ bool IRGenerator::emitCMainWrapper(llvm::Function* userMain) {
     builder.CreateCall(moduleInitFn_);
   }
   const auto mainDef = functionDefs_.find("sere_main");
-  const FunctionDef* asyncDef =
-      mainDef == functionDefs_.end() ? nullptr : mainDef->second;
+  const FunctionDef* asyncDef = mainDef == functionDefs_.end() ? nullptr : mainDef->second;
   const bool asyncMain = asyncDef != nullptr && asyncDef->isAsync();
   if (!asyncMain) {
     llvm::Value* result = nullptr;
@@ -6153,17 +6167,17 @@ bool IRGenerator::emitCMainWrapper(llvm::Function* userMain) {
   builder.CreateCondBr(isDone, doneBB, loopBB);
   builder.SetInsertPoint(doneBB);
   llvm::Value* code = builder.getInt32(0);
-  const Type* retType = asyncDef->resolvedType() == nullptr
-                            ? nullptr
-                            : asyncDef->resolvedType()->returnType();
+  const Type* retType =
+      asyncDef->resolvedType() == nullptr ? nullptr : asyncDef->resolvedType()->returnType();
   if (retType != nullptr && !retType->isVoidLike()) {
     llvm::Type* retLL = lower(retType);
     if (retLL != nullptr && !retLL->isVoidTy() && retLL->isIntegerTy()) {
       const unsigned align =
           static_cast<unsigned>(module_->getDataLayout().getABITypeAlign(retLL).value());
-      llvm::Value* addr = builder.CreateCall(
-          coroPromise, {hdl, builder.getInt32(static_cast<int>(align)), builder.getFalse()},
-          "root.result");
+      llvm::Value* addr =
+          builder.CreateCall(coroPromise,
+                             {hdl, builder.getInt32(static_cast<int>(align)), builder.getFalse()},
+                             "root.result");
       llvm::Value* value = builder.CreateLoad(retLL, addr);
       code = builder.CreateIntCast(value, i32, true);
     }
@@ -6319,11 +6333,9 @@ bool IRGenerator::emitInstantiations(const std::vector<const Module*>& modules) 
 // @llvm.coro.end and returns the handle.
 // ---------------------------------------------------------------------------
 
-static llvm::Function* sereCoroIntrinsic(llvm::Module* module,
-                                         unsigned id,
-                                         llvm::ArrayRef<llvm::Type*> tys = {}) {
-  return llvm::Intrinsic::getOrInsertDeclaration(
-      module, static_cast<llvm::Intrinsic::ID>(id), tys);
+static llvm::Function*
+sereCoroIntrinsic(llvm::Module* module, unsigned id, llvm::ArrayRef<llvm::Type*> tys = {}) {
+  return llvm::Intrinsic::getOrInsertDeclaration(module, static_cast<llvm::Intrinsic::ID>(id), tys);
 }
 
 bool IRGenerator::setupAsyncCoroutine(llvm::IRBuilder<>& builder,
@@ -6331,8 +6343,7 @@ bool IRGenerator::setupAsyncCoroutine(llvm::IRBuilder<>& builder,
                                       const Type* returnType) {
   llvm::PointerType* ptrTy = builder.getPtrTy();
   asyncCoroIdFn_ = sereCoroIntrinsic(module_, llvm::Intrinsic::coro_id);
-  asyncCoroSizeFn_ =
-      sereCoroIntrinsic(module_, llvm::Intrinsic::coro_size, {builder.getInt64Ty()});
+  asyncCoroSizeFn_ = sereCoroIntrinsic(module_, llvm::Intrinsic::coro_size, {builder.getInt64Ty()});
   asyncCoroBeginFn_ = sereCoroIntrinsic(module_, llvm::Intrinsic::coro_begin);
   asyncCoroSuspendFn_ = sereCoroIntrinsic(module_, llvm::Intrinsic::coro_suspend);
   asyncCoroFreeFn_ = sereCoroIntrinsic(module_, llvm::Intrinsic::coro_free);
@@ -6352,14 +6363,13 @@ bool IRGenerator::setupAsyncCoroutine(llvm::IRBuilder<>& builder,
     }
   }
 
-  llvm::Value* id = builder.CreateCall(asyncCoroIdFn_,
-                                       {builder.getInt32(0),
-                                        asyncPromise_ == nullptr
-                                            ? llvm::ConstantPointerNull::get(ptrTy)
-                                            : asyncPromise_,
-                                        llvm::ConstantPointerNull::get(ptrTy),
-                                        llvm::ConstantPointerNull::get(ptrTy)},
-                                       "coro.id");
+  llvm::Value* id = builder.CreateCall(
+      asyncCoroIdFn_,
+      {builder.getInt32(0),
+       asyncPromise_ == nullptr ? llvm::ConstantPointerNull::get(ptrTy) : asyncPromise_,
+       llvm::ConstantPointerNull::get(ptrTy),
+       llvm::ConstantPointerNull::get(ptrTy)},
+      "coro.id");
   llvm::Value* size = builder.CreateCall(asyncCoroSizeFn_, {}, "coro.size");
   llvm::Function* alloc = runtimeDecl("sere_alloc", ptrTy, {builder.getInt64Ty()});
   llvm::Value* mem = builder.CreateCall(alloc, {size}, "coro.alloc");
@@ -6387,10 +6397,10 @@ bool IRGenerator::setupAsyncCoroutine(llvm::IRBuilder<>& builder,
   llvm::BasicBlock* coroBody = llvm::BasicBlock::Create(*context_, "coro.body", llvmFn);
   builder.CreateBr(coroInit);
   builder.SetInsertPoint(coroInit);
-  llvm::Value* initSuspend = builder.CreateCall(
-      asyncCoroSuspendFn_,
-      {llvm::ConstantTokenNone::get(*context_), builder.getFalse()},
-      "coro.init.suspend");
+  llvm::Value* initSuspend =
+      builder.CreateCall(asyncCoroSuspendFn_,
+                         {llvm::ConstantTokenNone::get(*context_), builder.getFalse()},
+                         "coro.init.suspend");
   llvm::SwitchInst* initSwitch = builder.CreateSwitch(initSuspend, asyncSuspend_, 2);
   initSwitch->addCase(builder.getInt8(0), coroBody);
   initSwitch->addCase(builder.getInt8(1), asyncCleanup_);
@@ -6430,8 +6440,8 @@ void IRGenerator::buildAsyncTail(llvm::IRBuilder<>& builder, llvm::Function* llv
   // coro.final: final suspend; resuming a completed coroutine is UB (trap).
   {
     llvm::IRBuilder<> fb(asyncFinal_);
-    llvm::Value* suspended = fb.CreateCall(asyncCoroSuspendFn_, {noneToken, fb.getTrue()},
-                                           "coro.final.suspend");
+    llvm::Value* suspended =
+        fb.CreateCall(asyncCoroSuspendFn_, {noneToken, fb.getTrue()}, "coro.final.suspend");
     llvm::BasicBlock* trap =
         llvm::BasicBlock::Create(*context_, "coro.trap", asyncFinal_->getParent());
     llvm::SwitchInst* sw = fb.CreateSwitch(suspended, asyncSuspend_, 2);
@@ -6495,9 +6505,8 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
         // By-reference capture: the environment holds a pointer to the object;
         // give the nested local a slot holding that pointer, matching the
         // layout of a method's `self` slot.
-        llvm::Value* slot =
-            builder.CreateAlloca(llvm::PointerType::getUnqual(*context_), nullptr,
-                                 capture.name + ".slot");
+        llvm::Value* slot = builder.CreateAlloca(
+            llvm::PointerType::getUnqual(*context_), nullptr, capture.name + ".slot");
         builder.CreateStore(builder.CreateLoad(builder.getPtrTy(), cell), slot);
         rememberLocal(capture.name, slot, capture.type);
       } else {
@@ -6516,13 +6525,12 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
     const ParamDecl& param = function.params()[index];
     const Type* paramType = fnType->paramTypes()[index];
     arg.setName(param.name);
-    if ((function.isMethod() && index == 0) || (arg.getType()->isPointerTy() &&
-                                                recordHasTypeId(paramType))) {
+    if ((function.isMethod() && index == 0) ||
+        (arg.getType()->isPointerTy() && recordHasTypeId(paramType))) {
       // `self` and every class parameter arrive as a pointer to the object, but
       // captured locals are read back through a load (see the FunctionDef case
       // in emitStatement), so keep a slot that holds the pointer itself.
-      llvm::Value* selfSlot =
-          builder.CreateAlloca(arg.getType(), nullptr, param.name + ".slot");
+      llvm::Value* selfSlot = builder.CreateAlloca(arg.getType(), nullptr, param.name + ".slot");
       builder.CreateStore(&arg, selfSlot);
       // While a class parameter is borrowed storage, it behaves like `self`:
       // reading it loads the pointer and field access follows it.
@@ -6867,8 +6875,7 @@ llvm::Value* IRGenerator::emitDunderCall(llvm::IRBuilder<>& builder,
                                          const Expr& object,
                                          std::string_view name,
                                          const std::vector<llvm::Value*>& extra) {
-  const Type* record =
-      resolveType(object.resolvedType());
+  const Type* record = resolveType(object.resolvedType());
   if (record == nullptr) {
     return nullptr;
   }

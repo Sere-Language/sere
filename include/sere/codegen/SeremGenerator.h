@@ -115,7 +115,11 @@ private:
   /// list.
   [[nodiscard]] serem::ValuePtr emitComprehension(const ComprehensionExpr& expression);
   [[nodiscard]] serem::ValuePtr stringValue(std::string_view value);
-  [[nodiscard]] bool bindLocal(const std::string& name, serem::ValuePtr value);
+  /// Binds `name` to a storage slot and records the type the slot holds, so a
+  /// later read loads the slot with its real type rather than the (possibly
+  /// narrowed) type of the reading expression.
+  [[nodiscard]] bool
+  bindLocal(const std::string& name, serem::ValuePtr value, const Type* type = nullptr);
   [[nodiscard]] serem::ValuePtr local(const std::string& name) const;
   [[nodiscard]] bool unsupported(const Node& node, std::string_view feature);
   [[nodiscard]] std::string functionName(const FunctionDef& function) const;
