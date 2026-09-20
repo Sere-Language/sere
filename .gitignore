@@ -73,7 +73,7 @@ agents/
 
 # Packaged editor
 /editors/vscode/*.vsix
-
+worker.md
 # IDE
 /.vs/
 /.vscode/

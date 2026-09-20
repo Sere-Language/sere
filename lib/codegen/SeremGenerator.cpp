@@ -50,6 +50,21 @@ namespace {
   return std::to_string(static_cast<std::int32_t>(listElementKindOf(type)));
 }
 
+/// Key interpretation the runtime dict hashes with: 1 int32, 2 int64, 3 string.
+/// Any other key is compared bytewise, which the runtime names 0.
+[[nodiscard]] std::string dictKeyKindText(const Type* type) {
+  if (type == nullptr)
+    return "0";
+  const Type* canonical = type->canonical();
+  if (canonical->isNamed("str"))
+    return "3";
+  if (canonical->isNamed("i32") || canonical->isNamed("u32"))
+    return "1";
+  if (canonical->isInteger())
+    return "2";
+  return "0";
+}
+
 /// Whether a record carries its concrete type in the first word of its storage.
 /// Enums keep a variant tag of their own and structs are plain values, so only
 /// classes get the header.
@@ -558,16 +573,15 @@ bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbo
   const Type* type = subst_.empty() ? genericType : types_->substitute(genericType, subst_);
   if (type == nullptr) type = genericType;
   // A specialised method is lowered against the instantiated class, so its
-  // receiver reads the instance's layout instead of the generic one.
-  if (receiverOverride_ != nullptr && !type->paramTypes().empty()) {
-    std::vector<const Type*> params = type->paramTypes();
-    params[0] = receiverOverride_;
-    const Type* replaced = types_->functionType(params, type->returnType());
-    if (replaced != nullptr) type = replaced;
-  }
-
+  // receiver reads the instance's layout instead of the generic one. The
+  // receiver is overridden while lowering rather than by rebuilding the function
+  // type, which would canonicalise the instance back to the generic class.
   std::vector<serem::IRType> params;
-  for (const Type* param : type->paramTypes()) params.push_back(lowerType(param));
+  for (std::size_t index = 0; index < type->paramTypes().size(); ++index) {
+    const Type* param =
+        index == 0 && receiverOverride_ != nullptr ? receiverOverride_ : type->paramTypes()[index];
+    params.push_back(lowerType(param));
+  }
   auto irFunction = std::make_unique<serem::IRFunction>(
       symbol.empty() ? functionName(function) : symbol, std::move(params),
       lowerType(type->returnType()));
@@ -595,6 +609,8 @@ bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbo
   builder_ = std::make_unique<serem::IRBuilder>(*function_);
   locals_.clear();
   localTypes_.clear();
+  functionStatics_.clear();
+  staticTypes_.clear();
   defers_.clear();
   tryHandlers_.clear();
   returnType_ = type->returnType();
@@ -611,7 +627,9 @@ bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbo
   for (std::size_t index = 0; index < function.params().size(); ++index) {
     if (index < function_->arguments().size()) {
       locals_[function.params()[index].name] = function_->argument(index);
-      localTypes_[function.params()[index].name] = type->paramTypes()[index];
+      localTypes_[function.params()[index].name] = index == 0 && receiverOverride_ != nullptr
+                                                       ? receiverOverride_
+                                                       : type->paramTypes()[index];
     }
   }
   if (!emitBlock(function.body())) return false;
@@ -662,6 +680,34 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
     const auto& declaration = static_cast<const VarDecl&>(statement);
     const Type* type = declaration.resolvedType();
     const serem::IRType irType = lowerType(type);
+    // A `static` local lives in a module global rather than on the frame, so its
+    // value survives the call. A companion guard makes the initializer run once.
+    if (declaration.isStatic() && function_ != nullptr) {
+      const std::string symbol = function_->name() + "." + declaration.name();
+      functionStatics_[declaration.name()] = symbol;
+      staticTypes_[declaration.name()] = type;
+      if (declaration.init() != nullptr) {
+        serem::ValuePtr done = builder_->operation(
+            "static.get", serem::IRType::i64(), {}, {{"symbol", symbol + ".once"}});
+        serem::ValuePtr unset = builder_->compare(
+            "eq", std::move(done), std::make_shared<serem::ConstantInt>(0, serem::IRType::i64()));
+        serem::BasicBlock& initBlock = function_->addBlock("static.init");
+        serem::BasicBlock& contBlock = function_->addBlock("static.cont");
+        (void)builder_->conditionalBranch(unset, initBlock, contBlock);
+        builder_->setInsertBlock(initBlock);
+        serem::ValuePtr value =
+            coerce(emitExpression(*declaration.init()), declaration.init()->resolvedType(), type);
+        (void)builder_->operation(
+            "static.set", serem::IRType::voidType(), {value}, {{"symbol", symbol}});
+        (void)builder_->operation("static.set",
+                                  serem::IRType::voidType(),
+                                  {std::make_shared<serem::ConstantInt>(1, serem::IRType::i64())},
+                                  {{"symbol", symbol + ".once"}});
+        (void)builder_->branch(contBlock);
+        builder_->setInsertBlock(contBlock);
+      }
+      return true;
+    }
     auto slot = builder_->alloca(irType);
     locals_[declaration.name()] = slot;
     localTypes_[declaration.name()] = type;
@@ -730,7 +776,15 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
       std::vector<serem::ValuePtr> operands{emitExpression(index.object())};
       if (index.hasStart()) operands.push_back(emitExpression(*index.start()));
       operands.push_back(value);
-      (void)builder_->operation("index.set", serem::IRType::voidType(), std::move(operands));
+      std::unordered_map<std::string, std::string> attributes;
+      if (objectType != nullptr && objectType->isDict()) {
+        attributes["container"] = "dict";
+        attributes["key.kind"] = listElementKindText(objectType->dictKeyType());
+        attributes["key.dict.kind"] = dictKeyKindText(objectType->dictKeyType());
+        attributes["value.kind"] = listElementKindText(objectType->dictValueType());
+      }
+      (void)builder_->operation(
+          "index.set", serem::IRType::voidType(), std::move(operands), std::move(attributes));
       return true;
     }
     if (assign.target().kind() == NodeKind::UnaryExpr &&
@@ -745,6 +799,57 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
       return true;
     }
     const auto& name = static_cast<const NameExpr&>(assign.target());
+    // A `static` local is a module global, so the write goes through it and a
+    // compound assignment reads the global before storing the updated value.
+    const auto statik = functionStatics_.find(name.name());
+    if (statik != functionStatics_.end()) {
+      const Type* type = assign.target().resolvedType();
+      const serem::IRType irType = lowerType(type);
+      if (assign.op() != AssignOp::Assign) {
+        const serem::ValuePtr current =
+            builder_->operation("static.get", irType, {}, {{"symbol", statik->second}});
+        BinaryOp binaryOp = BinaryOp::Add;
+        if (binaryOpForAssign(assign.op(), binaryOp)) {
+          switch (binaryOp) {
+          case BinaryOp::Add:
+            value = builder_->add(current, value, irType);
+            break;
+          case BinaryOp::Sub:
+            value = builder_->sub(current, value, irType);
+            break;
+          case BinaryOp::Mul:
+            value = builder_->mul(current, value, irType);
+            break;
+          case BinaryOp::Div:
+            value = builder_->div(current, value, irType);
+            break;
+          case BinaryOp::Mod:
+            value = builder_->rem(current, value, irType);
+            break;
+          case BinaryOp::BitAnd:
+            value = builder_->bitAnd(current, value, irType);
+            break;
+          case BinaryOp::BitOr:
+            value = builder_->bitOr(current, value, irType);
+            break;
+          case BinaryOp::BitXor:
+            value = builder_->bitXor(current, value, irType);
+            break;
+          case BinaryOp::Shl:
+            value = builder_->shiftLeft(current, value, irType);
+            break;
+          case BinaryOp::Shr:
+            value = builder_->shiftRight(current, value, irType);
+            break;
+          default:
+            break;
+          }
+        }
+      }
+      (void)builder_->operation(
+          "static.set", serem::IRType::voidType(), {value}, {{"symbol", statik->second}});
+      return true;
+    }
     serem::ValuePtr slot = local(name.name());
     if (slot == nullptr) {
       slot = builder_->alloca(value->type());
@@ -779,7 +884,12 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
   case NodeKind::MatchStmt: {
     const auto& match = static_cast<const MatchStmt&>(statement);
     const serem::ValuePtr subject = emitExpression(match.subject());
-    const auto tag = builder_->operation("enum.tag", serem::IRType::i32(), {subject});
+    const Type* subjectType = match.subject().resolvedType();
+    // Only an enum subject carries a variant tag; the tag of an integer or a
+    // string subject is not the arm position.
+    const bool enumSubject = subjectType != nullptr && subjectType->canonical()->isEnum();
+    const serem::ValuePtr tag =
+        enumSubject ? builder_->operation("enum.tag", serem::IRType::i32(), {subject}) : nullptr;
     serem::BasicBlock* merge = &function_->addBlock("match.end");
     std::vector<serem::BasicBlock*> arms;
     for (std::size_t index = 0; index < match.arms().size(); ++index) {
@@ -789,10 +899,49 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
       const MatchArm& arm = match.arms()[index];
       serem::BasicBlock* next = index + 1 < arms.size() ? arms[index + 1] : merge;
       serem::BasicBlock* body = &function_->addBlock("match.body" + std::to_string(index));
-      auto patternTag = std::make_shared<serem::ConstantInt>(static_cast<std::int64_t>(index),
-                          serem::IRType::i32());
-      auto condition = builder_->compare("eq", tag, patternTag);
-      (void)builder_->conditionalBranch(condition, *body, *next);
+      const Expr& pattern = *arm.pattern;
+      // A bare name is the wildcard arm, which matches whatever is left.
+      const bool wildcard = pattern.kind() == NodeKind::NameExpr;
+      serem::ValuePtr condition = nullptr;
+      if (wildcard) {
+        (void)builder_->branch(*body);
+      } else if (pattern.kind() == NodeKind::IntegerLiteral) {
+        const auto& literal = static_cast<const IntegerLiteral&>(pattern);
+        const serem::IRType subjectIr = lowerType(subjectType);
+        condition = builder_->compare(
+            "eq", subject,
+            std::make_shared<serem::ConstantInt>(literal.value(), subjectIr));
+      } else if (enumSubject) {
+        // `case Color.Green` and `case Message.Move(x, y)` name a variant, whose
+        // tag the enum records in the field table.
+        const MemberExpr* member = nullptr;
+        if (pattern.kind() == NodeKind::MemberExpr) {
+          member = static_cast<const MemberExpr*>(&pattern);
+        } else if (pattern.kind() == NodeKind::CallExpr &&
+                   static_cast<const CallExpr&>(pattern).callee().kind() == NodeKind::MemberExpr) {
+          member = static_cast<const MemberExpr*>(
+              &static_cast<const CallExpr&>(pattern).callee());
+        }
+        const RecordField* field =
+            member == nullptr ? nullptr : subjectType->canonical()->findField(member->field());
+        if (field != nullptr) {
+          std::int64_t variant = 0;
+          (void)std::from_chars(field->llvmName.data(),
+                                field->llvmName.data() + field->llvmName.size(), variant);
+          condition = builder_->compare("eq", tag,
+                                        std::make_shared<serem::ConstantInt>(variant,
+                                                                            serem::IRType::i32()));
+        }
+      }
+      if (condition == nullptr && !wildcard) {
+        condition = builder_->compare(
+            "eq", tag == nullptr ? subject : tag,
+            std::make_shared<serem::ConstantInt>(static_cast<std::int64_t>(index),
+                                                 serem::IRType::i32()));
+      }
+      if (condition != nullptr) {
+        (void)builder_->conditionalBranch(condition, *body, *next);
+      }
       builder_->setInsertBlock(*body);
       if (arm.pattern->kind() == NodeKind::CallExpr) {
         const auto& call = static_cast<const CallExpr&>(*arm.pattern);
@@ -972,10 +1121,30 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
   case NodeKind::DeferStmt:
     defers_.push_back(&static_cast<const DeferStmt&>(statement));
     return true;
-  case NodeKind::DelStmt:
-    (void)builder_->operation("destroy", serem::IRType::voidType(),
-                              {emitExpression(static_cast<const DelStmt&>(statement).target())});
+  case NodeKind::DelStmt: {
+    const Expr& target = static_cast<const DelStmt&>(statement).target();
+    // `del container[key]` removes the entry itself; the container is the
+    // operand, not the value stored at that key.
+    if (target.kind() == NodeKind::IndexExpr) {
+      const auto& index = static_cast<const IndexExpr&>(target);
+      const Type* objectType = index.object().resolvedType();
+      if (objectType != nullptr && index.hasStart()) {
+        std::vector<serem::ValuePtr> operands{emitExpression(index.object()),
+                                              emitExpression(*index.start())};
+        std::unordered_map<std::string, std::string> attributes;
+        if (objectType->isDict()) {
+          attributes["container"] = "dict";
+          attributes["key.kind"] = listElementKindText(objectType->dictKeyType());
+          attributes["key.dict.kind"] = dictKeyKindText(objectType->dictKeyType());
+        }
+        (void)builder_->operation(
+            "index.delete", serem::IRType::voidType(), std::move(operands), std::move(attributes));
+        return true;
+      }
+    }
+    (void)builder_->operation("destroy", serem::IRType::voidType(), {emitExpression(target)});
     return true;
+  }
   case NodeKind::ReturnStmt: {
     const auto& result = static_cast<const ReturnStmt&>(statement);
     emitDeferred();
@@ -1207,6 +1376,8 @@ serem::ValuePtr SeremGenerator::emitExpression(const Expr& expression) {
   case NodeKind::DictLiteral:
   case NodeKind::TupleExpr:
     return emitAggregate(expression);
+  case NodeKind::ComprehensionExpr:
+    return emitComprehension(static_cast<const ComprehensionExpr&>(expression));
   case NodeKind::TernaryExpr: {
     const auto& ternary = static_cast<const TernaryExpr&>(expression);
     return builder_->select(emitExpression(ternary.condition()),
@@ -1259,6 +1430,14 @@ serem::ValuePtr SeremGenerator::coerce(serem::ValuePtr value, const Type* from, 
   }
   if (from->isUnion() && !to->isUnion()) {
     return builder_->operation("union.extract", lowerType(to), {value});
+  }
+  // A class reference is a pointer either way, and a base and its derived class
+  // share their layout prefix. Re-typing the value would make a field access use
+  // the wrong record, which is exactly what happens when an instantiated generic
+  // class is viewed through its generic declaration.
+  if (from->isRecord() && to->isRecord() && !from->isEnum() && !to->isEnum() && !from->isStruct() &&
+      !to->isStruct()) {
+    return value;
   }
   if (lowerType(from).display() != lowerType(to).display()) {
     return builder_->operation("cast.value", lowerType(to), {value},
@@ -1381,6 +1560,15 @@ serem::ValuePtr SeremGenerator::printable(serem::ValuePtr value, const Type* typ
 }
 
 serem::ValuePtr SeremGenerator::emitName(const NameExpr& expression) {
+  // A `static` local reads its module global, which outlives the frame.
+  const auto statik = functionStatics_.find(expression.name());
+  if (statik != functionStatics_.end()) {
+    const auto known = staticTypes_.find(expression.name());
+    const Type* stored = known == staticTypes_.end() ? expression.resolvedType() : known->second;
+    serem::ValuePtr value =
+        builder_->operation("static.get", lowerType(stored), {}, {{"symbol", statik->second}});
+    return coerce(std::move(value), stored, expression.resolvedType());
+  }
   if (serem::ValuePtr value = local(expression.name())) {
     const auto known = localTypes_.find(expression.name());
     const Type* stored = known == localTypes_.end() ? expression.resolvedType() : known->second;
@@ -1507,6 +1695,11 @@ serem::ValuePtr SeremGenerator::emitBinary(const BinaryExpr& expression) {
     }
     if (rightType != nullptr && rightType->isList() && rightType->elementType() != nullptr) {
       attributes["element"] = rightType->elementType()->display();
+    }
+    if (rightType != nullptr && rightType->isDict()) {
+      attributes["container"] = "dict";
+      attributes["key.kind"] = listElementKindText(rightType->dictKeyType());
+      attributes["key.dict.kind"] = dictKeyKindText(rightType->dictKeyType());
     }
     return builder_->operation("contains", serem::IRType::boolType(), {left, right},
                                std::move(attributes));
@@ -1649,6 +1842,23 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
         "aggregate.list", lowerType(expression.resolvedType()), std::move(args),
         {{"element", element == nullptr ? std::string{} : element->display()},
          {"element.kind", listElementKindText(element)}});
+  }
+  if (expression.intrinsic() == IntrinsicKind::DictNew) {
+    std::vector<serem::ValuePtr> args;
+    for (const std::unique_ptr<Expr>& argument : expression.arguments()) {
+      args.push_back(emitExpression(*argument));
+    }
+    const Type* dict = expression.resolvedType();
+    const Type* key = dict == nullptr ? nullptr : dict->dictKeyType();
+    const Type* value = dict == nullptr ? nullptr : dict->dictValueType();
+    return builder_->operation("aggregate.dict",
+                               lowerType(dict),
+                               std::move(args),
+                               {{"key", key == nullptr ? std::string{} : key->display()},
+                                {"key.kind", listElementKindText(key)},
+                                {"key.dict.kind", dictKeyKindText(key)},
+                                {"value", value == nullptr ? std::string{} : value->display()},
+                                {"value.kind", listElementKindText(value)}});
   }
   if (expression.intrinsic() == IntrinsicKind::Len) {
     const Type* argumentType = expression.arguments().empty()
@@ -1945,10 +2155,22 @@ serem::ValuePtr SeremGenerator::emitIndex(const IndexExpr& expression) {
   std::vector<serem::ValuePtr> operands{emitExpression(expression.object())};
   if (expression.hasStart()) operands.push_back(emitExpression(*expression.start()));
   if (expression.hasStop()) operands.push_back(emitExpression(*expression.stop()));
+  std::unordered_map<std::string, std::string> attributes{
+      {"has.start", expression.hasStart() ? "true" : "false"},
+      {"has.stop", expression.hasStop() ? "true" : "false"}};
+  if (objectType != nullptr && objectType->isDict()) {
+    const Type* key = objectType->dictKeyType();
+    const Type* value = objectType->dictValueType();
+    attributes["container"] = "dict";
+    attributes["key.kind"] = listElementKindText(key);
+    attributes["key.dict.kind"] = dictKeyKindText(key);
+    attributes["value.kind"] = listElementKindText(value);
+    attributes["value"] = value == nullptr ? std::string{} : value->display();
+  }
   return builder_->operation(expression.isSlice() ? "slice" : "index",
-                             lowerType(expression.resolvedType()), std::move(operands),
-                             {{"has.start", expression.hasStart() ? "true" : "false"},
-                              {"has.stop", expression.hasStop() ? "true" : "false"}});
+                             lowerType(expression.resolvedType()),
+                             std::move(operands),
+                             std::move(attributes));
 }
 
 serem::ValuePtr SeremGenerator::emitAggregate(const Expr& expression) {
@@ -1979,8 +2201,83 @@ serem::ValuePtr SeremGenerator::emitAggregate(const Expr& expression) {
     attributes["element"] = element->display();
     attributes["element.kind"] = listElementKindText(element);
   }
+  // A dict literal carries the key and value layouts, which is what sizes its
+  // bucket entries at runtime.
+  if (expression.kind() == NodeKind::DictLiteral && expression.resolvedType() != nullptr) {
+    const Type* key = expression.resolvedType()->dictKeyType();
+    const Type* value = expression.resolvedType()->dictValueType();
+    attributes["key"] = key == nullptr ? std::string{} : key->display();
+    attributes["key.kind"] = listElementKindText(key);
+    attributes["key.dict.kind"] = dictKeyKindText(key);
+    attributes["value"] = value == nullptr ? std::string{} : value->display();
+    attributes["value.kind"] = listElementKindText(value);
+  }
   return builder_->operation("aggregate." + kind, lowerType(expression.resolvedType()),
                              std::move(operands), std::move(attributes));
+}
+
+serem::ValuePtr SeremGenerator::emitComprehension(const ComprehensionExpr& expression) {
+  const Type* resultType = expression.resolvedType();
+  const Type* elementType =
+      resultType != nullptr && resultType->isList() ? resultType->elementType() : resultType;
+  const Type* iterableType = expression.iterable().resolvedType();
+  const Type* iterElement = iterableType == nullptr ? nullptr : iterableType->elementType();
+  if (elementType == nullptr || iterElement == nullptr) {
+    return nullptr;
+  }
+  std::unordered_map<std::string, std::string> listAttributes;
+  listAttributes["element"] = elementType->display();
+  listAttributes["element.kind"] = listElementKindText(elementType);
+  const serem::ValuePtr list =
+      builder_->operation("aggregate.list", lowerType(resultType), {}, listAttributes);
+  const serem::ValuePtr source = emitExpression(expression.iterable());
+  const std::unordered_map<std::string, std::string> iteratorAttributes{
+      {"element", iterElement->display()}};
+  const serem::ValuePtr iterator = builder_->operation(
+      "iter.begin", serem::IRType::ptr(serem::IRType::i64()), {source}, iteratorAttributes);
+  serem::BasicBlock* condition = &function_->addBlock("comp.cond");
+  serem::BasicBlock* body = &function_->addBlock("comp.body");
+  serem::BasicBlock* exit = &function_->addBlock("comp.end");
+  if (!builder_->currentBlock().isTerminated())
+    (void)builder_->branch(*condition);
+  builder_->setInsertBlock(*condition);
+  serem::ValuePtr hasNext = builder_->operation(
+      "iter.has_next", serem::IRType::boolType(), {source, iterator}, iteratorAttributes);
+  (void)builder_->conditionalBranch(std::move(hasNext), *body, *exit);
+  builder_->setInsertBlock(*body);
+  serem::ValuePtr next = builder_->operation(
+      "iter.next", lowerType(iterElement), {source, iterator}, iteratorAttributes);
+  serem::ValuePtr slot = builder_->alloca(next->type());
+  builder_->store(next, slot);
+  // The loop variable only exists inside the comprehension.
+  const auto previousLocal = locals_.find(expression.name());
+  const auto previousType = localTypes_.find(expression.name());
+  const bool hadLocal = previousLocal != locals_.end();
+  const bool hadType = previousType != localTypes_.end();
+  const serem::ValuePtr savedLocal = hadLocal ? previousLocal->second : nullptr;
+  const Type* savedType = hadType ? previousType->second : nullptr;
+  locals_[expression.name()] = slot;
+  localTypes_[expression.name()] = iterElement;
+  serem::ValuePtr value = coerce(
+      emitExpression(expression.element()), expression.element().resolvedType(), elementType);
+  std::unordered_map<std::string, std::string> appendAttributes = listAttributes;
+  appendAttributes["name"] = "list.append";
+  (void)builder_->operation(
+      "builtin.method", serem::IRType::voidType(), {list, value}, std::move(appendAttributes));
+  if (!builder_->currentBlock().isTerminated())
+    (void)builder_->branch(*condition);
+  builder_->setInsertBlock(*exit);
+  if (hadLocal) {
+    locals_[expression.name()] = savedLocal;
+  } else {
+    locals_.erase(expression.name());
+  }
+  if (hadType) {
+    localTypes_[expression.name()] = savedType;
+  } else {
+    localTypes_.erase(expression.name());
+  }
+  return list;
 }
 
 serem::ValuePtr SeremGenerator::emitUnary(const UnaryExpr& expression) {
@@ -2019,6 +2316,54 @@ serem::ValuePtr SeremGenerator::emitUnary(const UnaryExpr& expression) {
   case UnaryOp::Pos: return operand;
   case UnaryOp::Not: return builder_->operation("not", type, {operand});
   case UnaryOp::Invert: return builder_->operation("invert", type, {operand});
+  case UnaryOp::PreInc:
+  case UnaryOp::PreDec:
+  case UnaryOp::PostInc:
+  case UnaryOp::PostDec: {
+    // Increment and decrement need the target's storage, so the operand is
+    // lowered as an lvalue rather than as a value.
+    const bool increment =
+        expression.op() == UnaryOp::PreInc || expression.op() == UnaryOp::PostInc;
+    const bool prefix = expression.op() == UnaryOp::PreInc || expression.op() == UnaryOp::PreDec;
+    serem::ValuePtr slot = nullptr;
+    if (expression.operand().kind() == NodeKind::NameExpr) {
+      const auto& name = static_cast<const NameExpr&>(expression.operand());
+      const auto statik = functionStatics_.find(name.name());
+      if (statik != functionStatics_.end()) {
+        const Type* storedType = expression.operand().resolvedType();
+        const serem::IRType stored = lowerType(storedType);
+        const serem::ValuePtr current =
+            builder_->operation("static.get", stored, {}, {{"symbol", statik->second}});
+        const serem::ValuePtr one = std::make_shared<serem::ConstantInt>(1, stored);
+        const serem::ValuePtr updated =
+            increment ? builder_->add(current, one, stored) : builder_->sub(current, one, stored);
+        (void)builder_->operation(
+            "static.set", serem::IRType::voidType(), {updated}, {{"symbol", statik->second}});
+        return prefix ? updated : current;
+      }
+      slot = local(name.name());
+    } else if (expression.operand().kind() == NodeKind::IndexExpr) {
+      const auto& index = static_cast<const IndexExpr&>(expression.operand());
+      const Type* objectType = index.object().resolvedType();
+      slot = builder_->operation("index.address",
+                                 serem::IRType::ptr(lowerType(index.object().resolvedType())),
+                                 {emitExpression(index.object()), emitExpression(*index.start())});
+      (void)objectType;
+    }
+    if (slot != nullptr) {
+      const serem::IRType stored = lowerType(expression.operand().resolvedType());
+      const serem::ValuePtr current = builder_->load(slot, stored);
+      const serem::ValuePtr one = std::make_shared<serem::ConstantInt>(1, stored);
+      const serem::ValuePtr updated =
+          increment ? builder_->add(current, one, stored) : builder_->sub(current, one, stored);
+      builder_->store(updated, slot);
+      return prefix ? updated : current;
+    }
+    return builder_->operation("unary.dynamic",
+                               type,
+                               {operand},
+                               {{"operator", std::to_string(static_cast<int>(expression.op()))}});
+  }
   case UnaryOp::AddrOf:
     if (expression.operand().kind() == NodeKind::NameExpr) {
       const auto& name = static_cast<const NameExpr&>(expression.operand());

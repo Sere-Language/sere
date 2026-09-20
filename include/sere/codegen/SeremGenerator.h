@@ -71,6 +71,9 @@ private:
   [[nodiscard]] serem::ValuePtr emitMember(const MemberExpr& expression);
   [[nodiscard]] serem::ValuePtr emitIndex(const IndexExpr& expression);
   [[nodiscard]] serem::ValuePtr emitAggregate(const Expr& expression);
+  /// Lowers `[element for name in iterable]` to a loop that appends to a fresh
+  /// list.
+  [[nodiscard]] serem::ValuePtr emitComprehension(const ComprehensionExpr& expression);
   [[nodiscard]] serem::ValuePtr stringValue(std::string_view value);
   [[nodiscard]] bool bindLocal(const std::string& name, serem::ValuePtr value);
   [[nodiscard]] serem::ValuePtr local(const std::string& name) const;
@@ -86,6 +89,10 @@ private:
   std::unique_ptr<serem::IRBuilder> builder_;
   std::unordered_map<std::string, serem::ValuePtr> locals_;
   std::unordered_map<std::string, const Type*> localTypes_;
+  /// `static` locals of the function being lowered: name to the Serem symbol of
+  /// the module global that backs it.
+  std::unordered_map<std::string, std::string> functionStatics_;
+  std::unordered_map<std::string, const Type*> staticTypes_;
   const Type* returnType_ = nullptr;
   std::unordered_map<std::string, serem::IRType> functions_;
   std::unordered_map<std::string, const FunctionDef*> definitions_;
