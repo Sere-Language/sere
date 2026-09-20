@@ -229,6 +229,57 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
   const std::string& opcode = operation.opcode();
   llvm::Type* type = lowerType(operation.type());
   auto& ir = builder_->builder;
+  /// Storage for a `@static` field. Statics have no slot in the instance layout,
+  /// so every one of them lives in a word-sized module global keyed by the
+  /// field path the generator names.
+  auto staticSlot = [&](const std::string& field) -> llvm::GlobalVariable* {
+    const std::string name = "sere.static." + field;
+    if (llvm::GlobalVariable* existing = module_->getGlobalVariable(name)) {
+      return existing;
+    }
+    return new llvm::GlobalVariable(
+        *module_, ir.getInt64Ty(), /*isConstant=*/false, llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantInt::get(ir.getInt64Ty(), 0), name);
+  };
+  /// Bits a value travels through a static slot as.
+  auto toWord = [&](llvm::Value* value) -> llvm::Value* {
+    if (value == nullptr) {
+      return llvm::ConstantInt::get(ir.getInt64Ty(), 0);
+    }
+    llvm::Type* valueType = value->getType();
+    if (valueType->isPointerTy()) {
+      return ir.CreatePtrToInt(value, ir.getInt64Ty());
+    }
+    if (valueType->isDoubleTy()) {
+      return ir.CreateBitCast(value, ir.getInt64Ty());
+    }
+    if (valueType->isFloatTy()) {
+      return ir.CreateBitCast(ir.CreateFPExt(value, ir.getDoubleTy()), ir.getInt64Ty());
+    }
+    if (valueType->isIntegerTy(1)) {
+      return ir.CreateZExt(value, ir.getInt64Ty());
+    }
+    if (valueType->isIntegerTy() && valueType->getIntegerBitWidth() < 64) {
+      return ir.CreateSExt(value, ir.getInt64Ty());
+    }
+    return value;
+  };
+  /// Inverse of `toWord` for a known destination type.
+  auto fromWord = [&](llvm::Value* word, llvm::Type* wanted) -> llvm::Value* {
+    if (wanted->isPointerTy()) {
+      return ir.CreateIntToPtr(word, wanted);
+    }
+    if (wanted->isDoubleTy()) {
+      return ir.CreateBitCast(word, wanted);
+    }
+    if (wanted->isFloatTy()) {
+      return ir.CreateFPTrunc(ir.CreateBitCast(word, ir.getDoubleTy()), wanted);
+    }
+    if (wanted->isIntegerTy() && wanted->getIntegerBitWidth() < 64) {
+      return ir.CreateTrunc(word, wanted);
+    }
+    return word;
+  };
   auto convert = [&](llvm::Value* value, llvm::Type* target, bool isSigned = true) -> llvm::Value* {
     llvm::Type* source = value->getType();
     if (source == target) return value;
@@ -1119,14 +1170,13 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     const std::string indexText = attribute(operation, "index");
     (void)std::from_chars(indexText.data(), indexText.data() + indexText.size(), index);
     if (indexText == "-1") {
-      const std::string field = attribute(operation, "field");
-      if (field == "name") {
-        result = operand(0);
-      } else {
-        llvm::GlobalVariable* global = builder_->builder.CreateGlobalString(field);
-        result = builder_->builder.CreatePointerCast(
-          global, llvm::PointerType::getUnqual(*context_));
-      }
+      // A `@static` field, or a nested class reached through one. The slot is a
+      // module global: a pointer result asks for its address, because the access
+      // is the base of a static store, and anything else asks for its value.
+      llvm::GlobalVariable* slot = staticSlot(attribute(operation, "field"));
+      result = type->isPointerTy()
+                   ? static_cast<llvm::Value*>(slot)
+                   : fromWord(ir.CreateLoad(ir.getInt64Ty(), slot), type);
     } else {
       llvm::Value* object = operand(0);
       if (object != nullptr && object->getType()->isStructTy()) {
@@ -1140,10 +1190,20 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     unsigned index = 0;
     const std::string indexText = attribute(operation, "index");
     (void)std::from_chars(indexText.data(), indexText.data() + indexText.size(), index);
-    if (operands[0]->type().pointee() != nullptr) {
+    if (indexText == "-1") {
+      // A `@static` write: the base is the receiver, and the storage is the
+      // field's own module global.
+      ir.CreateStore(toWord(operand(1)), staticSlot(attribute(operation, "field")));
+    } else if (operands[0]->type().pointee() != nullptr) {
       llvm::Type* record = lowerType(*operands[0]->type().pointee());
-      ir.CreateStore(convert(operand(1), record->getStructElementType(index)),
-                     ir.CreateStructGEP(record, operand(0), index));
+      if (!record->isStructTy()) {
+        report("Serem field assignment requires a record type");
+      } else if (index >= record->getStructNumElements()) {
+        report("Serem field assignment index is out of range");
+      } else {
+        ir.CreateStore(convert(operand(1), record->getStructElementType(index)),
+                       ir.CreateStructGEP(record, operand(0), index));
+      }
     } else {
       report("Serem field assignment requires object storage");
     }

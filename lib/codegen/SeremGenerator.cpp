@@ -1099,7 +1099,10 @@ serem::ValuePtr SeremGenerator::formatValue(const Expr& expression, const std::s
   // reads the operand out of the matching slot, so only one is ever live.
   if (type != nullptr && type->isNamed("bool")) {
     attributes["kind"] = "3";
-    operands.push_back(coerce(emitExpression(expression), type, types_->i64Type()));
+    // A bool widens with zero-extension, so `True` formats as `1` and not as
+    // the all-ones word a sign extension of a single bit would produce.
+    operands.push_back(builder_->operation("cast.value", serem::IRType::i64(),
+                                           {emitExpression(expression)}, {{"unsigned", "true"}}));
   } else if (type != nullptr && (type->isInteger() || type->isIntEnum())) {
     attributes["kind"] = "0";
     operands.push_back(coerce(emitExpression(expression), type, types_->i64Type()));
