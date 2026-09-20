@@ -1,4 +1,5 @@
-﻿
+﻿import fs
+
 class Person:
     """Person Class"""
     @private name: str
@@ -37,6 +38,9 @@ class Mayor(Person):
 def print_name(person: Person | str) -> None:
     if person is str:
         print(person)
+    elif person is Mayor:
+        print("This is the mayor!")
+        print(person.get_name())
     else:
         print("This is a person!")
         print(person.get_name())

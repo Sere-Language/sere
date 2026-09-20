@@ -1,0 +1,18 @@
+class Vec:
+    @private x: i32
+    @private y: i32
+
+    def __init__(self, x: i32, y: i32) -> None:
+        self.x = x
+        self.y = y
+
+    def __str__(self) -> str:
+        return f"Vec({self.x}, {self.y})"
+
+    def __setitem__(self, index: i32, value: i32) -> None:
+        self.x = value
+
+
+def main(argv: list[str]) -> None:
+    a = Vec(1, 2)
+    print(a)

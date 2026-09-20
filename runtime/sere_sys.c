@@ -1125,6 +1125,10 @@ enum {
   SERE_LIST_F32 = 4,
   SERE_LIST_BOOL = 5,
   SERE_LIST_PTR = 6,
+  SERE_LIST_I8 = 7,
+  SERE_LIST_I16 = 8,
+  SERE_LIST_U8 = 9,
+  SERE_LIST_U16 = 10,
 };
 
 static void
@@ -1169,6 +1173,30 @@ void sere_list_repr_data(void* list, int32_t kind, const char** out_data, int64_
     case SERE_LIST_STR: {
       const SereStr* value = (const SereStr*)item;
       rendered = sere_str_repr_data(value->data, value->len, &rendered_len);
+      break;
+    }
+    case SERE_LIST_I8: {
+      int8_t value = 0;
+      memcpy(&value, item, sizeof(value));
+      rendered_len = snprintf(text, sizeof(text), "%d", (int)value);
+      break;
+    }
+    case SERE_LIST_I16: {
+      int16_t value = 0;
+      memcpy(&value, item, sizeof(value));
+      rendered_len = snprintf(text, sizeof(text), "%d", (int)value);
+      break;
+    }
+    case SERE_LIST_U8: {
+      uint8_t value = 0;
+      memcpy(&value, item, sizeof(value));
+      rendered_len = snprintf(text, sizeof(text), "%u", (unsigned)value);
+      break;
+    }
+    case SERE_LIST_U16: {
+      uint16_t value = 0;
+      memcpy(&value, item, sizeof(value));
+      rendered_len = snprintf(text, sizeof(text), "%u", (unsigned)value);
       break;
     }
     case SERE_LIST_I32: {

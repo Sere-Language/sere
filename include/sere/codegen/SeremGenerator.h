@@ -57,6 +57,7 @@ private:
                                            const std::string& name,
                                            serem::ValuePtr self,
                                            const std::vector<serem::ValuePtr>& arguments);
+  void appendDefaults(const std::string& symbol, std::vector<serem::ValuePtr>& arguments);
   [[nodiscard]] serem::ValuePtr emitName(const NameExpr& expression);
   [[nodiscard]] serem::ValuePtr emitBinary(const BinaryExpr& expression);
   [[nodiscard]] serem::ValuePtr emitCall(const CallExpr& expression);
@@ -78,6 +79,7 @@ private:
   std::unordered_map<std::string, const Type*> localTypes_;
   const Type* returnType_ = nullptr;
   std::unordered_map<std::string, serem::IRType> functions_;
+  std::unordered_map<std::string, const FunctionDef*> definitions_;
   std::unordered_map<std::string, std::string> functionSymbols_;
   /// "Class::method" to the Serem symbol that implements it, so a dunder call
   /// finds the class that declares the method even when it is inherited.

@@ -2788,18 +2788,41 @@ bool TypeChecker::checkIf(IfStmt& statement, const Type* expectedReturn) {
     Symbol* original = lookup(name->name());
     if (original == nullptr || original->type == nullptr || !original->type->isUnion()) return;
     std::vector<const Type*> remaining;
-    for (const Type* member : original->type->args()) {
-      const bool matches = member->canonical() == tested->canonical();
-      if ((test->op() == BinaryOp::Is && matches) ||
-          (test->op() == BinaryOp::IsNot && !matches)) {
-        remaining.push_back(member);
+    if (test->op() == BinaryOp::Is) {
+      // When the tested type fits inside a member, the value *is* that type, so
+      // `person is Mayor` on a `Person | str` narrows to `Mayor`. Matching
+      // canonical member names alone misses every class that is not written out
+      // verbatim, which left the union untouched and un-callable.
+      for (const Type* member : original->type->args()) {
+        if (isAssignable(tested, member)) {
+          Symbol narrowed = *original;
+          narrowed.type = tested;
+          scopes_.back()[name->name()] = std::move(narrowed);
+          return;
+        }
+      }
+      // Otherwise the test can still succeed through members that derive from
+      // the tested type; that is all `is Person` promises for a `Mayor | str`.
+      for (const Type* member : original->type->args()) {
+        if (isAssignable(member, tested)) {
+          remaining.push_back(member);
+        }
+      }
+    } else {
+      // A member that already is an instance of the tested type can never reach
+      // the negative branch, so drop it and keep the rest.
+      for (const Type* member : original->type->args()) {
+        if (!isAssignable(member, tested)) {
+          remaining.push_back(member);
+        }
       }
     }
-    if (!remaining.empty()) {
-      Symbol narrowed = *original;
-      narrowed.type = remaining.size() == 1 ? remaining.front() : types_->unionType(remaining);
-      scopes_.back()[name->name()] = std::move(narrowed);
+    if (remaining.empty()) {
+      return;
     }
+    Symbol narrowed = *original;
+    narrowed.type = remaining.size() == 1 ? remaining.front() : types_->unionType(remaining);
+    scopes_.back()[name->name()] = std::move(narrowed);
   };
   for (IfBranch& branch : statement.branches()) {
     if (taken) {

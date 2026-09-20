@@ -1,0 +1,2 @@
+Found 2 vowels
+Vowels found: ['a', 'u']

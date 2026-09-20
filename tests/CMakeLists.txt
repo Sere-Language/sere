@@ -513,3 +513,20 @@ add_executable(sere_test_iterator_types iterator_types.cpp)
 target_link_libraries(sere_test_iterator_types PRIVATE sere_sema)
 sere_apply_warnings(sere_test_iterator_types)
 add_test(NAME sere.test.iterator_types COMMAND sere_test_iterator_types)
+
+# Execute the same ABI and conversion regressions through both native backends.
+foreach(_backend IN ITEMS llvm serem)
+  foreach(_case IN ITEMS objects casts entry fs)
+    add_test(NAME sere.test.backend_${_backend}_${_case}
+      COMMAND "${CMAKE_COMMAND}"
+        "-DSERE=$<TARGET_FILE:sere>"
+        "-DBACKEND=${_backend}"
+        "-DCASE=${_case}"
+        "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/backend_${_case}.sere"
+        "-DOUTPUT=${CMAKE_BINARY_DIR}/backend_${_backend}_${_case}${CMAKE_EXECUTABLE_SUFFIX}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/run_backend.cmake")
+    set_tests_properties(sere.test.backend_${_backend}_${_case} PROPERTIES
+      ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib"
+      TIMEOUT 120)
+  endforeach()
+endforeach()

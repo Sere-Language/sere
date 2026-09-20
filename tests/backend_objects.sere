@@ -15,7 +15,7 @@ class Person:
         return self.age
 
     def __len__(self) -> i64:
-        return self.age as i64
+        return self.age
 
     def introduce(self) -> str:
         return f"Hello, my name is {self.name}, I am {self.age} years old."

@@ -23,11 +23,15 @@ namespace sere::serem {
 enum class ListElementKind : std::int32_t {
   Str = 0,     // SereStr { data, len }
   Int32 = 1,   // i32/u32
-  Int64 = 2,   // i64/u64 and other integers
+  Int64 = 2,   // i64/u64
   Float64 = 3, // f64
   Float32 = 4, // f32
   Bool = 5,    // stored as one byte
-  Ptr = 6,     // any other pointer-like value
+  Ptr = 6,     // other pointer-like values
+  Int8 = 7,
+  Int16 = 8,
+  UInt8 = 9,
+  UInt16 = 10,
 };
 
 class IRType {

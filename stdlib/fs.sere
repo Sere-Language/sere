@@ -45,6 +45,11 @@ extern "C" "sere_fs_seek"
 def _fs_seek(handle: Ptr[i8], offset: i64, whence: i32) -> void
 
 
+# Allocate fixed byte storage by length; array[T](...) takes element values.
+extern "C" "sere_array_new"
+def _byte_buffer(stride: i64, length: i64) -> array[i8]
+
+
 class File:
     _handle: Ptr[i8]
     _mode: str
@@ -72,8 +77,10 @@ class File:
         """Read bytes from the file into a list."""
         if self._handle is None:
             return []
-        # Allocate buffer
-        buffer: array[i8] = array[i8](buffer_size)
+        if buffer_size <= 0:
+            return []
+        # Allocate buffer_size bytes, rather than a single byte containing the size.
+        buffer: array[i8] = _byte_buffer(1, buffer_size)
         bytes_read = _fs_read_bytes(self._handle, &buffer[0], buffer_size)
 
         # Return list of read bytes

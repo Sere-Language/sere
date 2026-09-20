@@ -1,0 +1,52 @@
+class Vec:
+    @private x: i32
+    @private y: i32
+
+    def __init__(self, x: i32, y: i32) -> None:
+        self.x = x
+        self.y = y
+
+    def __len__(self) -> i64:
+        return 2
+
+    def __str__(self) -> str:
+        return f"Vec({self.x}, {self.y})"
+
+    def __repr__(self) -> str:
+        return f"Vec[{self.x}, {self.y}]"
+
+    def __eq__(self, other: Vec) -> bool:
+        return self.x == other.x and self.y == other.y
+
+    def __add__(self, other: Vec) -> Vec:
+        return Vec(self.x + other.x, self.y + other.y)
+
+    def __lt__(self, other: Vec) -> bool:
+        return self.x + self.y < other.x + other.y
+
+    def __neg__(self) -> Vec:
+        return Vec(0 - self.x, 0 - self.y)
+
+    def __getitem__(self, index: i32) -> i32:
+        if index == 0:
+            return self.x
+        return self.y
+
+    def __setitem__(self, index: i32, value: i32) -> None:
+        if index == 0:
+            self.x = value
+        else:
+            self.y = value
+
+    def __contains__(self, value: i32) -> bool:
+        return value == self.x or value == self.y
+
+    def __bool__(self) -> bool:
+        return self.x != 0 or self.y != 0
+
+    def __call__(self, scale: i32) -> i32:
+        return (self.x + self.y) * scale
+
+def main(argv: list[str]) -> None:
+    a = Vec(1, 2)
+    print(len(a))

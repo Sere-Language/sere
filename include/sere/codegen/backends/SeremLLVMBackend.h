@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace llvm {
 class BasicBlock;
@@ -53,6 +54,7 @@ private:
   std::unordered_map<std::string, llvm::Function*> functions_;
   std::unordered_map<std::string, llvm::BasicBlock*> blocks_;
   std::unordered_map<const serem::Value*, llvm::Value*> values_;
+  std::unordered_set<std::string> externalSymbols_;
   std::string currentFunctionName_;
   class IRBuilderHolder;
   std::unique_ptr<IRBuilderHolder> builder_;
