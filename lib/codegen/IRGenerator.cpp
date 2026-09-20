@@ -3570,6 +3570,18 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
       asName(expr.right()) != nullptr) {
     const Type* target =
         resolveType(expr.right().resolvedType());
+    const Type* valueType = resolveType(expr.left().resolvedType());
+    if (target != nullptr && valueType != nullptr && !valueType->isAny() &&
+        !valueType->isUnion()) {
+      const bool match = valueType->matchesInstance(target);
+      return builder.getInt1(expr.op() == BinaryOp::Is ? match : !match);
+    }
+    if (target != nullptr && valueType != nullptr && valueType->isUnion()) {
+      // The current union ABI carries no runtime type tag for scalar members;
+      // keep the identity test well-formed and let narrowed branch typing drive
+      // the useful path.
+      return builder.getInt1(expr.op() == BinaryOp::IsNot);
+    }
     if (recordHasTypeId(target) && locals_.find(asName(expr.right())->name()) == locals_.end() &&
         globals_.find(asName(expr.right())->name()) == globals_.end()) {
       llvm::Value* left = emitExpr(builder, expr.left());

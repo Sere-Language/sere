@@ -202,9 +202,118 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
                                          data, lengthValue});
     result = builder_->builder.CreateLoad(llvm::PointerType::getUnqual(*context_), data);
   }
+  else if (opcode == "runtime.len") {
+    const std::string kind = attribute(operation, "kind");
+    const char* runtimeName = kind == "str" ? "strlen" :
+                              kind.find("dict[") == 0 ? "sere_dict_len" : "sere_list_len";
+    llvm::Function* length = module_->getFunction(runtimeName);
+    if (length == nullptr) {
+      length = llvm::Function::Create(
+          llvm::FunctionType::get(llvm::Type::getInt64Ty(*context_),
+                                  {llvm::PointerType::getUnqual(*context_)}, false),
+          llvm::Function::ExternalLinkage, runtimeName, module_.get());
+    }
+    result = builder_->builder.CreateCall(length, {operand(0)});
+  }
   else if (opcode == "builtin.method") {
     const std::string name = attribute(operation, "name");
     llvm::Value* value = operand(0);
+    auto runtime = [&](const char* functionName, llvm::Type* returnType,
+                       std::initializer_list<llvm::Type*> params) {
+      llvm::Function* function = module_->getFunction(functionName);
+      if (function == nullptr) {
+        function = llvm::Function::Create(
+            llvm::FunctionType::get(returnType, params, false), llvm::Function::ExternalLinkage,
+            functionName, module_.get());
+      }
+      return function;
+    };
+    if (name.starts_with("list.")) {
+      auto slot = [&](llvm::Value* item) {
+        if (attribute(operation, "element") == "str") {
+          llvm::StructType* stringType = llvm::StructType::get(
+              *context_, {llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_)});
+          llvm::Value* storage = builder_->builder.CreateAlloca(stringType);
+          builder_->builder.CreateStore(item, builder_->builder.CreateStructGEP(stringType, storage, 0));
+          llvm::Function* stringLength = runtime(
+              "strlen", llvm::Type::getInt64Ty(*context_), {llvm::PointerType::getUnqual(*context_)});
+          builder_->builder.CreateStore(
+              builder_->builder.CreateCall(stringLength, {item}),
+              builder_->builder.CreateStructGEP(stringType, storage, 1));
+          return storage;
+        }
+        llvm::AllocaInst* storage = builder_->builder.CreateAlloca(item->getType());
+        builder_->builder.CreateStore(item, storage);
+        return static_cast<llvm::Value*>(storage);
+      };
+      llvm::Value* item = operands.size() > 1 ? operand(1) : nullptr;
+      if (name == "list.append" || name == "list.push") {
+        if (item != nullptr) builder_->builder.CreateCall(
+            runtime("sere_list_push", llvm::Type::getVoidTy(*context_),
+                    {llvm::PointerType::getUnqual(*context_), llvm::PointerType::getUnqual(*context_)}),
+            {value, slot(item)});
+        return nullptr;
+      }
+      if (name == "list.clear" || name == "list.reverse") {
+        builder_->builder.CreateCall(
+            runtime(name == "list.clear" ? "sere_list_clear" : "sere_list_reverse",
+                    llvm::Type::getVoidTy(*context_), {llvm::PointerType::getUnqual(*context_)}),
+            {value});
+        return nullptr;
+      }
+      if (name == "list.extend") {
+        builder_->builder.CreateCall(
+            runtime("sere_list_extend", llvm::Type::getVoidTy(*context_),
+                    {llvm::PointerType::getUnqual(*context_), llvm::PointerType::getUnqual(*context_)}),
+            {value, operand(1)});
+        return nullptr;
+      }
+      if (name == "list.copy" || name == "list.clone") {
+        return builder_->builder.CreateCall(
+            runtime("sere_list_copy", llvm::PointerType::getUnqual(*context_),
+                    {llvm::PointerType::getUnqual(*context_)}), {value});
+      }
+      if (name == "list.insert") {
+        builder_->builder.CreateCall(
+            runtime("sere_list_insert", llvm::Type::getVoidTy(*context_),
+                    {llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_),
+                     llvm::PointerType::getUnqual(*context_)}),
+            {value, operand(1), slot(operand(2))});
+        return nullptr;
+      }
+      if (name == "list.remove" || name == "list.find" || name == "list.index" ||
+          name == "list.count" || name == "list.contains" || name == "list.has") {
+        const char* functionName = name == "list.remove" ? "sere_list_remove_value"
+                                  : name == "list.find" || name == "list.index" ? "sere_list_index_of"
+                                  : name == "list.count" ? "sere_list_count" : "sere_list_contains";
+        llvm::Type* returnType = name == "list.remove" || name == "list.contains" || name == "list.has"
+                                     ? llvm::Type::getInt32Ty(*context_)
+                                     : llvm::Type::getInt64Ty(*context_);
+        llvm::Value* call = builder_->builder.CreateCall(
+            runtime(functionName, returnType,
+                    {llvm::PointerType::getUnqual(*context_), llvm::PointerType::getUnqual(*context_)}),
+            {value, slot(item)});
+        return (name == "list.remove" || name == "list.contains" || name == "list.has")
+                   ? builder_->builder.CreateICmpNE(call, llvm::ConstantInt::get(returnType, 0))
+                   : call;
+      }
+      if (name == "list.pop") {
+        llvm::AllocaInst* output = builder_->builder.CreateAlloca(type);
+        if (operands.size() == 1) {
+          builder_->builder.CreateCall(
+              runtime("sere_list_pop", llvm::Type::getVoidTy(*context_),
+                      {llvm::PointerType::getUnqual(*context_), llvm::PointerType::getUnqual(*context_)}),
+              {value, output});
+        } else {
+          builder_->builder.CreateCall(
+              runtime("sere_list_pop_at", llvm::Type::getVoidTy(*context_),
+                      {llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_),
+                       llvm::PointerType::getUnqual(*context_)}),
+              {value, operand(1), output});
+        }
+        return builder_->builder.CreateLoad(type, output);
+      }
+    }
     llvm::Function* length = module_->getFunction("strlen");
     if (length == nullptr) {
       llvm::FunctionType* lengthType = llvm::FunctionType::get(
@@ -213,16 +322,6 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
                                       "strlen", module_.get());
     }
     llvm::Value* valueLength = builder_->builder.CreateCall(length, {value});
-    auto runtime = [&](const char* name, llvm::Type* returnType,
-                       std::initializer_list<llvm::Type*> params) {
-      llvm::Function* function = module_->getFunction(name);
-      if (function == nullptr) {
-        function = llvm::Function::Create(
-            llvm::FunctionType::get(returnType, params, false), llvm::Function::ExternalLinkage,
-            name, module_.get());
-      }
-      return function;
-    };
     auto outputString = [&](llvm::Function* function, std::vector<llvm::Value*> args) {
       llvm::Value* data = builder_->builder.CreateAlloca(
           llvm::PointerType::getUnqual(*context_));
@@ -503,6 +602,42 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     llvm::Value* length = builder_->builder.CreateAlloca(llvm::Type::getInt64Ty(*context_));
     builder_->builder.CreateCall(repr, {operand(0), data, length});
     result = builder_->builder.CreateLoad(llvm::PointerType::getUnqual(*context_), data);
+  }
+  else if (opcode == "aggregate.list") {
+    const std::string element = attribute(operation, "element");
+    llvm::Function* create = module_->getFunction("sere_list_new");
+    if (create == nullptr) {
+      llvm::FunctionType* createType = llvm::FunctionType::get(
+          llvm::PointerType::getUnqual(*context_), {llvm::Type::getInt64Ty(*context_)}, false);
+      create = llvm::Function::Create(createType, llvm::Function::ExternalLinkage,
+                                      "sere_list_new", module_.get());
+    }
+    result = builder_->builder.CreateCall(
+        create, {llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context_),
+                                        element == "str" ? 16 : 8)});
+    if (element == "str") {
+      llvm::Function* push = module_->getFunction("sere_list_str_push");
+      if (push == nullptr) {
+        llvm::FunctionType* pushType = llvm::FunctionType::get(
+            llvm::Type::getVoidTy(*context_),
+            {llvm::PointerType::getUnqual(*context_), llvm::PointerType::getUnqual(*context_),
+             llvm::Type::getInt64Ty(*context_)},
+            false);
+        push = llvm::Function::Create(pushType, llvm::Function::ExternalLinkage,
+                                      "sere_list_str_push", module_.get());
+      }
+      llvm::Function* length = module_->getFunction("strlen");
+      if (length == nullptr) {
+        llvm::FunctionType* lengthType = llvm::FunctionType::get(
+            llvm::Type::getInt64Ty(*context_), {llvm::PointerType::getUnqual(*context_)}, false);
+        length = llvm::Function::Create(lengthType, llvm::Function::ExternalLinkage,
+                                        "strlen", module_.get());
+      }
+      for (std::size_t index = 0; index < operands.size(); ++index) {
+        llvm::Value* item = operand(index);
+        builder_->builder.CreateCall(push, {result, item, builder_->builder.CreateCall(length, {item})});
+      }
+    }
   }
   else if (opcode == "construct") {
     if (type->isStructTy()) {

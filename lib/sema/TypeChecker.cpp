@@ -2454,24 +2454,29 @@ TypeChecker::rewriteDunderBinary(BinaryExpr& expr, const Type* left, const Type*
 
 const Type* TypeChecker::checkBinary(BinaryExpr& expr) {
   const Type* left = checkExpr(expr.left());
-  const Type* right = checkExpr(expr.right());
-  if (left == nullptr || right == nullptr) {
+  if (left == nullptr) {
     return nullptr;
   }
   const BinaryOp op = expr.op();
+  if (op == BinaryOp::Is || op == BinaryOp::IsNot) {
+    if (const Type* typeRhs = resolveTypeFromExpr(expr.right(), false)) {
+      expr.right().setResolvedType(typeRhs);
+    } else {
+      return nullptr;
+    }
+    expr.setResolvedType(types_->boolType());
+    return types_->boolType();
+  }
+  const Type* right = checkExpr(expr.right());
+  if (right == nullptr) {
+    return nullptr;
+  }
   if (op == BinaryOp::And || op == BinaryOp::Or) {
     if (!left->isNamed("bool") || !right->isNamed("bool")) {
       diagnostics_->error(expr.range(),
                           "logical operators require bool operands, found " + quoteType(left) +
                               " and " + quoteType(right));
       return nullptr;
-    }
-    expr.setResolvedType(types_->boolType());
-    return types_->boolType();
-  }
-  if (op == BinaryOp::Is || op == BinaryOp::IsNot) {
-    if (const Type* typeRhs = resolveTypeFromExpr(expr.right(), false)) {
-      expr.right().setResolvedType(typeRhs);
     }
     expr.setResolvedType(types_->boolType());
     return types_->boolType();

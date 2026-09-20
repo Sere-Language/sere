@@ -81,6 +81,7 @@ int64_t sere_list_len(void* list);
 void* sere_list_new(int64_t stride);
 void* sere_array_new(int64_t stride, int64_t length);
 void sere_list_push(void* list, const void* item);
+void sere_list_str_push(void* list, const char* data, int64_t len);
 void sere_list_insert(void* list, int64_t index, const void* item);
 void sere_list_remove(void* list, int64_t index);
 void sere_list_pop(void* list, void* out_item);

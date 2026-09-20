@@ -647,6 +647,13 @@ void sere_list_push(void* list, const void* item) {
   typed->len += 1;
 }
 
+void sere_list_str_push(void* list, const char* data, int64_t len) {
+  SereStr item;
+  item.data = data == NULL ? "" : data;
+  item.len = len < 0 ? 0 : len;
+  sere_list_push(list, &item);
+}
+
 void sere_list_remove(void* list, int64_t index) {
   SereList* typed = (SereList*)list;
   if (typed == NULL || typed->data == NULL || index < 0 || index >= typed->len) {

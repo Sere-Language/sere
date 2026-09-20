@@ -636,16 +636,43 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
                                                  ? std::string{}
                                                  : expression.resolvedType()->display()}});
   }
+  if (expression.intrinsic() == IntrinsicKind::ListNew) {
+    std::vector<serem::ValuePtr> args;
+    for (const std::unique_ptr<Expr>& argument : expression.arguments()) {
+      args.push_back(emitExpression(*argument));
+    }
+    const Type* element = expression.resolvedType() == nullptr
+                              ? nullptr
+                              : expression.resolvedType()->elementType();
+    return builder_->operation("aggregate.list", lowerType(expression.resolvedType()),
+                               std::move(args),
+                               {{"element", element == nullptr ? std::string{} : element->display()}});
+  }
+  if (expression.intrinsic() == IntrinsicKind::Len) {
+    const Type* argumentType = expression.arguments().empty()
+                                   ? nullptr
+                                   : expression.arguments()[0]->resolvedType();
+    serem::ValuePtr value = expression.arguments().empty()
+                                ? nullptr
+                                : emitExpression(*expression.arguments()[0]);
+    return builder_->operation("runtime.len", lowerType(expression.resolvedType()), {value},
+                               {{"kind", argumentType == nullptr ? std::string{}
+                                                                    : argumentType->valueType()->display()}});
+  }
   if (expression.intrinsic() == IntrinsicKind::BuiltinMethod &&
-      expression.loweredName().starts_with("str.") &&
       expression.callee().kind() == NodeKind::MemberExpr) {
     const auto& member = static_cast<const MemberExpr&>(expression.callee());
     std::vector<serem::ValuePtr> args{emitExpression(member.object())};
     for (const std::unique_ptr<Expr>& argument : expression.arguments()) {
       args.push_back(emitExpression(*argument));
     }
+    std::unordered_map<std::string, std::string> attributes{{"name", expression.loweredName()}};
+    const Type* objectType = member.object().resolvedType();
+    if (objectType != nullptr && objectType->isList() && objectType->elementType() != nullptr) {
+      attributes["element"] = objectType->elementType()->display();
+    }
     return builder_->operation("builtin.method", lowerType(expression.resolvedType()),
-                               std::move(args), {{"name", expression.loweredName()}});
+                               std::move(args), std::move(attributes));
   }
   if (expression.callee().kind() == NodeKind::NameExpr &&
       static_cast<const NameExpr&>(expression.callee()).name() == "input") {
@@ -811,8 +838,13 @@ serem::ValuePtr SeremGenerator::emitAggregate(const Expr& expression) {
       operands.push_back(emitExpression(*dict.values()[index]));
     }
   }
+  std::unordered_map<std::string, std::string> attributes;
+  if (expression.kind() == NodeKind::ListLiteral && expression.resolvedType() != nullptr &&
+      expression.resolvedType()->elementType() != nullptr) {
+    attributes["element"] = expression.resolvedType()->elementType()->display();
+  }
   return builder_->operation("aggregate." + kind, lowerType(expression.resolvedType()),
-                             std::move(operands));
+                             std::move(operands), std::move(attributes));
 }
 
 serem::ValuePtr SeremGenerator::emitUnary(const UnaryExpr& expression) {

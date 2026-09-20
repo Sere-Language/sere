@@ -1,7 +1,17 @@
 
 def main() -> i32:
-    ls = ["apple", "banana", "cherry"]
-    print(ls)
-    name = input("Enter your name: ")
-    print(f"Bye, {name.split('')}!")
+    vowels = "aeiou"
+    print("Vowel identifier!")
+    in_str = input("Input your sentence or word: ")
+    in_list = in_str.split('')
+    found = list[str]()
+
+    for c in in_list:
+        if c in vowels:
+            found.append(c)
+    print(f"Found {len(found)} vowels")
+    print(f"Vowels found: {found}")
+
+
+
     return 0
