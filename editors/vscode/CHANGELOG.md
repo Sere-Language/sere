@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.10
+
+- **Docstrings are documented**: `def`, `class`, `struct`, and `enum` declarations take a leading string literal with a summary, `Args:`, `Returns:`, `Raises:`, `Example:`, and `Note:` sections
+- Hovering a declaration **or a call** shows the signature, the description, one bullet per argument with its type, the return value, the errors raised, and an example code block
+- Completion and signature help render the same documentation, so a function explains itself wherever it is read
+- The format is described in `docs/language.md` under *Functions → Docstrings*
+
+## 0.2.9
+
+- Refresh the packaged compiler and language server helper
+
 ## 0.2.8
 
 - Member completion now resolves call and index receivers: `add(5, 4).` and `xs[0].` list the members of the returned type, including generic substitutions such as `unwrap() -> i32`

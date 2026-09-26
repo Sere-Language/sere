@@ -3,6 +3,7 @@
 
 #include "sere/codegen/Serem.h"
 
+#include <algorithm>
 #include <iomanip>
 #include <sstream>
 
@@ -506,6 +507,17 @@ bool IRModule::removeGlobal(std::string_view name) {
     }
   }
   return false;
+}
+
+bool IRModule::removeType(std::string_view name) {
+  const auto it = std::find_if(types_.begin(), types_.end(), [&](const auto& type) {
+    return type != nullptr && type->name() == name;
+  });
+  if (it == types_.end()) {
+    return false;
+  }
+  types_.erase(it);
+  return true;
 }
 const std::vector<std::unique_ptr<TypeDef>>& IRModule::types() const {
   return types_;

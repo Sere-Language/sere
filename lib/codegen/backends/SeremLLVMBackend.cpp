@@ -494,6 +494,10 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
   } else if (opcode == "static.get" || opcode == "static.set") {
     const std::string name = "sere.static." + attribute(operation, "symbol");
     llvm::Type* fieldType = opcode == "static.get" ? type : lowerType(operands[0]->type());
+    // A function value occupies a pointer-sized slot, not a function slot.
+    if (fieldType->isFunctionTy()) {
+      fieldType = ir.getPtrTy();
+    }
     // Include internal globals in the lookup: every read and write must use the
     // same storage, including when a read is emitted before the first write.
     llvm::GlobalVariable* slot = module_->getGlobalVariable(name, true);
@@ -552,7 +556,10 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
   } else if (opcode.starts_with("cmp.")) {
     const std::string predicate = opcode.substr(4);
     auto [left, right] = binary(0, 1);
-    if (operands[0]->type().kind() == serem::IRType::Kind::String &&
+    // A comparison whose operands the generator could not lower has no types to
+    // read, so the string case only applies when both operands are present.
+    if (operands.size() >= 2 && operands[0] != nullptr && operands[1] != nullptr &&
+        operands[0]->type().kind() == serem::IRType::Kind::String &&
         operands[1]->type().kind() == serem::IRType::Kind::String) {
       auto compare =
           module_->getOrInsertFunction("strcmp", ir.getInt32Ty(), ir.getPtrTy(), ir.getPtrTy());

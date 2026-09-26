@@ -10,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace sere {
 
@@ -109,6 +110,7 @@ private:
   /// Emits the renderers the two symbols above named while the module was
   /// lowered.
   void emitPendingRenderers();
+  void pruneUnusedPreludeTypes();
   /// Renders an enum's variant name from its discriminant, qualified as
   /// `Type.Variant` when the caller asks for the long form.
   [[nodiscard]] serem::ValuePtr
@@ -178,6 +180,9 @@ private:
   std::unordered_map<const FunctionDef*, std::string> functionNames_;
   std::unordered_map<std::string, std::string> decorators_;
   std::unordered_map<std::string, std::string> classBases_;
+  std::unordered_set<std::string> preludeTypeNames_;
+  mutable std::unordered_set<std::string> usedTypeNames_;
+  bool loweringPrelude_ = false;
   std::unordered_map<std::string, std::vector<serem::IRType>> classFields_;
   /// Every declared class, so `isinstance` can list the classes a value of a
   /// given static type may hold at runtime.

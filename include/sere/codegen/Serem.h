@@ -323,6 +323,8 @@ public:
   bool removeFunction(std::string_view name);
   /// Drops the named global, reporting whether anything was removed.
   bool removeGlobal(std::string_view name);
+  /// Drops the named type, reporting whether anything was removed.
+  bool removeType(std::string_view name);
   [[nodiscard]] const std::vector<std::unique_ptr<TypeDef>>& types() const;
   [[nodiscard]] const std::vector<std::unique_ptr<GlobalConstant>>& globals() const;
   [[nodiscard]] const std::vector<std::unique_ptr<IRFunction>>& functions() const;

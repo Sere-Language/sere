@@ -291,6 +291,17 @@ serem::IRType SeremGenerator::lowerType(const Type* type) const {
   if (!instanceRecord) {
     type = type->canonical();
   }
+  if (type->isRecord()) {
+    usedTypeNames_.insert(type->name());
+    if (const std::size_t genericStart = type->name().find('[');
+        genericStart != std::string::npos) {
+      usedTypeNames_.insert(type->name().substr(0, genericStart));
+    }
+    for (const Type* base : type->bases()) {
+      if (base != nullptr)
+        usedTypeNames_.insert(base->canonical()->name());
+    }
+  }
   if (type->isNamed("bool"))
     return serem::IRType::boolType();
   if (type->isInteger())
@@ -378,6 +389,8 @@ SeremGenerator::emit(const Module& module,
   classBases_.clear();
   classFields_.clear();
   classes_.clear();
+  preludeTypeNames_.clear();
+  usedTypeNames_.clear();
   functionNames_.clear();
   renderers_.clear();
   rendererOrder_.clear();
@@ -486,6 +499,10 @@ SeremGenerator::emit(const Module& module,
       methodSymbols_[instance->name() + "::" + method.name] = method.llvmName;
     }
   }
+  // Type declarations are laid out before function bodies. Any marks made while
+  // registering those declarations are not evidence that a type is used by the
+  // program, so start reachability from emitted user code below.
+  usedTypeNames_.clear();
   for (const Module* current : modules) {
     for (const auto& statement : current->statements()) {
       if (statement->kind() == NodeKind::FunctionDef &&
@@ -620,7 +637,10 @@ SeremGenerator::emit(const Module& module,
   // The renderers every boxed value and every container slot points at are
   // emitted last: the boxes are created while the bodies above are lowered, and a
   // renderer can name any class method the module declared.
+  const std::unordered_set<std::string> usedTypesBeforeRenderers = usedTypeNames_;
   emitPendingRenderers();
+  usedTypeNames_ = usedTypesBeforeRenderers;
+  pruneUnusedPreludeTypes();
   return std::move(module_);
 }
 
@@ -632,10 +652,31 @@ void SeremGenerator::declareTypes(const Module& module) {
       const auto& classDef = static_cast<const ClassDef&>(*statement);
       if (classDef.resolvedType() != nullptr)
         classes_.push_back(classDef.resolvedType());
+      const bool previousLoweringPrelude = loweringPrelude_;
+      loweringPrelude_ = statement->fromPrelude();
       declareClass(classDef);
+      loweringPrelude_ = previousLoweringPrelude;
+      if (statement->fromPrelude())
+        preludeTypeNames_.insert(classDef.name());
     } else if (statement->kind() == NodeKind::EnumDef) {
-      declareEnum(static_cast<const EnumDef&>(*statement));
+      const auto& enumDef = static_cast<const EnumDef&>(*statement);
+      declareEnum(enumDef);
+      if (statement->fromPrelude())
+        preludeTypeNames_.insert(enumDef.name());
     }
+  }
+}
+
+void SeremGenerator::pruneUnusedPreludeTypes() {
+  const std::string ir = module_->display();
+  for (const std::string& name : preludeTypeNames_) {
+    std::size_t occurrences = 0;
+    for (std::size_t position = ir.find(name); position != std::string::npos;
+         position = ir.find(name, position + name.size())) {
+      ++occurrences;
+    }
+    if (!usedTypeNames_.contains(name) || occurrences <= 2)
+      (void)module_->removeType(name);
   }
 }
 
@@ -742,9 +783,15 @@ void SeremGenerator::declareEnum(const EnumDef& enumDef) {
 }
 
 bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbol) {
+  const bool previousLoweringPrelude = loweringPrelude_;
+  loweringPrelude_ = function.fromPrelude() ||
+                     (!function.ownerClass().empty() &&
+                      preludeTypeNames_.contains(function.ownerClass()));
   const Type* genericType = functionType(function);
-  if (genericType == nullptr)
+  if (genericType == nullptr) {
+    loweringPrelude_ = previousLoweringPrelude;
     return unsupported(function, "function without a resolved type");
+  }
   // A generic instantiation substitutes the caller's type arguments, so the
   // emitted parameters, locals, and return type are concrete types.
   const Type* type = subst_.empty() ? genericType : types_->substitute(genericType, subst_);
@@ -770,6 +817,7 @@ bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbo
     // function bodyless and let the backend emit a declaration.
     irFunction->setExternal(true);
     (void)module_->addFunction(std::move(irFunction));
+    loweringPrelude_ = previousLoweringPrelude;
     return true;
   }
   function_ = &module_->addFunction(std::move(irFunction));
@@ -780,6 +828,7 @@ bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbo
   if (function.isExtern()) {
     // External functions are declarations only: the implementation is supplied by
     // the runtime library or a linked native library under the extern symbol.
+    loweringPrelude_ = previousLoweringPrelude;
     return true;
   }
   for (const std::string& decorator : function.decorators()) {
@@ -811,8 +860,11 @@ bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbo
                                                        : type->paramTypes()[index];
     }
   }
-  if (!emitBlock(function.body()))
+  loweringPrelude_ = false;
+  if (!emitBlock(function.body())) {
+    loweringPrelude_ = previousLoweringPrelude;
     return false;
+  }
   if (coroutineToken_ != nullptr && function.isGenerator()) {
     // A generator body falls through to its final suspend; there is no return
     // statement to emit.
@@ -836,6 +888,7 @@ bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbo
   locals_.clear();
   defers_.clear();
   tryHandlers_.clear();
+  loweringPrelude_ = previousLoweringPrelude;
   return true;
 }
 
@@ -2582,6 +2635,13 @@ serem::ValuePtr SeremGenerator::emitBinary(const BinaryExpr& expression) {
   serem::ValuePtr right = expression.op() == BinaryOp::Is || expression.op() == BinaryOp::IsNot
                               ? nullptr
                               : emitExpression(expression.right());
+  // An operand the generator could not lower leaves nothing to compare, and an
+  // operation built around it would reach the backend without a value.
+  if (left == nullptr ||
+      (right == nullptr && expression.op() != BinaryOp::Is && expression.op() != BinaryOp::IsNot)) {
+    (void)unsupported(expression, "operand of a binary operator could not be lowered");
+    return nullptr;
+  }
   // `x is None` / `x == None` is a null check for a pointer-shaped value, but a
   // tagged optional (`str | None`) keeps its value inline, so the test is on the
   // union tag instead. `pointer.is_null` on the aggregate would be invalid IR.
@@ -2858,17 +2918,24 @@ serem::ValuePtr SeremGenerator::emitDecoratorClosure(const Expr& decorator,
     return nullptr;
 
   std::unordered_map<std::string, serem::ValuePtr> captures;
+  // A decorator feeds its wrapper through the factory's parameters: `@factory(a)`
+  // passes the call's arguments, while a bare `@factory` passes the decorated
+  // function to the first parameter. Whatever else the wrapper captures is the
+  // wrapped function itself, which the decorator the factory returned receives
+  // under the name the wrapper uses for it.
   for (const FunctionDef::Capture& capture : wrapper->captures()) {
-    if (capture.name == "fn") {
-      captures[capture.name] = target;
-      continue;
-    }
+    std::size_t parameter = factory->params().size();
     for (std::size_t index = 0; index < factory->params().size(); ++index) {
-      if (factory->params()[index].name == capture.name && index < factoryArguments.size()) {
-        captures[capture.name] = factoryArguments[index];
+      if (factory->params()[index].name == capture.name) {
+        parameter = index;
         break;
       }
     }
+    if (parameter < factoryArguments.size()) {
+      captures[capture.name] = factoryArguments[parameter];
+      continue;
+    }
+    captures[capture.name] = target;
   }
   if (captures.size() != wrapper->captures().size())
     return nullptr;
@@ -2879,10 +2946,14 @@ serem::ValuePtr SeremGenerator::emitDecoratorClosure(const Expr& decorator,
   for (const FunctionDef::Capture& capture : wrapper->captures()) {
     const std::string slot = "sere.capture." + symbol + "." + capture.name;
     const auto value = captures.find(capture.name);
+    if (value == captures.end() || value->second == nullptr) {
+      return nullptr;
+    }
     const Type* captureType = capture.type;
     serem::ValuePtr stored = coerce(value->second, captureType, captureType);
-    if (capture.name == "fn" && stored != nullptr &&
-        stored->type().kind() == serem::IRType::Kind::Function) {
+    // A function value is parked in the capture slot as an address, so the
+    // wrapper can call it indirectly.
+    if (stored != nullptr && stored->type().kind() == serem::IRType::Kind::Function) {
       stored = builder_->operation("cast.value",
                                    serem::IRType::ptr(serem::IRType::i8()),
                                    {std::move(stored)},

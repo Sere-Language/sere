@@ -1533,6 +1533,19 @@ std::vector<std::unique_ptr<Stmt>>& Module::statements() {
 void Module::insertFront(std::vector<std::unique_ptr<Stmt>> extra) {
   for (std::unique_ptr<Stmt>& statement : extra) {
     statement->setFromPrelude(true);
+    if (statement->kind() == NodeKind::ClassDef) {
+      for (const std::unique_ptr<FunctionDef>& method :
+           static_cast<const ClassDef&>(*statement).methods()) {
+        if (method != nullptr)
+          method->setFromPrelude(true);
+      }
+    } else if (statement->kind() == NodeKind::EnumDef) {
+      for (const std::unique_ptr<FunctionDef>& method :
+           static_cast<const EnumDef&>(*statement).methods()) {
+        if (method != nullptr)
+          method->setFromPrelude(true);
+      }
+    }
   }
   extra.insert(extra.end(),
                std::make_move_iterator(statements_.begin()),
