@@ -2,52 +2,68 @@
 
 extern "C" "sere_ml_relu"
 def relu(values: list[f64]) -> list[f64]
+"""Apply ReLU to an f64 array."""
 
 extern "C" "sere_ml_leaky_relu"
 def leaky_relu(values: list[f64], alpha: f64) -> list[f64]
+"""Apply leaky ReLU to an f64 array."""
 
 extern "C" "sere_ml_sigmoid"
 def sigmoid(values: list[f64]) -> list[f64]
+"""Apply sigmoid to an f64 array."""
 
 extern "C" "sere_ml_tanh"
 def tanh(values: list[f64]) -> list[f64]
+"""Apply hyperbolic tangent to an f64 array."""
 
 extern "C" "sere_ml_softmax"
 def softmax(values: list[f64]) -> list[f64]
+"""Return the softmax of an f64 array."""
 
 extern "C" "sere_ml_log_softmax"
 def log_softmax(values: list[f64]) -> list[f64]
+"""Return the log-softmax of an f64 array."""
 
 extern "C" "sere_ml_mse"
 def mse(pred: list[f64], target: list[f64]) -> f64
+"""Return mean squared error between arrays."""
 
 extern "C" "sere_ml_mae"
 def mae(pred: list[f64], target: list[f64]) -> f64
+"""Return mean absolute error between arrays."""
 
 extern "C" "sere_ml_bce"
 def binary_cross_entropy(pred: list[f64], target: list[f64]) -> f64
+"""Return binary cross-entropy between arrays."""
 
 extern "C" "sere_ml_linear"
 def linear(inputs: list[f64], weights: list[f64], bias: f64) -> f64
+"""Return a linear weighted sum with bias."""
 
 extern "C" "sere_math_exp"
 def _exp(value: f64) -> f64
+"""Return e raised to value."""
 
 extern "C" "sere_math_tanh"
 def _tanh(value: f64) -> f64
+"""Return the hyperbolic tangent of value."""
 
 def relu_scalar(value: f64) -> f64:
+    """Apply ReLU to one value."""
     if value < 0 as f64:
         return 0 as f64
     return value
 
 def leaky_relu_scalar(value: f64, alpha: f64) -> f64:
+    """Apply leaky ReLU to one value."""
     if value < 0 as f64:
         return value * alpha
     return value
 
 def sigmoid_scalar(value: f64) -> f64:
+    """Apply the sigmoid function to one value."""
     return 1 as f64 / (1 as f64 + _exp(0 as f64 - value))
 
 def tanh_scalar(value: f64) -> f64:
+    """Apply hyperbolic tangent to one value."""
     return _tanh(value)

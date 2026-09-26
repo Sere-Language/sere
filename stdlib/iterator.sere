@@ -1,4 +1,5 @@
 # Iterator[T] is a built-in, single-pass iterator type; no import is required.
+"""Built-in iterator and generator usage conventions."""
 # A function containing yield must declare -> Iterator[T]. Calling it creates
 # a suspended generator. Each iteration resumes it until the next yield.
 #

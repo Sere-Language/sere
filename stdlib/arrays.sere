@@ -2,93 +2,124 @@
 
 extern "C" "sere_f64_full"
 def full(length: i64, fill: f64) -> list[f64]
+"""Return an f64 array filled with fill."""
 
 extern "C" "sere_f64_copy"
 def copy(values: list[f64]) -> list[f64]
+"""Return a copy of an f64 array."""
 
 extern "C" "sere_f64_reverse"
 def reverse(values: list[f64]) -> list[f64]
+"""Return an f64 array in reverse order."""
 
 extern "C" "sere_f64_concat"
 def concat(left: list[f64], right: list[f64]) -> list[f64]
+"""Concatenate two f64 arrays."""
 
 extern "C" "sere_f64_add"
 def add(left: list[f64], right: list[f64]) -> list[f64]
+"""Add two f64 arrays element-wise."""
 
 extern "C" "sere_f64_sub"
 def sub(left: list[f64], right: list[f64]) -> list[f64]
+"""Subtract two f64 arrays element-wise."""
 
 extern "C" "sere_f64_mul"
 def mul(left: list[f64], right: list[f64]) -> list[f64]
+"""Multiply two f64 arrays element-wise."""
 
 extern "C" "sere_f64_div"
 def div(left: list[f64], right: list[f64]) -> list[f64]
+"""Divide two f64 arrays element-wise."""
 
 extern "C" "sere_f64_scale"
 def scale(values: list[f64], factor: f64) -> list[f64]
+"""Scale every f64 array element by factor."""
 
 extern "C" "sere_f64_abs"
 def abs(values: list[f64]) -> list[f64] # type: ignore
+"""Return the absolute value of every element."""
 
 extern "C" "sere_f64_clip"
 def clip(values: list[f64], low: f64, high: f64) -> list[f64]
+"""Clip f64 array values to a range."""
 
 extern "C" "sere_f64_linspace"
 def linspace(start: f64, stop: f64, count: i64) -> list[f64]
+"""Return count evenly spaced f64 values."""
 
 extern "C" "sere_f64_sum"
 def sum(values: list[f64]) -> f64
+"""Return the sum of an f64 array."""
 
 extern "C" "sere_f64_mean"
 def mean(values: list[f64]) -> f64
+"""Return the mean of an f64 array."""
 
 extern "C" "sere_f64_var"
 def var(values: list[f64]) -> f64
+"""Return the population variance of an f64 array."""
 
 extern "C" "sere_f64_min"
 def vmin(values: list[f64]) -> f64
+"""Return the minimum f64 array value."""
 
 extern "C" "sere_f64_max"
 def vmax(values: list[f64]) -> f64
+"""Return the maximum f64 array value."""
 
 extern "C" "sere_f64_argmin"
 def argmin(values: list[f64]) -> i64
+"""Return the index of the minimum value."""
 
 extern "C" "sere_f64_argmax"
 def argmax(values: list[f64]) -> i64
+"""Return the index of the maximum value."""
 
 extern "C" "sere_f64_dot"
 def dot(left: list[f64], right: list[f64]) -> f64
+"""Return the dot product of two f64 arrays."""
 
 extern "C" "sere_f64_outer"
 def outer(left: list[f64], right: list[f64]) -> list[f64]
+"""Return the outer product of two f64 arrays."""
 
 extern "C" "sere_f64_normalize"
 def normalize(values: list[f64]) -> list[f64]
+"""Return a normalized f64 array."""
 
 extern "C" "sere_f64_cross3"
 def cross(left: list[f64], right: list[f64]) -> list[f64]
+"""Return the cross product of two vectors."""
 
 extern "C" "sere_mat_mul"
 def matmul(left: list[f64], left_rows: i64, left_cols: i64, right: list[f64], right_rows: i64, right_cols: i64) -> list[f64]
+"""Multiply two packed f64 matrices."""
 
 extern "C" "sere_mat_transpose"
 def transpose(values: list[f64], rows: i64, cols: i64) -> list[f64]
+"""Transpose a packed f64 matrix."""
 
 extern "C" "sere_mat_identity"
 def eye(n: i64) -> list[f64]
+"""Return an n by n identity matrix."""
 
 def zeros(length: i64) -> list[f64]:
+    """Return a zero-filled array."""
     return full(length, 0 as f64)
 
 def ones(length: i64) -> list[f64]:
+    """Return a one-filled array."""
     return full(length, 1 as f64)
 
 def zeros2(rows: i64, cols: i64) -> list[f64]:
+    """Return a two-dimensional zero-filled array."""
     return zeros(rows * cols)
 
 def ones2(rows: i64, cols: i64) -> list[f64]:
+    """Return a two-dimensional one-filled array."""
     return ones(rows * cols)
 
 def std(values: list[f64]) -> f64:
+    """Return the population standard deviation."""
     return var(values) ** (1 as f64 / 2 as f64)

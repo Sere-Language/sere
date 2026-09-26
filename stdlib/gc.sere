@@ -16,51 +16,68 @@ import string
 
 extern "C" "sere_gc_use"
 def _use(name: str) -> i32
+"""Select a garbage collector by name."""
 
 extern "C" "sere_gc_name"
 def name() -> str
+"""Return the active garbage collector name."""
 
 extern "C" "sere_gc_collect"
 def collect() -> void
+"""Collect unreachable runtime memory."""
 
 extern "C" "sere_gc_add_root"
 def add_root(pointer: Ptr[i8]) -> void
+"""Register a pointer as a GC root."""
 
 extern "C" "sere_gc_remove_root"
 def remove_root(pointer: Ptr[i8]) -> void
+"""Unregister a GC root pointer."""
 
 extern "C" "sere_gc_retain"
 def retain(pointer: Ptr[i8]) -> void
+"""Retain a pointer for garbage collection."""
 
 extern "C" "sere_gc_release"
 def release(pointer: Ptr[i8]) -> void
+"""Release a retained pointer."""
 
 extern "C" "sere_gc_bytes_in_use"
 def bytes_in_use() -> i64
+"""Return bytes currently in use."""
 
 extern "C" "sere_gc_bytes_allocated"
 def bytes_allocated() -> i64
+"""Return total allocated bytes."""
 
 extern "C" "sere_gc_live_blocks"
 def live_blocks() -> i64
+"""Return the number of live blocks."""
 
 extern "C" "sere_gc_collections"
 def collections() -> i64
+"""Return the number of collections."""
 
 extern "C" "sere_alloc"
 def alloc_bytes(size: i64) -> Ptr[i8]
+"""Allocate raw bytes through the active collector."""
 
 extern "C" "sere_free"
 def free_bytes(pointer: Ptr[i8]) -> void
+"""Free raw bytes through the active collector."""
 
 def use(name: str) -> bool:
+    """Select the named garbage collector."""
     return _use(name) as bool
 
 def is_none() -> bool:
+    """Return whether the none collector is active."""
     return string.eq(name(), "none")
 
 def is_mark_sweep() -> bool:
+    """Return whether mark-sweep is active."""
     return string.eq(name(), "mark_sweep")
 
 def is_arena() -> bool:
+    """Return whether the arena collector is active."""
     return string.eq(name(), "arena")

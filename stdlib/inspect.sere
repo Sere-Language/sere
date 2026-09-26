@@ -9,7 +9,9 @@
 #   __name__  __file__  __package__  __doc__  __debug__  __sere_version__
 
 def label(name: str) -> str:
+    """Return the supplied introspection label."""
     return name
 
 def describe(name: str, kind: str) -> str:
+    """Format a name and kind for display."""
     return f"{kind} {name}"

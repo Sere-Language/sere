@@ -1,4 +1,5 @@
 # Standard I/O beyond builtin print().
+"""Standard input and output helpers."""
 #   import io
 #   line = io.read_line()
 #   io.eprint("debug")
@@ -6,9 +7,12 @@
 
 extern "C" "sere_io_read_line"
 def read_line() -> str
+"""Read one line from standard input."""
 
 extern "C" "sere_io_eprint"
 def eprint(text: str) -> void
+"""Write text to standard error."""
 
 extern "C" "sere_io_eprint_nl"
 def eprint_nl() -> void
+"""Write a newline to standard error."""

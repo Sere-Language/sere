@@ -1,10 +1,14 @@
 # Wall clock and sleep. Import with: import time
+"""Wall-clock and sleeping helpers."""
 
 extern "C" "sere_time_now_ms"
 def now_ms() -> i64
+"""Return the current wall-clock time in milliseconds."""
 
 extern "C" "sere_time_sleep_ms"
 def sleep_ms(ms: i32) -> void
+"""Sleep for milliseconds."""
 
 extern "C" "sere_time_get_timestamp"
 def get_timestamp() -> str
+"""Return the current formatted timestamp."""

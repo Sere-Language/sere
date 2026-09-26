@@ -3,18 +3,24 @@
 
 extern "C" "sere_path_join"
 def join(left: str, right: str) -> str
+"""Join two path components."""
 
 extern "C" "sere_path_dirname"
 def dirname(value: str) -> str
+"""Return the directory portion of a path."""
 
 extern "C" "sere_path_basename"
 def basename(value: str) -> str
+"""Return the final component of a path."""
 
 extern "C" "sere_path_ext"
 def ext(value: str) -> str
+"""Return the extension of a path."""
 
 extern "C" "sere_path_is_abs"
 def _is_abs(value: str) -> i32
+"""Test whether a path is absolute."""
 
 def is_abs(value: str) -> bool:
+    """Return whether value is an absolute path."""
     return _is_abs(value) as bool

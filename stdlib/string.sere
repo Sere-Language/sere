@@ -3,45 +3,60 @@
 
 extern "C" "sere_string_upper"
 def upper(text: str) -> str
+"""Return text in uppercase."""
 
 extern "C" "sere_string_lower"
 def lower(text: str) -> str
+"""Return text in lowercase."""
 
 extern "C" "sere_string_strip"
 def strip(text: str) -> str
+"""Return text without surrounding whitespace."""
 
 extern "C" "sere_string_repeat"
 def repeat(text: str, count: i64) -> str
+"""Repeat text count times."""
 
 extern "C" "sere_string_starts_with"
 def _starts_with(text: str, prefix: str) -> i32
+"""Test whether text starts with prefix."""
 
 extern "C" "sere_string_ends_with"
 def _ends_with(text: str, suffix: str) -> i32
+"""Test whether text ends with suffix."""
 
 extern "C" "sere_str_contains"
 def _contains(text: str, needle: str) -> i32
+"""Test whether text contains needle."""
 
 extern "C" "sere_str_eq"
 def _eq(left: str, right: str) -> i32
+"""Compare two strings for equality."""
 
 def starts_with(text: str, prefix: str) -> bool:
+    """Return whether text starts with prefix."""
     return _starts_with(text, prefix) as bool
 
 def ends_with(text: str, suffix: str) -> bool:
+    """Return whether text ends with suffix."""
     return _ends_with(text, suffix) as bool
 
 def contains(text: str, needle: str) -> bool:
+    """Return whether text contains needle."""
     return _contains(text, needle) as bool
 
 def eq(left: str, right: str) -> bool:
+    """Return whether two strings are equal."""
     return _eq(left, right) as bool
 
 extern "C" "sere_string_find"
 def find(text: str, needle: str) -> i64
+"""Find needle in text and return its index."""
 
 extern "C" "sere_string_replace"
 def replace(text: str, old: str, new: str) -> str
+"""Replace occurrences of old in text."""
 
 extern "C" "sere_string_split"
 def split(text: str, sep: str) -> list[str]
+"""Split text by a separator."""

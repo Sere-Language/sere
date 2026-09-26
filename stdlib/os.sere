@@ -2,13 +2,16 @@
 
 extern "C" "sere_os_getcwd"
 def getcwd() -> str
+"""Return the current working directory."""
 
 extern "C" "sere_os_getenv"
 def getenv(name: str) -> str
+"""Return an environment variable value."""
 
 extern "C" "sere_os_listdir"
 def listdir(path: str) -> list[str]
+"""Return the entries in a directory."""
 
 extern "C" "sere_os_exit"
 def exit(code: i32) -> void
-
+"""Exit the process with code."""

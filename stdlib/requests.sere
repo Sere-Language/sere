@@ -5,42 +5,53 @@
 # Transport failures raise ConnectionError; HTTP errors can be checked with raise_for_status().
 
 class RequestException(Exception):
+    """Base class for HTTP request failures."""
     pass
 
 class ConnectionError(RequestException):
+    """Raised when an HTTP request cannot connect."""
     pass
 
 class HTTPError(RequestException):
+    """Raised for an unsuccessful HTTP response."""
     status_code: i32
     url: str
 
     def __init__(self, status_code: i32, url: str) -> void:
+        """Create an HTTP error for status_code and url."""
         self.message = "HTTP " + str(status_code) + " for " + url
         self.status_code = status_code
         self.url = url
 
 extern "C" "sere_http_request"
 def _request(method: str, url: str, body: str, timeout_ms: i32) -> str
+"""Perform a native HTTP request."""
 
 extern "C" "sere_http_last_status"
 def _last_status() -> i32
+"""Return the status of the last HTTP request."""
 
 class Response:
+    """An HTTP response."""
     status_code: i32
     url: str
     text: str
     def __init__(self, status_code: i32, url: str, text: str) -> void:
+        """Create a response with status, URL, and text."""
         self.status_code = status_code
         self.url = url
         self.text = text
     def raise_for_status(self) -> void:
+        """Raise HTTPError when the status is unsuccessful."""
         if self.status_code >= 400:
             raise HTTPError(self.status_code, self.url)
 
     def ok(self) -> bool:
+        """Return whether the status is successful."""
         return self.status_code >= 200 and self.status_code < 300
 
 def request(method: str, url: str, data: str = "", timeout_ms: i32 = 30000) -> Response:
+    """Send an HTTP request and return its response."""
     text: str = _request(method, url, data, timeout_ms)
     status: i32 = _last_status()
     if status == 0:
@@ -48,13 +59,17 @@ def request(method: str, url: str, data: str = "", timeout_ms: i32 = 30000) -> R
     return Response(status, url, text)
 
 def get(url: str, timeout_ms: i32 = 30000) -> Response:
+    """Send a GET request."""
     return request("GET", url, "", timeout_ms)
 
 def post(url: str, data: str = "", timeout_ms: i32 = 30000) -> Response:
+    """Send a POST request."""
     return request("POST", url, data, timeout_ms)
 
 def put(url: str, data: str = "", timeout_ms: i32 = 30000) -> Response:
+    """Send a PUT request."""
     return request("PUT", url, data, timeout_ms)
 
 def delete(url: str, timeout_ms: i32 = 30000) -> Response:
+    """Send a DELETE request."""
     return request("DELETE", url, "", timeout_ms)

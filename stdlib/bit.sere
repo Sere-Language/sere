@@ -1,22 +1,27 @@
 # Integer bit operations. Import with: import bit
 
 def get(value: i32, index: i32) -> bool:
+    """Return the bit at index."""
     shifted: i32 = value >> index
     return (shifted & 1) == 1
 
 def set(value: i32, index: i32) -> i32:
+    """Set the bit at index."""
     mask: i32 = 1 << index
     return value | mask
 
 def clear(value: i32, index: i32) -> i32:
+    """Clear the bit at index."""
     mask: i32 = 1 << index
     return value & ~mask
 
 def toggle(value: i32, index: i32) -> i32:
+    """Toggle the bit at index."""
     mask: i32 = 1 << index
     return value ^ mask
 
 def mask(width: i32) -> i32:
+    """Return a mask containing width low bits."""
     if width <= 0:
         return 0
     if width >= 32:

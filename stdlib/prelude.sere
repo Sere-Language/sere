@@ -50,28 +50,34 @@ type SignedInt = i8 | i16 | i32 | i64
 
 extern "C" "sere_input"
 def input(prompt: str) -> str
+"""Read a line after displaying a prompt."""
 
 def abs(value: i32) -> i32:
+    """Return the absolute value."""
     if value < 0:
         return -value
     return value
 
 def min(left: i32, right: i32) -> i32:
+    """Return the smaller integer."""
     if left < right:
         return left
     else:
         return right
 
 def max(left: i32, right: i32) -> i32:
+    """Return the larger integer."""
     if left > right:
         return left
     else:
         return right
 
 def clamp(value: i32, low: i32, high: i32) -> i32:
+    """Clamp value to the inclusive range."""
     return min(max(value, low), high)
 
 def sign(value: i32) -> i32:
+    """Return -1, 0, or 1 according to value's sign."""
     if value > 0:
         return 1
     elif value < 0:
@@ -80,58 +86,76 @@ def sign(value: i32) -> i32:
     return 0
 
 class Exception:
+    """Base class for Sere exceptions."""
     message: str
 
     def __init__(self, message: str = "") -> void:
+        """Create an exception with an optional message."""
         self.message = message
 
 class SyntaxError(Exception):
+    """Raised for invalid syntax."""
     pass
 
 class IndentationError(Exception):
+    """Raised for invalid indentation."""
     pass
 
 class NameError(Exception):
+    """Raised for an unknown name."""
     pass
 
 class AttributeError(Exception):
+    """Raised for an unknown attribute."""
     pass
 
 class TypeError(Exception):
+    """Raised for an invalid type."""
     pass
 
 class IndexError(Exception):
+    """Raised for an invalid index."""
     pass
 
 class ImportError(Exception):
+    """Raised when a module cannot be imported."""
     pass
 
 class ValueError(Exception):
+    """Raised for an invalid value."""
     pass
 
 class AssertionError(Exception):
+    """Raised when an assertion fails."""
     pass
 
 class PermissionError(Exception):
+    """Raised when an operation lacks permission."""
     pass
 
 class RuntimeError(Exception):
+    """Raised for a runtime failure."""
     pass
 
 class RecursionError(Exception):
+    """Raised when recursion exceeds its limit."""
     pass
 
 class NotImplementedError(Exception):
+    """Raised for an unsupported operation."""
     pass
 
 class ResultError(Exception):
+    """Raised when an unsuccessful Result is unwrapped."""
     pass
 
 enum Result[T, E]:
+    """A value that is either successful or an error."""
     Ok(value: T)
     Err(error: E)
 
     def is_ok(self) -> bool:
+        """Return whether this result is Ok."""
         match self:
             case Result.Ok(_):
                 return True
@@ -139,6 +163,7 @@ enum Result[T, E]:
                 return False
 
     def is_err(self) -> bool:
+        """Return whether this result is Err."""
         match self:
             case Result.Ok(_):
                 return False
@@ -146,6 +171,7 @@ enum Result[T, E]:
                 return True
 
     def unwrap(self) -> T:
+        """Return the value or raise ResultError."""
         match self:
             case Result.Ok(value):
                 return value
@@ -153,6 +179,7 @@ enum Result[T, E]:
                 raise ResultError(str(error))
 
     def try_unwrap(self) -> T | None:
+        """Return the value, or None for an error."""
         match self:
             case Result.Ok(value):
                 return value
@@ -160,6 +187,7 @@ enum Result[T, E]:
                 return None
 
     def expect(self, message: str) -> T:
+        """Return the value or raise with message."""
         match self:
             case Result.Ok(value):
                 return value
@@ -167,6 +195,7 @@ enum Result[T, E]:
                 raise ResultError(message + ": " + str(error))
 
     def ok(self) -> T | None:
+        """Return the success value, or None."""
         match self:
             case Result.Ok(value):
                 return value
@@ -174,6 +203,7 @@ enum Result[T, E]:
                 return None
 
     def err(self) -> E | None:
+        """Return the error value, or None."""
         match self:
             case Result.Ok(_):
                 return None
@@ -181,6 +211,7 @@ enum Result[T, E]:
                 return error
 
     def unwrap_or(self, default: T) -> T:
+        """Return the value, or default for an error."""
         match self:
             case Result.Ok(value):
                 return value
@@ -188,6 +219,7 @@ enum Result[T, E]:
                 return default
 
     def unwrap_or_else(self, fn: Callable[[E], T]) -> T:
+        """Return the value, or compute one from the error."""
         match self:
             case Result.Ok(value):
                 return value
@@ -195,6 +227,7 @@ enum Result[T, E]:
                 return fn(error)
 
     def map[U](self, fn: Callable[[T], U]) -> Result[U, E]:
+        """Map a successful value."""
         match self:
             case Result.Ok(value):
                 return Result.Ok(fn(value))
@@ -202,6 +235,7 @@ enum Result[T, E]:
                 return Result.Err(error)
 
     def map_err[F](self, fn: Callable[[E], F]) -> Result[T, F]:
+        """Map an error value."""
         match self:
             case Result.Ok(value):
                 return Result.Ok(value)
@@ -209,6 +243,7 @@ enum Result[T, E]:
                 return Result.Err(fn(error))
 
     def map_or[U](self, default: U, fn: Callable[[T], U]) -> U:
+        """Map a value or return default for an error."""
         match self:
             case Result.Ok(value):
                 return fn(value)
@@ -216,6 +251,7 @@ enum Result[T, E]:
                 return default
 
     def map_or_else[U](self, default_fn: Callable[[E], U], fn: Callable[[T], U]) -> U:
+        """Map a value or compute a fallback from the error."""
         match self:
             case Result.Ok(value):
                 return fn(value)
@@ -223,6 +259,7 @@ enum Result[T, E]:
                 return default_fn(error)
 
     def and_[U](self, other: Result[U, E]) -> Result[U, E]:
+        """Return other for success, otherwise this error."""
         match self:
             case Result.Ok(_):
                 return other
@@ -230,6 +267,7 @@ enum Result[T, E]:
                 return Result.Err(error)
 
     def and_then[U](self, fn: Callable[[T], Result[U, E]]) -> Result[U, E]:
+        """Chain a function over a successful value."""
         match self:
             case Result.Ok(value):
                 return fn(value)
@@ -237,6 +275,7 @@ enum Result[T, E]:
                 return Result.Err(error)
 
     def or_[F](self, other: Result[T, F]) -> Result[T, F]:
+        """Return this success, or other for an error."""
         match self:
             case Result.Ok(value):
                 return Result.Ok(value)
@@ -244,6 +283,7 @@ enum Result[T, E]:
                 return other
 
     def or_else[F](self, fn: Callable[[E], Result[T, F]]) -> Result[T, F]:
+        """Return this success, or compute a result from the error."""
         match self:
             case Result.Ok(value):
                 return Result.Ok(value)
@@ -251,6 +291,7 @@ enum Result[T, E]:
                 return fn(error)
 
     def contains(self, expected: T) -> bool:
+        """Return whether this result contains expected."""
         match self:
             case Result.Ok(value):
                 return value == expected
@@ -258,6 +299,7 @@ enum Result[T, E]:
                 return False
 
     def contains_err(self, expected: E) -> bool:
+        """Return whether this result contains expected error."""
         match self:
             case Result.Ok(_):
                 return False

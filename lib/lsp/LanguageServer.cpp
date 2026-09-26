@@ -288,13 +288,29 @@ void writeNullResult(const llvm::json::Value* id) {
   } else if (type.isStruct()) {
     kind = "struct";
   }
-  std::string text = kind + " " + type.display() + ":\n";
+  std::string text = kind + " " + type.display();
+  if (!type.bases().empty()) {
+    text += "(";
+    for (std::size_t index = 0; index < type.bases().size(); ++index) {
+      if (index != 0)
+        text += ", ";
+      text += type.bases()[index] == nullptr ? "?" : type.bases()[index]->display();
+    }
+    text += ")";
+  }
+  text += ":\n";
   for (const RecordField& field : type.fields()) {
-    text +=
-        "    " + field.name + ": " + (field.type == nullptr ? "?" : field.type->display()) + "\n";
+    text += "    " + field.name + ": " +
+            (field.type == nullptr ? "?" : field.type->display());
+    if (!field.docstring.empty())
+      text += " — " + renderDocMarkdown(parseDocstring(field.docstring));
+    text += "\n";
   }
   for (const RecordMethod& method : type.methods()) {
-    text += "    def " + formatMethod(method) + "\n";
+    text += "    def " + formatMethod(method);
+    if (!method.docstring.empty())
+      text += " — " + renderDocMarkdown(parseDocstring(method.docstring));
+    text += "\n";
   }
   return text;
 }

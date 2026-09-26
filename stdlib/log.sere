@@ -16,6 +16,7 @@ import time
 
 
 enum Level:
+    """Severity levels used by the logger."""
     Trace = 0
     Debug = 10
     Info = 20
@@ -24,6 +25,7 @@ enum Level:
     Critical = 50
 
     def get_name(self) -> str:
+        """Return the lowercase level name."""
         match self:
             case Level.Trace:
                 return "trace"
@@ -39,18 +41,21 @@ enum Level:
                 return "critical"
 
 class LogRecord:
+    """A single formatted logging event."""
     logger_name: str
     message: str
     level: Level
     timestamp: str
 
     def __init__(self, logger_name: str, message: str, level: Level, timestamp: str) -> None:
+        """Create a log record."""
         self.logger_name = logger_name
         self.message = message
         self.level = level
         self.timestamp = timestamp
 
 def write(level: str, text: str) -> void:
+    """Write a bracketed message to standard error."""
     io.eprint("[")
     io.eprint(level)
     io.eprint("] ")
@@ -58,24 +63,31 @@ def write(level: str, text: str) -> void:
     io.eprint_nl()
 
 class Formatter:
+    """Format log records for display."""
     def format(self, record: LogRecord) -> str:
+        """Return the display form of a record."""
         return f"{record.timestamp} [{record.level.get_name().upper()}] {record.logger_name.capitalize()}: {record.message}"
 
 class Logger:
+    """Emit messages at or above a configured level."""
     name: str
     @private level: Level
 
     def __init__(self, name: str, level: Level = Level.Info) -> None:
+        """Create a named logger."""
         self.name = name
         self.level = level
 
     def get_level(self) -> Level:
+        """Return the configured minimum level."""
         return self.level
 
     def set_level(self, level: Level) -> None:
+        """Set the minimum emitted level."""
         self.level = level
 
     def log(self, level: Level, message: str) -> void:
+        """Emit message when level is enabled."""
         if level.value < self.level.value:
             return
         record = LogRecord(self.name, message, level, time.get_timestamp())
@@ -83,22 +95,29 @@ class Logger:
         io.eprint_nl()
 
     def trace(self, message: str) -> void:
+        """Emit a trace message."""
         self.log(Level.Trace, message)
 
     def debug(self, message: str) -> void:
+        """Emit a debug message."""
         self.log(Level.Debug, message)
 
     def info(self, message: str) -> void:
+        """Emit an informational message."""
         self.log(Level.Info, message)
 
     def warning(self, message: str) -> void:
+        """Emit a warning message."""
         self.log(Level.Warning, message)
 
     def error(self, message: str) -> void:
+        """Emit an error message."""
         self.log(Level.Error, message)
 
     def critical(self, message: str) -> void:
+        """Emit a critical message."""
         self.log(Level.Critical, message)
 
 def get_logger(name: str, level: Level = Level.Info) -> Logger:
+    """Create and return a logger."""
     return Logger(name, level)

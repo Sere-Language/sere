@@ -5,56 +5,150 @@
 
 extern "C" "sere_win_available"
 def _available() -> i32
+"""Test whether the Windows API is available."""
 
 extern "C" "sere_win_message_box"
 def _message_box(text: str, title: str, flags: i32) -> i32
+"""Display a native Windows message box."""
 
 extern "C" "sere_win_beep"
 def _beep(freq: i32, ms: i32) -> i32
+"""Play a Windows system beep."""
 
 extern "C" "sere_win_last_error"
 def last_error() -> i32
+"""Return the last Windows error code."""
 
 extern "C" "sere_win_computer_name"
 def computer_name() -> str
+"""Return the Windows computer name."""
 
 extern "C" "sere_win_user_name"
 def user_name() -> str
+"""Return the Windows user name."""
 
 extern "C" "sere_win_cursor_x"
 def cursor_x() -> i32
+"""Return the cursor x coordinate."""
 
 extern "C" "sere_win_cursor_y"
 def cursor_y() -> i32
+"""Return the cursor y coordinate."""
 
 extern "C" "sere_win_set_cursor"
 def _set_cursor(x: i32, y: i32) -> i32
+"""Set the cursor screen coordinates."""
 
 extern "C" "sere_win_screen_width"
 def screen_width() -> i32
+"""Return the primary screen width."""
 
 extern "C" "sere_win_screen_height"
 def screen_height() -> i32
+"""Return the primary screen height."""
 
 extern "C" "sere_win_clipboard_get"
 def clipboard_get() -> str
+"""Return the system clipboard text."""
 
 extern "C" "sere_win_clipboard_set"
 def _clipboard_set(text: str) -> i32
+"""Set the system clipboard text."""
 
 extern "C" "sere_win_foreground"
 def foreground() -> Ptr[i8]
+"""Return the foreground window handle."""
 
 extern "C" "sere_win_window_text"
 def window_text(hwnd: Ptr[i8]) -> str
+"""Return the text of a window."""
 
 extern "C" "sere_win_debug"
 def debug(text: str) -> void
+"""Write text to the Windows debugger."""
 
 extern "C" "sere_win_open"
 def _open(path: str) -> i32
+"""Open a path with the Windows shell."""
+
+extern "C" "sere_win_process_id"
+def process_id() -> i32
+"""Return the foreground process ID."""
+
+extern "C" "sere_win_thread_id"
+def thread_id() -> i32
+"""Return the foreground thread ID."""
+
+extern "C" "sere_win_tick_count"
+def tick_count() -> i32
+"""Return the Windows tick count."""
+
+extern "C" "sere_win_sleep"
+def _sleep(milliseconds: i32) -> void
+"""Sleep for milliseconds on Windows."""
+
+extern "C" "sere_win_current_directory"
+def current_directory() -> str
+"""Return the current Windows directory."""
+
+extern "C" "sere_win_temp_directory"
+def temp_directory() -> str
+"""Return the Windows temporary directory."""
+
+extern "C" "sere_win_env_get"
+def env_get(name: str) -> str
+"""Return a Windows environment variable."""
+
+extern "C" "sere_win_env_set"
+def _env_set(name: str, value: str) -> i32
+"""Set a Windows environment variable."""
+
+extern "C" "sere_win_file_exists"
+def _file_exists(path: str) -> i32
+"""Test whether a Windows file exists."""
+
+extern "C" "sere_win_directory_exists"
+def _directory_exists(path: str) -> i32
+"""Test whether a Windows directory exists."""
+
+extern "C" "sere_win_create_directory"
+def _create_directory(path: str) -> i32
+"""Create a Windows directory."""
+
+extern "C" "sere_win_delete_file"
+def _delete_file(path: str) -> i32
+"""Delete a Windows file."""
+
+extern "C" "sere_win_full_path"
+def full_path(path: str) -> str
+"""Return the fully qualified Windows path."""
+
+extern "C" "sere_win_foreground_title"
+def foreground_title() -> str
+"""Return the foreground window title."""
+
+extern "C" "sere_win_virtual_screen_width"
+def virtual_screen_width() -> i32
+"""Return the virtual screen width."""
+
+extern "C" "sere_win_virtual_screen_height"
+def virtual_screen_height() -> i32
+"""Return the virtual screen height."""
+
+extern "C" "sere_win_key_down"
+def _key_down(virtual_key: i32) -> i32
+"""Test whether a virtual key is pressed."""
+
+extern "C" "sere_win_show_cursor"
+def _show_cursor(visible: i32) -> i32
+"""Show or hide the Windows cursor."""
+
+extern "C" "sere_win_os_version"
+def os_version() -> str
+"""Return the Windows OS version."""
 
 enum MessageBoxKind:
+    """Win32 message-box button combinations."""
     Ok = 0
     OkCancel = 1
     AbortRetryIgnore = 2
@@ -63,45 +157,127 @@ enum MessageBoxKind:
     RetryCancel = 5
 
 enum MessageBoxIcon:
+    """Win32 message-box icon flags."""
     None = 0 # type: ignore
     Error = 16
     Question = 32
     Warning = 48
     Info = 64
 
+enum VirtualKey:
+    """Common Win32 virtual-key codes."""
+    Backspace = 8
+    Tab = 9
+    Enter = 13
+    Escape = 27
+    Space = 32
+    Left = 37
+    Up = 38
+    Right = 39
+    Down = 40
+    Insert = 45
+    Delete = 46
+    Home = 36
+    End = 35
+    PageUp = 33
+    PageDown = 34
+    Shift = 16
+    Control = 17
+    Alt = 18
+    Windows = 91
+    F1 = 112
+    F2 = 113
+    F3 = 114
+    F4 = 115
+    F5 = 116
+    F6 = 117
+    F7 = 118
+    F8 = 119
+    F9 = 120
+    F10 = 121
+    F11 = 122
+    F12 = 123
+
 struct Point:
+    """A screen coordinate pair."""
     x: i32
     y: i32
 
 struct Size:
+    """A width and height pair."""
     width: i32
     height: i32
 
 type Handle = Ptr[i8]
 
 def available() -> bool:
+    """Return whether the Windows API is available."""
     return _available() as bool
 
 def message_box(text: str, title: str = "Sere", kind: i32 = 0) -> i32:
+    """Display a native message box."""
     return _message_box(text, title, kind)
 
 def alert(text: str, title: str, kind: MessageBoxKind, icon: MessageBoxIcon) -> i32:
+    """Display a message box with button and icon flags."""
     return _message_box(text, title, kind.value + icon.value)
 
 def beep(freq: i32, ms: i32) -> bool:
+    """Play a system beep."""
     return _beep(freq, ms) as bool
 
 def set_cursor(x: i32, y: i32) -> bool:
+    """Move the cursor to screen coordinates."""
     return _set_cursor(x, y) as bool
 
 def cursor() -> Point:
+    """Return the current cursor position."""
     return Point(cursor_x(), cursor_y())
 
 def screen() -> Size:
+    """Return the primary screen size."""
     return Size(screen_width(), screen_height())
 
 def clipboard_set(text: str) -> bool:
+    """Set the system clipboard text."""
     return _clipboard_set(text) as bool
 
 def open(path: str) -> bool:
+    """Open a path with the system shell."""
     return _open(path) as bool
+
+def sleep(milliseconds: i32) -> void:
+    """Sleep for the given number of milliseconds."""
+    _sleep(milliseconds)
+
+def env_set(name: str, value: str) -> bool:
+    """Set a process environment variable."""
+    return _env_set(name, value) as bool
+
+def file_exists(path: str) -> bool:
+    """Return whether a file exists."""
+    return _file_exists(path) as bool
+
+def directory_exists(path: str) -> bool:
+    """Return whether a directory exists."""
+    return _directory_exists(path) as bool
+
+def create_directory(path: str) -> bool:
+    """Create a directory."""
+    return _create_directory(path) as bool
+
+def delete_file(path: str) -> bool:
+    """Delete a file."""
+    return _delete_file(path) as bool
+
+def key_down(virtual_key: i32) -> bool:
+    """Return whether a virtual key is pressed."""
+    return _key_down(virtual_key) as bool
+
+def show_cursor(visible: bool) -> bool:
+    """Show or hide the cursor."""
+    return _show_cursor(visible as i32) as bool
+
+def virtual_screen() -> Size:
+    """Return the virtual desktop size."""
+    return Size(virtual_screen_width(), virtual_screen_height())

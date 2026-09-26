@@ -2105,8 +2105,14 @@ std::unique_ptr<FunctionDef> Parser::parseFunction(std::string externName) {
   }
   std::vector<std::unique_ptr<Stmt>> body;
   const bool isExtern = !externName.empty();
+  std::string docstring;
   if (isExtern) {
-    if (!finishLine()) {
+    if (check(TokenKind::String)) {
+      docstring = parseStringValue();
+      if (!finishLine()) {
+        return nullptr;
+      }
+    } else if (!finishLine()) {
       return nullptr;
     }
   } else {
@@ -2116,7 +2122,9 @@ std::unique_ptr<FunctionDef> Parser::parseFunction(std::string externName) {
       return nullptr;
     }
   }
-  const std::string docstring = takeLeadingDocstring(body);
+  if (!isExtern) {
+    docstring = takeLeadingDocstring(body);
+  }
   SourceRange range{start, returnType->range().end};
   if (!body.empty()) {
     range.end = body.back()->range().end;

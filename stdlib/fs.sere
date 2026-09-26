@@ -3,59 +3,76 @@
 
 extern "C" "sere_fs_read_text"
 def read_text(path: str) -> str
+"""Read text from a path."""
 
 extern "C" "sere_fs_write_text"
 def _write_text(path: str, data: str) -> i32
+"""Write text to a path."""
 
 extern "C" "sere_fs_exists"
 def _exists(path: str) -> i32
+"""Test whether a path exists."""
 
 extern "C" "sere_fs_is_file"
 def _is_file(path: str) -> i32
+"""Test whether a path is a file."""
 
 extern "C" "sere_fs_is_dir"
 def _is_dir(path: str) -> i32
+"""Test whether a path is a directory."""
 
 extern "C" "sere_fs_remove"
 def _remove(path: str) -> i32
+"""Remove a filesystem path."""
 
 extern "C" "sere_fs_mkdir"
 def _mkdir(path: str) -> i32
+"""Create a filesystem directory."""
 
 # File handle I/O (new Python-like API)
 extern "C" "sere_fs_open"
 def _fs_open(path: str, mode: str) -> Ptr[i8]
+"""Open a filesystem handle."""
 
 extern "C" "sere_fs_close"
 def _fs_close(handle: Ptr[i8]) -> i32
+"""Close a filesystem handle."""
 
 extern "C" "sere_fs_read_all"
 def _fs_read_all(handle: Ptr[i8]) -> str
+"""Read all text from a handle."""
 
 extern "C" "sere_fs_write_all"
 def _fs_write_all(handle: Ptr[i8], data: str) -> i32
+"""Write text to a handle."""
 
 extern "C" "sere_fs_read_bytes"
 def _fs_read_bytes(handle: Ptr[i8], buffer: Ptr[i8], buffer_len: i64) -> i32
+"""Read bytes from a handle."""
 
 extern "C" "sere_fs_write_bytes"
 def _fs_write_bytes(handle: Ptr[i8], data: Ptr[i8], data_len: i64) -> i32
+"""Write bytes to a handle."""
 
 extern "C" "sere_fs_seek"
 def _fs_seek(handle: Ptr[i8], offset: i64, whence: i32) -> void
+"""Seek within a filesystem handle."""
 
 
 # Allocate fixed byte storage by length; array[T](...) takes element values.
 extern "C" "sere_array_new"
 def _byte_buffer(stride: i64, length: i64) -> array[i8]
+"""Allocate fixed byte storage."""
 
 
 class File:
+    """An open filesystem handle."""
     _handle: Ptr[i8]
     _mode: str
     _path: str
 
     def __init__(self, path: str, mode: str):
+        """Open path using mode."""
         self._path = path
         self._mode = mode
         self._handle = _fs_open(path, mode)
@@ -164,19 +181,25 @@ def open(path: str, mode: str = "r") -> File:
 
 # Legacy simple API (backward compatible)
 def write_text(path: str, data: str) -> bool:
+    """Write text to a path."""
     return _write_text(path, data) as bool
 
 def exists(path: str) -> bool:
+    """Return whether a path exists."""
     return _exists(path) as bool
 
 def is_file(path: str) -> bool:
+    """Return whether a path is a file."""
     return _is_file(path) as bool
 
 def is_dir(path: str) -> bool:
+    """Return whether a path is a directory."""
     return _is_dir(path) as bool
 
 def remove(path: str) -> bool:
+    """Remove a path."""
     return _remove(path) as bool
 
 def mkdir(path: str) -> bool:
+    """Create a directory."""
     return _mkdir(path) as bool

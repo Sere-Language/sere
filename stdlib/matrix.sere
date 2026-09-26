@@ -3,153 +3,204 @@
 
 extern "C" "sere_mat_identity"
 def _identity_n(n: i64) -> list[f64]
+"""Return an n by n identity matrix."""
 
 extern "C" "sere_mat_mul"
 def _mul_n(left: list[f64], left_rows: i64, left_cols: i64, right: list[f64], right_rows: i64, right_cols: i64) -> list[f64]
+"""Multiply packed matrices with the given dimensions."""
 
 extern "C" "sere_mat_transpose"
 def _transpose_n(values: list[f64], rows: i64, cols: i64) -> list[f64]
+"""Transpose a packed matrix with the given dimensions."""
 
 extern "C" "sere_mat_det2"
 def det2(values: list[f64]) -> f64
+"""Return the determinant of a 2 by 2 matrix."""
 
 extern "C" "sere_mat_det3"
 def det3(values: list[f64]) -> f64
+"""Return the determinant of a 3 by 3 matrix."""
 
 extern "C" "sere_mat4_identity"
 def _identity4() -> list[f64]
+"""Return a 4 by 4 identity matrix."""
 
 extern "C" "sere_mat4_mul"
 def _mul4(left: list[f64], right: list[f64]) -> list[f64]
+"""Multiply two 4 by 4 matrices."""
 
 extern "C" "sere_mat4_transpose"
 def _transpose4(values: list[f64]) -> list[f64]
+"""Transpose a 4 by 4 matrix."""
 
 extern "C" "sere_mat4_inverse"
 def _inverse4(values: list[f64]) -> list[f64]
+"""Return the inverse of a 4 by 4 matrix."""
 
 extern "C" "sere_mat4_translate"
 def _translate(x: f64, y: f64, z: f64) -> list[f64]
+"""Return a 4 by 4 translation matrix."""
 
 extern "C" "sere_mat4_scale"
 def _scale(x: f64, y: f64, z: f64) -> list[f64]
+"""Return a 4 by 4 scale matrix."""
 
 extern "C" "sere_mat4_rotate_x"
 def _rotate_x(radians: f64) -> list[f64]
+"""Return a rotation matrix around the x axis."""
 
 extern "C" "sere_mat4_rotate_y"
 def _rotate_y(radians: f64) -> list[f64]
+"""Return a rotation matrix around the y axis."""
 
 extern "C" "sere_mat4_rotate_z"
 def _rotate_z(radians: f64) -> list[f64]
+"""Return a rotation matrix around the z axis."""
 
 extern "C" "sere_mat4_perspective"
 def _perspective(fov_y: f64, aspect: f64, near_z: f64, far_z: f64) -> list[f64]
+"""Return a perspective projection matrix."""
 
 extern "C" "sere_mat4_ortho"
 def _ortho(left: f64, right: f64, bottom: f64, top: f64, near_z: f64, far_z: f64) -> list[f64]
+"""Return an orthographic projection matrix."""
 
 extern "C" "sere_mat4_look_at"
 def _look_at(eye: list[f64], center: list[f64], up: list[f64]) -> list[f64]
+"""Return a camera view matrix."""
 
 extern "C" "sere_mat4_transform_point"
 def _transform_point(matrix: list[f64], x: f64, y: f64, z: f64) -> list[f64]
+"""Transform a point by a 4 by 4 matrix."""
 
 extern "C" "sere_mat4_transform_dir"
 def _transform_dir(matrix: list[f64], x: f64, y: f64, z: f64) -> list[f64]
+"""Transform a direction by a 4 by 4 matrix."""
 
 class Mat2:
+    """A 2 by 2 row-major matrix."""
     data: list[f64]
 
     def __init__(self, data: list[f64]) -> void:
+        """Create a matrix from packed row-major data."""
         self.data = data
 
     def get(self, row: i64, col: i64) -> f64:
+        """Return the element at row and column."""
         return self.data[row * 2 + col]
 
     def mul(self, other: Mat2) -> Mat2:
+        """Multiply this matrix by another matrix."""
         return Mat2(_mul_n(self.data, 2, 2, other.data, 2, 2))
 
     def transpose(self) -> Mat2:
+        """Return the transposed matrix."""
         return Mat2(_transpose_n(self.data, 2, 2))
 
     def det(self) -> f64:
+        """Return the determinant."""
         return det2(self.data)
 
 class Mat3:
+    """A 3 by 3 row-major matrix."""
     data: list[f64]
 
     def __init__(self, data: list[f64]) -> void:
+        """Create a matrix from packed row-major data."""
         self.data = data
 
     def get(self, row: i64, col: i64) -> f64:
+        """Return the element at row and column."""
         return self.data[row * 3 + col]
 
     def mul(self, other: Mat3) -> Mat3:
+        """Multiply this matrix by another matrix."""
         return Mat3(_mul_n(self.data, 3, 3, other.data, 3, 3))
 
     def transpose(self) -> Mat3:
+        """Return the transposed matrix."""
         return Mat3(_transpose_n(self.data, 3, 3))
 
     def det(self) -> f64:
+        """Return the determinant."""
         return det3(self.data)
 
 class Mat4:
+    """A 4 by 4 row-major transformation matrix."""
     data: list[f64]
 
     def __init__(self, data: list[f64]) -> void:
+        """Create a matrix from packed row-major data."""
         self.data = data
 
     def get(self, row: i64, col: i64) -> f64:
+        """Return the element at row and column."""
         return self.data[row * 4 + col]
 
     def mul(self, other: Mat4) -> Mat4:
+        """Multiply this matrix by another matrix."""
         return Mat4(_mul4(self.data, other.data))
 
     def transpose(self) -> Mat4:
+        """Return the transposed matrix."""
         return Mat4(_transpose4(self.data))
 
     def inverse(self) -> Mat4:
+        """Return the inverse matrix."""
         return Mat4(_inverse4(self.data))
 
     def transform_point(self, x: f64, y: f64, z: f64) -> list[f64]:
+        """Transform a point by this matrix."""
         return _transform_point(self.data, x, y, z)
 
     def transform_dir(self, x: f64, y: f64, z: f64) -> list[f64]:
+        """Transform a direction by this matrix."""
         return _transform_dir(self.data, x, y, z)
 
 def identity2() -> Mat2:
+    """Return a 2 by 2 identity matrix."""
     return Mat2(_identity_n(2))
 
 def identity3() -> Mat3:
+    """Return a 3 by 3 identity matrix."""
     return Mat3(_identity_n(3))
 
 def identity() -> Mat4:
+    """Return a 4 by 4 identity matrix."""
     return Mat4(_identity4())
 
 def translate(x: f64, y: f64, z: f64) -> Mat4:
+    """Return a translation matrix."""
     return Mat4(_translate(x, y, z))
 
 def scale(x: f64, y: f64, z: f64) -> Mat4:
+    """Return a scale matrix."""
     return Mat4(_scale(x, y, z))
 
 def rotate_x(radians: f64) -> Mat4:
+    """Return a rotation matrix around the x axis."""
     return Mat4(_rotate_x(radians))
 
 def rotate_y(radians: f64) -> Mat4:
+    """Return a rotation matrix around the y axis."""
     return Mat4(_rotate_y(radians))
 
 def rotate_z(radians: f64) -> Mat4:
+    """Return a rotation matrix around the z axis."""
     return Mat4(_rotate_z(radians))
 
 def perspective(fov_y: f64, aspect: f64, near_z: f64, far_z: f64) -> Mat4:
+    """Return a perspective projection matrix."""
     return Mat4(_perspective(fov_y, aspect, near_z, far_z))
 
 def ortho(left: f64, right: f64, bottom: f64, top: f64, near_z: f64, far_z: f64) -> Mat4:
+    """Return an orthographic projection matrix."""
     return Mat4(_ortho(left, right, bottom, top, near_z, far_z))
 
 def look_at(eye: list[f64], center: list[f64], up: list[f64]) -> Mat4:
+    """Return a camera view matrix."""
     return Mat4(_look_at(eye, center, up))
 
 def mul(left: Mat4, right: Mat4) -> Mat4:
+    """Multiply two 4 by 4 matrices."""
     return left.mul(right)

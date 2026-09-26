@@ -6,43 +6,55 @@
 
 extern "C" "sere_sys_platform"
 def platform() -> str
+"""Return the host platform name."""
 
 extern "C" "sere_sys_arch"
 def arch() -> str
+"""Return the host architecture name."""
 
 extern "C" "sere_sys_version"
 def version() -> str
+"""Return the host system version."""
 
 extern "C" "sere_sys_pid"
 def pid() -> i32
+"""Return the current process ID."""
 
 extern "C" "sere_sys_cpu_count"
 def cpu_count() -> i32
+"""Return the number of host CPUs."""
 
 enum Family:
+    """Supported operating-system families."""
     Windows
     Linux
     Macos
     Unknown
 
 enum Arch:
+    """Supported processor architectures."""
     X86_64
     Arm64
     Unknown
 
 def is_windows() -> bool:
+    """Return whether the host is Windows."""
     return platform() == "windows"
 
 def is_macos() -> bool:
+    """Return whether the host is macOS."""
     return platform() == "macos"
 
 def is_linux() -> bool:
+    """Return whether the host is Linux."""
     return platform() == "linux"
 
 def is_unix() -> bool:
+    """Return whether the host is Unix-like."""
     return is_linux() or is_macos()
 
 def family() -> Family:
+    """Return the host operating-system family."""
     if is_windows():
         return Family.Windows
     if is_macos():
@@ -52,6 +64,7 @@ def family() -> Family:
     return Family.Unknown
 
 def cpu() -> Arch:
+    """Return the host processor architecture."""
     kind: str = arch()
     if kind == "x86_64":
         return Arch.X86_64

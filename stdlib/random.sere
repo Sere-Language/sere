@@ -3,15 +3,74 @@
 
 extern "C" "sere_random_seed"
 def seed(value: i64) -> void
+"""Seed the random number generator."""
 
 extern "C" "sere_random_i32"
 def next_i32() -> i32
+"""Return the next random i32."""
 
 extern "C" "sere_random_i64"
 def next_i64() -> i64
+"""Return the next random i64."""
 
 extern "C" "sere_random_f64"
 def next_f64() -> f64
+"""Return the next random f64."""
 
 extern "C" "sere_random_range"
 def between(low: i32, high: i32) -> i32
+"""Return a random i32 in a range."""
+
+extern "C" "sere_random_range_i64"
+def between_i64(low: i64, high: i64) -> i64
+"""Return a random i64 in a range."""
+
+extern "C" "sere_random_between_f64"
+def between_f64(low: f64, high: f64) -> f64
+"""Return a random f64 in a range."""
+
+extern "C" "sere_random_bool"
+def bool() -> bool
+"""Return a random boolean."""
+
+extern "C" "sere_random_chance"
+def _chance(probability: f64) -> i32
+"""Test a random probability."""
+
+extern "C" "sere_random_bits"
+def bits(count: i32) -> i32
+"""Return count random bits."""
+
+def chance(probability: f64) -> bool:
+    """Return whether a probability check succeeds."""
+    return _chance(probability) as bool
+
+def probability(percent: f64) -> bool:
+    """Return whether a percentage check succeeds."""
+    return chance(percent / 100.0)
+
+def random_int(low: i32, high: i32) -> i32:
+    """Return a random integer in the given range."""
+    return between(low, high)
+
+def integer(low: i32, high: i32) -> i32:
+    """Return a random integer in the given range."""
+    return between(low, high)
+
+def random_float(low: f64 = 0.0, high: f64 = 1.0) -> f64:
+    """Return a random floating-point value in the given range."""
+    return between_f64(low, high)
+
+def random_float32(low: f64 = 0.0, high: f64 = 1.0) -> f32:
+    """Return a random f32 value in the given range."""
+    return between_f64(low, high) as f32
+
+def choice[T](items: list[T]) -> T:
+    """Return a random item from items."""
+    if len(items) == 0:
+        raise ValueError("cannot choose from an empty list")
+    return items[between(0, len(items))]
+
+def pick[T](items: list[T]) -> T:
+    """Return a random item from items."""
+    return choice(items)

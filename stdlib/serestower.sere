@@ -1,6 +1,7 @@
 import time
 
 def speak() -> void:
+    """Print the module's farewell."""
     print("I bid the body fairwell...")
     time.sleep_ms(3000)
     print("\tSlumped down and cold history.")

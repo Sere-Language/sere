@@ -4,129 +4,172 @@
 
 extern "C" "sere_math_sqrt"
 def sqrt(value: f64) -> f64
+"""Return the square root of value."""
 
 extern "C" "sere_math_sin"
 def sin(value: f64) -> f64
+"""Return the sine of value in radians."""
 
 extern "C" "sere_math_cos"
 def cos(value: f64) -> f64
+"""Return the cosine of value in radians."""
 
 extern "C" "sere_math_tan"
 def tan(value: f64) -> f64
+"""Return the tangent of value in radians."""
 
 extern "C" "sere_math_asin"
 def asin(value: f64) -> f64
+"""Return the inverse sine of value."""
 
 extern "C" "sere_math_acos"
 def acos(value: f64) -> f64
+"""Return the inverse cosine of value."""
 
 extern "C" "sere_math_atan"
 def atan(value: f64) -> f64
+"""Return the inverse tangent of value."""
 
 extern "C" "sere_math_atan2"
 def atan2(y: f64, x: f64) -> f64
+"""Return the angle for coordinates y and x."""
 
 extern "C" "sere_math_sinh"
 def sinh(value: f64) -> f64
+"""Return the hyperbolic sine of value."""
 
 extern "C" "sere_math_cosh"
 def cosh(value: f64) -> f64
+"""Return the hyperbolic cosine of value."""
 
 extern "C" "sere_math_tanh"
 def tanh(value: f64) -> f64
+"""Return the hyperbolic tangent of value."""
 
 extern "C" "sere_math_exp"
 def exp(value: f64) -> f64
+"""Return e raised to value."""
 
 extern "C" "sere_math_expm1"
 def expm1(value: f64) -> f64
+"""Return e raised to value minus one."""
 
 extern "C" "sere_math_log"
 def log(value: f64) -> f64
+"""Return the natural logarithm of value."""
 
 extern "C" "sere_math_log2"
 def log2(value: f64) -> f64
+"""Return the base-two logarithm of value."""
 
 extern "C" "sere_math_log10"
 def log10(value: f64) -> f64
+"""Return the base-ten logarithm of value."""
 
 extern "C" "sere_math_log1p"
 def log1p(value: f64) -> f64
+"""Return the natural logarithm of one plus value."""
 
 extern "C" "sere_math_hypot"
 def hypot(x: f64, y: f64) -> f64
+"""Return the hypotenuse for x and y."""
 
 extern "C" "sere_math_fmod"
 def fmod(x: f64, y: f64) -> f64
+"""Return the floating-point remainder."""
 
 extern "C" "sere_math_copysign"
 def copysign(mag: f64, sign: f64) -> f64
+"""Return mag with the sign of sign."""
 
 extern "C" "sere_math_round"
 def round(value: f64) -> f64
+"""Round value to the nearest integer-valued float."""
 
 extern "C" "sere_math_trunc"
 def trunc(value: f64) -> f64
+"""Truncate value toward zero."""
 
 extern "C" "sere_math_fmin"
 def fmin(left: f64, right: f64) -> f64
+"""Return the smaller floating-point value."""
 
 extern "C" "sere_math_fmax"
 def fmax(left: f64, right: f64) -> f64
+"""Return the larger floating-point value."""
 
 extern "C" "sere_math_clamp"
 def fclamp(value: f64, low: f64, high: f64) -> f64
+"""Clamp a floating-point value to a range."""
 
 extern "C" "sere_math_lerp"
 def lerp(from_value: f64, to_value: f64, t: f64) -> f64
+"""Interpolate between two floating-point values."""
 
 extern "C" "sere_math_radians"
 def radians(degrees: f64) -> f64
+"""Convert degrees to radians."""
 
 extern "C" "sere_math_degrees"
 def degrees(radians_value: f64) -> f64
+"""Convert radians to degrees."""
 
 extern "C" "sere_math_pi"
 def pi() -> f64
+"""Return the mathematical constant pi."""
 
 extern "C" "sere_math_tau"
 def tau() -> f64
+"""Return the mathematical constant tau."""
 
 extern "C" "sere_math_e"
 def e() -> f64
+"""Return the mathematical constant e."""
 
 extern "C" "sere_math_inf"
 def inf() -> f64
+"""Return positive infinity."""
 
 extern "C" "sere_math_nan"
 def nan() -> f64
+"""Return a not-a-number value."""
 
 extern "C" "sere_math_isnan"
 def _isnan(value: f64) -> i32
+"""Test whether value is NaN."""
 
 extern "C" "sere_math_isinf"
 def _isinf(value: f64) -> i32
+"""Test whether value is infinite."""
 
 extern "C" "sere_math_isfinite"
 def _isfinite(value: f64) -> i32
+"""Test whether value is finite."""
 
 extern "C" "sere_math_abs"
 def fabs(value: f64) -> f64
+"""Return the absolute value of value."""
 
 extern "C" "sere_math_floor"
 def floor(value: f64) -> f64
+"""Return the floor of value."""
 
 extern "C" "sere_math_ceil"
 def ceil(value: f64) -> f64
+"""Return the ceiling of value."""
 
 extern "C" "sere_math_pow"
 def pow(base: f64, exp: f64) -> f64
+"""Raise base to the power exp."""
 
 def isnan(value: f64) -> bool:
+    """Return whether value is NaN."""
     return _isnan(value) as bool
 
 def isinf(value: f64) -> bool:
+    """Return whether value is infinite."""
     return _isinf(value) as bool
 
 def isfinite(value: f64) -> bool:
+    """Return whether value is finite."""
     return _isfinite(value) as bool

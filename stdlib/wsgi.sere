@@ -37,63 +37,81 @@ import string
 
 extern "C" "sere_http_listen"
 def _listen(host: str, port: i32) -> Ptr[i8]
+"""Start an HTTP server on host and port."""
 
 extern "C" "sere_http_accept"
 def _accept(server: Ptr[i8]) -> Ptr[i8]
+"""Accept the next HTTP request."""
 
 extern "C" "sere_http_req_method"
 def _req_method(req: Ptr[i8]) -> str
+"""Return the request method."""
 
 extern "C" "sere_http_req_path"
 def _req_path(req: Ptr[i8]) -> str
+"""Return the request path."""
 
 extern "C" "sere_http_req_query"
 def _req_query(req: Ptr[i8]) -> str
+"""Return the raw request query."""
 
 extern "C" "sere_http_req_version"
 def _req_version(req: Ptr[i8]) -> str
+"""Return the request HTTP version."""
 
 extern "C" "sere_http_req_headers"
 def _req_headers(req: Ptr[i8]) -> str
+"""Return the raw request headers."""
 
 extern "C" "sere_http_req_body"
 def _req_body(req: Ptr[i8]) -> str
+"""Return the request body."""
 
 extern "C" "sere_http_reply_ext"
 def _reply_ext(req: Ptr[i8], status: i32, reason: str, content_type: str, extra_headers: str, body: str) -> void
+"""Send an HTTP response with extra headers."""
 
 extern "C" "sere_http_reply"
 def _reply(req: Ptr[i8], status: i32, content_type: str, body: str) -> void
+"""Send an HTTP response."""
 
 extern "C" "sere_http_close"
 def _close(server: Ptr[i8]) -> void
+"""Close an HTTP server handle."""
 
 extern "C" "sere_url_decode"
 def url_decode(text: str) -> str
+"""Decode URL-escaped text."""
 
 # ---------------------------------------------------------------------------
 # Multi-value name/value collections (headers, query strings, forms).
 # ---------------------------------------------------------------------------
 
 class MultiMap:
+    """Case-insensitive ordered name/value collection."""
     names: list[str]
     values: list[str]
 
     def __init__(self) -> void:
+        """Create an empty collection."""
         self.names = list[str]()
         self.values = list[str]()
 
     def add(self, name: str, value: str) -> void:
+        """Append a name/value pair."""
         self.names.append(name)
         self.values.append(value)
 
     def count(self) -> i64:
+        """Return the number of stored names."""
         return len(self.names)
 
     def is_empty(self) -> bool:
+        """Return whether the collection is empty."""
         return len(self.names) == 0
 
     def index_of(self, name: str) -> i64:
+        """Return the first index matching name, or -1."""
         target: str = string.lower(name)
         i: i64 = 0
         while i < len(self.names):
@@ -103,15 +121,18 @@ class MultiMap:
         return -1
 
     def has(self, name: str) -> bool:
+        """Return whether name is present."""
         return self.index_of(name) >= 0
 
     def get(self, name: str, fallback: str = "") -> str:
+        """Return the first value for name or fallback."""
         found: i64 = self.index_of(name)
         if found < 0:
             return fallback
         return self.values[found]
 
     def get_all(self, name: str) -> list[str]:
+        """Return every value for name."""
         found_all: list[str] = list[str]()
         target: str = string.lower(name)
         i: i64 = 0
@@ -122,12 +143,15 @@ class MultiMap:
         return found_all
 
     def name_at(self, index: i64) -> str:
+        """Return the name at index."""
         return self.names[index]
 
     def value_at(self, index: i64) -> str:
+        """Return the value at index."""
         return self.values[index]
 
     def set(self, name: str, value: str) -> void:
+        """Replace the first value, or add a new pair."""
         found: i64 = self.index_of(name)
         if found < 0:
             self.add(name, value)
@@ -135,6 +159,7 @@ class MultiMap:
         self.values[found] = value
 
     def remove(self, name: str) -> void:
+        """Remove every pair matching name."""
         kept_names: list[str] = list[str]()
         kept_values: list[str] = list[str]()
         target: str = string.lower(name)
@@ -152,6 +177,7 @@ class MultiMap:
 # ---------------------------------------------------------------------------
 
 def parse_query(raw: str) -> MultiMap:
+    """Parse a URL query string."""
     out: MultiMap = MultiMap()
     if len(raw) == 0:
         return out
@@ -169,6 +195,7 @@ def parse_query(raw: str) -> MultiMap:
     return out
 
 def parse_headers(raw: str) -> MultiMap:
+    """Parse newline-separated HTTP headers."""
     out: MultiMap = MultiMap()
     lines: list[str] = string.split(raw, "\n")
     i: i64 = 0
@@ -185,6 +212,7 @@ def parse_headers(raw: str) -> MultiMap:
     return out
 
 def headers_block(headers: MultiMap) -> str:
+    """Serialize headers for an HTTP response."""
     out: str = ""
     i: i64 = 0
     while i < len(headers.names):
@@ -193,6 +221,7 @@ def headers_block(headers: MultiMap) -> str:
     return out
 
 def status_text(status: i32) -> str:
+    """Return the standard reason phrase for status."""
     if status == 100:
         return "Continue"
     if status == 101:
@@ -264,6 +293,7 @@ def status_text(status: i32) -> str:
     return "OK"
 
 def json_escape(value: str) -> str:
+    """Escape a string for JSON."""
     out: str = ""
     i: i64 = 0
     while i < len(value):
@@ -284,9 +314,11 @@ def json_escape(value: str) -> str:
     return out
 
 def json_string(value: str) -> str:
+    """Quote and escape a string as JSON."""
     return "\"" + json_escape(value) + "\""
 
 def content_type_for(path: str) -> str:
+    """Infer a content type from a path extension."""
     lowered: str = string.lower(path)
     if string.ends_with(lowered, ".html") or string.ends_with(lowered, ".htm"):
         return "text/html; charset=utf-8"
@@ -311,6 +343,7 @@ def content_type_for(path: str) -> str:
 # ---------------------------------------------------------------------------
 
 class Environ:
+    """HTTP request environment and parsed parameters."""
     method: str
     path: str
     query: str
@@ -320,6 +353,7 @@ class Environ:
     params: MultiMap
 
     def __init__(self, method: str, path: str, body: str) -> void:
+        """Create an environment for a request."""
         self.method = method
         self.path = path
         self.query = ""
@@ -329,24 +363,31 @@ class Environ:
         self.params = MultiMap()
 
     def header(self, name: str, fallback: str = "") -> str:
+        """Return a request header or fallback."""
         return self.headers.get(name, fallback)
 
     def param(self, name: str, fallback: str = "") -> str:
+        """Return a query parameter or fallback."""
         return self.params.get(name, fallback)
 
     def form(self) -> MultiMap:
+        """Parse the request body as form data."""
         return parse_query(self.body)
 
     def is_get(self) -> bool:
+        """Return whether the request uses GET."""
         return string.lower(self.method) == "get"
 
     def is_post(self) -> bool:
+        """Return whether the request uses POST."""
         return string.lower(self.method) == "post"
 
     def is_head(self) -> bool:
+        """Return whether the request uses HEAD."""
         return string.lower(self.method) == "head"
 
 class Response:
+    """An HTTP response under construction."""
     status: i32
     content_type: str
     body: str
@@ -354,6 +395,7 @@ class Response:
     headers: MultiMap
 
     def __init__(self, status: i32 = 200, content_type: str = "text/plain; charset=utf-8", body: str = "") -> void:
+        """Create a response with status, content type, and body."""
         self.status = status
         self.content_type = content_type
         self.body = body
@@ -361,15 +403,19 @@ class Response:
         self.headers = MultiMap()
 
     def set_header(self, name: str, value: str) -> void:
+        """Replace a response header."""
         self.headers.set(name, value)
 
     def add_header(self, name: str, value: str) -> void:
+        """Append a response header."""
         self.headers.add(name, value)
 
     def set_cookie(self, name: str, value: str, path: str = "/") -> void:
+        """Add a Set-Cookie header."""
         self.headers.add("Set-Cookie", name + "=" + value + "; Path=" + path)
 
     def status_line(self) -> str:
+        """Return the HTTP status line."""
         if len(self.reason) > 0:
             return str(self.status) + " " + self.reason
         return str(self.status) + " " + status_text(self.status)
@@ -379,35 +425,45 @@ class Response:
 # ---------------------------------------------------------------------------
 
 def text(body: str, status: i32 = 200) -> Response:
+    """Build a plain-text response."""
     return Response(status, "text/plain; charset=utf-8", body)
 
 def html(body: str, status: i32 = 200) -> Response:
+    """Build an HTML response."""
     return Response(status, "text/html; charset=utf-8", body)
 
 def json(body: str, status: i32 = 200) -> Response:
+    """Build a JSON response."""
     return Response(status, "application/json; charset=utf-8", body)
 
 def redirect(location: str, status: i32 = 302) -> Response:
+    """Build a redirect response."""
     response: Response = Response(status, "text/plain; charset=utf-8", "")
     response.set_header("Location", location)
     return response
 
 def not_found(body: str = "Not Found") -> Response:
+    """Build a 404 response."""
     return text(body, 404)
 
 def forbidden(body: str = "Forbidden") -> Response:
+    """Build a 403 response."""
     return text(body, 403)
 
 def bad_request(body: str = "Bad Request") -> Response:
+    """Build a 400 response."""
     return text(body, 400)
 
 def method_not_allowed(body: str = "Method Not Allowed") -> Response:
+    """Build a 405 response."""
     return text(body, 405)
 
 def server_error(body: str = "Internal Server Error") -> Response:
+    """Build a 500 response."""
     return text(body, 500)
 
 def no_content() -> Response:
+    """Build a 204 response."""
     return Response(204, "text/plain; charset=utf-8", "")
 
 # ---------------------------------------------------------------------------
@@ -415,12 +471,14 @@ def no_content() -> Response:
 # ---------------------------------------------------------------------------
 
 class Route:
+    """A route pattern and its request handler."""
     method: str
     pattern: str
     kind: i32
     handler: Callable[[Environ], Response]
 
     def __init__(self, method: str, pattern: str, kind: i32, handler: Callable[[Environ], Response]) -> void:
+        """Create a route."""
         self.method = method
         self.pattern = pattern
         self.kind = kind
@@ -441,6 +499,7 @@ def _prefix_matches(prefix: str, path: str) -> bool:
     return path[len(prefix)] == "/"
 
 def match_pattern(pattern: str, path: str, captures: MultiMap) -> bool:
+    """Match a path and fill named captures."""
     want: list[str] = string.split(pattern, "/")
     have: list[str] = string.split(path, "/")
     if len(want) != len(have):
@@ -461,39 +520,51 @@ def match_pattern(pattern: str, path: str, captures: MultiMap) -> bool:
     return True
 
 class Router:
+    """Ordered HTTP route collection."""
     routes: list[Route]
 
     def __init__(self) -> void:
+        """Create an empty router."""
         self.routes = list[Route]()
 
     def add(self, method: str, pattern: str, handler: Callable[[Environ], Response]) -> void:
+        """Add a method-specific route."""
         self.routes.append(Route(method, pattern, 2, handler))
 
     def any(self, pattern: str, handler: Callable[[Environ], Response]) -> void:
+        """Add a route accepting every method."""
         self.add("*", pattern, handler)
 
     def get(self, pattern: str, handler: Callable[[Environ], Response]) -> void:
+        """Add a GET route."""
         self.add("GET", pattern, handler)
 
     def post(self, pattern: str, handler: Callable[[Environ], Response]) -> void:
+        """Add a POST route."""
         self.add("POST", pattern, handler)
 
     def put(self, pattern: str, handler: Callable[[Environ], Response]) -> void:
+        """Add a PUT route."""
         self.add("PUT", pattern, handler)
 
     def patch(self, pattern: str, handler: Callable[[Environ], Response]) -> void:
+        """Add a PATCH route."""
         self.add("PATCH", pattern, handler)
 
     def delete(self, pattern: str, handler: Callable[[Environ], Response]) -> void:
+        """Add a DELETE route."""
         self.add("DELETE", pattern, handler)
 
     def mount(self, prefix: str, handler: Callable[[Environ], Response]) -> void:
+        """Mount a handler below a path prefix."""
         self.routes.append(Route("*", prefix, 1, handler))
 
     def count(self) -> i64:
+        """Return the number of routes."""
         return len(self.routes)
 
     def dispatch(self, environ: Environ) -> Response:
+        """Dispatch an environment to the first matching route."""
         i: i64 = 0
         while i < len(self.routes):
             route: Route = self.routes[i]
@@ -512,14 +583,17 @@ class Router:
 # ---------------------------------------------------------------------------
 
 class Files:
+    """Serve files below a configured document root."""
     root: str
     prefix: str
 
     def __init__(self, root: str, prefix: str = "") -> void:
+        """Create a static-file handler."""
         self.root = root
         self.prefix = prefix
 
     def handle(self, environ: Environ) -> Response:
+        """Build a response for a static-file request."""
         rel: str = environ.path
         if len(self.prefix) > 0 and string.starts_with(rel, self.prefix):
             rel = rel[len(self.prefix):]
@@ -541,23 +615,29 @@ class Files:
 # ---------------------------------------------------------------------------
 
 class Server:
+    """Listening HTTP server handle."""
     handle: Ptr[i8]
 
     def __init__(self, host: str, port: i32) -> void:
+        """Start listening on host and port."""
         self.handle = _listen(host, port)
 
     def is_running(self) -> bool:
+        """Return whether the server is active."""
         return self.handle is not None
 
     def accept(self) -> Ptr[i8]:
+        """Accept and return the next request handle."""
         return _accept(self.handle)
 
     def close(self) -> void:
+        """Close the listening server."""
         if self.handle is not None:
             _close(self.handle)
             self.handle = None
 
 def request_environ(req: Ptr[i8]) -> Environ:
+    """Convert a native request into an environment."""
     environ: Environ = Environ(_req_method(req), _req_path(req), _req_body(req))
     environ.query = _req_query(req)
     environ.version = _req_version(req)
@@ -566,21 +646,25 @@ def request_environ(req: Ptr[i8]) -> Environ:
     return environ
 
 def dispatch(app: Callable[[Environ], Response], environ: Environ) -> Response:
+    """Invoke an application and convert failures to 500 responses."""
     try:
         return app(environ)
     except Exception as error:
         return server_error(error.message)
 
 def send(req: Ptr[i8], response: Response) -> void:
+    """Send a response through the native HTTP transport."""
     extra: str = headers_block(response.headers)
     _reply_ext(req, response.status, response.reason, response.content_type, extra, response.body)
 
 def handle_request(app: Callable[[Environ], Response], req: Ptr[i8]) -> void:
+    """Build, dispatch, and send one request."""
     environ: Environ = request_environ(req)
     response: Response = dispatch(app, environ)
     send(req, response)
 
 def serve_once(app: Callable[[Environ], Response], server: Server) -> bool:
+    """Accept and handle one request."""
     req: Ptr[i8] = server.accept()
     if req is None:
         return False
@@ -588,6 +672,7 @@ def serve_once(app: Callable[[Environ], Response], server: Server) -> bool:
     return True
 
 def serve(app: Callable[[Environ], Response], host: str, port: i32) -> void:
+    """Serve requests until the process exits."""
     server: Server = Server(host, port)
     if not server.is_running():
         return
@@ -596,4 +681,3 @@ def serve(app: Callable[[Environ], Response], host: str, port: i32) -> void:
         if req is None:
             continue
         handle_request(app, req)
-

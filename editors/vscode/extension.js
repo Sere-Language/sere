@@ -1317,8 +1317,22 @@ function activate(context) {
             if (!result || !result.contents) {
               return undefined;
             }
-            const value =
-              typeof result.contents === "string" ? result.contents : result.contents.value;
+            const contents = Array.isArray(result.contents) ? result.contents : [result.contents];
+            const value = contents
+              .map((content) => {
+                if (typeof content === "string") {
+                  return content;
+                }
+                if (content && typeof content.value === "string") {
+                  return content.kind === "markdown" ? content.value : content.value;
+                }
+                return "";
+              })
+              .filter(Boolean)
+              .join("\n\n");
+            if (!value) {
+              return undefined;
+            }
             const markdown = new vscode.MarkdownString(value, true);
             markdown.supportHtml = false;
             return new vscode.Hover(markdown, result.range ? fromRange(result.range) : undefined);

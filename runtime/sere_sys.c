@@ -767,6 +767,42 @@ int32_t sere_random_range(int32_t low, int32_t high) {
   return low + (int32_t)(rngNext() % (uint64_t)span);
 }
 
+int64_t sere_random_range_i64(int64_t low, int64_t high) {
+  if (high <= low)
+    return low;
+  const uint64_t span = (uint64_t)high - (uint64_t)low;
+  const uint64_t limit = UINT64_MAX - (UINT64_MAX % span);
+  uint64_t value;
+  do {
+    value = rngNext();
+  } while (value >= limit);
+  return (int64_t)((uint64_t)low + (value % span));
+}
+
+double sere_random_between_f64(double low, double high) {
+  if (high <= low)
+    return low;
+  return low + (high - low) * sere_random_f64();
+}
+
+int32_t sere_random_bool(void) { return (int32_t)(rngNext() & 1ULL); }
+
+int32_t sere_random_chance(double probability) {
+  if (probability <= 0.0)
+    return 0;
+  if (probability >= 1.0)
+    return 1;
+  return sere_random_f64() < probability ? 1 : 0;
+}
+
+int32_t sere_random_bits(int32_t bits) {
+  if (bits <= 0)
+    return 0;
+  if (bits >= 31)
+    return (int32_t)(rngNext() >> 33);
+  return (int32_t)(rngNext() & ((1ULL << bits) - 1ULL));
+}
+
 int64_t sere_hash_fnv1a(const char* data, int64_t len) {
   uint64_t hash = 14695981039346656037ULL;
   if (data == NULL || len <= 0) {

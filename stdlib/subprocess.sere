@@ -36,30 +36,39 @@ import string
 # ---------------------------------------------------------------------------
 extern "C" "sere_proc_open"
 def _open(cmd: str) -> Ptr[i8]
+"""Open a child process for cmd."""
 
 extern "C" "sere_proc_write"
 def _write(proc: Ptr[i8], data: str) -> void
+"""Write data to a child process."""
 
 extern "C" "sere_proc_close_stdin"
 def _close_stdin(proc: Ptr[i8]) -> void
+"""Close a child process standard input."""
 
 extern "C" "sere_proc_read"
 def _read(proc: Ptr[i8], buf: Ptr[i8], cap: i64, wait_ms: i32) -> i64
+"""Read child output into a buffer."""
 
 extern "C" "sere_proc_poll"
 def _poll(proc: Ptr[i8], status: Ptr[i32]) -> i32
+"""Poll a child process for completion."""
 
 extern "C" "sere_proc_wait"
 def _wait(proc: Ptr[i8]) -> i32
+"""Wait for a child process and return its status."""
 
 extern "C" "sere_proc_kill"
 def _kill(proc: Ptr[i8]) -> void
+"""Terminate a child process."""
 
 extern "C" "sere_proc_close"
 def _close(proc: Ptr[i8]) -> void
+"""Close a child process handle."""
 
 extern "C" "sere_proc_communicate"
 def _communicate(proc: Ptr[i8]) -> str
+"""Read remaining child output."""
 
 # ---------------------------------------------------------------------------
 # Popen
@@ -78,24 +87,29 @@ def _communicate(proc: Ptr[i8]) -> str
 #       proc.kill()
 # ---------------------------------------------------------------------------
 class Popen:
+    """A live child process."""
     args: str
     handle: Ptr[i8]
 
     def __init__(self, args: str) -> void:
+        """Start a child process for args."""
         self.args = args
         self.handle = _open(args)
         if self.handle is None:
             raise SubprocessError("failed to spawn: " + args)
 
     def alive(self) -> bool:
+        """Return whether the child handle is active."""
         return self.handle != None
 
     # Write `data` to the child's stdin.
     def write(self, data: str) -> void:
+        """Write data to the child's standard input."""
         _write(self.handle, data)
 
     # Close the child's stdin, signalling end-of-input.
     def close_stdin(self) -> void:
+        """Close the child's standard input."""
         _close_stdin(self.handle)
 
     # Read up to `cap` bytes of the child's merged stdout+stderr into
@@ -103,10 +117,12 @@ class Popen:
     # read; 0 means end-of-output. Returns -1 when the child is still
     # running with nothing ready and wait_ms == 0.
     def read(self, buf: Ptr[i8], cap: i64, wait_ms: i32 = 0) -> i64:
+        """Read child output into buf."""
         return _read(self.handle, buf, cap, wait_ms)
 
     # Exit code if the child has finished, None if it is still running.
     def poll(self) -> i32 | None:
+        """Return the exit code, or None while running."""
         if self.handle == None:
             return None
         status: i32 = 0
@@ -117,6 +133,7 @@ class Popen:
 
     # Block until the child exits; returns its exit status.
     def wait(self) -> i32:
+        """Wait for and return the exit status."""
         code: i32 = _wait(self.handle)
         return code
 
@@ -124,23 +141,28 @@ class Popen:
     # (like Popen.communicate() without input), then wait and return
     # the exit code alongside the collected text.
     def communicate(self) -> str:
+        """Read remaining output and wait for exit."""
         return _communicate(self.handle)
 
     # Forcefully terminate the child.
     def kill(self) -> void:
+        """Terminate the child process."""
         _kill(self.handle)
 
     # Release the handle; kills the child if it is still running.
     def close(self) -> void:
+        """Release the child handle."""
         if self.handle != None:
             _close(self.handle)
             self.handle = None
 
 
 class SubprocessError(Exception):
+    """Base class for subprocess failures."""
     pass
 
 class CalledProcessError(SubprocessError):
+    """Raised when a command exits unsuccessfully."""
     args: str
     cmd: str
     returncode: i32
@@ -148,6 +170,7 @@ class CalledProcessError(SubprocessError):
     stderr: str
 
     def __init__(self, cmd: str, returncode: i32, output: str = "", stderr: str = "") -> void:
+        """Create an error containing command results."""
         self.message = "command '" + cmd + "' returned exit status " + str(returncode)
         self.args = cmd
         self.cmd = cmd
@@ -156,15 +179,18 @@ class CalledProcessError(SubprocessError):
         self.stderr = stderr
 
 class CompletedProcess:
+    """The result of a completed command."""
     args: str
     returncode: i32
     stdout: str
     stderr: str
 
     def failed(self) -> bool:
+        """Return whether the command failed."""
         return self.returncode != 0
 
     def ok(self) -> bool:
+        """Return whether the command succeeded."""
         return self.returncode == 0
 
 # ---------------------------------------------------------------------------
@@ -174,11 +200,14 @@ class CompletedProcess:
 # ---------------------------------------------------------------------------
 extern "C" "sere_proc_run"
 def _run(cmd: str) -> str
+"""Run a command and capture its output."""
 
 extern "C" "sere_proc_status"
 def _status() -> i32
+"""Return the last command exit status."""
 
 def _completed(args: str) -> CompletedProcess:
+    """Run args and collect its completed result."""
     stdout: str = _run(args)
     code: i32 = _status()
     stderr: str = ""
@@ -200,6 +229,7 @@ def _completed(args: str) -> CompletedProcess:
 # check=False in Python: failures are recorded, never raised here.
 # ---------------------------------------------------------------------------
 def run(args: str, capture_output: bool = False) -> CompletedProcess:
+    """Run a command and return its completed result."""
     if capture_output:
         return _completed(args)
     output: str = _run(args)
@@ -220,6 +250,7 @@ def run(args: str, capture_output: bool = False) -> CompletedProcess:
 # boolean used to decide the return value.
 # ---------------------------------------------------------------------------
 def call(args: str) -> i32:
+    """Run a command and return its exit status."""
     result: CompletedProcess = _completed(args)
     return result.returncode
 
@@ -230,6 +261,7 @@ def call(args: str) -> i32:
 # if it exits non-zero. On success the exit code (0) is returned.
 # ---------------------------------------------------------------------------
 def check_call(args: str) -> i32:
+    """Run a command and raise on failure."""
     result: CompletedProcess = _completed(args)
     if result.returncode != 0:
         raise CalledProcessError(args, result.returncode, result.stdout, result.stderr)
@@ -243,6 +275,7 @@ def check_call(args: str) -> i32:
 # shell command substitution drops the final newline.
 # ---------------------------------------------------------------------------
 def check_output(args: str) -> str:
+    """Run a command and return trimmed output."""
     result: CompletedProcess = _completed(args)
     if result.returncode != 0:
         raise CalledProcessError(args, result.returncode, result.stdout, result.stderr)
@@ -255,6 +288,7 @@ def check_output(args: str) -> str:
 # merged stdout+stderr without ever raising, whatever the exit code.
 # ---------------------------------------------------------------------------
 def getoutput(args: str) -> str:
+    """Run a command and return trimmed output without raising."""
     result: CompletedProcess = _completed(args)
     return string.strip(result.stdout)
 
@@ -265,5 +299,6 @@ def getoutput(args: str) -> str:
 # whitespace-trimmed, never raises.
 # ---------------------------------------------------------------------------
 def getstatusoutput(args: str) -> tuple[i32, str]:
+    """Return a command's status and trimmed output."""
     result: CompletedProcess = _completed(args)
     return (result.returncode, string.strip(result.stdout))

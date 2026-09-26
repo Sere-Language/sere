@@ -1,7 +1,10 @@
 # Text encodings. Import with: import encoding
+"""Text encoding helpers."""
 
 extern "C" "sere_b64_encode"
 def b64encode(text: str) -> str
+"""Encode text as base64."""
 
 extern "C" "sere_b64_decode"
 def b64decode(text: str) -> str
+"""Decode base64 text."""

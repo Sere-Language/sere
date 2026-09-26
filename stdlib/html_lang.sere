@@ -2,9 +2,11 @@
 # html: captures raw markup and interpolates {expr} holes.
 
 class Html:
+    """Raw HTML captured by the html macro."""
     value: str
 
     def __init__(self, value: str) -> void:
+        """Wrap raw HTML text."""
         self.value = value
 
 macro html:

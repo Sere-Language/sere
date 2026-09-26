@@ -5,12 +5,16 @@
 
 extern "C" "sere_re_is_match"
 def _is_match(pattern: regex, text: str) -> i32
+"""Test whether a pattern matches text."""
 
 extern "C" "sere_re_find"
 def find(pattern: regex, text: str) -> str
+"""Return the first match in text."""
 
 extern "C" "sere_re_replace"
 def replace(pattern: regex, text: str, repl: str) -> str
+"""Replace pattern matches in text."""
 
 def is_match(pattern: regex, text: str) -> bool:
+    """Return whether pattern matches text."""
     return _is_match(pattern, text) as bool
