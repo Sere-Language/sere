@@ -136,12 +136,7 @@ void collectImportStmts(const Module& module, std::vector<const ImportStmt*>& ou
   return type != nullptr && type->isRecord() ? type : nullptr;
 }
 
-void bindModuleExports(TypeChecker& checker,
-                       TypeContext& types,
-                       Module& module,
-                       const std::string& moduleName,
-                       const ImportStmt& statement,
-                       DiagnosticEngine& diagnostics) {
+void bindModuleMethods(TypeChecker& checker, Module& module) {
   // Imported calls use the same source parameter binder as local calls.
   for (const auto& item : module.statements()) {
     if (item->kind() == NodeKind::ClassDef) {
@@ -156,6 +151,16 @@ void bindModuleExports(TypeChecker& checker,
       }
     }
   }
+}
+
+void bindModuleExports(TypeChecker& checker,
+                       TypeContext& types,
+                       Module& module,
+                       const std::vector<std::unique_ptr<Module>>& dependencies,
+                       const std::string& moduleName,
+                       const ImportStmt& statement,
+                       DiagnosticEngine& diagnostics) {
+  bindModuleMethods(checker, module);
   std::vector<RecordField> exports;
   for (std::unique_ptr<Stmt>& item : module.statements()) {
     if (item->fromPrelude()) {
@@ -315,6 +320,26 @@ void bindModuleExports(TypeChecker& checker,
             static_cast<FunctionDef&>(*item).name() == field.name) {
           symbol.function = static_cast<FunctionDef*>(item.get());
           break;
+        }
+      }
+      if (symbol.function == nullptr && !field.llvmName.empty()) {
+        for (const auto& dependency : dependencies) {
+          for (const auto& item : dependency->statements()) {
+            if (item->kind() != NodeKind::FunctionDef) {
+              continue;
+            }
+            auto& function = static_cast<FunctionDef&>(*item);
+            const std::string llvmName = function.isExtern()
+                                             ? function.externName()
+                                             : function.modulePrefix() + "_" + function.name();
+            if (llvmName == field.llvmName) {
+              symbol.function = &function;
+              break;
+            }
+          }
+          if (symbol.function != nullptr) {
+            break;
+          }
         }
       }
     }
@@ -497,6 +522,11 @@ bool Frontend::analyze(const std::string& path,
   checker_ = std::make_unique<TypeChecker>(*types_, diagnostics_);
   checker_->setBestEffort(bestEffort);
   checker_->setModuleInfo(absolutePath(path), "__main__", "", moduleDocstring(*ast_), true);
+  // Re-exported classes still need their original method declarations for
+  // keyword/default argument binding, even when the entry module only imports them.
+  for (const auto& dependency : imported_) {
+    bindModuleMethods(*checker_, *dependency);
+  }
   std::vector<const ImportStmt*> imports;
   collectImportStmts(*ast_, imports);
   for (const ImportStmt* statement : imports) {
@@ -508,6 +538,7 @@ bool Frontend::analyze(const std::string& path,
     bindModuleExports(*checker_,
                       *types_,
                       *imported_[found->second],
+                      imported_,
                       importNames_[found->second],
                       *statement,
                       diagnostics_);
@@ -599,6 +630,9 @@ bool Frontend::typecheckOneImported(std::size_t index, Module* prelude) {
   const std::string file = absolutePath(importPaths_[index].string());
   const std::string name = importNames_[index];
   checker.setModuleInfo(file, name, "", moduleDocstring(*imported_[index]), true);
+  for (const auto& dependency : imported_) {
+    bindModuleMethods(checker, *dependency);
+  }
   if (prelude != nullptr) {
     bindPreludeExports(checker, *prelude);
   }
@@ -612,6 +646,7 @@ bool Frontend::typecheckOneImported(std::size_t index, Module* prelude) {
     bindModuleExports(checker,
                       *types_,
                       *imported_[found->second],
+                      imported_,
                       importNames_[found->second],
                       *statement,
                       diagnostics_);

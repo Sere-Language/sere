@@ -1,0 +1,25 @@
+import init_package
+from init_package.shadow import value as file_value
+from init_package import answer, Marker
+from init_package.child import answer as nested_answer
+import wsgi
+from wsgi import Headers
+
+def main() -> i32:
+    assert init_package.answer() == 42
+    assert answer() == 42
+    assert answer(value=43) == 43
+    assert init_package.answer(value=44) == 44
+    assert nested_answer() == 42
+    assert file_value() == 3
+    assert init_package.entry_name() == "init_package"
+    marker: Marker = Marker()
+    assert marker.value() == 7
+    headers: Headers = Headers()
+    headers.add("Content-Type", "text/plain")
+    assert headers.get("content-type") == "text/plain"
+    fields: wsgi.Headers = wsgi.Headers()
+    fields.add("X-Package", "yes")
+    assert fields.get("x-package") == "yes"
+    print("package init ok")
+    return 0

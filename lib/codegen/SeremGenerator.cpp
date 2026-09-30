@@ -444,7 +444,7 @@ SeremGenerator::emit(const Module& module,
           continue;
         }
         for (const std::unique_ptr<FunctionDef>& method : classDef.methods()) {
-          if (!prefix.empty())
+          if (!prefix.empty() && method->modulePrefix().empty())
             functionNames_[method.get()] = prefix + "_" + functionName(*method);
           const Type* type = functionType(*method);
           if (type != nullptr) {
@@ -3060,14 +3060,22 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
   if (expression.callee().kind() == NodeKind::MemberExpr) {
     const auto& member = static_cast<const MemberExpr&>(expression.callee());
     const Type* receiver = member.object().resolvedType();
-    if (receiver != nullptr && receiver->isModule()) {
+    if (receiver != nullptr && receiver->isModule() && !expression.isConstructor()) {
       const RecordField* field = receiver->findField(member.field());
-      const std::string symbol = !expression.loweredName().empty() ? expression.loweredName()
-                                 : field == nullptr                ? member.field()
-                                                                   : field->llvmName;
+      const std::string symbol = !expression.loweredName().empty() &&
+                                         functions_.contains(expression.loweredName())
+                                     ? expression.loweredName()
+                                 : field == nullptr ? member.field() : field->llvmName;
       std::vector<serem::ValuePtr> args;
-      for (const auto& argument : expression.arguments())
-        args.push_back(emitExpression(*argument));
+      if (!expression.boundArguments().empty()) {
+        for (const Expr* argument : expression.boundArguments()) {
+          if (argument != nullptr)
+            args.push_back(emitExpression(*argument));
+        }
+      } else {
+        for (const auto& argument : expression.arguments())
+          args.push_back(emitExpression(*argument));
+      }
       return builder_->call(std::make_shared<serem::FunctionRef>(
                                 symbol, lowerType(expression.callee().resolvedType())),
                             std::move(args),
