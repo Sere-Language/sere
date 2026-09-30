@@ -1,0 +1,48 @@
+import socket
+import bytes
+
+
+def main() -> i32:
+    listener: socket.Socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    assert listener.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR) == 1
+    listener.bind(("127.0.0.1", 0))
+    bound_host, bound_port = listener.getsockname()
+    assert bound_host == "127.0.0.1"
+    assert bound_port > 0
+    listener.listen()
+    client: socket.Socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    client.connect((bound_host, bound_port))
+    accepted, remote = listener.accept()
+    payload: list[byte] = bytes.from_str("socket test")
+    client.sendall(payload)
+    assert bytes.to_str(accepted.recv(64)) == "socket test"
+    accepted.sendall(payload)
+    assert bytes.to_str(client.recv(64)) == "socket test"
+    client.close()
+    accepted.close()
+    assert listener.getblocking()
+    listener.settimeout(0.0)
+    assert not listener.getblocking()
+    assert listener.gettimeout() == 0.0
+    listener.setblocking(True)
+    assert listener.getblocking()
+    listener.close()
+    listener.close()
+
+    datagram: socket.Socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    datagram.bind(("127.0.0.1", 0))
+    udp_host, udp_port = datagram.getsockname()
+    assert udp_port > 0
+    sender: socket.Socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    assert sender.sendto(bytes.from_str("udp"), (udp_host, udp_port)) == 3
+    message, remote_udp = datagram.recvfrom(64)
+    assert bytes.to_str(message) == "udp"
+    sender.close()
+    datagram.close()
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as scoped:
+        assert scoped.getblocking()
+
+    print("socket ok")
+    return 0

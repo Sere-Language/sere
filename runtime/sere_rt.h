@@ -713,6 +713,35 @@ void sere_gl_blit_framebuffer(int32_t src_x0,
 void* sere_gl_read_pixels(
     int32_t x, int32_t y, int32_t width, int32_t height, uint32_t format, uint32_t type);
 
+// Low-level sockets. Handles are owning opaque wrappers; close is idempotent only
+// while the caller retains a valid wrapper pointer, so Sere clears it after close.
+void* sere_socket_new(int32_t family, int32_t type, int32_t proto);
+void sere_socket_close(void* handle);
+int32_t sere_socket_bind(void* handle, const char* host, int64_t host_len, int32_t port);
+int32_t sere_socket_listen(void* handle, int32_t backlog);
+void* sere_socket_accept(void* handle);
+int32_t sere_socket_connect(void* handle, const char* host, int64_t host_len, int32_t port);
+int64_t sere_socket_send(void* handle, const uint8_t* data, int64_t size);
+int32_t sere_socket_sendall(void* handle, const uint8_t* data, int64_t size);
+int64_t sere_socket_recv(void* handle, uint8_t* data, int64_t size);
+int64_t sere_socket_sendto(void* handle, const uint8_t* data, int64_t size,
+                           const char* host, int64_t host_len, int32_t port);
+int64_t sere_socket_recvfrom(void* handle, uint8_t* data, int64_t size);
+int32_t sere_socket_shutdown(void* handle, int32_t how);
+int32_t sere_socket_setblocking(void* handle, int32_t blocking);
+int32_t sere_socket_getblocking(void* handle);
+int32_t sere_socket_settimeout(void* handle, double seconds);
+double sere_socket_gettimeout(void* handle);
+int32_t sere_socket_setsockopt(void* handle, int32_t level, int32_t option, int32_t value);
+int32_t sere_socket_getsockopt(void* handle, int32_t level, int32_t option);
+void sere_socket_name_host(void* handle, int32_t peer, const char** out_data, int64_t* out_len);
+int32_t sere_socket_name_port(void* handle, int32_t peer);
+void sere_socket_peer_host(void* handle, const char** out_data, int64_t* out_len);
+int32_t sere_socket_peer_port(void* handle);
+void sere_socket_last_error(const char** out_data, int64_t* out_len);
+int32_t sere_socket_native_family(int32_t family);
+int32_t sere_socket_native_type(int32_t type);
+
 void sere_http_request(const char* method,
                        int64_t method_len,
                        const char* url,

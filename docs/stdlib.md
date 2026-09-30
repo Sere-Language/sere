@@ -40,6 +40,7 @@ calling the existing intrinsic rather than reimplementing I/O in Sere.
 | `html_lang` | Indent-body HTML macro support |
 | `windows`, `gl`, `qt6` | Native UI / graphics (GL: window close/state, shaders, mesh, FBO) |
 | `requests` | HTTP client (`get` / `post` / `put` / `delete`) |
+| `socket` | Low-level TCP/UDP sockets, address resolution, blocking modes, and integer options |
 | `wsgi` | Blocking HTTP server; subclass `Handler` and implement `handle` |
 
 Bindings that need C use:
@@ -50,6 +51,34 @@ def collect() -> void
 ```
 
 The string must match a symbol in `sere_rt` (or a library passed with `--link`).
+
+### `socket`
+
+`socket` exposes owning native sockets for TCP (`SOCK_STREAM`) and UDP
+(`SOCK_DGRAM`) over IPv4 and IPv6. Addresses are `(host, port)` tuples;
+`bind` and `connect` resolve hostnames through the system resolver. Payloads
+are `list[byte]` values (for example, `bytes.from_str("hello")`). `send` may
+write only part of its input; `sendall` loops until all bytes are written.
+Blocking is the default. `setblocking(false)` exposes native non-blocking
+behavior, while `settimeout(seconds)` configures socket I/O timeouts supported
+by the OS. Network and OS errors currently raise `RuntimeError` containing the
+operation and native error code. Handles are owning and must be explicitly
+closed or used in a `with` scope. Raw struct options, DNS result records,
+UNIX-domain addresses, and event polling are not yet exposed.
+
+```sere
+import socket
+import bytes
+
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(("127.0.0.1", 0))
+server.listen()
+print(server.getsockname())
+server.close()
+
+payload: list[byte] = bytes.from_str("hello")
+```
 
 ## Native stdlib surface
 

@@ -1,0 +1,361 @@
+"""Low-level TCP and UDP sockets backed by operating-system sockets.
+
+Socket methods perform blocking native I/O by default. Use setblocking(false)
+for event-loop or polling code; would-block failures currently surface as
+RuntimeError with the platform error number. settimeout(seconds) configures
+native socket I/O timeouts where supported. A timeout of 0 selects non-blocking
+mode. gettimeout returns -1.0 for the default blocking mode, 0.0 for
+non-blocking mode, or the configured positive number of seconds.
+
+Addresses currently use (numeric-or-resolvable host string, port) pairs for
+IPv4 and IPv6. Name resolution uses the platform getaddrinfo implementation.
+Payloads are byte lists from the bytes module; text is never implicitly encoded.
+Sockets own their native handle and should be explicitly closed or used as a
+context manager. Runtime failures raise RuntimeError with an operation and
+native error number; Python-style typed socket exceptions are not yet exposed.
+The API does not implement protocol framing, buffering, or an async scheduler.
+
+TCP echo server outline::
+
+    server = socket(AF_INET, SOCK_STREAM)
+    server.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 8000))
+    server.listen()
+    client, address = server.accept()
+    client.sendall(client.recv(4096))
+    client.close()
+    server.close()
+
+UDP uses SOCK_DGRAM with sendto/recvfrom. IPv6 is supported when present on
+the host OS. Platform socket handles are opaque and are not POSIX descriptors
+on Windows; fileno-style adoption and polling APIs are not currently exposed.
+"""
+import bytes
+
+# Portable Sere identifiers; the C runtime maps these to native platform values.
+const AF_UNSPEC: i32 = 0
+const AF_INET: i32 = 2
+const AF_INET6: i32 = 10
+const SOCK_STREAM: i32 = 1
+const SOCK_DGRAM: i32 = 2
+const SOCK_RAW: i32 = 3
+const SOCK_SEQPACKET: i32 = 5
+const IPPROTO_IP: i32 = 0
+const IPPROTO_ICMP: i32 = 1
+const IPPROTO_TCP: i32 = 6
+const IPPROTO_UDP: i32 = 17
+const IPPROTO_IPV6: i32 = 41
+const IPPROTO_ICMPV6: i32 = 58
+const SHUT_RD: i32 = 0
+const SHUT_WR: i32 = 1
+const SHUT_RDWR: i32 = 2
+const SOL_SOCKET: i32 = 1
+const SOL_IP: i32 = 0
+const SOL_TCP: i32 = 6
+const SOL_UDP: i32 = 17
+const SOL_IPV6: i32 = 41
+const SO_REUSEADDR: i32 = 2
+const SO_TYPE: i32 = 3
+const SO_ERROR: i32 = 4
+const SO_BROADCAST: i32 = 6
+const SO_SNDBUF: i32 = 7
+const SO_RCVBUF: i32 = 8
+const SO_KEEPALIVE: i32 = 9
+const SO_LINGER: i32 = 13
+const SO_REUSEPORT: i32 = 15
+const SO_RCVTIMEO: i32 = 20
+const SO_SNDTIMEO: i32 = 21
+const TCP_NODELAY: i32 = 1
+const IPV6_V6ONLY: i32 = 26
+
+extern "C" "sere_socket_new"
+def _new(family: i32, kind: i32, proto: i32) -> Ptr[i8]
+"""Create an owning native socket wrapper; returns None and records an error on failure."""
+
+extern "C" "sere_socket_close"
+def _close(handle: Ptr[i8]) -> void
+"""Close the native socket and release its wrapper allocation."""
+
+extern "C" "sere_socket_bind"
+def _bind(handle: Ptr[i8], host: str, port: i32) -> i32
+"""Resolve and bind a native socket to a host and port."""
+
+extern "C" "sere_socket_listen"
+def _listen(handle: Ptr[i8], backlog: i32) -> i32
+"""Listen for incoming stream connections."""
+
+extern "C" "sere_socket_accept"
+def _accept(handle: Ptr[i8]) -> Ptr[i8]
+"""Accept one connection and return its owning native wrapper."""
+
+extern "C" "sere_socket_connect"
+def _connect(handle: Ptr[i8], host: str, port: i32) -> i32
+"""Resolve and connect a native socket to a host and port."""
+
+extern "C" "sere_socket_send"
+def _send(handle: Ptr[i8], data: Ptr[byte], size: i64) -> i64
+"""Send one available portion of a byte buffer."""
+
+extern "C" "sere_socket_sendall"
+def _sendall(handle: Ptr[i8], data: Ptr[byte], size: i64) -> i32
+"""Send a complete byte buffer, retrying partial writes."""
+
+extern "C" "sere_socket_recv"
+def _recv(handle: Ptr[i8], data: Ptr[byte], size: i64) -> i64
+"""Receive into a caller-owned mutable byte buffer."""
+
+extern "C" "sere_socket_sendto"
+def _sendto(handle: Ptr[i8], data: Ptr[byte], size: i64, host: str, port: i32) -> i64
+"""Send one datagram to the resolved destination."""
+
+extern "C" "sere_socket_recvfrom"
+def _recvfrom(handle: Ptr[i8], data: Ptr[byte], size: i64) -> i64
+"""Receive one datagram and save its source address in the socket wrapper."""
+
+extern "C" "sere_socket_shutdown"
+def _shutdown(handle: Ptr[i8], how: i32) -> i32
+"""Shut down one or both directions of a connected socket."""
+
+extern "C" "sere_socket_setblocking"
+def _setblocking(handle: Ptr[i8], blocking: i32) -> i32
+"""Set native blocking mode."""
+
+extern "C" "sere_socket_getblocking"
+def _getblocking(handle: Ptr[i8]) -> i32
+"""Return native blocking mode."""
+
+extern "C" "sere_socket_settimeout"
+def _settimeout(handle: Ptr[i8], seconds: f64) -> i32
+"""Set native I/O timeout seconds; zero selects non-blocking mode."""
+
+extern "C" "sere_socket_gettimeout"
+def _gettimeout(handle: Ptr[i8]) -> f64
+"""Return configured timeout seconds or -1.0 for blocking mode."""
+
+extern "C" "sere_socket_setsockopt"
+def _setsockopt(handle: Ptr[i8], level: i32, option: i32, value: i32) -> i32
+"""Set a supported integer socket option."""
+
+extern "C" "sere_socket_getsockopt"
+def _getsockopt(handle: Ptr[i8], level: i32, option: i32) -> i32
+"""Read a supported integer socket option."""
+
+extern "C" "sere_socket_name_host"
+def _name_host(handle: Ptr[i8], peer: i32) -> str
+"""Return a numeric local or peer host address."""
+
+extern "C" "sere_socket_name_port"
+def _name_port(handle: Ptr[i8], peer: i32) -> i32
+"""Return the local or peer TCP/UDP port."""
+
+extern "C" "sere_socket_peer_host"
+def _peer_host(handle: Ptr[i8]) -> str
+"""Return the most recently accepted or received peer host."""
+
+extern "C" "sere_socket_peer_port"
+def _peer_port(handle: Ptr[i8]) -> i32
+"""Return the most recently accepted or received peer port."""
+
+extern "C" "sere_socket_last_error"
+def _last_error() -> str
+"""Return the latest native socket error message on this thread."""
+
+class Socket:
+    """An owning wrapper around one native TCP, UDP, or raw socket."""
+    _handle: Ptr[i8]
+    _closed: bool
+    family: i32
+    kind: i32
+    proto: i32
+
+    def __init__(self, family: i32, kind: i32, proto: i32, handle: Ptr[i8]) -> void:
+        """Initialize a socket wrapper by taking ownership of its native handle."""
+        self.family = family
+        self.kind = kind
+        self.proto = proto
+        self._closed = False
+        self._handle = handle
+        if self._handle is None:
+            raise RuntimeError(_last_error())
+
+    def _require_open(self) -> void:
+        """Raise a Sere RuntimeError rather than passing a closed handle to native code."""
+        if self._closed:
+            raise RuntimeError("operation on a closed socket")
+
+    def close(self) -> void:
+        """Close this socket and release its owned native handle; repeated close is safe."""
+        if not self._closed:
+            _close(self._handle)
+            self._closed = True
+
+    def __enter__(self) -> Socket:
+        """Return this socket for deterministic `with`-scope cleanup."""
+        self._require_open()
+        return self
+
+    def __exit__(self) -> void:
+        """Close this socket when its context exits, including exceptional exits."""
+        self.close()
+
+    def bind(self, address: tuple[str, i32]) -> void:
+        """Bind to a local (host, port); use port 0 to request an ephemeral port."""
+        self._require_open()
+        host, port = address
+        if _bind(self._handle, host, port) != 0:
+            raise RuntimeError(_last_error())
+
+    def listen(self, backlog: i32 = -1) -> void:
+        """Mark a stream socket as a listener; -1 selects the OS maximum backlog."""
+        self._require_open()
+        if _listen(self._handle, backlog) != 0:
+            raise RuntimeError(_last_error())
+
+    def accept(self) -> tuple[Socket, tuple[str, i32]]:
+        """Accept one connection, blocking by default, and return (socket, peer address)."""
+        self._require_open()
+        handle: Ptr[i8] = _accept(self._handle)
+        if handle is None:
+            raise RuntimeError(_last_error())
+        peer_host: str = _peer_host(handle)
+        peer_port: i32 = _peer_port(handle)
+        client: Socket = Socket(self.family, self.kind, self.proto, handle)
+        return (client, (peer_host, peer_port))
+
+    def connect(self, address: tuple[str, i32]) -> void:
+        """Resolve and connect to a host/port pair using the socket's address family."""
+        self._require_open()
+        host, port = address
+        if _connect(self._handle, host, port) != 0:
+            raise RuntimeError(_last_error())
+
+    def send(self, data: list[byte]) -> i64:
+        """Send one portion of data and return bytes written; it may be a partial send."""
+        self._require_open()
+        if len(data) == 0:
+            return 0
+        sent: i64 = _send(self._handle, &data[0], len(data))
+        if sent < 0:
+            raise RuntimeError(_last_error())
+        return sent
+
+    def sendall(self, data: list[byte]) -> void:
+        """Send every byte, looping over partial writes; raises if native I/O fails."""
+        self._require_open()
+        if len(data) == 0:
+            return
+        if _sendall(self._handle, &data[0], len(data)) != 0:
+            raise RuntimeError(_last_error())
+
+    def recv(self, bufsize: i64) -> list[byte]:
+        """Receive up to bufsize bytes; an empty list signals orderly TCP EOF."""
+        self._require_open()
+        if bufsize < 0 or bufsize > 1073741824:
+            raise ValueError("receive size must be between 0 and 1073741824")
+        if bufsize == 0:
+            return bytes.zeros(0)
+        buffer: list[byte] = bytes.zeros(bufsize)
+        received: i64 = _recv(self._handle, &buffer[0], bufsize)
+        if received < 0:
+            raise RuntimeError(_last_error())
+        return buffer[0:received]
+
+    def sendto(self, data: list[byte], address: tuple[str, i32]) -> i64:
+        """Send one UDP datagram and return its byte count."""
+        self._require_open()
+        host, port = address
+        sent: i64 = 0
+        if len(data) == 0:
+            empty: list[byte] = bytes.zeros(1)
+            sent = _sendto(self._handle, &empty[0], 0, host, port)
+        else:
+            sent = _sendto(self._handle, &data[0], len(data), host, port)
+        if sent < 0:
+            raise RuntimeError(_last_error())
+        return sent
+
+    def recvfrom(self, bufsize: i64) -> tuple[list[byte], tuple[str, i32]]:
+        """Receive one UDP datagram and return (payload, numeric source address)."""
+        self._require_open()
+        if bufsize <= 0 or bufsize > 1073741824:
+            raise ValueError("datagram receive size must be between 1 and 1073741824")
+        buffer: list[byte] = bytes.zeros(bufsize)
+        received: i64 = _recvfrom(self._handle, &buffer[0], bufsize)
+        if received < 0:
+            raise RuntimeError(_last_error())
+        return (buffer[0:received], (_peer_host(self._handle), _peer_port(self._handle)))
+
+    def shutdown(self, how: i32) -> void:
+        """Disable reading, writing, or both with SHUT_RD, SHUT_WR, or SHUT_RDWR."""
+        self._require_open()
+        if how < SHUT_RD or how > SHUT_RDWR:
+            raise ValueError("shutdown mode must be SHUT_RD, SHUT_WR, or SHUT_RDWR")
+        if _shutdown(self._handle, how) != 0:
+            raise RuntimeError(_last_error())
+
+    def setblocking(self, blocking: bool) -> void:
+        """Enable blocking I/O, or non-blocking I/O for event-loop integration."""
+        self._require_open()
+        if _setblocking(self._handle, blocking as i32) != 0:
+            raise RuntimeError(_last_error())
+
+    def getblocking(self) -> bool:
+        """Return whether operations on this socket currently use blocking mode."""
+        self._require_open()
+        return _getblocking(self._handle) as bool
+
+    def settimeout(self, seconds: f64) -> void:
+        """Set native I/O timeout seconds; zero means non-blocking and negatives are invalid."""
+        self._require_open()
+        if seconds < 0.0:
+            raise ValueError("socket timeout must be non-negative")
+        if _settimeout(self._handle, seconds) != 0:
+            raise RuntimeError(_last_error())
+
+    def gettimeout(self) -> f64:
+        """Return timeout seconds, using -1.0 to represent indefinite blocking."""
+        self._require_open()
+        return _gettimeout(self._handle)
+
+    def setsockopt(self, level: i32, option: i32, value: i32) -> void:
+        """Set a native integer socket option such as SO_REUSEADDR or TCP_NODELAY."""
+        self._require_open()
+        if _setsockopt(self._handle, level, option, value) != 0:
+            raise RuntimeError(_last_error())
+
+    def getsockopt(self, level: i32, option: i32) -> i32:
+        """Read a native integer socket option; unsupported options raise RuntimeError."""
+        self._require_open()
+        value: i32 = _getsockopt(self._handle, level, option)
+        if value < 0:
+            raise RuntimeError(_last_error())
+        return value
+
+    def getsockname(self) -> tuple[str, i32]:
+        """Return this socket's local numeric (host, port) address."""
+        self._require_open()
+        return (_name_host(self._handle, 0), _name_port(self._handle, 0))
+
+    def getpeername(self) -> tuple[str, i32]:
+        """Return this socket's remote numeric (host, port) address."""
+        self._require_open()
+        return (_name_host(self._handle, 1), _name_port(self._handle, 1))
+
+    def fileno(self) -> i64:
+        """Return an opaque native socket value suitable for diagnostics only."""
+        self._require_open()
+        raise NotImplementedError("fileno is not yet exposed portably")
+
+    def __repr__(self) -> str:
+        """Return a short representation without performing network I/O."""
+        if self._closed:
+            return "<socket closed>"
+        return "<socket family=" + str(self.family) + " type=" + str(self.kind) + ">"
+
+def socket(family: i32 = AF_INET, kind: i32 = SOCK_STREAM, proto: i32 = 0) -> Socket:
+    """Create an owning native socket for TCP, UDP, or another OS-supported kind."""
+    handle: Ptr[i8] = _new(family, kind, proto)
+    if handle is None:
+        raise RuntimeError(_last_error())
+    return Socket(family, kind, proto, handle)
+ 
