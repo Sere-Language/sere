@@ -31,6 +31,7 @@ private:
 struct DecodedString {
   std::string value;
   bool regex = false;
+  bool bytes = false;
 };
 
 [[nodiscard]] std::string_view stringLiteralInner(std::string_view spelling);

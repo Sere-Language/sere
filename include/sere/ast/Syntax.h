@@ -144,13 +144,15 @@ private:
 
 class StringLiteral final : public Expr {
 public:
-  StringLiteral(SourceRange range, std::string value, bool regex = false);
+  StringLiteral(SourceRange range, std::string value, bool regex = false, bool bytes = false);
   [[nodiscard]] const std::string& value() const;
   [[nodiscard]] bool isRegex() const;
+  [[nodiscard]] bool isBytes() const;
 
 private:
   std::string value_;
   bool regex_ = false;
+  bool bytes_ = false;
 };
 
 struct StringPart {

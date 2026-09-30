@@ -136,8 +136,8 @@ bool FloatLiteral::isF32() const {
   return isF32_;
 }
 
-StringLiteral::StringLiteral(SourceRange range, std::string value, bool regex)
-    : Expr(NodeKind::StringLiteral, range), value_(std::move(value)), regex_(regex) {
+StringLiteral::StringLiteral(SourceRange range, std::string value, bool regex, bool bytes)
+    : Expr(NodeKind::StringLiteral, range), value_(std::move(value)), regex_(regex), bytes_(bytes) {
 }
 
 const std::string& StringLiteral::value() const {
@@ -146,6 +146,10 @@ const std::string& StringLiteral::value() const {
 
 bool StringLiteral::isRegex() const {
   return regex_;
+}
+
+bool StringLiteral::isBytes() const {
+  return bytes_;
 }
 
 InterpolatedStringExpr::InterpolatedStringExpr(SourceRange range, std::vector<StringPart> parts)

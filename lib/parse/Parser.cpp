@@ -32,7 +32,8 @@ void attachFunctionDecorators(FunctionDef& function, std::vector<std::unique_ptr
 }
 
 [[nodiscard]] bool isLineEnd(TokenKind kind) {
-  return kind == TokenKind::Newline || kind == TokenKind::Dedent || kind == TokenKind::EndOfFile;
+  return kind == TokenKind::Newline || kind == TokenKind::Dedent || kind == TokenKind::EndOfFile ||
+         kind == TokenKind::Semicolon;
 }
 
 [[nodiscard]] std::string describeToken(const Token& token) {
@@ -47,6 +48,8 @@ void attachFunctionDecorators(FunctionDef& function, std::vector<std::unique_ptr
     return "dedent";
   case TokenKind::String:
     return "string literal";
+  case TokenKind::Bytes:
+    return "bytes literal";
   case TokenKind::FString:
     return "f-string";
   case TokenKind::Regex:
@@ -267,6 +270,9 @@ void Parser::skipNewlines() {
 }
 
 bool Parser::finishLine() {
+  if (match(TokenKind::Semicolon)) {
+    return true;
+  }
   if (isLineEnd(peek().kind())) {
     match(TokenKind::Newline);
     return true;
@@ -490,13 +496,13 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     const ParsedFloat parsed = parseFloat(previous().spelling());
     return std::make_unique<FloatLiteral>(previous().range(), parsed.value, parsed.isF32);
   }
-  if (match(TokenKind::String)) {
+  if (match(TokenKind::String) || match(TokenKind::Bytes)) {
     const Token& token = previous();
     const DecodedString decoded = decodeStringToken(token.spelling());
     // Single quotes are strings, exactly like double quotes: `'a'` is the one
     // character string "a". It used to become a byte value, which silently
     // broke every str method call taking a literal separator (`s.split('.')`).
-    return std::make_unique<StringLiteral>(token.range(), decoded.value, false);
+    return std::make_unique<StringLiteral>(token.range(), decoded.value, false, decoded.bytes);
   }
   if (match(TokenKind::Regex)) {
     const DecodedString decoded = decodeStringToken(previous().spelling());
@@ -963,8 +969,8 @@ std::unique_ptr<Expr> Parser::parsePostfix() {
     }
     if (match(TokenKind::Dot)) {
       std::string field;
-      if (check(TokenKind::Identifier)) {
-        field = parseIdentifier("expected field name");
+      if (check(TokenKind::Identifier) || check(TokenKind::KeywordType)) {
+        field = std::string(advance().spelling());
       } else if (check(TokenKind::KeywordNone)) {
         field = std::string(advance().spelling());
       } else {
@@ -2333,7 +2339,8 @@ std::unique_ptr<ClassDef> Parser::parseClass(const std::string& enclosing) {
       methods.push_back(std::move(method));
       continue;
     }
-    if (check(TokenKind::Identifier) && peekNth(1).kind() == TokenKind::Dot &&
+    if ((check(TokenKind::Identifier) || check(TokenKind::KeywordType)) &&
+        peekNth(1).kind() == TokenKind::Dot &&
         peekNth(2).kind() == TokenKind::Identifier &&
         (peekNth(2).spelling() == "get" || peekNth(2).spelling() == "set")) {
       const SourceRange nameRange = peek().range();
@@ -2352,7 +2359,11 @@ std::unique_ptr<ClassDef> Parser::parseClass(const std::string& enclosing) {
     FieldDecl field;
     field.isStatic = markedStatic || match(TokenKind::KeywordStatic);
     field.range = peek().range();
-    field.name = parseIdentifier("expected field or method");
+    if (check(TokenKind::KeywordType)) {
+      field.name = std::string(advance().spelling());
+    } else {
+      field.name = parseIdentifier("expected field or method");
+    }
     if (field.name.empty() || !consume(TokenKind::Colon, "expected ':' after field name")) {
       synchronize();
       continue;

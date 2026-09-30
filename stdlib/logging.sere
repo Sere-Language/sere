@@ -1,7 +1,7 @@
 # Pythonic stderr logger. Import with: import log
 #
-#   import log
-#   logger = log.get_logger("app")
+#   import logging
+#   logger = logging.get_logger("app")
 #   logger.info("booted")          # default level is Info, so this prints
 #   logger.warning("uh oh")
 #   logger.set_level(log.Level.Debug)

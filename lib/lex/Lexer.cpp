@@ -370,6 +370,8 @@ Token Lexer::nextToken() {
     return makeToken(TokenKind::RBrace, start, offset_);
   case ',':
     return makeToken(TokenKind::Comma, start, offset_);
+  case ';':
+    return makeToken(TokenKind::Semicolon, start, offset_);
   case ':':
     if (peek() == '=') {
       advance();
@@ -532,6 +534,11 @@ Token Lexer::nextToken() {
     const char quote = peek();
     advance();
     return lexQuoted(start, quote, TokenKind::FString);
+  }
+  if ((character == 'b' || character == 'B') && (peek() == '"' || peek() == '\'')) {
+    const char quote = peek();
+    advance();
+    return lexQuoted(start, quote, TokenKind::Bytes);
   }
   if (isAsciiLetter(character)) {
     return lexIdentifier(start);

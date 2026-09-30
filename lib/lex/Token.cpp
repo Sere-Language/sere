@@ -56,7 +56,6 @@ constexpr KeywordEntry kKeywords[] = {
     {"struct", TokenKind::KeywordStruct},
     {"super", TokenKind::KeywordSuper},
     {"try", TokenKind::KeywordTry},
-    {"type", TokenKind::KeywordType},
     {"while", TokenKind::KeywordWhile},
     {"with", TokenKind::KeywordWith},
 };
@@ -110,6 +109,8 @@ std::string_view tokenKindName(TokenKind kind) {
     return "Float";
   case TokenKind::String:
     return "String";
+  case TokenKind::Bytes:
+    return "Bytes";
   case TokenKind::FString:
     return "FString";
   case TokenKind::Regex:
@@ -208,6 +209,8 @@ std::string_view tokenKindName(TokenKind kind) {
     return "Colon";
   case TokenKind::Comma:
     return "Comma";
+  case TokenKind::Semicolon:
+    return "Semicolon";
   case TokenKind::Dot:
     return "Dot";
   case TokenKind::DotDotDot:
@@ -364,7 +367,7 @@ std::string_view stringLiteralInner(std::string_view spelling) {
     return {};
   }
   std::size_t start = 0;
-  if (spelling[0] == 'f' || spelling[0] == 'F') {
+  if (spelling[0] == 'f' || spelling[0] == 'F' || spelling[0] == 'b' || spelling[0] == 'B') {
     start = 1;
   }
   if (start >= spelling.size()) {
@@ -394,7 +397,9 @@ std::size_t stringLiteralInnerOffset(std::string_view spelling) {
   if (spelling.empty()) {
     return 0;
   }
-  const std::size_t start = (spelling[0] == 'f' || spelling[0] == 'F') ? 1 : 0;
+  const std::size_t start =
+      (spelling[0] == 'f' || spelling[0] == 'F' || spelling[0] == 'b' || spelling[0] == 'B') ? 1
+                                                                                             : 0;
   if (start >= spelling.size()) {
     return start;
   }
@@ -496,6 +501,7 @@ FStringSplitStatus splitFStringSegments(std::string_view inner,
 
 DecodedString decodeStringToken(std::string_view spelling) {
   DecodedString decoded;
+  decoded.bytes = spelling.size() > 1 && (spelling[0] == 'b' || spelling[0] == 'B');
   decoded.regex = !spelling.empty() && spelling[0] == '`';
   decoded.value = unescapeStringBody(stringLiteralInner(spelling), decoded.regex);
   return decoded;
