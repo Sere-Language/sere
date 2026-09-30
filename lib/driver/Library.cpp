@@ -297,8 +297,12 @@ std::filesystem::path folderLibraryEntry(const std::filesystem::path& directory)
     return {};
   }
   const std::string name = directory.filename().string();
+  const std::filesystem::path init = directory / "__init__.sere";
   const std::filesystem::path named = directory / (name + ".sere");
   const std::filesystem::path lib = directory / "lib.sere";
+  if (std::filesystem::is_regular_file(init, error)) {
+    return std::filesystem::weakly_canonical(init, error);
+  }
   if (std::filesystem::is_regular_file(named, error)) {
     return std::filesystem::weakly_canonical(named, error);
   }
@@ -319,7 +323,7 @@ std::filesystem::path libraryNativeRoot(const std::filesystem::path& importedPat
   }
   const std::string stem = importedPath.stem().string();
   const std::string dirName = parent.filename().string();
-  if (stem == "lib" || stem == dirName) {
+  if (stem == "__init__" || stem == "lib" || stem == dirName) {
     return parent;
   }
   return {};

@@ -1,0 +1,3 @@
+"""Legacy folder entry; __init__.sere must take precedence over this file."""
+def answer() -> i32:
+    return -1

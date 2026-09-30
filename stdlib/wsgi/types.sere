@@ -2,8 +2,8 @@
 
 Bodies use Sere's list[byte], never implicitly encoded text. Environment is a
 heterogeneous dictionary: unbox input/errors to InputStream/ErrorStream before
-calling methods. Applications return Any so lists, arrays, iterators and Result
-can share one callback ABI. Custom iterables use Result(iterable.__iter__(), close).
+calling methods. Applications return Any so lists, arrays, iterators and WSGIResult
+can share one callback ABI. Custom iterables use WSGIResult(iterable.__iter__(), close).
 """
 import bytes
 import io
@@ -157,7 +157,7 @@ def _noop() -> void:
     """Default cleanup for results without external resources."""
     pass
 
-class Result:
+class WSGIResult:
     """Adapt a custom iterator plus cleanup callback to the common application ABI.
 
     Cleanup is explicit because Sere Any has no dynamic member lookup. Pass
@@ -187,8 +187,6 @@ class Result:
             finally:
                 self.cleanup()
 
-type WSGIResult = Result
-"""Owned streaming result for adapters that need an explicit close hook."""
 
 class FileWrapper:
     """Buffered binary file iterator; close owns the supplied fs.File."""
@@ -221,7 +219,7 @@ class FileWrapper:
             self.closed = True
             self.file.close()
 
-def file_wrapper(file: fs.File, block_size: i64 = 8192) -> Result:
-    """Wrap an open binary file in an owned streaming Result; closes on every exit."""
+def file_wrapper(file: fs.File, block_size: i64 = 8192) -> WSGIResult:
+    """Wrap an open binary file in an owned streaming WSGIResult; closes on every exit."""
     wrapper: FileWrapper = FileWrapper(file, block_size)
-    return Result(wrapper.__iter__(), wrapper.close)
+    return WSGIResult(wrapper.__iter__(), wrapper.close)

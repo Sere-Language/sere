@@ -52,9 +52,34 @@ A module may be provided by:
 | --- | --- |
 | `util.sere` | `util` |
 | `util.slib` | `util` |
-| `util/util.sere` or `util/lib.sere` | `util` |
+| `util/__init__.sere`, `util/util.sere` or `util/lib.sere` | `util` |
 
-When both `util.sere` and `util.slib` exist, the `.sere` file wins. A folder
+Resolution within each search directory prefers `util.sere`, then `util.slib`,
+then a folder entry. Within a folder, `__init__.sere` wins over `util.sere`,
+which wins over `lib.sere`. Existing file modules keep their precedence.
+
+An `__init__.sere` file is an ordinary module containing the package's public
+API, not a constructor method. For example:
+
+```text
+widgets/
+    __init__.sere
+    buttons.sere
+```
+
+```sere
+# widgets/__init__.sere
+from widgets.buttons import Button
+__exports__ = [Button]
+```
+
+Consumers can use `from widgets import Button`, `import widgets` followed by
+`widgets.Button`, or `from widgets.buttons import Button`. Submodules are
+resolved independently; importing a dotted submodule does not implicitly execute
+its parent's initializer. Use explicit imports and `__exports__` to expose names
+from the package entry point.
+
+A folder
 library may also contain native sources (`.c`, `.lib`) directly in the folder or
 in `native/`; those are compiled and linked automatically. `.slib` files are
 extracted next to themselves under `.sere-lib/`, and any native objects they

@@ -4,7 +4,7 @@ validator(app) returns a callable with the same typed Application ABI. It checks
 the environment and wraps start_response and iteration, preserving lazy output
 and deterministic result cleanup. Violations raise useful Sere exceptions.
 """
-from wsgi.types import Application, Environment, StartResponse, HeaderList, WriteCallable, InputStream, ErrorStream, Result
+from wsgi.types import Application, Environment, StartResponse, HeaderList, WriteCallable, InputStream, ErrorStream, WSGIResult
 from wsgi.headers import Headers, validate_status, is_hop_by_hop, parse_length
 from wsgi.handlers import iterate_result, close_result
 from wsgi.util import environ_text
@@ -62,7 +62,7 @@ class _Validation:
         """Check response metadata before forwarding to the gateway."""
         code: i32 = validate_status(status)
         fields: Headers = Headers(headers)
-        if self.called and error is None:
+        if self.called and typeof(error) == "None":
             raise RuntimeError("validator: start_response called twice")
         for name in fields.keys():
             if is_hop_by_hop(name):
@@ -111,7 +111,7 @@ class _Validator:
         check_environ(environ)
         state: _Validation = _Validation(start)
         state.result = self.application(environ, StartResponse(state.start_response))
-        return Result(state.stream(), state.close)
+        return WSGIResult(state.stream(), state.close)
 
 def validator(application: Application) -> Application:
     """Wrap an application for debugging; returned callable composes as ordinary middleware."""

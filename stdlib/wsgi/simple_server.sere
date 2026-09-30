@@ -1,0 +1,197 @@
+"""Small synchronous development WSGI server with IPv4 and IPv6 socket support.
+
+Applications receive (Environment, StartResponse) and return a byte iterable as
+Any. Sere byte chunks are list[byte], produced for example by bytes.from_str.
+Use with make_server("", 8000, app) as server, then server.serve_forever().
+The context always closes its listener. Each request owns one connection;
+HTTP/1.0 responses use Content-Length or connection-close framing, even when
+the request uses HTTP/1.1. This module contains no routing or framework policy.
+"""
+import bytes
+import string
+import time
+from wsgi.types import Application, Environment, InputStream, ErrorStream, file_wrapper
+from wsgi.handlers import BaseHandler
+from wsgi.util import decode_path, environ_text
+
+extern "C" "sere_wsgi_listen"
+def _listen(host: str, port: i32, backlog: i32, timeout: i32, reuse: i32) -> Ptr[i8]
+"""Bind a native listener, resolving hostnames and supporting port zero."""
+extern "C" "sere_wsgi_port"
+def _port(handle: Ptr[i8]) -> i32
+"""Return the actual bound port, including an OS-selected ephemeral port."""
+extern "C" "sere_wsgi_accept"
+def _accept(handle: Ptr[i8]) -> Ptr[i8]
+"""Poll for a connection and parse bounded headers; reject malformed requests locally."""
+extern "C" "sere_wsgi_close"
+def _close(handle: Ptr[i8]) -> void
+"""Release the native listening socket and handle."""
+extern "C" "sere_wsgi_request_close"
+def _request_close(handle: Ptr[i8]) -> void
+"""Release the accepted connection after application result/input cleanup."""
+extern "C" "sere_wsgi_meta"
+def _meta(handle: Ptr[i8], field: i32) -> str
+"""Read validated method, target, protocol, headers or numeric peer address."""
+extern "C" "sere_wsgi_write"
+def _write(handle: Ptr[i8], data: Ptr[byte], size: i64) -> i32
+"""Send all bytes or report a disconnect; no encoding or response buffering."""
+
+def request_environ(handle: Ptr[i8], server_name: str, server_port: i32) -> Environment:
+    """Build independent CGI/WSGI metadata for an accepted request.
+
+    Content headers use CONTENT_*; other fields use HTTP_* with uppercase
+    names. Repeated request fields join with commas (Cookie uses semicolons).
+    PATH_INFO decodes percent escapes once and preserves plus and raw octets.
+    The input stream reads only Content-Length bytes, lazily from the socket.
+    """
+    target: str = _meta(handle, 1)
+    query: str = ""
+    sep: i64 = string.find(target, "?")
+    if sep >= 0:
+        query = target[sep + 1:]
+        target = target[0:sep]
+    stream: InputStream = InputStream()
+    stream.handle = handle
+    environ: Environment = {"REQUEST_METHOD": _meta(handle, 0), "SCRIPT_NAME": "", "PATH_INFO": decode_path(target), "QUERY_STRING": query, "SERVER_NAME": server_name, "SERVER_PORT": str(server_port), "SERVER_PROTOCOL": _meta(handle, 2), "CONTENT_TYPE": "", "CONTENT_LENGTH": "", "REMOTE_ADDR": _meta(handle, 4), "REMOTE_HOST": "", "wsgi.version": (1, 0), "wsgi.url_scheme": "http", "wsgi.input": stream, "wsgi.errors": ErrorStream(), "wsgi.multithread": False, "wsgi.multiprocess": False, "wsgi.run_once": False, "wsgi.file_wrapper": file_wrapper}
+    for line in string.split(_meta(handle, 3), "\r\n"):
+        colon: i64 = string.find(line, ":")
+        if colon > 0:
+            name: str = string.upper(string.replace(line[0:colon], "-", "_"))
+            value: str = string.strip(line[colon + 1:])
+            if name == "CONTENT_TYPE" or name == "CONTENT_LENGTH":
+                environ[name] = value
+            else:
+                key: str = "HTTP_" + name
+                if key in environ:
+                    separator: str = ","
+                    if name == "COOKIE":
+                        separator = "; "
+                    value = environ_text(environ, key) + separator + value
+                environ[key] = value
+    return environ
+
+class WSGIRequestHandler:
+    """Connection adapter; override logging or handling through a server factory."""
+    handle: Ptr[i8]
+    environ: Environment
+
+    def __init__(self, handle: Ptr[i8], environ: Environment) -> void:
+        """Borrow an accepted connection and its environment for one handle call."""
+        self.handle = handle
+        self.environ = environ
+
+    def write(self, data: list[byte]) -> void:
+        """Synchronously send a chunk; propagate socket errors as RuntimeError."""
+        if len(data) > 0 and _write(self.handle, &data[0], len(data)) == 0:
+            raise RuntimeError("client disconnected during WSGI response")
+
+    def log_request(self, code: i32, size: i64) -> void:
+        """Write numeric peer, timestamp, sanitized request line, status and body byte count."""
+        errors: ErrorStream = self.environ["wsgi.errors"] as ErrorStream
+        request: str = _meta(self.handle, 0) + " " + _meta(self.handle, 1) + " " + _meta(self.handle, 2)
+        errors.write(_meta(self.handle, 4) + " - - [" + time.get_timestamp() + "] \"" + request + "\" " + str(code) + " " + str(size) + "\n")
+
+    def handle(self, application: Application) -> void:
+        """Dispatch through the reusable gateway and log the resulting status."""
+        gateway: BaseHandler = BaseHandler(self.environ)
+        gateway.output = self.write
+        gateway.run(application)
+        self.log_request(gateway.code, gateway.bytes_sent)
+
+type ServerHandler = BaseHandler
+"""The same response engine used by socket and embedded gateways."""
+
+def _handler(handle: Ptr[i8], environ: Environment) -> WSGIRequestHandler:
+    """Default factory for the per-connection adapter."""
+    return WSGIRequestHandler(handle, environ)
+
+class WSGIServer:
+    """Synchronous listener owning an application and per-request handler factory.
+
+    All methods run on the calling thread. shutdown stops future iterations;
+    server_close releases the listener. Neither is a cross-thread synchronization
+    primitive. Accepted sockets have a finite read/write timeout. Use with or
+    finally to release the listener when an application or caller raises.
+    """
+    handle: Ptr[i8]
+    server_name: str
+    server_port: i32
+    server_address: tuple[str, i32]
+    application: Application
+    running: bool
+    handler_factory: Callable[[Ptr[i8], Environment], WSGIRequestHandler]
+
+    def __init__(self, host: str, port: i32, app: Application, backlog: i32 = 16, timeout: i32 = 30000, reuse_address: bool = True) -> void:
+        """Bind host/port immediately; timeout is milliseconds, failures raise RuntimeError."""
+        self.handle = _listen(host, port, backlog, timeout, reuse_address as i32)
+        if self.handle is None:
+            raise RuntimeError("could not bind WSGI server to " + host + ":" + str(port))
+        self.server_name = host
+        if len(host) == 0:
+            self.server_name = "localhost"
+        self.server_port = _port(self.handle)
+        self.server_address = (host, self.server_port)
+        self.application = app
+        self.handler_factory = _handler
+        self.running = False
+
+    def get_app(self) -> Application:
+        """Return the installed callable for inspection or middleware wrapping."""
+        return self.application
+
+    def set_app(self, application: Application) -> void:
+        """Replace the callable used by subsequent requests."""
+        self.application = application
+
+    def handle_request(self) -> bool:
+        """Poll once and handle one valid request; return False on timeout or rejection."""
+        if self.handle is None:
+            raise RuntimeError("WSGI server is closed")
+        request: Ptr[i8] = _accept(self.handle)
+        if request is None:
+            return False
+        try:
+            environ: Environment = request_environ(request, self.server_name, self.server_port)
+            handler: WSGIRequestHandler = self.handler_factory(request, environ)
+            handler.handle(self.application)
+        finally:
+            _request_close(request)
+        return True
+
+    def serve_forever(self) -> void:
+        """Serve sequential requests until shutdown; close the listener on unwinding."""
+        self.running = True
+        try:
+            while self.running:
+                self.handle_request()
+        finally:
+            self.server_close()
+
+    def shutdown(self) -> void:
+        """Stop the serving loop after the current request completes."""
+        self.running = False
+
+    def server_close(self) -> void:
+        """Idempotently stop serving and release the listening socket."""
+        self.running = False
+        if self.handle is not None:
+            _close(self.handle)
+            self.handle = None
+
+    def __enter__(self) -> WSGIServer:
+        """Return this bound server for use in a with statement."""
+        return self
+
+    def __exit__(self) -> void:
+        """Release the listener on both normal and exceptional scope exit."""
+        self.server_close()
+
+def make_server(host: str, port: i32, app: Application, backlog: i32 = 16, timeout: i32 = 30000) -> WSGIServer:
+    """Create a bound development server invoking app(environ, start_response).
+
+    Empty host binds a wildcard interface. Port zero chooses a free port, exposed
+    as server_port. No requests run until handle_request or serve_forever. Close
+    with server_close or a with statement. Assign handler_factory for custom
+    request adapters/logging; no routing is performed by this server.
+    """
+    return WSGIServer(host, port, app, backlog, timeout)

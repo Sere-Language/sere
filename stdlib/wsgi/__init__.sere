@@ -1,0 +1,18 @@
+"""Low-level WSGI gateway interfaces and synchronous reference HTTP server.
+
+Use make_server(host, port, application), then handle_request or serve_forever.
+Applications receive Environment and StartResponse and return byte iterables.
+Body chunks use Sere list[byte]; encode text explicitly with bytes.from_str.
+
+The package re-exports common entry points. Specialized APIs remain available
+from wsgi.simple_server, wsgi.handlers, wsgi.headers, wsgi.types, wsgi.util and
+wsgi.validate. No routing, request objects or framework policy is supplied.
+"""
+from wsgi.simple_server import make_server, WSGIServer, WSGIRequestHandler, ServerHandler
+from wsgi.handlers import BaseHandler, SimpleHandler
+from wsgi.headers import Headers
+from wsgi.types import Application, WSGIApplication, Environment, WSGIEnvironment, StartResponse, Header, HeaderList, WriteCallable, InputStream, ErrorStream, WSGIResult, FileWrapper, file_wrapper
+from wsgi.util import guess_scheme, application_uri, request_uri, shift_path_info, setup_testing_defaults
+from wsgi.validate import validator
+
+__exports__ = [make_server, WSGIServer, WSGIRequestHandler, ServerHandler, BaseHandler, SimpleHandler, Headers, Application, WSGIApplication, Environment, WSGIEnvironment, StartResponse, Header, HeaderList, WriteCallable, InputStream, ErrorStream, WSGIResult, FileWrapper, file_wrapper, guess_scheme, application_uri, request_uri, shift_path_info, setup_testing_defaults, validator]

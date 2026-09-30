@@ -34,7 +34,7 @@ struct PackedLibrary {
 
 [[nodiscard]] bool isExtractedLibraryPath(const std::filesystem::path& path);
 
-/// Entry file for a folder library: `name/name.sere` or `name/lib.sere`.
+/// Entry file for a folder library: `__init__.sere`, `name.sere`, then `lib.sere`.
 [[nodiscard]] std::filesystem::path folderLibraryEntry(const std::filesystem::path& directory);
 
 /// Directory that owns native objects for an imported module, if any.

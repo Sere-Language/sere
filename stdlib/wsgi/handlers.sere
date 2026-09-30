@@ -6,7 +6,7 @@ Its output callback accepts raw wire bytes. The default collects wire chunks for
 tests; a socket or CGI gateway can replace it without changing application code.
 """
 import bytes
-from wsgi.types import Application, Environment, StartResponse, HeaderList, WriteCallable, Result, InputStream, ErrorStream
+from wsgi.types import Application, Environment, StartResponse, HeaderList, WriteCallable, WSGIResult, InputStream, ErrorStream
 from wsgi.headers import Headers, validate_status, is_hop_by_hop, parse_length
 from wsgi.util import setup_testing_defaults, environ_text
 
@@ -25,8 +25,8 @@ type ByteChunk = list[byte]
 
 def close_result(result: Any) -> void:
     """Release supported owned iterable types, including generators never advanced."""
-    if isinstance(result, Result):
-        owned: Result = result as Result
+    if isinstance(result, WSGIResult):
+        owned: WSGIResult = result as WSGIResult
         owned.close()
     elif isinstance(result, ByteIterator):
         iterator: Iterator[list[byte]] = result as Iterator[list[byte]]
@@ -38,11 +38,11 @@ def close_result(result: Any) -> void:
 def iterate_result(result: Any) -> Iterator[list[byte]]:
     """Yield supported result chunks without collecting; reject text and invalid elements.
 
-    Custom iterable objects adapt through Result(obj.__iter__(), obj.close).
+    Custom iterable objects adapt through WSGIResult(obj.__iter__(), obj.close).
     Runtime checks precede Any conversions so protocol violations are catchable.
     """
-    if isinstance(result, Result):
-        owned: Result = result as Result
+    if isinstance(result, WSGIResult):
+        owned: WSGIResult = result as WSGIResult
         for chunk in owned:
             yield chunk
     elif isinstance(result, ByteIterator):
@@ -70,7 +70,7 @@ def iterate_result(result: Any) -> Iterator[list[byte]]:
                 raise TypeError("WSGI iterator yielded a non-byte chunk")
             yield value as list[byte]
     else:
-        raise TypeError("WSGI application must return a byte iterable; use Result for custom iterables")
+        raise TypeError("WSGI application must return a byte iterable; use WSGIResult for custom iterables")
 
 class BaseHandler:
     """One-request gateway with replaceable output and explicit response state.
@@ -121,7 +121,7 @@ class BaseHandler:
         Duplicate calls without error raise RuntimeError. After commitment error
         is raised again. Pass an Exception base value, not a traceback tuple.
         """
-        if error is not None:
+        if typeof(error) != "None":
             if not isinstance(error, Exception):
                 raise TypeError("start_response error must be an Exception base value")
             if self.headers_sent:

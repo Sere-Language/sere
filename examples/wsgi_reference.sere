@@ -1,0 +1,16 @@
+"""Minimal low-level WSGI server. Run and visit http://127.0.0.1:8000/."""
+import bytes
+from wsgi.simple_server import make_server
+from wsgi.types import Environment, StartResponse
+
+def application(environ: Environment, start_response: StartResponse) -> Any:
+    """Return an explicitly encoded single-chunk representation."""
+    start_response("200 OK", [("Content-Type", "text/plain; charset=utf-8")])
+    return [bytes.from_str("Hello, WSGI World!\n")]
+
+def main() -> i32:
+    """Own the listener for the duration of the serving loop."""
+    with make_server("127.0.0.1", 8000, application) as server:
+        print("Serving on port 8000...")
+        server.serve_forever()
+    return 0

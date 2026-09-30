@@ -1,0 +1,10 @@
+"""Package entry used to verify imports and explicit submodule re-exports."""
+from init_package.child import answer
+__exports__ += [answer]
+
+def entry_name() -> str:
+    return __name__
+
+class Marker:
+    def value(self) -> i32:
+        return 7
