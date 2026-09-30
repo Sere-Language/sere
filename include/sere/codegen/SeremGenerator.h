@@ -44,6 +44,10 @@ private:
   emitBoundMethod(const Type* owner, const std::string& method, const Expr& object);
   /// Per-function emission state, swapped out while a nested body is lowered
   /// into its own frame.
+  struct ModuleGlobal {
+    std::string symbol;
+    const Type* type = nullptr;
+  };
   struct FunctionState {
     std::unique_ptr<serem::IRBuilder> builder;
     serem::IRFunction* function = nullptr;
@@ -132,6 +136,10 @@ private:
                                            const std::vector<serem::ValuePtr>& arguments);
   void appendDefaults(const std::string& symbol, std::vector<serem::ValuePtr>& arguments);
   [[nodiscard]] serem::ValuePtr emitName(const NameExpr& expression);
+  [[nodiscard]] const ModuleGlobal* moduleGlobal(std::string_view name) const;
+  [[nodiscard]] const ModuleGlobal* moduleMemberGlobal(const MemberExpr& expression) const;
+  [[nodiscard]] bool emitModuleInitializers(const std::vector<const Module*>& modules,
+                                            const std::vector<std::string>& moduleKeys);
   [[nodiscard]] serem::ValuePtr emitBinary(const BinaryExpr& expression);
   [[nodiscard]] serem::ValuePtr emitUnionEquality(serem::ValuePtr left,
                                                   serem::ValuePtr right,
@@ -170,6 +178,14 @@ private:
   /// the module global that backs it.
   std::unordered_map<std::string, std::string> functionStatics_;
   std::unordered_map<std::string, const Type*> staticTypes_;
+  /// Module-level variables, keyed by their owning module and source name.
+  std::unordered_map<std::string, std::unordered_map<std::string, ModuleGlobal>> moduleGlobals_;
+  /// Imported module aliases and imported variables visible from each module.
+  std::unordered_map<std::string, std::unordered_map<std::string, std::string>> moduleAliases_;
+  std::unordered_map<std::string, std::unordered_map<std::string, ModuleGlobal>>
+      importedModuleGlobals_;
+  std::string rootModuleKey_;
+  std::string currentModuleKey_;
   const Type* returnType_ = nullptr;
   std::unordered_map<std::string, serem::IRType> functions_;
   std::unordered_map<std::string, const FunctionDef*> definitions_;

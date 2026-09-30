@@ -302,6 +302,8 @@ void emitLiteral(const Token& token, std::vector<SemanticToken>& out) {
     pushToken(out, token.range(), SemanticType::Number, 0);
   } else if (token.kind() == TokenKind::String) {
     pushToken(out, token.range(), SemanticType::String, 0);
+  } else if (token.kind() == TokenKind::Bytes) {
+    pushToken(out, token.range(), SemanticType::String, 0);
   } else if (token.kind() == TokenKind::Regex) {
     pushToken(out, token.range(), SemanticType::Regexp, 0);
   } else if (isOperatorToken(token.kind())) {
@@ -399,6 +401,11 @@ void classifyToken(const std::vector<Token>& tokens,
   const Token& token = tokens[index];
   if (isModifierKeyword(token.kind())) {
     pushToken(out, token.range(), SemanticType::Modifier, 0);
+    return;
+  }
+  if (token.kind() == TokenKind::KeywordType && index > 0 &&
+      tokens[index - 1].kind() == TokenKind::Dot) {
+    emitIdentifier(tokens, index, checker, out);
     return;
   }
   if (isLanguageKeyword(token.kind())) {

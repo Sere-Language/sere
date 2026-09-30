@@ -3998,13 +3998,18 @@ TypeChecker::checkBuiltinMethod(CallExpr& expr, const Type* objectType, const st
     diagnostics_->error(expr.range(), "unknown method '" + name + "' on " + quoteType(objectType));
     return nullptr;
   };
-  if (member == nullptr) {
+  const bool isByteList = objectType->isList() && objectType->elementType() != nullptr &&
+                          objectType->elementType()->canonical()->isNamed("u8");
+  const bool isStringEncode = receiver == BuiltinReceiver::Str && name == "encode";
+  const bool isBytesDecode = receiver == BuiltinReceiver::List && name == "decode" && isByteList;
+  if (member == nullptr && !isStringEncode && !isBytesDecode) {
     return unknown();
   }
   const auto finish = [&](const Type* result) -> const Type* {
     expr.setIntrinsic(IntrinsicKind::BuiltinMethod);
     expr.setLoweredName(std::string(builtinPrefix(receiver)) + name);
-    expr.setParamNames(member->parameterNames(expr.arguments().size()));
+    expr.setParamNames(member == nullptr ? std::vector<std::string>{}
+                                         : member->parameterNames(expr.arguments().size()));
     expr.setResolvedType(result);
     return result;
   };
@@ -4019,6 +4024,13 @@ TypeChecker::checkBuiltinMethod(CallExpr& expr, const Type* objectType, const st
   }
   if (objectType->isList()) {
     const Type* elem = objectType->elementType();
+    if (name == "decode" && elem != nullptr && elem->canonical()->isNamed("u8")) {
+      if (!expr.arguments().empty()) {
+        diagnostics_->error(expr.range(), "decode() takes no arguments");
+        return nullptr;
+      }
+      return finish(types_->strType());
+    }
     if (name == "append" || name == "push") {
       if (!argCount(1, name + "() takes one argument") ||
           checkExpr(*expr.arguments()[0]) == nullptr ||
@@ -4155,6 +4167,13 @@ TypeChecker::checkBuiltinMethod(CallExpr& expr, const Type* objectType, const st
   }
   if (objectType->isStrLayout()) {
     const Type* str = types_->strType();
+    if (name == "encode") {
+      if (!expr.arguments().empty()) {
+        diagnostics_->error(expr.range(), "encode() takes no arguments; strings are encoded as UTF-8");
+        return nullptr;
+      }
+      return finish(types_->listType(types_->primitive("u8")));
+    }
     auto strArg = [&](std::size_t index) -> bool {
       const Type* type = checkExpr(*expr.arguments()[index]);
       if (type == nullptr) {
@@ -4635,7 +4654,9 @@ const Type* TypeChecker::checkExpr(Expr& expr) {
   }
   case NodeKind::StringLiteral: {
     const auto& literal = static_cast<const StringLiteral&>(expr);
-    const Type* type = literal.isRegex() ? types_->regexType() : types_->strType();
+    const Type* type = literal.isBytes()
+                           ? types_->listType(types_->primitive("u8"))
+                           : literal.isRegex() ? types_->regexType() : types_->strType();
     expr.setResolvedType(type);
     return type;
   }

@@ -345,6 +345,12 @@ std::string unescapeStringBody(std::string_view body, bool regex) {
     case 'n':
       out.push_back('\n');
       break;
+    case 'b':
+      out.push_back('\b');
+      break;
+    case 'f':
+      out.push_back('\f');
+      break;
     case 't':
       out.push_back('\t');
       break;
@@ -353,6 +359,24 @@ std::string unescapeStringBody(std::string_view body, bool regex) {
       break;
     case '0':
       out.push_back('\0');
+      break;
+    case 'x':
+      if (index + 2 < body.size()) {
+        const auto hex = [](char ch) -> int {
+          if (ch >= '0' && ch <= '9') return ch - '0';
+          if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+          if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+          return -1;
+        };
+        const int high = hex(body[index + 1]);
+        const int low = hex(body[index + 2]);
+        if (high >= 0 && low >= 0) {
+          out.push_back(static_cast<char>((high << 4) | low));
+          index += 2;
+          break;
+        }
+      }
+      out.push_back(next);
       break;
     default:
       out.push_back(next);
@@ -367,7 +391,8 @@ std::string_view stringLiteralInner(std::string_view spelling) {
     return {};
   }
   std::size_t start = 0;
-  if (spelling[0] == 'f' || spelling[0] == 'F' || spelling[0] == 'b' || spelling[0] == 'B') {
+  if ((spelling[0] == 'f' || spelling[0] == 'F' || spelling[0] == 'b' || spelling[0] == 'B') &&
+      spelling.size() > 1 && (spelling[1] == '"' || spelling[1] == '\'')) {
     start = 1;
   }
   if (start >= spelling.size()) {
@@ -398,8 +423,10 @@ std::size_t stringLiteralInnerOffset(std::string_view spelling) {
     return 0;
   }
   const std::size_t start =
-      (spelling[0] == 'f' || spelling[0] == 'F' || spelling[0] == 'b' || spelling[0] == 'B') ? 1
-                                                                                             : 0;
+      ((spelling[0] == 'f' || spelling[0] == 'F' || spelling[0] == 'b' || spelling[0] == 'B') &&
+       spelling.size() > 1 && (spelling[1] == '"' || spelling[1] == '\''))
+          ? 1
+          : 0;
   if (start >= spelling.size()) {
     return start;
   }

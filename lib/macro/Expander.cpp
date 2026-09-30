@@ -185,9 +185,11 @@ bool matchMeta(const PatternAtom& meta,
       }
       expr = std::make_unique<FloatLiteral>(
           token.range(), std::strtod(spelling.c_str(), nullptr), isF32);
-    } else if (token.kind() == TokenKind::String || token.kind() == TokenKind::Regex) {
+    } else if (token.kind() == TokenKind::String || token.kind() == TokenKind::Bytes ||
+               token.kind() == TokenKind::Regex) {
       const DecodedString decoded = decodeStringToken(token.spelling());
-      expr = std::make_unique<StringLiteral>(token.range(), decoded.value, decoded.regex);
+      expr = std::make_unique<StringLiteral>(
+          token.range(), decoded.value, decoded.regex, decoded.bytes);
     } else if (token.kind() == TokenKind::KeywordTrue || token.kind() == TokenKind::KeywordFalse) {
       expr =
           std::make_unique<BooleanLiteral>(token.range(), token.kind() == TokenKind::KeywordTrue);

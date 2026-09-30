@@ -446,7 +446,8 @@ std::unique_ptr<Expr> cloneExpr(const Expr& expr) {
   }
   case NodeKind::StringLiteral: {
     const auto& literal = static_cast<const StringLiteral&>(expr);
-    return std::make_unique<StringLiteral>(expr.range(), literal.value(), literal.isRegex());
+    return std::make_unique<StringLiteral>(
+        expr.range(), literal.value(), literal.isRegex(), literal.isBytes());
   }
   case NodeKind::BooleanLiteral:
     return std::make_unique<BooleanLiteral>(expr.range(),

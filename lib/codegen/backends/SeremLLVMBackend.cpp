@@ -508,11 +508,16 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
                                       llvm::GlobalValue::InternalLinkage,
                                       llvm::Constant::getNullValue(fieldType),
                                       name);
+    } else if (slot->getValueType() != fieldType) {
+      report("inconsistent Serem static type for '" + attribute(operation, "symbol") + "'");
     }
     if (opcode == "static.get") {
-      result = ir.CreateLoad(fieldType, slot);
+      result = ir.CreateLoad(slot->getValueType(), slot);
     } else {
-      ir.CreateStore(operand(0), slot);
+      llvm::Value* value = operand(0);
+      if (value->getType() != slot->getValueType())
+        value = convert(value, slot->getValueType());
+      ir.CreateStore(value, slot);
     }
   } else if (opcode == "pointer.null")
     result = llvm::ConstantPointerNull::get(ir.getPtrTy());
@@ -1034,6 +1039,23 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       }
       return function;
     };
+    if (name == "str.encode") {
+      llvm::Function* length = runtime("strlen", llvm::Type::getInt64Ty(*context_),
+                                       {llvm::PointerType::getUnqual(*context_)});
+      result = builder_->builder.CreateCall(
+          runtime("sere_bytes_from_str", llvm::PointerType::getUnqual(*context_),
+                  {llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_)}),
+          {value, builder_->builder.CreateCall(length, {value})});
+    } else if (name == "list.decode") {
+      llvm::Value* data = builder_->builder.CreateAlloca(llvm::PointerType::getUnqual(*context_));
+      llvm::Value* lengthSlot = builder_->builder.CreateAlloca(llvm::Type::getInt64Ty(*context_));
+      builder_->builder.CreateCall(
+          runtime("sere_bytes_to_str", llvm::Type::getVoidTy(*context_),
+                  {llvm::PointerType::getUnqual(*context_), llvm::PointerType::getUnqual(*context_),
+                   llvm::PointerType::getUnqual(*context_)}),
+          {value, data, lengthSlot});
+      result = builder_->builder.CreateLoad(llvm::PointerType::getUnqual(*context_), data);
+    }
     if (name.starts_with("list.")) {
       auto slot = [&](llvm::Value* item) {
         if (attribute(operation, "element") == "str") {
@@ -1955,6 +1977,15 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
     } else if (!operands.empty()) {
       result = operand(0);
     }
+  } else if (opcode == "bytes.literal") {
+    llvm::Value* text = operand(0);
+    result = builder_->builder.CreateCall(
+        module_->getOrInsertFunction("sere_bytes_from_str", ir.getPtrTy(), ir.getPtrTy(),
+                                     ir.getInt64Ty()),
+        {text, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context_),
+                                     static_cast<std::int64_t>(
+                                         std::strtoll(attribute(operation, "length").c_str(),
+                                                      nullptr, 10)))});
   } else if (opcode == "member.get") {
     unsigned index = 0;
     const std::string indexText = attribute(operation, "index");
@@ -2609,6 +2640,8 @@ void SeremLLVMBackend::emitEntryPoint(const serem::IRFunction& userMain,
                              module_.get());
   llvm::BasicBlock* entryBlock = llvm::BasicBlock::Create(*context_, "entry", wrapper);
   builder_->builder.SetInsertPoint(entryBlock);
+  if (llvm::Function* moduleInit = module_->getFunction("sere.module.init"))
+    builder_->builder.CreateCall(moduleInit, {});
   std::vector<llvm::Value*> arguments;
   // `main(argv: list[str])` receives the process arguments as a list, which the
   // runtime builds from the platform's argc/argv pair.

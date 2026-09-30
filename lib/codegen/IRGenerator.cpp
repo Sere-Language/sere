@@ -1844,6 +1844,23 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
                                ? nullptr
                                : member.object().resolvedType()->valueType();
   const std::string& name = expr.loweredName();
+  if (name == "str.encode") {
+    llvm::Value* data = builder.CreateExtractValue(object, {0});
+    llvm::Value* len = builder.CreateExtractValue(object, {1});
+    return builder.CreateCall(runtimeDecl("sere_bytes_from_str",
+                                          builder.getPtrTy(),
+                                          {builder.getPtrTy(), builder.getInt64Ty()}),
+                              {data, len});
+  }
+  if (name == "list.decode") {
+    llvm::Value* data = builder.CreateAlloca(builder.getPtrTy());
+    llvm::Value* len = builder.CreateAlloca(builder.getInt64Ty());
+    builder.CreateCall(runtimeDecl("sere_bytes_to_str",
+                                   builder.getVoidTy(),
+                                   {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()}),
+                       {object, data, len});
+    return builder.CreateLoad(builder.getPtrTy(), data);
+  }
   if (name == "iterator.close") {
     auto* function = builder.GetInsertBlock()->getParent();
     auto* close = llvm::BasicBlock::Create(*context_, "iterator.close", function);
@@ -3339,12 +3356,26 @@ llvm::Value* IRGenerator::emitCall(llvm::IRBuilder<>& builder, const CallExpr& e
       if (definition != functionDefs_.end() && definition->second != nullptr) {
         appendBoundCallArgs(builder, expr, *definition->second, fnType, args, 0);
       } else {
-        for (const std::unique_ptr<Expr>& argument : expr.arguments()) {
-          llvm::Value* value = emitExpr(builder, *argument);
-          if (value == nullptr) {
+        const Type* parameterList = nullptr;
+        if (fnType->isCallableConstraint() && !fnType->args().empty() &&
+            fnType->args()[0] != nullptr && fnType->args()[0]->isParamList()) {
+          parameterList = fnType->args()[0];
+        }
+        for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
+          const Expr& argument = *expr.arguments()[index];
+          const Type* parameterType = nullptr;
+          if (fnType->kind() == TypeKind::Function && index < fnType->paramTypes().size()) {
+            parameterType = fnType->paramTypes()[index];
+          } else if (parameterList != nullptr && index < parameterList->args().size() &&
+                     !parameterList->args()[index]->isEllipsis()) {
+            parameterType = parameterList->args()[index];
+          }
+          args.push_back(parameterType == nullptr
+                             ? emitExpr(builder, argument)
+                             : emitCallArgument(builder, argument, parameterType));
+          if (args.back() == nullptr) {
             return nullptr;
           }
-          args.push_back(value);
         }
       }
       return emitIndirectCallable(builder, fnptr, llvmFn, args);
@@ -5208,7 +5239,17 @@ llvm::Value* IRGenerator::emitExpr(llvm::IRBuilder<>& builder, const Expr& expr)
   case NodeKind::AwaitExpr:
     return emitAwait(builder, static_cast<const AwaitExpr&>(expr));
   case NodeKind::StringLiteral: {
-    return emitStrLiteral(builder, static_cast<const StringLiteral&>(expr).value());
+    const auto& literal = static_cast<const StringLiteral&>(expr);
+    if (!literal.isBytes()) {
+      return emitStrLiteral(builder, literal.value());
+    }
+    llvm::Value* data = emitStrLiteral(builder, literal.value());
+    llvm::Value* pointer = builder.CreateExtractValue(data, {0});
+    llvm::Value* length = builder.CreateExtractValue(data, {1});
+    return builder.CreateCall(runtimeDecl("sere_bytes_from_str",
+                                          builder.getPtrTy(),
+                                          {builder.getPtrTy(), builder.getInt64Ty()}),
+                              {pointer, length});
   }
   case NodeKind::InterpolatedStringExpr:
     return emitInterpolated(builder, static_cast<const InterpolatedStringExpr&>(expr));

@@ -6,6 +6,8 @@
     { "include": "#fstringTriple" },
     { "include": "#fstring" },
     { "include": "#stringTriple" },
+    { "include": "#bytesTriple" },
+    { "include": "#bytes" },
     { "include": "#regex" },
     { "include": "#stringSingle" },
     { "include": "#string" },
@@ -29,6 +31,30 @@
     "comment": {
       "name": "comment.line.number-sign.sere",
       "match": "#.*$"
+    },
+    "bytes": {
+      "name": "string.quoted.double.bytes.sere",
+      "begin": "([bB])(\"|')",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.sere" },
+        "2": { "name": "punctuation.definition.string.begin.sere" }
+      },
+      "end": "\\2",
+      "patterns": [
+        { "name": "constant.character.escape.sere", "match": "\\\\." }
+      ]
+    },
+    "bytesTriple": {
+      "name": "string.quoted.triple.bytes.sere",
+      "begin": "([bB])(\"\"\"|''')",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.sere" },
+        "2": { "name": "punctuation.definition.string.begin.sere" }
+      },
+      "end": "\\2",
+      "patterns": [
+        { "name": "constant.character.escape.sere", "match": "\\\\." }
+      ]
     },
     "string": {
       "name": "string.quoted.double.sere",
@@ -179,7 +205,7 @@
       }
     },
     "member": {
-      "match": "\\.([A-Za-z_][A-Za-z0-9_]*)",
+      "match": "\\.(type|[A-Za-z_][A-Za-z0-9_]*)",
       "captures": {
         "1": { "name": "variable.other.member.sere" }
       }

@@ -10,7 +10,6 @@ if(WIN32)
   target_sources(sere PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/sere.rc")
 endif()
 target_link_libraries(sere PRIVATE sere_driver)
-add_dependencies(sere sere_runtime sere_qt6)
 sere_apply_warnings(sere)
 
 if(WIN32)
@@ -59,8 +58,6 @@ add_custom_command(TARGET sere POST_BUILD
   COMMAND "${CMAKE_COMMAND}"
     -DSERE_EXE="$<TARGET_FILE:sere>"
     -DSERE_RUNTIME="$<TARGET_FILE:sere_runtime>"
-    -DSERE_QT6="$<TARGET_LINKER_FILE:sere_qt6>"
-    -DSERE_QT6_BIN="$<TARGET_FILE:sere_qt6>"
     -DSERE_STDLIB="${CMAKE_SOURCE_DIR}/stdlib"
     -DSERE_API_HEADER="${CMAKE_SOURCE_DIR}/include/sere/api/sere_mod.h"
     -DSERE_GC_HEADER="${CMAKE_SOURCE_DIR}/include/sere/api/sere_gc.h"

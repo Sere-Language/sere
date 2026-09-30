@@ -380,6 +380,7 @@ SeremGenerator::emit(const Module& module,
                      std::string moduleName,
                      const std::vector<const Module*>* imported,
                      const std::vector<std::string>* importedNames) {
+  const std::string rootName = moduleName;
   module_ = std::make_unique<serem::IRModule>(std::move(moduleName));
   functions_.clear();
   definitions_.clear();
@@ -398,6 +399,84 @@ SeremGenerator::emit(const Module& module,
   std::vector<const Module*> modules{&module};
   if (imported != nullptr)
     modules.insert(modules.end(), imported->begin(), imported->end());
+  std::vector<std::string> moduleKeys;
+  moduleKeys.reserve(modules.size());
+  moduleKeys.push_back(rootName);
+  for (std::size_t index = 1; index < modules.size(); ++index) {
+    moduleKeys.push_back(importedNames != nullptr && index - 1 < importedNames->size()
+                             ? (*importedNames)[index - 1]
+                             : "imported" + std::to_string(index - 1));
+  }
+  rootModuleKey_ = moduleKeys.front();
+  currentModuleKey_ = rootModuleKey_;
+  moduleGlobals_.clear();
+  moduleAliases_.clear();
+  importedModuleGlobals_.clear();
+  for (std::size_t index = 0; index < modules.size(); ++index) {
+    const Module& current = *modules[index];
+    const std::string& key = moduleKeys[index];
+    for (const std::unique_ptr<Stmt>& statement : current.statements()) {
+      if (statement == nullptr || statement->kind() != NodeKind::VarDecl)
+        continue;
+      const auto& declaration = static_cast<const VarDecl&>(*statement);
+      moduleGlobals_[key].insert_or_assign(
+          declaration.name(),
+          ModuleGlobal{"module." + key + "." + declaration.name(), declaration.resolvedType()});
+    }
+  }
+  for (std::size_t index = 0; index < modules.size(); ++index) {
+    const Module& current = *modules[index];
+    const std::string& key = moduleKeys[index];
+    for (const std::unique_ptr<Stmt>& statement : current.statements()) {
+      if (statement == nullptr || statement->kind() != NodeKind::ImportStmt)
+        continue;
+      const auto& import = static_cast<const ImportStmt&>(*statement);
+      if (import.modulePath().empty())
+        continue;
+      const std::string& sourceName = import.modulePath().back();
+      std::string qualifiedName;
+      for (const std::string& part : import.modulePath()) {
+        if (!qualifiedName.empty())
+          qualifiedName += '.';
+        qualifiedName += part;
+      }
+      std::string sourceKey;
+      for (std::size_t candidate = 1; candidate < moduleKeys.size(); ++candidate) {
+        if (moduleKeys[candidate] == qualifiedName || moduleKeys[candidate] == sourceName ||
+            moduleKeys[candidate].ends_with("." + sourceName)) {
+          sourceKey = moduleKeys[candidate];
+          break;
+        }
+      }
+      if (sourceKey.empty())
+        continue;
+      const std::string moduleBound = import.alias().empty() ? sourceName : import.alias();
+      moduleAliases_[key].insert_or_assign(moduleBound, sourceKey);
+      std::string qualifiedPath;
+      for (const std::string& part : import.modulePath()) {
+        if (!qualifiedPath.empty())
+          qualifiedPath += '.';
+        qualifiedPath += part;
+      }
+      moduleAliases_[key].insert_or_assign(qualifiedPath, sourceKey);
+      if (import.isFrom()) {
+        moduleAliases_[key].insert_or_assign(qualifiedName, sourceKey);
+        const auto sourceGlobals = moduleGlobals_.find(sourceKey);
+        if (sourceGlobals == moduleGlobals_.end())
+          continue;
+        if (import.star()) {
+          for (const auto& [name, global] : sourceGlobals->second)
+            importedModuleGlobals_[key].insert_or_assign(name, global);
+        } else {
+          for (std::size_t nameIndex = 0; nameIndex < import.names().size(); ++nameIndex) {
+            const auto global = sourceGlobals->second.find(import.names()[nameIndex]);
+            if (global != sourceGlobals->second.end())
+              importedModuleGlobals_[key].insert_or_assign(import.boundName(nameIndex), global->second);
+          }
+        }
+      }
+    }
+  }
   for (const Module* current : modules)
     declareTypes(*current);
   declareInstances(modules);
@@ -499,11 +578,17 @@ SeremGenerator::emit(const Module& module,
       methodSymbols_[instance->name() + "::" + method.name] = method.llvmName;
     }
   }
+  // Module initializers run from the platform entry point before user main.
+  // Emit them after every callable has a known Serem signature.
+  if (!emitModuleInitializers(modules, moduleKeys))
+    return nullptr;
   // Type declarations are laid out before function bodies. Any marks made while
   // registering those declarations are not evidence that a type is used by the
   // program, so start reachability from emitted user code below.
   usedTypeNames_.clear();
-  for (const Module* current : modules) {
+  for (std::size_t moduleIndex = 0; moduleIndex < modules.size(); ++moduleIndex) {
+    const Module* current = modules[moduleIndex];
+    currentModuleKey_ = moduleKeys[moduleIndex];
     for (const auto& statement : current->statements()) {
       if (statement->kind() == NodeKind::FunctionDef &&
           !emitFunction(static_cast<const FunctionDef&>(*statement)))
@@ -526,6 +611,7 @@ SeremGenerator::emit(const Module& module,
       }
     }
   }
+  currentModuleKey_ = rootModuleKey_;
   for (const FunctionInstantiation& inst : types_->functionInstantiations()) {
     subst_.clear();
     for (std::size_t index = 0; index < inst.typeParams.size() && index < inst.args.size();
@@ -641,7 +727,114 @@ SeremGenerator::emit(const Module& module,
   emitPendingRenderers();
   usedTypeNames_ = usedTypesBeforeRenderers;
   pruneUnusedPreludeTypes();
+  currentModuleKey_ = rootModuleKey_;
   return std::move(module_);
+}
+
+const SeremGenerator::ModuleGlobal* SeremGenerator::moduleGlobal(std::string_view name) const {
+  const auto ownModule = moduleGlobals_.find(currentModuleKey_);
+  if (ownModule != moduleGlobals_.end()) {
+    const auto found = ownModule->second.find(std::string(name));
+    if (found != ownModule->second.end())
+      return &found->second;
+  }
+  const auto imported = importedModuleGlobals_.find(currentModuleKey_);
+  if (imported != importedModuleGlobals_.end()) {
+    const auto found = imported->second.find(std::string(name));
+    if (found != imported->second.end())
+      return &found->second;
+  }
+  return nullptr;
+}
+
+const SeremGenerator::ModuleGlobal*
+SeremGenerator::moduleMemberGlobal(const MemberExpr& expression) const {
+  if (expression.object().kind() != NodeKind::NameExpr ||
+      expression.object().resolvedType() == nullptr ||
+      !expression.object().resolvedType()->isModule())
+    return nullptr;
+  const auto& object = static_cast<const NameExpr&>(expression.object());
+  const auto aliases = moduleAliases_.find(currentModuleKey_);
+  if (aliases == moduleAliases_.end())
+    return nullptr;
+  const auto alias = aliases->second.find(object.name());
+  if (alias == aliases->second.end())
+    return nullptr;
+  const auto module = moduleGlobals_.find(alias->second);
+  if (module == moduleGlobals_.end())
+    return nullptr;
+  const auto global = module->second.find(expression.field());
+  return global == module->second.end() ? nullptr : &global->second;
+}
+
+bool SeremGenerator::emitModuleInitializers(const std::vector<const Module*>& modules,
+                                            const std::vector<std::string>& moduleKeys) {
+  const std::string symbol = "sere.module.init";
+  if (module_->findFunction(symbol) != nullptr)
+    return true;
+  auto initFunction = std::make_unique<serem::IRFunction>(
+      symbol, std::vector<serem::IRType>{}, serem::IRType::voidType());
+  function_ = &module_->addFunction(std::move(initFunction));
+  builder_ = std::make_unique<serem::IRBuilder>(*function_);
+  functions_.insert_or_assign(symbol,
+                              serem::IRType::function(serem::IRType::voidType(), {}));
+  const std::string guard = "module.init.once." + rootModuleKey_;
+  serem::ValuePtr done =
+      builder_->operation("static.get", serem::IRType::i64(), {}, {{"symbol", guard}});
+  serem::ValuePtr unset = builder_->compare(
+      "eq", std::move(done), std::make_shared<serem::ConstantInt>(0, serem::IRType::i64()));
+  serem::BasicBlock& initBlock = function_->addBlock("module.init.body");
+  serem::BasicBlock& endBlock = function_->addBlock("module.init.end");
+  (void)builder_->conditionalBranch(unset, initBlock, endBlock);
+  builder_->setInsertBlock(initBlock);
+  const std::string previousModule = currentModuleKey_;
+  for (std::size_t index = 1; index < modules.size() && index < moduleKeys.size(); ++index) {
+    currentModuleKey_ = moduleKeys[index];
+    for (const std::unique_ptr<Stmt>& statement : modules[index]->statements()) {
+      if (statement == nullptr || statement->kind() != NodeKind::VarDecl)
+        continue;
+      const auto& declaration = static_cast<const VarDecl&>(*statement);
+      const ModuleGlobal* global = moduleGlobal(declaration.name());
+      if (global == nullptr || declaration.init() == nullptr)
+        continue;
+      serem::ValuePtr value = coerce(emitExpression(*declaration.init()),
+                                     declaration.init()->resolvedType(),
+                                     global->type);
+      (void)builder_->operation("static.set",
+                                serem::IRType::voidType(),
+                                {std::move(value)},
+                                {{"symbol", global->symbol}});
+    }
+  }
+  currentModuleKey_ = rootModuleKey_;
+  for (const std::unique_ptr<Stmt>& statement : modules.front()->statements()) {
+    if (statement == nullptr || statement->kind() != NodeKind::VarDecl)
+      continue;
+    const auto& declaration = static_cast<const VarDecl&>(*statement);
+    const ModuleGlobal* global = moduleGlobal(declaration.name());
+    if (global == nullptr || declaration.init() == nullptr)
+      continue;
+    serem::ValuePtr value = coerce(emitExpression(*declaration.init()),
+                                   declaration.init()->resolvedType(),
+                                   global->type);
+    (void)builder_->operation("static.set",
+                              serem::IRType::voidType(),
+                              {std::move(value)},
+                              {{"symbol", global->symbol}});
+  }
+  currentModuleKey_ = rootModuleKey_;
+  (void)builder_->operation(
+      "static.set",
+      serem::IRType::voidType(),
+      {std::make_shared<serem::ConstantInt>(1, serem::IRType::i64())},
+      {{"symbol", guard}});
+  currentModuleKey_ = previousModule;
+  (void)builder_->branch(endBlock);
+  builder_->setInsertBlock(endBlock);
+  builder_->retVoid();
+  builder_.reset();
+  function_ = nullptr;
+  return true;
 }
 
 void SeremGenerator::declareTypes(const Module& module) {
@@ -821,6 +1014,11 @@ bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbo
     return true;
   }
   function_ = &module_->addFunction(std::move(irFunction));
+  if (!function.modulePrefix().empty()) {
+    currentModuleKey_ = moduleGlobals_.contains(function.modulePrefix())
+                            ? function.modulePrefix()
+                            : rootModuleKey_;
+  }
   currentOwnerClass_ = function.ownerClass();
   function_->setAsync(function.isAsync());
   function_->setGenerator(function.isGenerator());
@@ -858,6 +1056,15 @@ bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbo
       localTypes_[function.params()[index].name] = index == 0 && receiverOverride_ != nullptr
                                                        ? receiverOverride_
                                                        : type->paramTypes()[index];
+    }
+  }
+  if (function.name() == "main" && currentModuleKey_ == rootModuleKey_) {
+    const auto initType = functions_.find("sere.module.init");
+    if (initType != functions_.end()) {
+      (void)builder_->call(
+          std::make_shared<serem::FunctionRef>("sere.module.init", initType->second),
+          {},
+          serem::IRType::voidType());
     }
   }
   loweringPrelude_ = false;
@@ -1184,6 +1391,28 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
                                    assign.target().resolvedType());
     if (assign.target().kind() == NodeKind::MemberExpr) {
       const auto& member = static_cast<const MemberExpr&>(assign.target());
+      const ModuleGlobal* global = moduleMemberGlobal(member);
+      if (global != nullptr) {
+        if (assign.op() != AssignOp::Assign) {
+          const serem::IRType irType = lowerType(global->type);
+          const serem::ValuePtr current =
+              builder_->operation("static.get", irType, {}, {{"symbol", global->symbol}});
+          BinaryOp binaryOp = BinaryOp::Add;
+          if (binaryOpForAssign(assign.op(), binaryOp)) {
+            switch (binaryOp) {
+            case BinaryOp::Add: value = builder_->add(current, value, irType); break;
+            case BinaryOp::Sub: value = builder_->sub(current, value, irType); break;
+            case BinaryOp::Mul: value = builder_->mul(current, value, irType); break;
+            case BinaryOp::Div: value = builder_->div(current, value, irType); break;
+            case BinaryOp::Mod: value = builder_->rem(current, value, irType); break;
+            default: break;
+            }
+          }
+        }
+        (void)builder_->operation(
+            "static.set", serem::IRType::voidType(), {value}, {{"symbol", global->symbol}});
+        return true;
+      }
       if (const std::string symbol = staticFieldSymbol(member); !symbol.empty()) {
         if (assign.op() != AssignOp::Assign) {
           const serem::IRType irType = lowerType(assign.target().resolvedType());
@@ -1363,6 +1592,35 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
           "static.set", serem::IRType::voidType(), {value}, {{"symbol", statik->second}});
       return true;
     }
+    if (local(name.name()) == nullptr) {
+      if (const ModuleGlobal* global = moduleGlobal(name.name()); global != nullptr) {
+        const serem::IRType irType = lowerType(global->type);
+        if (assign.op() != AssignOp::Assign) {
+          const serem::ValuePtr current =
+              builder_->operation("static.get", irType, {}, {{"symbol", global->symbol}});
+          BinaryOp binaryOp = BinaryOp::Add;
+          if (binaryOpForAssign(assign.op(), binaryOp)) {
+            switch (binaryOp) {
+            case BinaryOp::Add: value = builder_->add(current, value, irType); break;
+            case BinaryOp::Sub: value = builder_->sub(current, value, irType); break;
+            case BinaryOp::Mul: value = builder_->mul(current, value, irType); break;
+            case BinaryOp::Div: value = builder_->div(current, value, irType); break;
+            case BinaryOp::Mod: value = builder_->rem(current, value, irType); break;
+            case BinaryOp::BitAnd: value = builder_->bitAnd(current, value, irType); break;
+            case BinaryOp::BitOr: value = builder_->bitOr(current, value, irType); break;
+            case BinaryOp::BitXor: value = builder_->bitXor(current, value, irType); break;
+            case BinaryOp::Shl: value = builder_->shiftLeft(current, value, irType); break;
+            case BinaryOp::Shr: value = builder_->shiftRight(current, value, irType); break;
+            default: break;
+            }
+          }
+        }
+        (void)builder_->operation(
+            "static.set", serem::IRType::voidType(), {value}, {{"symbol", global->symbol}});
+        return true;
+      }
+    }
+
     serem::ValuePtr slot = local(name.name());
     if (slot == nullptr) {
       slot = builder_->alloca(value->type());
@@ -2019,8 +2277,12 @@ serem::ValuePtr SeremGenerator::emitExpression(const Expr& expression) {
                                                   lowerType(expression.resolvedType()));
   }
   case NodeKind::StringLiteral: {
-    const std::string& value = static_cast<const StringLiteral&>(expression).value();
-    return stringValue(value);
+    const auto& literal = static_cast<const StringLiteral&>(expression);
+    if (!literal.isBytes())
+      return stringValue(literal.value());
+    return builder_->operation("bytes.literal", lowerType(expression.resolvedType()),
+                               {stringValue(literal.value())},
+                               {{"length", std::to_string(literal.value().size())}});
   }
   case NodeKind::InterpolatedStringExpr: {
     const auto& interpolated = static_cast<const InterpolatedStringExpr&>(expression);
@@ -2507,6 +2769,11 @@ serem::ValuePtr SeremGenerator::emitName(const NameExpr& expression) {
       value = builder_->load(value, lowerType(stored));
     }
     return coerce(value, stored, expression.resolvedType());
+  }
+  if (const ModuleGlobal* global = moduleGlobal(expression.name()); global != nullptr) {
+    serem::ValuePtr value =
+        builder_->operation("static.get", lowerType(global->type), {}, {{"symbol", global->symbol}});
+    return coerce(std::move(value), global->type, expression.resolvedType());
   }
   // A captured outer local was parked in a module global when the inner body was
   // defined, and reads back as the address it was stored under.
@@ -3498,6 +3765,14 @@ serem::ValuePtr SeremGenerator::emitMember(const MemberExpr& expression) {
           "enum.unit", lowerType(record), {}, {{"tag", std::to_string(tag)}});
     }
   }
+  const ModuleGlobal* moduleGlobalValue = moduleMemberGlobal(expression);
+  if (moduleGlobalValue != nullptr) {
+    serem::ValuePtr value = builder_->operation("static.get",
+                                                lowerType(moduleGlobalValue->type),
+                                                {},
+                                                {{"symbol", moduleGlobalValue->symbol}});
+    return coerce(std::move(value), moduleGlobalValue->type, expression.resolvedType());
+  }
   if (const std::string symbol = staticFieldSymbol(expression); !symbol.empty()) {
     return builder_->operation(
         "static.get", lowerType(expression.resolvedType()), {}, {{"symbol", symbol}});
@@ -3810,16 +4085,20 @@ serem::ValuePtr SeremGenerator::emitUnary(const UnaryExpr& expression) {
     if (expression.operand().kind() == NodeKind::NameExpr) {
       const auto& name = static_cast<const NameExpr&>(expression.operand());
       const auto statik = functionStatics_.find(name.name());
-      if (statik != functionStatics_.end()) {
-        const Type* storedType = expression.operand().resolvedType();
+      const ModuleGlobal* global = local(name.name()) == nullptr ? moduleGlobal(name.name()) : nullptr;
+      if (statik != functionStatics_.end() || global != nullptr) {
+        const std::string& symbol = statik != functionStatics_.end() ? statik->second : global->symbol;
+        const Type* storedType = statik != functionStatics_.end()
+                                     ? expression.operand().resolvedType()
+                                     : global->type;
         const serem::IRType stored = lowerType(storedType);
         const serem::ValuePtr current =
-            builder_->operation("static.get", stored, {}, {{"symbol", statik->second}});
+            builder_->operation("static.get", stored, {}, {{"symbol", symbol}});
         const serem::ValuePtr one = std::make_shared<serem::ConstantInt>(1, stored);
         const serem::ValuePtr updated =
             increment ? builder_->add(current, one, stored) : builder_->sub(current, one, stored);
         (void)builder_->operation(
-            "static.set", serem::IRType::voidType(), {updated}, {{"symbol", statik->second}});
+            "static.set", serem::IRType::voidType(), {updated}, {{"symbol", symbol}});
         return prefix ? updated : current;
       }
       slot = local(name.name());

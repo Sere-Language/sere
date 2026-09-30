@@ -946,7 +946,7 @@ void* sere_bytes_from_str(const char* data, int64_t len) {
     len = 0;
   }
   SereList* out = (SereList*)sere_bytes_alloc(len);
-  if (out->data != NULL && data != NULL && len > 0) {
+  if (out != NULL && out->data != NULL && data != NULL && len > 0) {
     memcpy(out->data, data, (size_t)len);
   }
   return out;

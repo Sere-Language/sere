@@ -222,6 +222,7 @@ Token Lexer::lexNumber(std::size_t start) {
 
 Token Lexer::lexQuoted(std::size_t start, char quote, TokenKind kind) {
   const bool allowTriple = quote == '"' || quote == '\'';
+  const bool isBytes = kind == TokenKind::Bytes;
   std::size_t quoteCount = 1;
   if (allowTriple) {
     while (quoteCount < 3 && peek() == quote) {
@@ -235,6 +236,11 @@ Token Lexer::lexQuoted(std::size_t start, char quote, TokenKind kind) {
   const bool triple = quoteCount == 3;
   while (!isAtEnd()) {
     const char ch = peek();
+    if (isBytes && static_cast<unsigned char>(ch) > 0x7f) {
+      diagnostics_->error(SourceRange{source_->location(offset_), source_->location(offset_ + 1)},
+                          "bytes literals may contain only ASCII source characters");
+      diagnostics_->help("use a \\xNN escape for bytes above 0x7f");
+    }
     if (!triple && quote != '`' && (ch == '\n' || ch == '\r')) {
       break;
     }

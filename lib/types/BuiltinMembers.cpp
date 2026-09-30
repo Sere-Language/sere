@@ -34,6 +34,7 @@ const std::vector<BuiltinMember>& table() {
 
       {BuiltinReceiver::List, "append", "append(value)", "value", -1},
       {BuiltinReceiver::List, "push", "push(value)", "value", -1},
+      {BuiltinReceiver::List, "decode", "decode() -> str", "", -1},
       {BuiltinReceiver::List, "insert", "insert(index, value)", "index value", -1},
       {BuiltinReceiver::List, "pop", "pop(index?) -> T", "index", 0},
       {BuiltinReceiver::List, "remove", "remove(value) -> bool", "value", -1},
@@ -85,6 +86,7 @@ const std::vector<BuiltinMember>& table() {
       {BuiltinReceiver::Str, "is_digit", "is_digit() -> bool", "", -1},
       {BuiltinReceiver::Str, "is_alpha", "is_alpha() -> bool", "", -1},
       {BuiltinReceiver::Str, "is_space", "is_space() -> bool", "", -1},
+      {BuiltinReceiver::Str, "encode", "encode() -> list[byte]", "", -1},
   };
   return members;
 }

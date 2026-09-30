@@ -237,6 +237,9 @@ bool Parser::consume(TokenKind kind, const char* errorMessage) {
 
 void Parser::synchronize() {
   while (!isAtEnd()) {
+    if (match(TokenKind::Semicolon)) {
+      return;
+    }
     if (match(TokenKind::Newline)) {
       return;
     }
@@ -249,7 +252,8 @@ void Parser::synchronize() {
       return;
     }
     // `type Name = ...` starts a statement; `type[...]` is a type constructor.
-    if (check(TokenKind::KeywordType) && peekNth(1).kind() == TokenKind::Identifier) {
+    if (check(TokenKind::KeywordType) && peekNth(1).kind() == TokenKind::Identifier &&
+        peekNth(2).kind() == TokenKind::Equal) {
       return;
     }
     advance();
@@ -326,7 +330,7 @@ std::unique_ptr<Expr> Parser::parseEqualsValue() {
 }
 
 std::string Parser::parseIdentifier(const char* errorMessage) {
-  if (!check(TokenKind::Identifier)) {
+  if (!check(TokenKind::Identifier) && !check(TokenKind::KeywordType)) {
     diagnostics_->error(peek().range(),
                         std::string(errorMessage) + ", found " + describeToken(peek()));
     return {};
@@ -349,6 +353,10 @@ std::unique_ptr<TypeExpr> Parser::parseTypeAtom() {
         number.range(), std::string(number.spelling()), std::vector<std::unique_ptr<TypeExpr>>{});
   }
   if (match(TokenKind::KeywordType)) {
+    if (!check(TokenKind::LBracket)) {
+      diagnostics_->error(previous().range(), "expected 'type' to be followed by type arguments");
+      return nullptr;
+    }
     const Token& name = previous();
     const SourceLocation start = name.range().start;
     SourceLocation end = name.range().end;
@@ -500,8 +508,11 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
     const Token& token = previous();
     const DecodedString decoded = decodeStringToken(token.spelling());
     // Single quotes are strings, exactly like double quotes: `'a'` is the one
-    // character string "a". It used to become a byte value, which silently
-    // broke every str method call taking a literal separator (`s.split('.')`).
+    // character string "a". A b-prefixed token instead has list[byte] type.
+    if (decoded.bytes && token.spelling().size() >= 2 &&
+        token.spelling()[token.spelling().size() - 1] == '\\') {
+      diagnostics_->error(token.range(), "bytes literal cannot end with a backslash escape");
+    }
     return std::make_unique<StringLiteral>(token.range(), decoded.value, false, decoded.bytes);
   }
   if (match(TokenKind::Regex)) {
@@ -519,6 +530,10 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
   }
   if (match(TokenKind::KeywordNone)) {
     return std::make_unique<NoneLiteral>(previous().range());
+  }
+  if (match(TokenKind::KeywordType)) {
+    const Token& name = previous();
+    return std::make_unique<NameExpr>(name.range(), std::string(name.spelling()));
   }
   if (match(TokenKind::KeywordLambda)) {
     return parseLambda();
@@ -1431,6 +1446,8 @@ std::vector<std::unique_ptr<Stmt>> Parser::parseSuite() {
   std::vector<std::unique_ptr<Stmt>> body;
   while (!check(TokenKind::Dedent) && !isAtEnd()) {
     skipNewlines();
+    while (match(TokenKind::Semicolon)) {
+    }
     if (check(TokenKind::Dedent) || isAtEnd()) {
       break;
     }
@@ -1440,6 +1457,7 @@ std::vector<std::unique_ptr<Stmt>> Parser::parseSuite() {
       continue;
     }
     body.push_back(std::move(statement));
+    (void)match(TokenKind::Semicolon);
   }
   (void)consume(TokenKind::Dedent, "expected dedent to close block");
   return body;
@@ -2344,7 +2362,9 @@ std::unique_ptr<ClassDef> Parser::parseClass(const std::string& enclosing) {
         peekNth(2).kind() == TokenKind::Identifier &&
         (peekNth(2).spelling() == "get" || peekNth(2).spelling() == "set")) {
       const SourceRange nameRange = peek().range();
-      std::string property = parseIdentifier("expected property name");
+      std::string property = check(TokenKind::KeywordType)
+                                 ? std::string(advance().spelling())
+                                 : parseIdentifier("expected property name");
       std::unique_ptr<FunctionDef> accessor = parsePropertyAccessor(std::move(property), nameRange);
       if (accessor == nullptr) {
         synchronize();
@@ -2538,7 +2558,8 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
     }
     return classDef;
   }
-  if (check(TokenKind::KeywordType)) {
+  if (check(TokenKind::KeywordType) && peekNth(1).kind() == TokenKind::Identifier &&
+      peekNth(2).kind() == TokenKind::Equal) {
     std::unique_ptr<TypeAlias> alias = parseTypeAlias();
     if (alias != nullptr) {
       markPrivateFromDecorators(*alias, decorators);
@@ -2617,7 +2638,8 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
     return std::make_unique<ContinueStmt>(token.range());
   }
   if (match(TokenKind::KeywordStatic)) {
-    if (check(TokenKind::Identifier) && peekNth(1).kind() == TokenKind::Colon) {
+    if ((check(TokenKind::Identifier) || check(TokenKind::KeywordType)) &&
+        peekNth(1).kind() == TokenKind::Colon) {
       std::unique_ptr<VarDecl> decl = parseVarDecl(true);
       if (decl != nullptr) {
         markPrivateFromDecorators(*decl, decorators);
@@ -2627,7 +2649,8 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
     diagnostics_->error(peek().range(), "expected 'name: type' after 'static'");
     return nullptr;
   }
-  if (check(TokenKind::Identifier) && peekNth(1).kind() == TokenKind::Colon) {
+  if ((check(TokenKind::Identifier) || check(TokenKind::KeywordType)) &&
+      peekNth(1).kind() == TokenKind::Colon) {
     if (peekNth(2).kind() == TokenKind::Newline) {
       std::string name = std::string(peek().spelling());
       SourceRange nameRange = peek().range();
@@ -2647,6 +2670,11 @@ std::unique_ptr<Module> Parser::parseModule() {
   std::vector<std::unique_ptr<Stmt>> statements;
   skipNewlines();
   while (!isAtEnd()) {
+    while (match(TokenKind::Semicolon)) {
+    }
+    if (isAtEnd()) {
+      break;
+    }
     std::unique_ptr<Stmt> statement = parseStatement();
     if (statement == nullptr) {
       recoverStatement();
@@ -2658,6 +2686,9 @@ std::unique_ptr<Module> Parser::parseModule() {
       statements.push_back(std::move(nested));
     }
     nestedClasses_.clear();
+    if (match(TokenKind::Semicolon)) {
+      continue;
+    }
     skipNewlines();
   }
   SourceRange range;
