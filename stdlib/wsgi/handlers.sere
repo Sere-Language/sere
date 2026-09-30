@@ -1,0 +1,243 @@
+"""Transport-independent WSGI response state machine.
+
+BaseHandler handles application invocation, delayed header commitment, streaming,
+legacy write, Content-Length enforcement, error recovery and owned result cleanup.
+Its output callback accepts raw wire bytes. The default collects wire chunks for
+tests; a socket or CGI gateway can replace it without changing application code.
+"""
+import bytes
+from wsgi.types import Application, Environment, StartResponse, HeaderList, WriteCallable, Result, InputStream, ErrorStream
+from wsgi.headers import Headers, validate_status, is_hop_by_hop, parse_length
+from wsgi.util import setup_testing_defaults, environ_text
+
+type ByteIterator = Iterator[list[byte]]
+"""Concrete result shape used for safe runtime type checks."""
+type AnyIterator = Iterator[Any]
+"""Concrete result shape used for safe runtime type checks."""
+type ByteChunks = list[list[byte]]
+"""Concrete result shape used for safe runtime type checks."""
+type ByteArray = array[list[byte]]
+"""Concrete result shape used for safe runtime type checks."""
+type AnyChunks = list[Any]
+"""Concrete result shape used for safe runtime type checks."""
+type ByteChunk = list[byte]
+"""Concrete result shape used for safe runtime type checks."""
+
+def close_result(result: Any) -> void:
+    """Release supported owned iterable types, including generators never advanced."""
+    if isinstance(result, Result):
+        owned: Result = result as Result
+        owned.close()
+    elif isinstance(result, ByteIterator):
+        iterator: Iterator[list[byte]] = result as Iterator[list[byte]]
+        iterator.close()
+    elif isinstance(result, AnyIterator):
+        iterator_any: Iterator[Any] = result as Iterator[Any]
+        iterator_any.close()
+
+def iterate_result(result: Any) -> Iterator[list[byte]]:
+    """Yield supported result chunks without collecting; reject text and invalid elements.
+
+    Custom iterable objects adapt through Result(obj.__iter__(), obj.close).
+    Runtime checks precede Any conversions so protocol violations are catchable.
+    """
+    if isinstance(result, Result):
+        owned: Result = result as Result
+        for chunk in owned:
+            yield chunk
+    elif isinstance(result, ByteIterator):
+        iterator: Iterator[list[byte]] = result as Iterator[list[byte]]
+        for chunk in iterator:
+            yield chunk
+    elif isinstance(result, ByteChunks):
+        chunks: list[list[byte]] = result as list[list[byte]]
+        for chunk in chunks:
+            yield chunk
+    elif isinstance(result, ByteArray):
+        chunks_array: array[list[byte]] = result as array[list[byte]]
+        for chunk in chunks_array:
+            yield chunk
+    elif isinstance(result, AnyChunks):
+        mixed: list[Any] = result as list[Any]
+        for value in mixed:
+            if not isinstance(value, ByteChunk):
+                raise TypeError("WSGI body chunks must be list[byte], not text or arbitrary values")
+            yield value as list[byte]
+    elif isinstance(result, AnyIterator):
+        mixed_iterator: Iterator[Any] = result as Iterator[Any]
+        for value in mixed_iterator:
+            if not isinstance(value, ByteChunk):
+                raise TypeError("WSGI iterator yielded a non-byte chunk")
+            yield value as list[byte]
+    else:
+        raise TypeError("WSGI application must return a byte iterable; use Result for custom iterables")
+
+class BaseHandler:
+    """One-request gateway with replaceable output and explicit response state.
+
+    Instantiate per request. output must synchronously consume each byte chunk
+    or raise on disconnect. Headers commit before the first write attempt so
+    a partially sent response can never be replaced by a second status line.
+    """
+    environ: Environment
+    output: WriteCallable
+    wire: list[list[byte]]
+    status: str
+    headers: Headers
+    headers_sent: bool
+    bytes_sent: i64
+    expected: i64
+    code: i32
+    errors: ErrorStream
+    closed: bool
+
+    def __init__(self, environ: Environment) -> void:
+        """Prepare a fresh request; omitted testing metadata gets sensible defaults."""
+        self.environ = setup_testing_defaults(environ)
+        self.wire = []
+        self.output = self.capture
+        self.status = ""
+        self.headers = Headers()
+        self.headers_sent = False
+        self.bytes_sent = 0
+        self.expected = -1
+        self.code = 0
+        self.closed = False
+        if not isinstance(self.environ["wsgi.errors"], ErrorStream):
+            raise TypeError("wsgi.errors must be ErrorStream")
+        self.errors = self.environ["wsgi.errors"] as ErrorStream
+
+    def capture(self, data: list[byte]) -> void:
+        """Default test sink: retain an independent copy of each wire chunk."""
+        self.wire.append(bytes.copy(data))
+
+    def setup_environ(self) -> Environment:
+        """Return the prepared environment so embedded gateways can extend it."""
+        return self.environ
+
+    def start_response(self, status: str, response_headers: HeaderList, error: Any = None) -> WriteCallable:
+        """Validate and copy headers; permit replacement only with an exception before output.
+
+        Duplicate calls without error raise RuntimeError. After commitment error
+        is raised again. Pass an Exception base value, not a traceback tuple.
+        """
+        if error is not None:
+            if not isinstance(error, Exception):
+                raise TypeError("start_response error must be an Exception base value")
+            if self.headers_sent:
+                original: Exception = error as Exception
+                raise original
+        elif len(self.status) > 0:
+            raise RuntimeError("start_response called twice without an exception")
+        code: i32 = validate_status(status)
+        fields: Headers = Headers(response_headers)
+        for name in fields.keys():
+            if is_hop_by_hop(name):
+                raise ValueError("application supplied hop-by-hop header: " + name)
+        lengths: list[str] = fields.get_all("Content-Length")
+        if len(lengths) > 1:
+            raise ValueError("multiple Content-Length response fields")
+        expected: i64 = -1
+        if len(lengths) == 1:
+            expected = parse_length(lengths[0])
+        if code == 204 and expected >= 0:
+            raise ValueError("204 responses must not include Content-Length")
+        if code == 205 and expected > 0:
+            raise ValueError("205 response Content-Length must be zero")
+        self.status = status
+        self.headers = fields
+        self.code = code
+        self.expected = expected
+        return self.write
+
+    def send_preamble(self) -> void:
+        """Emit an HTTP/1.0 status line; custom CGI gateways may override this method."""
+        self.output(bytes.from_str("HTTP/1.0 " + self.status + "\r\n"))
+
+    def send_headers(self) -> void:
+        """Commit status and headers once; close-delimit responses of unknown length."""
+        if self.headers_sent:
+            return
+        if len(self.status) == 0:
+            raise RuntimeError("application did not call start_response before output")
+        self.headers_sent = True
+        self.send_preamble()
+        self.output(bytes.from_str(str(self.headers)))
+
+    def body_allowed(self) -> bool:
+        """Return whether this response may put representation bytes on the wire."""
+        return environ_text(self.environ, "REQUEST_METHOD") != "HEAD" and self.code != 204 and self.code != 205 and self.code != 304
+
+    def write(self, data: list[byte]) -> void:
+        """Synchronously write one body chunk, enforcing declared length before output."""
+        if self.closed:
+            raise RuntimeError("write after request completion")
+        if len(self.status) == 0:
+            raise RuntimeError("write before start_response")
+        if self.body_allowed() and self.expected >= 0 and len(data) > self.expected - self.bytes_sent:
+            raise ValueError("response exceeds Content-Length")
+        self.send_headers()
+        if self.body_allowed() and len(data) > 0:
+            self.output(data)
+            self.bytes_sent += len(data)
+
+    def finish_response(self, result: Any) -> void:
+        """Stream a result, infer a safe single-chunk length, then verify framing."""
+        if not self.headers_sent and len(self.status) > 0 and self.expected < 0 and self.code != 204 and self.code != 304:
+            if isinstance(result, ByteChunks):
+                known: list[list[byte]] = result as list[list[byte]]
+                if len(known) <= 1:
+                    length: i64 = 0
+                    if len(known) == 1:
+                        length = len(known[0])
+                    if self.code != 205 or length == 0:
+                        self.expected = length
+                        self.headers.set("Content-Length", str(length))
+        iterator: Iterator[list[byte]] = iterate_result(result)
+        try:
+            for chunk in iterator:
+                if len(chunk) > 0:
+                    self.write(chunk)
+            if self.body_allowed() and self.expected >= 0 and self.bytes_sent != self.expected:
+                raise ValueError("response ended before Content-Length")
+            self.send_headers()
+        finally:
+            iterator.close()
+
+    def handle_error(self, error: Exception) -> void:
+        """Log details locally; emit a fixed 500 only if no header write was attempted."""
+        self.errors.write("WSGI application error: " + error.message + "\n")
+        self.errors.flush()
+        if not self.headers_sent:
+            self.status = ""
+            self.bytes_sent = 0
+            body: list[byte] = bytes.from_str("Internal Server Error\n")
+            self.start_response("500 Internal Server Error", [("Content-Type", "text/plain"), ("Content-Length", str(len(body)))])
+            self.write(body)
+
+    def close(self) -> void:
+        """Invalidate write and input callbacks after result cleanup."""
+        self.closed = True
+        if isinstance(self.environ["wsgi.input"], InputStream):
+            stream: InputStream = self.environ["wsgi.input"] as InputStream
+            stream.close()
+
+    def run(self, application: Application) -> void:
+        """Invoke one application, stream output, always close results, and contain failures."""
+        result: Any = None
+        try:
+            try:
+                result = application(self.environ, StartResponse(self.start_response))
+                self.finish_response(result)
+            finally:
+                close_result(result)
+        except Exception as error:
+            try:
+                self.handle_error(error)
+            except Exception as output_error:
+                self.errors.write("WSGI output error: " + output_error.message + "\n")
+        finally:
+            self.close()
+
+type SimpleHandler = BaseHandler
+"""Callback-backed gateway; assign output to a synchronous byte writer before run."""

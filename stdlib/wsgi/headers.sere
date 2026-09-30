@@ -1,0 +1,160 @@
+"""Ordered HTTP field helpers with case-insensitive lookup and strict validation.
+
+Repeated fields such as Set-Cookie remain separate. Headers copies its input;
+items returns a copy so validation cannot be bypassed through aliasing.
+"""
+import string
+import bytes
+from wsgi.types import Header, HeaderList
+
+def validate_name(name: str) -> void:
+    """Raise ValueError unless name is a nonempty ASCII HTTP token."""
+    if len(name) == 0:
+        raise ValueError("header name must not be empty")
+    for value in bytes.from_str(name):
+        if not ((value >= 65 and value <= 90) or (value >= 97 and value <= 122) or (value >= 48 and value <= 57)):
+            one: list[byte] = [value]
+            if not string.contains("!#$%&'*+-.^_`|~", bytes.to_str(one)):
+                raise ValueError("invalid HTTP header name: " + name)
+
+def validate_value(value: str) -> void:
+    """Reject CR, LF, NUL and control bytes; preserve opaque non-ASCII octets."""
+    for c in bytes.from_str(value):
+        if (c < 32 and c != 9) or c == 127:
+            raise ValueError("HTTP field value contains a control byte")
+
+def is_hop_by_hop(name: str) -> bool:
+    """Return whether this field is reserved to the HTTP transport."""
+    lowered: str = string.lower(name)
+    return lowered in ["connection", "keep-alive", "transfer-encoding", "upgrade", "te", "trailer", "trailers", "proxy-authenticate", "proxy-authorization"]
+
+def parse_length(value: str) -> i64:
+    """Parse nonnegative decimal Content-Length, rejecting signs and i64 overflow."""
+    if len(value) == 0:
+        raise ValueError("Content-Length must contain decimal digits")
+    length: i64 = 0
+    for digit in bytes.from_str(value):
+        if digit < 48 or digit > 57:
+            raise ValueError("invalid Content-Length")
+        n: i64 = (digit as i64) - 48
+        if length > (9223372036854775807 - n) // 10:
+            raise ValueError("Content-Length overflow")
+        length = length * 10 + n
+    return length
+
+def validate_status(status: str) -> i32:
+    """Validate 'NNN reason', returning a final response code in 200..999."""
+    if len(status) < 4 or status[3] != " ":
+        raise ValueError("WSGI status must be three digits, a space and a reason")
+    code: i64 = parse_length(status[0:3])
+    if code < 200 or code > 999:
+        raise ValueError("WSGI requires a final status in 200..999")
+    validate_value(status)
+    return code as i32
+
+class Headers:
+    """Mutable ordered multimap retaining original field spelling and duplicates."""
+    _items: HeaderList
+
+    def __init__(self, items: HeaderList = list[tuple[str, str]]()) -> void:
+        """Copy and validate every supplied (name, value) pair."""
+        self._items = []
+        for pair in items:
+            name, value = pair
+            self.add(name, value)
+
+    def add(self, name: str, value: str) -> void:
+        """Append a validated field; never merge duplicates."""
+        validate_name(name)
+        validate_value(value)
+        self._items.append((name, value))
+
+    def add_header(self, name: str, value: str) -> void:
+        """Append an already-formatted field value, including any parameters."""
+        self.add(name, value)
+
+    def get(self, name: str, fallback: str = "") -> str:
+        """Return the first case-insensitive match or fallback."""
+        for pair in self._items:
+            field, value = pair
+            if string.lower(field) == string.lower(name):
+                return value
+        return fallback
+
+    def get_all(self, name: str) -> list[str]:
+        """Return all matching field values in insertion order."""
+        found: list[str] = []
+        for pair in self._items:
+            field, value = pair
+            if string.lower(field) == string.lower(name):
+                found.append(value)
+        return found
+
+    def contains(self, name: str) -> bool:
+        """Test field presence independently of whether its value is empty."""
+        return len(self.get_all(name)) > 0
+
+    def remove(self, name: str) -> void:
+        """Remove all matches; removing an absent name is harmless."""
+        kept: HeaderList = []
+        for pair in self._items:
+            field, value = pair
+            if string.lower(field) != string.lower(name):
+                kept.append(pair)
+        self._items = kept
+
+    def set(self, name: str, value: str) -> void:
+        """Validate first, then remove all existing matches and append one field."""
+        validate_name(name)
+        validate_value(value)
+        self.remove(name)
+        self.add(name, value)
+
+    def items(self) -> HeaderList:
+        """Return an independent ordered snapshot of all field pairs."""
+        out: HeaderList = []
+        for pair in self._items:
+            field, value = pair
+            out.append(pair)
+        return out
+
+    def keys(self) -> list[str]:
+        """Return field names in wire order, including duplicates."""
+        out: list[str] = []
+        for pair in self._items:
+            field, value = pair
+            out.append(field)
+        return out
+
+    def values(self) -> list[str]:
+        """Return field values in wire order, including duplicates."""
+        out: list[str] = []
+        for pair in self._items:
+            field, value = pair
+            out.append(value)
+        return out
+
+    def __getitem__(self, name: str) -> str:
+        """Return the first value, or an empty string when absent."""
+        return self.get(name)
+
+    def __setitem__(self, name: str, value: str) -> void:
+        """Replace all fields with this name using set semantics."""
+        self.set(name, value)
+
+    def __contains__(self, name: str) -> bool:
+        """Implement case-insensitive membership testing."""
+        return self.contains(name)
+
+    def __iter__(self) -> Iterator[tuple[str, str]]:
+        """Iterate a snapshot so later mutations do not affect traversal."""
+        for pair in self.items():
+            yield pair
+
+    def __str__(self) -> str:
+        """Serialize fields with CRLF plus the terminating blank line."""
+        out: str = ""
+        for pair in self._items:
+            field, value = pair
+            out = out + field + ": " + value + "\r\n"
+        return out + "\r\n"

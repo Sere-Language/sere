@@ -1,0 +1,144 @@
+"""Environment and URI helpers for gateways, middleware and isolated tests.
+
+CGI values use byte-preserving Sere strings. PATH_INFO is percent-decoded once;
+QUERY_STRING remains escaped. URI reconstruction quotes path octets, preserving
+slashes. These functions do not interpret proxy forwarding headers.
+"""
+import bytes
+import string
+from wsgi.types import Environment, InputStream, ErrorStream, file_wrapper, FileWrapper
+
+__exports__ += [FileWrapper, file_wrapper]
+
+def environ_text(environ: Environment, key: str, fallback: str = "") -> str:
+    """Read a string CGI value, raising TypeError rather than fatally unboxing a wrong type."""
+    if key not in environ:
+        return fallback
+    value: Any = environ[key]
+    if not isinstance(value, str):
+        raise TypeError("environment value must be str: " + key)
+    return value as str
+
+def guess_scheme(environ: Environment) -> str:
+    """Return https for HTTPS=on/1, otherwise http; no proxy headers are trusted."""
+    secure: str = string.lower(environ_text(environ, "HTTPS"))
+    if secure == "on" or secure == "1":
+        return "https"
+    return "http"
+
+def quote_path(path: str) -> str:
+    """Percent-encode path octets except URI unreserved characters and slashes."""
+    out: str = ""
+    digits: str = "0123456789ABCDEF"
+    for c in bytes.from_str(path):
+        if (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or (c >= 48 and c <= 57) or c == 45 or c == 46 or c == 95 or c == 126 or c == 47:
+            one: list[byte] = [c]
+            out = out + bytes.to_str(one)
+        else:
+            out = out + "%" + digits[(c as i64) // 16] + digits[(c as i64) % 16]
+    return out
+
+def decode_path(path: str) -> str:
+    """Decode percent escapes without treating plus as space; reject malformed escapes."""
+    out: list[byte] = []
+    raw: list[byte] = bytes.from_str(path)
+    i: i64 = 0
+    while i < len(raw):
+        if raw[i] == 37:
+            if i + 2 >= len(raw):
+                raise ValueError("incomplete percent escape in PATH_INFO")
+            pair: str = string.lower(path[i + 1:i + 3])
+            hi: i64 = string.find("0123456789abcdef", pair[0])
+            lo: i64 = string.find("0123456789abcdef", pair[1])
+            if hi < 0 or lo < 0:
+                raise ValueError("invalid percent escape in PATH_INFO")
+            out.append((hi * 16 + lo) as byte)
+            i += 3
+        else:
+            out.append(raw[i])
+            i += 1
+    return bytes.to_str(out)
+
+def application_uri(environ: Environment) -> str:
+    """Reconstruct the application's base URI, respecting Host, IPv6 and default ports."""
+    scheme: str = environ_text(environ, "wsgi.url_scheme", guess_scheme(environ))
+    host: str = environ_text(environ, "HTTP_HOST")
+    if len(host) == 0:
+        host = environ_text(environ, "SERVER_NAME", "127.0.0.1")
+        if string.contains(host, ":") and not string.starts_with(host, "["):
+            host = "[" + host + "]"
+        port: str = environ_text(environ, "SERVER_PORT")
+        if len(port) > 0 and not (scheme == "http" and port == "80") and not (scheme == "https" and port == "443"):
+            host = host + ":" + port
+    script: str = quote_path(environ_text(environ, "SCRIPT_NAME"))
+    if len(script) == 0:
+        script = "/"
+    return scheme + "://" + host + script
+
+def request_uri(environ: Environment, include_query: bool = True) -> str:
+    """Reconstruct the request URI without decoding or re-encoding its query string."""
+    uri: str = application_uri(environ)
+    path: str = quote_path(environ_text(environ, "PATH_INFO"))
+    if len(environ_text(environ, "SCRIPT_NAME")) == 0 and len(path) > 0:
+        uri = uri[0:len(uri) - 1]
+    uri = uri + path
+    query: str = environ_text(environ, "QUERY_STRING")
+    if include_query and len(query) > 0:
+        uri = uri + "?" + query
+    return uri
+
+def shift_path_info(environ: Environment) -> Any:
+    """Consume one path segment into SCRIPT_NAME; return None at an empty PATH_INFO.
+
+    Empty trailing segments return an empty string. Repeated slashes and dot
+    segments are normalized in the same manner as wsgiref's dispatch helper.
+    """
+    path: str = environ_text(environ, "PATH_INFO")
+    if len(path) == 0:
+        return None
+    parts: list[str] = string.split(path, "/")
+    kept: list[str] = []
+    for i in range(1, len(parts)):
+        if i == len(parts) - 1 or (len(parts[i]) > 0 and parts[i] != "."):
+            kept.append(parts[i])
+    name: str = ""
+    if len(kept) > 0:
+        name = kept[0]
+    script: str = environ_text(environ, "SCRIPT_NAME")
+    if name != ".":
+        if string.ends_with(script, "/"):
+            script = script[0:len(script) - 1]
+        script = script + "/" + name
+    rest: str = ""
+    for i in range(1, len(kept)):
+        rest = rest + "/" + kept[i]
+    environ["SCRIPT_NAME"] = script
+    environ["PATH_INFO"] = rest
+    if name == ".":
+        return ""
+    return name
+
+def setup_testing_defaults(environ: Environment) -> Environment:
+    """Fill missing WSGI values in place and return environ; preserve every existing value.
+
+    This creates an empty memory input and a capturing error stream. It is a
+    test fixture, not a substitute for real gateway request metadata.
+    """
+    defaults: Environment = {"REQUEST_METHOD": "GET", "SCRIPT_NAME": "", "PATH_INFO": "/", "QUERY_STRING": "", "SERVER_NAME": "127.0.0.1", "SERVER_PROTOCOL": "HTTP/1.0", "REMOTE_ADDR": "127.0.0.1", "REMOTE_HOST": "", "CONTENT_TYPE": "", "CONTENT_LENGTH": "", "wsgi.version": (1, 0), "wsgi.multithread": False, "wsgi.multiprocess": False, "wsgi.run_once": False}
+    for key in defaults.keys():
+        if key not in environ:
+            environ[key] = defaults[key]
+    if "wsgi.url_scheme" not in environ:
+        environ["wsgi.url_scheme"] = guess_scheme(environ)
+    if "SERVER_PORT" not in environ:
+        port: str = "80"
+        if environ_text(environ, "wsgi.url_scheme") == "https":
+            port = "443"
+        environ["SERVER_PORT"] = port
+    if "wsgi.input" not in environ:
+        environ["wsgi.input"] = InputStream()
+    if "wsgi.errors" not in environ:
+        environ["wsgi.errors"] = ErrorStream(True)
+    if "wsgi.file_wrapper" not in environ:
+        environ["wsgi.file_wrapper"] = file_wrapper
+    return environ

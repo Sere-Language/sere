@@ -1,0 +1,16 @@
+from wsgi.handlers import BaseHandler
+from wsgi.validate import validator
+from wsgi.headers import Headers
+from wsgi.types import InputStream
+import bytes
+
+def main() -> i32:
+    fields: Headers = Headers([("Set-Cookie", "a=1"), ("set-cookie", "b=2")])
+    assert len(fields.get_all("SET-COOKIE")) == 2
+    fields.set("Set-Cookie", "c=3")
+    assert len(fields.items()) == 1
+    stream: InputStream = InputStream(bytes.from_str("one\ntwo"))
+    assert bytes.to_str(stream.readline()) == "one\n"
+    assert bytes.to_str(stream.read()) == "two"
+    print("wsgi ok")
+    return 0

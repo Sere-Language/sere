@@ -1,0 +1,227 @@
+"""Typed WSGI boundaries and streams for framework and gateway authors.
+
+Bodies use Sere's list[byte], never implicitly encoded text. Environment is a
+heterogeneous dictionary: unbox input/errors to InputStream/ErrorStream before
+calling methods. Applications return Any so lists, arrays, iterators and Result
+can share one callback ABI. Custom iterables use Result(iterable.__iter__(), close).
+"""
+import bytes
+import io
+import fs
+
+type Header = tuple[str, str]
+"""One HTTP field name and value; repeated fields remain separate pairs."""
+type HeaderList = list[tuple[str, str]]
+"""Ordered response fields; validated and copied by start_response."""
+type Environment = dict[str, Any]
+"""CGI strings, typed WSGI streams/flags and application-owned extension values."""
+type WSGIEnvironment = dict[str, Any]
+"""Descriptive synonym for the heterogeneous Environment dictionary."""
+type WriteCallable = Callable[[list[byte]], void]
+"""Legacy synchronous output callback; prefer returning an iterable."""
+
+extern "C" "sere_wsgi_read"
+def _read(handle: Ptr[i8], data: Ptr[byte], size: i32) -> i32
+"""Read at most size bytes within the native request's declared body length."""
+
+class InputStream:
+    """Length-bounded binary input, backed by memory or a live request.
+
+    read(-1) reads to the declared end; positive sizes never cross that end.
+    A premature disconnect raises RuntimeError. Closing invalidates the stream
+    without owning the connection, whose request handler performs final cleanup.
+    """
+    data: list[byte]
+    position: i64
+    handle: Ptr[i8]
+    closed: bool
+
+    def __init__(self, data: list[byte] = list[byte]()) -> void:
+        """Use data for tests, or handle for lazy socket reads; do not combine them."""
+        self.data = data
+        self.position = 0
+        self.handle = None
+        self.closed = False
+
+    def read(self, size: i64 = -1) -> list[byte]:
+        """Return up to size bytes (all remaining for -1); raise on closed/truncated input."""
+        if self.closed:
+            raise ValueError("wsgi.input is closed")
+        if size < -1:
+            raise ValueError("read size must be -1 or nonnegative")
+        out: list[byte] = []
+        if self.handle is None:
+            while self.position < len(self.data) and (size < 0 or len(out) < size):
+                out.append(self.data[self.position])
+                self.position += 1
+            return out
+        while size < 0 or len(out) < size:
+            count: i64 = 8192
+            if size >= 0 and size - len(out) < count:
+                count = size - len(out)
+            buffer: list[byte] = bytes.zeros(count)
+            got: i32 = _read(self.handle, &buffer[0], count as i32)
+            if got < 0:
+                raise RuntimeError("request body ended before Content-Length")
+            if got == 0:
+                break
+            for i in range(got):
+                out.append(buffer[i])
+        return out
+
+    def readline(self, size: i64 = -1) -> list[byte]:
+        """Read through LF or size bytes, preserving line endings and binary data."""
+        out: list[byte] = []
+        while size < 0 or len(out) < size:
+            one: list[byte] = self.read(1)
+            if len(one) == 0:
+                break
+            out.append(one[0])
+            if one[0] == 10:
+                break
+        return out
+
+    def readlines(self, hint: i64 = -1) -> list[list[byte]]:
+        """Read lines until EOF or at least hint bytes have been collected."""
+        lines: list[list[byte]] = []
+        total: i64 = 0
+        for line in self:
+            lines.append(line)
+            total += len(line)
+            if hint > 0 and total >= hint:
+                break
+        return lines
+
+    def __iter__(self) -> Iterator[list[byte]]:
+        """Yield binary lines without reading beyond the request body."""
+        while True:
+            line: list[byte] = self.readline()
+            if len(line) == 0:
+                return
+            yield line
+
+    def close(self) -> void:
+        """Invalidate input after request completion; repeated calls are harmless."""
+        self.closed = True
+        self.handle = None
+
+class ErrorStream:
+    """Text diagnostics written to stderr, or captured in memory for tests."""
+    capture: bool
+    text: str
+
+    def __init__(self, capture: bool = False) -> void:
+        """Set capture to retain diagnostics in text instead of writing stderr."""
+        self.capture = capture
+        self.text = ""
+
+    def write(self, text: str) -> void:
+        """Write text exactly as supplied; callers supply their own newlines."""
+        if self.capture:
+            self.text = self.text + text
+        else:
+            io.eprint(text)
+
+    def writelines(self, lines: list[str]) -> void:
+        """Write each string without adding line separators."""
+        for line in lines:
+            self.write(line)
+
+    def flush(self) -> void:
+        """Complete synchronous writes; the stderr helper does not buffer here."""
+        pass
+
+class StartResponse:
+    """Callable protocol boundary with optional Sere exception recovery.
+
+    Pass the caught Exception as the third argument to replace uncommitted
+    headers. After commitment that same exception is raised. Sere does not
+    expose Python traceback triples; no exception object is retained here.
+    """
+    callback: Callable[[str, HeaderList, Any], WriteCallable]
+
+    def __init__(self, callback: Callable[[str, HeaderList, Any], WriteCallable]) -> void:
+        """Wrap a gateway or middleware callback with the standard optional argument."""
+        self.callback = callback
+
+    def __call__(self, status: str, headers: HeaderList, error: Any = None) -> WriteCallable:
+        """Set status/headers and return legacy write; error enables recovery."""
+        return self.callback(status, headers, error)
+
+type Application = Callable[[Environment, StartResponse], Any]
+"""Application or bound middleware method; returns a supported byte iterable as Any."""
+type WSGIApplication = Callable[[Environment, StartResponse], Any]
+"""Alias for Application using the same boxed return calling convention."""
+
+def _noop() -> void:
+    """Default cleanup for results without external resources."""
+    pass
+
+class Result:
+    """Adapt a custom iterator plus cleanup callback to the common application ABI.
+
+    Cleanup is explicit because Sere Any has no dynamic member lookup. Pass
+    obj.__iter__() and obj.close to preserve custom resource ownership. close
+    runs even when the iterator never starts, and is idempotent.
+    """
+    iterator: Iterator[list[byte]]
+    cleanup: Callable[[], void]
+    closed: bool
+
+    def __init__(self, iterator: Iterator[list[byte]], cleanup: Callable[[], void] = _noop) -> void:
+        """Take ownership of iterator and its optional external cleanup callback."""
+        self.iterator = iterator
+        self.cleanup = cleanup
+        self.closed = False
+
+    def __iter__(self) -> Iterator[list[byte]]:
+        """Return the owned single-pass iterator without collecting its contents."""
+        return self.iterator
+
+    def close(self) -> void:
+        """Close generator state and invoke cleanup once, even if generator close fails."""
+        if not self.closed:
+            self.closed = True
+            try:
+                self.iterator.close()
+            finally:
+                self.cleanup()
+
+type WSGIResult = Result
+"""Owned streaming result for adapters that need an explicit close hook."""
+
+class FileWrapper:
+    """Buffered binary file iterator; close owns the supplied fs.File."""
+    file: fs.File
+    block_size: i64
+    closed: bool
+
+    def __init__(self, file: fs.File, block_size: i64 = 8192) -> void:
+        """Read file in positive block_size chunks; invalid sizes raise ValueError."""
+        if block_size <= 0 or block_size > 1048576:
+            raise ValueError("file block size must be between 1 and 1048576")
+        self.file = file
+        self.block_size = block_size
+        self.closed = False
+
+    def __iter__(self) -> Iterator[list[byte]]:
+        """Yield file bytes lazily using the portable buffered fallback."""
+        while not self.closed:
+            raw: list[i8] = self.file.read_bytes(self.block_size)
+            if len(raw) == 0:
+                return
+            data: list[byte] = list[byte]()
+            for value in raw:
+                data.append(value as byte)
+            yield data
+
+    def close(self) -> void:
+        """Release the underlying file exactly once."""
+        if not self.closed:
+            self.closed = True
+            self.file.close()
+
+def file_wrapper(file: fs.File, block_size: i64 = 8192) -> Result:
+    """Wrap an open binary file in an owned streaming Result; closes on every exit."""
+    wrapper: FileWrapper = FileWrapper(file, block_size)
+    return Result(wrapper.__iter__(), wrapper.close)

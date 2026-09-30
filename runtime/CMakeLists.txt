@@ -17,6 +17,7 @@ add_library(sere_runtime
   sere_win.c
   sere_gl.c
   sere_http.c
+  sere_wsgi.c
   sere_proc.c
   sere_icon.c
 )

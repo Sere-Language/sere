@@ -1,0 +1,119 @@
+"""Development-time WSGI application validation, independent of TCP serving.
+
+validator(app) returns a callable with the same typed Application ABI. It checks
+the environment and wraps start_response and iteration, preserving lazy output
+and deterministic result cleanup. Violations raise useful Sere exceptions.
+"""
+from wsgi.types import Application, Environment, StartResponse, HeaderList, WriteCallable, InputStream, ErrorStream, Result
+from wsgi.headers import Headers, validate_status, is_hop_by_hop, parse_length
+from wsgi.handlers import iterate_result, close_result
+from wsgi.util import environ_text
+
+type _Version = tuple[i32, i32]
+"""Exact runtime representation of wsgi.version."""
+
+def check_environ(environ: Environment) -> void:
+    """Require CGI strings, version (1,0), streams, boolean flags and valid path fields."""
+    for key in ["REQUEST_METHOD", "SCRIPT_NAME", "PATH_INFO", "QUERY_STRING", "SERVER_NAME", "SERVER_PORT", "SERVER_PROTOCOL", "wsgi.url_scheme"]:
+        if key not in environ:
+            raise ValueError("missing WSGI environment key: " + key)
+        environ_text(environ, key)
+    for key in ["wsgi.multithread", "wsgi.multiprocess", "wsgi.run_once"]:
+        if key not in environ or not isinstance(environ[key], bool):
+            raise TypeError("WSGI flag must be bool: " + key)
+    if "wsgi.version" not in environ or not isinstance(environ["wsgi.version"], _Version):
+        raise TypeError("wsgi.version must be tuple[i32, i32]")
+    version: tuple[i32, i32] = environ["wsgi.version"] as tuple[i32, i32]
+    major, minor = version
+    if major != 1 or minor != 0:
+        raise ValueError("unsupported wsgi.version")
+    if "wsgi.input" not in environ or not isinstance(environ["wsgi.input"], InputStream):
+        raise TypeError("wsgi.input must be InputStream")
+    if "wsgi.errors" not in environ or not isinstance(environ["wsgi.errors"], ErrorStream):
+        raise TypeError("wsgi.errors must be ErrorStream")
+    for key in ["SCRIPT_NAME", "PATH_INFO"]:
+        path: str = environ_text(environ, key)
+        if len(path) > 0 and path[0] != "/":
+            raise ValueError(key + " must be empty or begin with /")
+    if len(environ_text(environ, "SCRIPT_NAME")) == 0 and len(environ_text(environ, "PATH_INFO")) == 0:
+        raise ValueError("SCRIPT_NAME and PATH_INFO cannot both be empty")
+    scheme: str = environ_text(environ, "wsgi.url_scheme")
+    if scheme != "http" and scheme != "https":
+        raise ValueError("wsgi.url_scheme must be http or https")
+    length: str = environ_text(environ, "CONTENT_LENGTH")
+    if len(length) > 0:
+        parse_length(length)
+
+class _Validation:
+    """Per-invocation state; shared middleware objects never share response state."""
+    start: StartResponse
+    called: bool
+    result: Any
+    closed: bool
+
+    def __init__(self, start: StartResponse) -> void:
+        """Capture the downstream callback for one application invocation."""
+        self.start = start
+        self.called = False
+        self.result = None
+        self.closed = False
+
+    def start_response(self, status: str, headers: HeaderList, error: Any) -> WriteCallable:
+        """Check response metadata before forwarding to the gateway."""
+        code: i32 = validate_status(status)
+        fields: Headers = Headers(headers)
+        if self.called and error is None:
+            raise RuntimeError("validator: start_response called twice")
+        for name in fields.keys():
+            if is_hop_by_hop(name):
+                raise ValueError("validator: forbidden hop-by-hop header " + name)
+        lengths: list[str] = fields.get_all("Content-Length")
+        if len(lengths) > 1:
+            raise ValueError("validator: duplicate Content-Length")
+        if len(lengths) == 1:
+            parse_length(lengths[0])
+        if code != 204 and code != 304 and not fields.contains("Content-Type"):
+            raise ValueError("validator: response requires Content-Type")
+        downstream: StartResponse = self.start
+        writer: WriteCallable = downstream(status, headers, error)
+        self.called = True
+        return writer
+
+    def stream(self) -> Iterator[list[byte]]:
+        """Validate byte chunks as they arrive and require start_response by completion."""
+        iterator: Iterator[list[byte]] = iterate_result(self.result)
+        try:
+            for chunk in iterator:
+                if not self.called:
+                    raise RuntimeError("validator: yielded before start_response")
+                yield chunk
+            if not self.called:
+                raise RuntimeError("validator: application omitted start_response")
+        finally:
+            iterator.close()
+
+    def close(self) -> void:
+        """Close the original iterable once, including when validation fails."""
+        if not self.closed:
+            self.closed = True
+            close_result(self.result)
+
+class _Validator:
+    """Callable middleware retaining only the wrapped application between requests."""
+    application: Application
+
+    def __init__(self, application: Application) -> void:
+        """Retain the application with its exact typed callback ABI."""
+        self.application = application
+
+    def call(self, environ: Environment, start: StartResponse) -> Any:
+        """Check input immediately and return an owned, lazily checked result."""
+        check_environ(environ)
+        state: _Validation = _Validation(start)
+        state.result = self.application(environ, StartResponse(state.start_response))
+        return Result(state.stream(), state.close)
+
+def validator(application: Application) -> Application:
+    """Wrap an application for debugging; returned callable composes as ordinary middleware."""
+    wrapper: _Validator = _Validator(application)
+    return wrapper.call
