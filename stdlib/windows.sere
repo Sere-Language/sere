@@ -1090,14 +1090,14 @@ def console_mode_enable(handle: Handle, flags: DWORD) -> bool:
     mode = console_mode(handle)
     if mode == None:
         return False
-    return set_console_mode(handle, mode | flags)
+    return set_console_mode(handle, (mode as DWORD) | flags)
 
 def console_mode_disable(handle: Handle, flags: DWORD) -> bool:
     """Turn off the given mode flags, preserving the others."""
     mode = console_mode(handle)
     if mode == None:
         return False
-    return set_console_mode(handle, mode & ~flags)
+    return set_console_mode(handle, (mode as DWORD) & ~flags)
 
 # ---------------------------------------------------------------------------
 # Console input events
@@ -1158,7 +1158,7 @@ def console_peek_event(handle: Handle | None = None) -> ConsoleInputEvent | None
 
     Returns None when nothing is pending or handle is not a console.
     """
-    target: Handle = stdin_handle() if handle == None else handle
+    target: Handle = (stdin_handle() if handle == None else handle) as Handle
     fields: list[i32] = [0, 0, 0, 0, 0, 0, 0, 0]
     if _console_peek_event(target, &fields[0], 8) == 0:
         return None
@@ -1207,7 +1207,7 @@ def _set_console_text_attribute(handle: Handle, attribute: i32) -> i32
 
 def console_screen_info(handle: Handle | None = None) -> ConsoleScreenInfo | None:
     """Return decoded console screen-buffer info, or None (default stdout)."""
-    target: Handle = stdout_handle() if handle == None else handle
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
     fields: list[i32] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     if _console_screen_info(target, &fields[0], 11) == 0:
         return None
@@ -1220,44 +1220,49 @@ def console_width(handle: Handle | None = None) -> i32:
     info = console_screen_info(handle)
     if info == None:
         return 0
-    return info.window_right - info.window_left + 1
+    resolved: ConsoleScreenInfo = info as ConsoleScreenInfo
+    return resolved.window_right - resolved.window_left + 1
 
 def console_height(handle: Handle | None = None) -> i32:
     """Return the visible console window height in cells."""
     info = console_screen_info(handle)
     if info == None:
         return 0
-    return info.window_bottom - info.window_top + 1
+    resolved: ConsoleScreenInfo = info as ConsoleScreenInfo
+    return resolved.window_bottom - resolved.window_top + 1
 
 def console_buffer_width(handle: Handle | None = None) -> i32:
     """Return the console screen buffer width in cells."""
     info = console_screen_info(handle)
     if info == None:
         return 0
-    return info.buffer_width
+    resolved: ConsoleScreenInfo = info as ConsoleScreenInfo
+    return resolved.buffer_width
 
 def console_buffer_height(handle: Handle | None = None) -> i32:
     """Return the console screen buffer height in cells."""
     info = console_screen_info(handle)
     if info == None:
         return 0
-    return info.buffer_height
+    resolved: ConsoleScreenInfo = info as ConsoleScreenInfo
+    return resolved.buffer_height
 
 def console_cursor(handle: Handle | None = None) -> ConsoleCoord | None:
     """Return the console cursor cell, or None."""
     info = console_screen_info(handle)
     if info == None:
         return None
-    return ConsoleCoord(info.cursor_x, info.cursor_y)
+    resolved: ConsoleScreenInfo = info as ConsoleScreenInfo
+    return ConsoleCoord(resolved.cursor_x, resolved.cursor_y)
 
 def console_set_cursor(x: i32, y: i32, handle: Handle | None = None) -> bool:
     """Move the console cursor to a cell (not the desktop mouse cursor)."""
-    target: Handle = stdout_handle() if handle == None else handle
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
     return _console_set_cursor_pos(target, x, y) as bool
 
 def console_cursor_size(handle: Handle | None = None) -> i32:
     """Return the console cursor size as a percentage 1..100 (0 on failure)."""
-    target: Handle = stdout_handle() if handle == None else handle
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
     size: u32 = 0
     visible: i32 = 0
     if _console_cursor_info(target, &size, &visible) == 0:
@@ -1266,7 +1271,7 @@ def console_cursor_size(handle: Handle | None = None) -> i32:
 
 def console_cursor_visible(handle: Handle | None = None) -> bool:
     """Return whether the console cursor is visible."""
-    target: Handle = stdout_handle() if handle == None else handle
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
     size: u32 = 0
     visible: i32 = 0
     if _console_cursor_info(target, &size, &visible) == 0:
@@ -1275,7 +1280,7 @@ def console_cursor_visible(handle: Handle | None = None) -> bool:
 
 def console_set_cursor_visible(visible: bool, handle: Handle | None = None) -> bool:
     """Show or hide the console cursor, keeping its current size."""
-    target: Handle = stdout_handle() if handle == None else handle
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
     size: u32 = 25
     current: i32 = 0
     if _console_cursor_info(target, &size, &current) == 0:
@@ -1284,7 +1289,7 @@ def console_set_cursor_visible(visible: bool, handle: Handle | None = None) -> b
 
 def console_set_cursor_size(size: i32, handle: Handle | None = None) -> bool:
     """Set the console cursor size percentage (1..100), keeping visibility."""
-    target: Handle = stdout_handle() if handle == None else handle
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
     current_size: u32 = 0
     visible: i32 = 0
     if _console_cursor_info(target, &current_size, &visible) == 0:
@@ -1293,7 +1298,7 @@ def console_set_cursor_size(size: i32, handle: Handle | None = None) -> bool:
 
 def console_largest_size(handle: Handle | None = None) -> Size | None:
     """Return the largest possible console window size, or None."""
-    target: Handle = stdout_handle() if handle == None else handle
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
     width: i32 = 0
     height: i32 = 0
     if _console_largest_size(target, &width, &height) == 0:
@@ -1302,17 +1307,17 @@ def console_largest_size(handle: Handle | None = None) -> Size | None:
 
 def console_set_buffer_size(width: i32, height: i32, handle: Handle | None = None) -> bool:
     """Resize the console screen buffer."""
-    target: Handle = stdout_handle() if handle == None else handle
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
     return _console_set_buffer_size(target, width, height) as bool
 
 def console_set_window_rect(rect: ConsoleRect, absolute: bool = False, handle: Handle | None = None) -> bool:
     """Set the console window rectangle (absolute or window-relative)."""
-    target: Handle = stdout_handle() if handle == None else handle
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
     return _console_set_window_rect(target, 1 if absolute else 0, rect.left, rect.top, rect.right, rect.bottom) as bool
 
 def console_set_attribute(attribute: DWORD, handle: Handle | None = None) -> bool:
     """Set the current console text attribute (see FOREGROUND_*/BACKGROUND_*)."""
-    target: Handle = stdout_handle() if handle == None else handle
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
     return _set_console_text_attribute(target, attribute as i32) as bool
 
 # ---------------------------------------------------------------------------
@@ -1349,31 +1354,31 @@ def _scroll_console(handle: Handle, left: i32, top: i32, right: i32, bottom: i32
 
 def console_write_at(x: i32, y: i32, text: str, handle: Handle | None = None) -> bool:
     """Write text starting at cell (x, y) without moving the cursor."""
-    target: Handle = stdout_handle() if handle == None else handle
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
     written: DWORD = 0
     return _write_console_output_chars(target, text, x, y, &written) != 0
 
 def console_fill_char(x: i32, y: i32, count: DWORD, char_code: i32 = 32, handle: Handle | None = None) -> bool:
     """Fill count cells from (x, y) with a character (default space)."""
-    target: Handle = stdout_handle() if handle == None else handle
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
     written: DWORD = 0
     return _fill_console_chars(target, char_code, count, x, y, &written) != 0
 
 def console_fill_attribute(x: i32, y: i32, count: DWORD, attribute: DWORD = 0, handle: Handle | None = None) -> bool:
     """Fill count cells from (x, y) with a text attribute."""
-    target: Handle = stdout_handle() if handle == None else handle
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
     written: DWORD = 0
     return _fill_console_attrs(target, attribute as i32, count, x, y, &written) != 0
 
 def console_write_attributes(x: i32, y: i32, attributes: list[u16], handle: Handle | None = None) -> bool:
     """Write a run of cell attributes starting at (x, y)."""
-    target: Handle = stdout_handle() if handle == None else handle
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
     written: DWORD = 0
     return _write_console_output_attrs(target, attributes, x, y, &written) != 0
 
 def console_read_at(x: i32, y: i32, count: DWORD, handle: Handle | None = None) -> str:
     """Read count characters starting at cell (x, y)."""
-    target: Handle = stdout_handle() if handle == None else handle
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
     return _read_console_output_chars(target, x, y, count)
 
 def _zeros_u16(count: i32) -> list[u16]:
@@ -1387,7 +1392,7 @@ def _zeros_u16(count: i32) -> list[u16]:
 
 def console_read_attributes(x: i32, y: i32, count: DWORD, handle: Handle | None = None) -> list[u16]:
     """Read count cell attributes starting at (x, y)."""
-    target: Handle = stdout_handle() if handle == None else handle
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
     attrs: list[u16] = _zeros_u16(count as i32)
     if _read_console_output_attrs(target, x, y, attrs) == 0:
         return []
@@ -1395,19 +1400,20 @@ def console_read_attributes(x: i32, y: i32, count: DWORD, handle: Handle | None 
 
 def console_scroll(rect: ConsoleRect, dx: i32, dy: i32, fill_char: i32 = 32, fill_attr: DWORD = 0, handle: Handle | None = None) -> bool:
     """Scroll a region by (dx, dy), filling the vacated band."""
-    target: Handle = stdout_handle() if handle == None else handle
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
     return _scroll_console(target, rect.left, rect.top, rect.right, rect.bottom, dx, dy, fill_char, fill_attr as i32) != 0
 
 def console_clear(handle: Handle | None = None) -> bool:
     """Clear the whole screen buffer to spaces and home the cursor."""
-    target: Handle = stdout_handle() if handle == None else handle
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
     info = console_screen_info(target)
     if info == None:
         return False
-    total: DWORD = (info.buffer_width * info.buffer_height) as DWORD
+    resolved: ConsoleScreenInfo = info as ConsoleScreenInfo
+    total: DWORD = (resolved.buffer_width * resolved.buffer_height) as DWORD
     written: DWORD = 0
     ok: bool = _fill_console_chars(target, 32, total, 0, 0, &written) != 0
-    ok = _fill_console_attrs(target, info.attributes, total, 0, 0, &written) != 0 and ok
+    ok = _fill_console_attrs(target, resolved.attributes, total, 0, 0, &written) != 0 and ok
     console_set_cursor(0, 0, target)
     return ok
 
@@ -1566,19 +1572,21 @@ def set_console_output_cp(code_page: DWORD) -> bool:
 
 def console_supports_vt(handle: Handle | None = None) -> bool:
     """Return whether the console already has VT processing enabled."""
-    target: Handle = stdout_handle() if handle == None else handle
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
     mode = console_mode(target)
     if mode == None:
         return False
-    return (mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0
+    return ((mode as DWORD) & ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0
 
 def console_enable_vt(handle: Handle | None = None) -> bool:
     """Enable VT output processing on the console (returns False if not one)."""
-    return console_mode_enable(stdout_handle() if handle == None else handle, ENABLE_VIRTUAL_TERMINAL_PROCESSING)
+    target: Handle = (stdout_handle() if handle == None else handle) as Handle
+    return console_mode_enable(target, ENABLE_VIRTUAL_TERMINAL_PROCESSING)
 
 def console_enable_vt_input(handle: Handle | None = None) -> bool:
     """Enable VT input processing on the console input handle."""
-    return console_mode_enable(stdin_handle() if handle == None else handle, ENABLE_VIRTUAL_TERMINAL_INPUT)
+    target: Handle = (stdin_handle() if handle == None else handle) as Handle
+    return console_mode_enable(target, ENABLE_VIRTUAL_TERMINAL_INPUT)
 
 def console_enable_raw_input(handle: Handle | None = None) -> bool:
     """Switch console input to raw-ish mode for a full-screen application.
@@ -1586,17 +1594,18 @@ def console_enable_raw_input(handle: Handle | None = None) -> bool:
     Disables line input, echo, and cooked processing; enables window and mouse
     input plus extended flags. Returns whether the mode was set.
     """
-    mode = console_mode(stdin_handle() if handle == None else handle)
+    target: Handle = (stdin_handle() if handle == None else handle) as Handle
+    mode = console_mode(target)
     if mode == None:
         return False
-    raw: DWORD = mode
+    raw: DWORD = mode as DWORD
     raw = raw & ~ENABLE_LINE_INPUT
     raw = raw & ~ENABLE_ECHO_INPUT
     raw = raw & ~ENABLE_PROCESSED_INPUT
     raw = raw | ENABLE_WINDOW_INPUT
     raw = raw | ENABLE_MOUSE_INPUT
     raw = raw | ENABLE_EXTENDED_FLAGS
-    return set_console_mode(stdin_handle() if handle == None else handle, raw)
+    return set_console_mode(target, raw)
 
 # ---------------------------------------------------------------------------
 # Keyboard
@@ -1621,6 +1630,10 @@ def _to_unicode(virtual_key: i32, scan_code: i32, state: list[byte], flags: i32)
 extern "C" "sere_win_map_virtual_key"
 def _map_virtual_key(code: DWORD, map_type: DWORD) -> DWORD
 """Map between virtual-key, scan, and character codes."""
+
+extern "C" "sere_win_key_down"
+def _key_down(virtual_key: i32) -> i32
+"""Test whether a virtual key is pressed (GetAsyncKeyState)."""
 
 def key_pressed(virtual_key: i32) -> bool:
     """Return whether a virtual key is currently down (GetKeyState)."""
@@ -1843,6 +1856,14 @@ extern "C" "sere_win_dispatch_message"
 def _dispatch_message(fields: Ptr[i32], field_count: i32, window: WindowHandle, wparam: WPARAM, lparam: LPARAM) -> LRESULT
 """Dispatch a message to its window procedure."""
 
+extern "C" "sere_win_post_message"
+def _post_message(window: WindowHandle, message: DWORD, wparam: WPARAM, lparam: LPARAM) -> i32
+"""Post a message to a window's queue."""
+
+extern "C" "sere_win_send_message"
+def _send_message(window: WindowHandle, message: DWORD, wparam: WPARAM, lparam: LPARAM) -> LRESULT
+"""Send a message to a window and wait for its result."""
+
 extern "C" "sere_win_post_quit_message"
 def post_quit_message(exit_code: i32) -> void
 """Post WM_QUIT to the calling thread's message queue."""
@@ -1854,7 +1875,7 @@ def register_window_class(name: str, style: DWORD = 0, wnd_proc: Handle | None =
     turn a `def` into one, so pass None (the default) to use DefWindowProcW and
     document. See the module notes on the callback limitation.
     """
-    return _register_window_class(name, style, wnd_proc, class_extra, window_extra, background)
+    return _register_window_class(name, style, wnd_proc as Handle, class_extra, window_extra, background as Handle)
 
 def unregister_window_class(name: str) -> bool:
     """Unregister a window class."""
@@ -1862,7 +1883,7 @@ def unregister_window_class(name: str) -> bool:
 
 def create_window(class_name: str, window_name: str = "", style: DWORD = WS_OVERLAPPEDWINDOW, ex_style: DWORD = 0, x: i32 = 128, y: i32 = 128, width: i32 = 640, height: i32 = 480, parent: WindowHandle | None = None, menu: Handle | None = None) -> WindowHandle:
     """Create a window, or return None on failure."""
-    return _create_window(class_name, window_name, style, ex_style, x, y, width, height, parent, menu)
+    return _create_window(class_name, window_name, style, ex_style, x, y, width, height, parent as WindowHandle, menu as Handle)
 
 def get_message() -> WindowMessageEvent | None:
     """Block for the next message; None after WM_QUIT or on error."""
@@ -1914,10 +1935,11 @@ def run_message_loop_until(window: WindowHandle) -> bool:
     while True:
         event = peek_message(PM_REMOVE)
         if event != None:
-            if event.message == WM_QUIT:
+            resolved: WindowMessageEvent = event as WindowMessageEvent
+            if resolved.message == WM_QUIT:
                 return True
-            translate_message(event)
-            dispatch_message(event)
+            translate_message(resolved)
+            dispatch_message(resolved)
         elif not window_valid(window):
             return True
 
@@ -1927,8 +1949,9 @@ def run_message_loop() -> bool:
         event = get_message()
         if event == None:
             return True
-        translate_message(event)
-        dispatch_message(event)
+        resolved: WindowMessageEvent = event as WindowMessageEvent
+        translate_message(resolved)
+        dispatch_message(resolved)
 
 # ---------------------------------------------------------------------------
 # Pseudoconsole (ConPTY)
