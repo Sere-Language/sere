@@ -1457,6 +1457,16 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
           const int index = objectType == nullptr ? -1 : objectType->fieldIndex(member.field());
           if (index >= 0) {
             const serem::ValuePtr current = builder_->load(slot, lowered);
+            if (assign.op() != AssignOp::Assign) {
+              const serem::IRType fieldType = lowerType(assign.target().resolvedType());
+              serem::ValuePtr combined = compoundAssignValue(
+                  assign.op(), builder_->extract(current, static_cast<std::size_t>(index), fieldType),
+                  value, assign.target().resolvedType());
+              if (combined == nullptr) {
+                return unsupported(assign, "unsupported compound assignment to a struct field");
+              }
+              value = std::move(combined);
+            }
             const serem::ValuePtr updated =
                 builder_->insert(current, value, static_cast<std::size_t>(index), lowered);
             builder_->store(updated, slot);
@@ -1464,15 +1474,27 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
           }
         }
       }
+      const std::string memberIndex = std::to_string(
+          fieldSlot(member.object().resolvedType(),
+                    member.object().resolvedType()->fieldIndex(member.field())));
+      serem::ValuePtr object = emitExpression(member.object());
+      // A compound assignment reads the current field first, so it stores the
+      // combined value rather than the right-hand side alone.
+      if (assign.op() != AssignOp::Assign) {
+        const serem::IRType fieldType = lowerType(assign.target().resolvedType());
+        serem::ValuePtr current = builder_->operation(
+            "member.get", fieldType, {object},
+            {{"field", member.field()}, {"index", memberIndex}});
+        serem::ValuePtr combined = compoundAssignValue(assign.op(), std::move(current), value,
+                                                       assign.target().resolvedType());
+        if (combined == nullptr) {
+          return unsupported(assign, "unsupported compound assignment to a field");
+        }
+        value = std::move(combined);
+      }
       (void)builder_->operation(
-          "member.set",
-          serem::IRType::voidType(),
-          {emitExpression(member.object()), value},
-          {{"field", member.field()},
-           {"index",
-            std::to_string(
-                fieldSlot(member.object().resolvedType(),
-                          member.object().resolvedType()->fieldIndex(member.field())))}});
+          "member.set", serem::IRType::voidType(), {object, value},
+          {{"field", member.field()}, {"index", memberIndex}});
       return true;
     }
     if (assign.target().kind() == NodeKind::IndexExpr) {
@@ -2854,6 +2876,58 @@ serem::ValuePtr SeremGenerator::emitUnionEquality(serem::ValuePtr left,
         "list.equal", serem::IRType::boolType(), {left, right}, {{"kind", std::to_string(kind)}});
   }
   return builder_->compare("eq", left, right);
+}
+
+serem::ValuePtr SeremGenerator::compoundAssignValue(AssignOp op, serem::ValuePtr current,
+                                                    serem::ValuePtr value,
+                                                    const Type* targetType) {
+  BinaryOp binaryOp = BinaryOp::Add;
+  if (!binaryOpForAssign(op, binaryOp) || current == nullptr || value == nullptr) {
+    return nullptr;
+  }
+  const Type* target = targetType == nullptr ? nullptr : types_->substitute(targetType, subst_);
+  const serem::IRType type = lowerType(target);
+  // `text += ...` concatenates and `text *= n` repeats, mirroring the binary
+  // operators the direct backend lowers for the same pair.
+  if (binaryOp == BinaryOp::Add && target != nullptr && target->isNamed("str")) {
+    return builder_->operation("string.concat", type, {current, value});
+  }
+  if (binaryOp == BinaryOp::Mul && target != nullptr && target->isNamed("str")) {
+    return builder_->operation("string.repeat", type, {current, value});
+  }
+  if (binaryOp == BinaryOp::Add && target != nullptr && target->isList()) {
+    return builder_->operation("list.concat", type, {current, value});
+  }
+  if (binaryOp == BinaryOp::Mul && target != nullptr && target->isList()) {
+    return builder_->operation("list.repeat", type, {current, value});
+  }
+  // A class routes `obj += other` through its operator method, the same way the
+  // direct backend does before falling back to the numeric path.
+  if (target != nullptr && target->isRecord()) {
+    const BinaryDunderNames names = binaryDunderNames(binaryOp);
+    const Type* record = target->valueType();
+    if (record != nullptr && record->isRecord() && names.method != nullptr) {
+      if (serem::ValuePtr result = callMethod(record, names.method, current, {value})) {
+        return result;
+      }
+    }
+    return nullptr;
+  }
+  switch (binaryOp) {
+  case BinaryOp::Add:
+    return builder_->add(current, value, type);
+  case BinaryOp::Sub:
+    return builder_->sub(current, value, type);
+  case BinaryOp::Mul:
+    return builder_->mul(current, value, type);
+  case BinaryOp::Div:
+  case BinaryOp::FloorDiv:
+    return builder_->div(current, value, type);
+  case BinaryOp::Mod:
+    return builder_->rem(current, value, type);
+  default:
+    return nullptr;
+  }
 }
 
 serem::ValuePtr SeremGenerator::emitBinary(const BinaryExpr& expression) {

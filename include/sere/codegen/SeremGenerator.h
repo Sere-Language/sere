@@ -141,6 +141,14 @@ private:
   [[nodiscard]] bool emitModuleInitializers(const std::vector<const Module*>& modules,
                                             const std::vector<std::string>& moduleKeys);
   [[nodiscard]] serem::ValuePtr emitBinary(const BinaryExpr& expression);
+  /// Combines the current and new value of a compound assignment (`+=`, `-=`,
+  /// ...), mirroring the binary operator semantics: text concatenation and
+  /// repetition, list concatenation and repetition, a record's operator method,
+  /// otherwise the numeric operation. Returns nullptr when the operation cannot
+  /// be lowered for the target type.
+  [[nodiscard]] serem::ValuePtr compoundAssignValue(AssignOp op, serem::ValuePtr current,
+                                                    serem::ValuePtr value,
+                                                    const Type* targetType);
   [[nodiscard]] serem::ValuePtr emitUnionEquality(serem::ValuePtr left,
                                                   serem::ValuePtr right,
                                                   const Type* leftType,
