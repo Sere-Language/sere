@@ -12,3 +12,7 @@ def sleep_ms(ms: i32) -> void
 extern "C" "sere_time_get_timestamp"
 def get_timestamp() -> str
 """Return the current formatted timestamp."""
+
+def sleep(seconds: i32) -> void:
+    sleep_ms(seconds * 1000)
+

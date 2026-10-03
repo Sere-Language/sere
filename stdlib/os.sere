@@ -1,17 +1,1494 @@
-# Process and environment. Import with: import os
+# Operating-system interface. Import with: import os
+#
+# A cross-platform OS foundation: platform identity, environment, paths,
+# directories, files and metadata, permission bits, raw file descriptors,
+# pipes, terminals, filesystem capacity, processes and signals, users,
+# memory and CPU information, monotonic timing, secure randomness, and
+# dynamic libraries.
+#
+# Conventions:
+#   * Native work lives in C (runtime/sere_sys.c); the wrappers here are thin.
+#   * Paths and text cross the boundary as UTF-8.
+#   * Predicates (`is_dir`, `exists`, `access`) return bool.
+#   * Operations that can fail return bool rather than throwing.
+#   * Queries never return optionals; result structs carry an `ok` flag and
+#     leave their remaining fields zeroed when the query failed. This keeps
+#     call sites free of optional narrowing.
+#   * Host differences are hidden behind `Platform`: `mkdir_mode` ignores
+#     `mode` on Windows, `umask` returns 0 there, and `user_id`/`group_id`
+#     report 0.
+
+import string
+
+# ---------------------------------------------------------------------------
+# Core types
+# ---------------------------------------------------------------------------
+
+type Handle = Ptr[i8]
+
+# ---------------------------------------------------------------------------
+# Enums
+# ---------------------------------------------------------------------------
+
+enum Platform:
+    """Operating-system families."""
+    Windows
+    Linux
+    Macos
+    Unknown
+
+
+enum FileKind:
+    """The kind of filesystem object a path names."""
+    Other
+    File
+    Directory
+    Symlink
+
+
+enum Endianness:
+    """Host byte order."""
+    Little
+    Big
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+# Platform codes, matching os.Platform variant order.
+const PLATFORM_WINDOWS: i32 = 0
+const PLATFORM_LINUX: i32 = 1
+const PLATFORM_MACOS: i32 = 2
+const PLATFORM_UNKNOWN: i32 = 3
+
+# File kinds reported by FileStat.kind and kind().
+const KIND_OTHER: i32 = 0
+const KIND_FILE: i32 = 1
+const KIND_DIRECTORY: i32 = 2
+const KIND_SYMLINK: i32 = 3
+
+# Open flags for open_fd(); OR them together. The values are identical on
+# every host and the native layer translates them to O_* or CreateFile flags.
+const OPEN_READ: i32 = 1
+const OPEN_WRITE: i32 = 2
+const OPEN_CREATE: i32 = 4
+const OPEN_TRUNCATE: i32 = 8
+const OPEN_APPEND: i32 = 16
+const OPEN_EXCLUSIVE: i32 = 32
+
+# Access modes for access().
+const F_OK: i32 = 0
+const R_OK: i32 = 4
+const W_OK: i32 = 2
+const X_OK: i32 = 1
+
+# Seek origins for seek_fd().
+const SEEK_SET: i32 = 0
+const SEEK_CUR: i32 = 1
+const SEEK_END: i32 = 2
+
+# Standard descriptor numbers.
+const STDIN_FD: i64 = 0
+const STDOUT_FD: i64 = 1
+const STDERR_FD: i64 = 2
+
+# Permission bits (POSIX numbering; Windows honours only the write bit).
+const S_IRUSR: i32 = 0o400
+const S_IWUSR: i32 = 0o200
+const S_IXUSR: i32 = 0o100
+const S_IRGRP: i32 = 0o040
+const S_IWGRP: i32 = 0o020
+const S_IXGRP: i32 = 0o010
+const S_IROTH: i32 = 0o004
+const S_IWOTH: i32 = 0o002
+const S_IXOTH: i32 = 0o001
+const S_IRWXU: i32 = 0o700
+
+# Signal numbers for raise_signal() and kill().
+const SIGHUP: i32 = 1
+const SIGINT: i32 = 2
+const SIGQUIT: i32 = 3
+const SIGABRT: i32 = 6
+const SIGKILL: i32 = 9
+const SIGUSR1: i32 = 10
+const SIGSEGV: i32 = 11
+const SIGPIPE: i32 = 13
+const SIGALRM: i32 = 14
+const SIGTERM: i32 = 15
+
+# ---------------------------------------------------------------------------
+# Structs
+# ---------------------------------------------------------------------------
+
+struct FileStat:
+    """Metadata for a filesystem object.
+
+    `ok` is False when the path could not be read, in which case every other
+    field is zero. `kind` is one of the KIND_* constants and `mode` is the raw
+    POSIX permission bits (Windows reports 0444 or 0666). Timestamps are
+    nanoseconds since the Unix epoch.
+    """
+    ok: bool
+    size: i64
+    mode: i32
+    kind: i32
+    inode: i64
+    device: i64
+    links: i64
+    uid: i64
+    gid: i64
+    atime_ns: i64
+    mtime_ns: i64
+    ctime_ns: i64
+    birth_ns: i64
+
+
+struct TerminalSize:
+    """Terminal dimensions in character cells; zeroes when unknown."""
+    columns: i32
+    rows: i32
+
+
+struct MemoryInfo:
+    """Physical and virtual memory, in bytes."""
+    ok: bool
+    total: i64
+    available: i64
+    total_virtual: i64
+    available_virtual: i64
+
+
+struct FilesystemInfo:
+    """Capacity of the filesystem that holds a path, in bytes."""
+    ok: bool
+    total_bytes: i64
+    free_bytes: i64
+    available_bytes: i64
+    block_size: i64
+
+
+struct EnvVar:
+    """One environment entry, split at the first '='."""
+    name: str
+    value: str
+
+
+# ---------------------------------------------------------------------------
+# Native bindings: platform and identity
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_sys_platform"
+def _platform_name() -> str
+"""Return the host platform name."""
+
+extern "C" "sere_sys_arch"
+def arch() -> str
+"""Return the host architecture name."""
+
+extern "C" "sere_sys_cpu_count"
+def _logical_cpu_count() -> i32
+"""Return the number of logical CPUs."""
+
+extern "C" "sere_sys_pid"
+def pid() -> i32
+"""Return the current process ID."""
+
+extern "C" "sere_os_hostname"
+def hostname() -> str
+"""Return the host name."""
+
+extern "C" "sere_os_user_name"
+def user_name() -> str
+"""Return the name of the current user."""
+
+extern "C" "sere_os_user_id"
+def user_id() -> i64
+"""Return the numeric user ID (0 on Windows)."""
+
+extern "C" "sere_os_group_id"
+def group_id() -> i64
+"""Return the numeric group ID (0 on Windows)."""
+
+extern "C" "sere_os_executable_path"
+def executable_path() -> str
+"""Return the absolute path of the running executable."""
+
+extern "C" "sere_os_page_size"
+def page_size() -> i64
+"""Return the memory page size in bytes."""
+
+extern "C" "sere_os_allocation_granularity"
+def allocation_granularity() -> i64
+"""Return the smallest reservable allocation size in bytes."""
+
+extern "C" "sere_os_physical_cpu_count"
+def physical_cpu_count() -> i64
+"""Return the number of physical CPU cores."""
+
+extern "C" "sere_os_endianness"
+def _endianness_code() -> i32
+"""Return 0 for little-endian hosts and 1 for big-endian hosts."""
+
+extern "C" "sere_os_newline"
+def newline() -> str
+"""Return the platform line ending."""
+
+extern "C" "sere_os_dev_null"
+def dev_null() -> str
+"""Return the path of the null device."""
+
+extern "C" "sere_os_path_separator"
+def _separator_code() -> i32
+"""Return the directory separator as a character code."""
+
+extern "C" "sere_os_path_list_separator"
+def _list_separator_code() -> i32
+"""Return the PATH separator as a character code."""
+
+# ---------------------------------------------------------------------------
+# Native bindings: environment
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_os_getenv"
+def getenv(name: str) -> str
+"""Return an environment variable value, or "" when unset."""
+
+extern "C" "sere_os_env_has"
+def _env_has(name: str) -> i32
+"""Test whether an environment variable is set."""
+
+extern "C" "sere_os_env_set"
+def _env_set(name: str, value: str) -> i32
+"""Set or clear an environment variable."""
+
+extern "C" "sere_os_env_remove"
+def _env_remove(name: str) -> i32
+"""Remove an environment variable."""
+
+extern "C" "sere_os_env_all"
+def environ() -> list[str]
+"""Return the environment as a list of "NAME=value" strings."""
+
+# ---------------------------------------------------------------------------
+# Native bindings: paths and directories
+# ---------------------------------------------------------------------------
 
 extern "C" "sere_os_getcwd"
 def getcwd() -> str
 """Return the current working directory."""
 
-extern "C" "sere_os_getenv"
-def getenv(name: str) -> str
-"""Return an environment variable value."""
+extern "C" "sere_os_chdir"
+def _chdir(path: str) -> i32
+"""Change the current working directory."""
 
 extern "C" "sere_os_listdir"
 def listdir(path: str) -> list[str]
 """Return the entries in a directory."""
 
+extern "C" "sere_os_home_dir"
+def home_dir() -> str
+"""Return the current user's home directory."""
+
+extern "C" "sere_os_temp_dir"
+def temp_dir() -> str
+"""Return the platform temporary directory."""
+
+extern "C" "sere_os_config_dir"
+def config_dir() -> str
+"""Return the per-user configuration directory."""
+
+extern "C" "sere_os_cache_dir"
+def cache_dir() -> str
+"""Return the per-user cache directory."""
+
+extern "C" "sere_os_data_dir"
+def data_dir() -> str
+"""Return the per-user data directory."""
+
+extern "C" "sere_os_path_normalize"
+def normalize_path(path: str) -> str
+"""Collapse separators and "."/".." components without touching the disk."""
+
+extern "C" "sere_os_path_absolute"
+def absolute_path(path: str) -> str
+"""Return an absolute form of path, resolved against the working directory."""
+
+extern "C" "sere_os_path_real"
+def real_path(path: str) -> str
+"""Return the canonical path with symlinks resolved, or "" when missing."""
+
+extern "C" "sere_os_path_stem"
+def stem(path: str) -> str
+"""Return the file name without its final extension."""
+
+extern "C" "sere_path_join"
+def join_path(left: str, right: str) -> str
+"""Join two path components with the platform separator."""
+
+extern "C" "sere_path_is_abs"
+def _is_absolute(path: str) -> i32
+"""Test whether a path is absolute."""
+
+# ---------------------------------------------------------------------------
+# Native bindings: files and metadata
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_fs_exists"
+def _fs_exists(path: str) -> i32
+"""Test whether a path exists."""
+
+extern "C" "sere_fs_is_file"
+def _fs_is_file(path: str) -> i32
+"""Test whether a path is a regular file."""
+
+extern "C" "sere_fs_is_dir"
+def _fs_is_dir(path: str) -> i32
+"""Test whether a path is a directory."""
+
+extern "C" "sere_fs_remove"
+def _fs_remove(path: str) -> i32
+"""Remove a file or empty directory."""
+
+extern "C" "sere_fs_read_text"
+def read_text(path: str) -> str
+"""Read a whole file as UTF-8 text, or "" on failure."""
+
+extern "C" "sere_fs_write_text"
+def write_text(path: str, data: str) -> i32
+"""Write UTF-8 text to a file, truncating it first."""
+
+extern "C" "sere_os_is_symlink"
+def _is_symlink(path: str) -> i32
+"""Test whether a path is a symbolic link."""
+
+extern "C" "sere_os_stat_size"
+def _stat_size(path: str, follow: i32) -> i64
+"""Return a path's size in bytes."""
+
+extern "C" "sere_os_stat_mode"
+def _stat_mode(path: str, follow: i32) -> i32
+"""Return a path's permission bits."""
+
+extern "C" "sere_os_stat_inode"
+def _stat_inode(path: str, follow: i32) -> i64
+"""Return a path's inode number."""
+
+extern "C" "sere_os_stat_device"
+def _stat_device(path: str, follow: i32) -> i64
+"""Return the device that holds a path."""
+
+extern "C" "sere_os_stat_links"
+def _stat_links(path: str, follow: i32) -> i64
+"""Return a path's hard link count."""
+
+extern "C" "sere_os_stat_uid"
+def _stat_uid(path: str, follow: i32) -> i64
+"""Return a path's owner user ID."""
+
+extern "C" "sere_os_stat_gid"
+def _stat_gid(path: str, follow: i32) -> i64
+"""Return a path's owner group ID."""
+
+extern "C" "sere_os_stat_atime_ns"
+def _stat_atime_ns(path: str, follow: i32) -> i64
+"""Return the last access time in nanoseconds since the epoch."""
+
+extern "C" "sere_os_stat_mtime_ns"
+def _stat_mtime_ns(path: str, follow: i32) -> i64
+"""Return the last modification time in nanoseconds since the epoch."""
+
+extern "C" "sere_os_stat_ctime_ns"
+def _stat_ctime_ns(path: str, follow: i32) -> i64
+"""Return the last metadata change time in nanoseconds since the epoch."""
+
+extern "C" "sere_os_stat_birth_ns"
+def _stat_birth_ns(path: str, follow: i32) -> i64
+"""Return the creation time in nanoseconds since the epoch."""
+
+extern "C" "sere_os_stat_kind"
+def _stat_kind(path: str, follow: i32) -> i32
+"""Return a path's KIND_* code."""
+
+extern "C" "sere_os_mkdir_mode"
+def _mkdir_mode(path: str, mode: i32) -> i32
+"""Create one directory with a permission mode."""
+
+extern "C" "sere_os_makedirs"
+def _makedirs(path: str, mode: i32, exist_ok: i32) -> i32
+"""Create a directory and any missing parents."""
+
+extern "C" "sere_os_rmdir"
+def _rmdir(path: str) -> i32
+"""Remove an empty directory."""
+
+extern "C" "sere_os_remove_tree"
+def _remove_tree(path: str, follow_links: i32) -> i32
+"""Recursively delete a directory tree."""
+
+extern "C" "sere_os_rename"
+def _rename(src: str, dst: str) -> i32
+"""Rename a path."""
+
+extern "C" "sere_os_replace"
+def _replace(src: str, dst: str) -> i32
+"""Rename a path, replacing the destination."""
+
+extern "C" "sere_os_copy_file"
+def _copy_file(src: str, dst: str, overwrite: i32) -> i32
+"""Copy a file's bytes."""
+
+extern "C" "sere_os_symlink"
+def _symlink(target: str, link: str) -> i32
+"""Create a symbolic link."""
+
+extern "C" "sere_os_readlink"
+def readlink(path: str) -> str
+"""Return a symbolic link's target, or "" when it is not a link."""
+
+extern "C" "sere_os_hardlink"
+def _hardlink(existing: str, link: str) -> i32
+"""Create a hard link."""
+
+extern "C" "sere_os_chmod"
+def _chmod(path: str, mode: i32) -> i32
+"""Change a path's permission bits."""
+
+extern "C" "sere_os_umask"
+def umask(mask: i32) -> i32
+"""Set the process file-creation mask and return the previous one."""
+
+extern "C" "sere_os_access"
+def _access(path: str, mode: i32) -> i32
+"""Test whether a path is accessible for the given modes."""
+
+extern "C" "sere_os_utime"
+def _utime(path: str, access_ns: i64, modify_ns: i64) -> i32
+"""Set a path's access and modification times."""
+
+# ---------------------------------------------------------------------------
+# Native bindings: descriptors
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_os_open_fd"
+def _open_fd_raw(path: str, flags: i32, mode: i32) -> i64
+"""Open a raw file descriptor, or -1 on failure."""
+
+extern "C" "sere_os_close_fd"
+def _close_fd(fd: i64) -> i32
+"""Close a raw file descriptor."""
+
+extern "C" "sere_os_read_fd"
+def _read_fd(fd: i64, buffer: Ptr[i8], length: i64) -> i64
+"""Read bytes from a descriptor into a buffer."""
+
+extern "C" "sere_os_write_fd"
+def _write_fd(fd: i64, buffer: Ptr[i8], length: i64) -> i64
+"""Write bytes from a buffer to a descriptor."""
+
+extern "C" "sere_os_seek_fd"
+def _seek_fd_raw(fd: i64, offset: i64, whence: i32) -> i64
+"""Reposition a descriptor and return the new offset."""
+
+extern "C" "sere_os_tell_fd"
+def tell_fd(fd: i64) -> i64
+"""Return a descriptor's current offset."""
+
+extern "C" "sere_os_truncate_fd"
+def _truncate_fd(fd: i64, size: i64) -> i32
+"""Truncate an open file to a length."""
+
+extern "C" "sere_os_fsync_fd"
+def _fsync_fd(fd: i64) -> i32
+"""Flush a descriptor's data and metadata to storage."""
+
+extern "C" "sere_os_fdatasync_fd"
+def _fdatasync_fd(fd: i64) -> i32
+"""Flush a descriptor's data to storage."""
+
+extern "C" "sere_os_dup_fd"
+def dup_fd(fd: i64) -> i64
+"""Duplicate a descriptor."""
+
+extern "C" "sere_os_dup2_fd"
+def dup2_fd(fd: i64, target: i64) -> i64
+"""Duplicate a descriptor onto a specific number."""
+
+extern "C" "sere_os_fd_isatty"
+def _fd_isatty(fd: i64) -> i32
+"""Test whether a descriptor is a terminal."""
+extern "C" "sere_os_terminal_columns"
+def _terminal_columns(fd: i64) -> i32
+"""Return a terminal's width in character cells."""
+
+extern "C" "sere_os_terminal_rows"
+def _terminal_rows(fd: i64) -> i32
+"""Return a terminal's height in character cells."""
+
+extern "C" "sere_array_new"
+def _byte_buffer(stride: i64, length: i64) -> array[i8]
+"""Allocate fixed byte storage."""
+
+# ---------------------------------------------------------------------------
+# Native bindings: pipes
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_os_pipe_new"
+def _pipe_new() -> Handle
+"""Create an anonymous pipe and return an opaque handle."""
+
+extern "C" "sere_os_pipe_read_fd"
+def _pipe_read_fd(pipe: Handle) -> i64
+"""Return a pipe's read descriptor."""
+
+extern "C" "sere_os_pipe_write_fd"
+def _pipe_write_fd(pipe: Handle) -> i64
+"""Return a pipe's write descriptor."""
+
+extern "C" "sere_os_pipe_close"
+def _pipe_close(pipe: Handle) -> i32
+"""Close both ends of a pipe and release its handle."""
+
+# ---------------------------------------------------------------------------
+# Native bindings: system resources, time, randomness, linking
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_os_memory_total"
+def memory_total() -> i64
+"""Return installed physical memory in bytes."""
+
+extern "C" "sere_os_memory_available"
+def memory_available() -> i64
+"""Return available physical memory in bytes."""
+
+extern "C" "sere_os_memory_total_virtual"
+def memory_total_virtual() -> i64
+"""Return total virtual memory in bytes."""
+
+extern "C" "sere_os_memory_available_virtual"
+def memory_available_virtual() -> i64
+"""Return available virtual memory in bytes."""
+
+extern "C" "sere_os_fs_total_bytes"
+def fs_total_bytes(path: str) -> i64
+"""Return the capacity of the filesystem holding path."""
+
+extern "C" "sere_os_fs_free_bytes"
+def fs_free_bytes(path: str) -> i64
+"""Return the free space of the filesystem holding path."""
+
+extern "C" "sere_os_fs_available_bytes"
+def fs_available_bytes(path: str) -> i64
+"""Return the space available to this user on path's filesystem."""
+
+extern "C" "sere_os_fs_block_size"
+def fs_block_size(path: str) -> i64
+"""Return the filesystem allocation block size."""
+
+extern "C" "sere_os_monotonic_ns"
+def monotonic_ns() -> i64
+"""Return a monotonic clock reading in nanoseconds."""
+
+extern "C" "sere_os_system_time_ns"
+def time_ns() -> i64
+"""Return the wall-clock time in nanoseconds since the epoch."""
+
+extern "C" "sere_os_sleep_ns"
+def _sleep_ns(nanoseconds: i64) -> void
+"""Suspend the thread for a duration."""
+
+extern "C" "sere_os_random_bytes"
+def _random_bytes(buffer: Ptr[i8], length: i64) -> i32
+"""Fill a buffer with cryptographically secure random bytes."""
+
+extern "C" "sere_os_which"
+def which(name: str) -> str
+"""Resolve an executable name against PATH, or "" when not found."""
+
+extern "C" "sere_os_raise"
+def _raise(signal_number: i32) -> i32
+"""Raise a signal in the current process."""
+
+extern "C" "sere_os_kill"
+def _kill(pid_value: i64, signal_number: i32) -> i32
+"""Send a signal to another process."""
+
+extern "C" "sere_os_library_open"
+def _library_open(path: str) -> Handle
+"""Load a shared library."""
+
+extern "C" "sere_os_library_symbol"
+def _library_symbol(library: Handle, name: str) -> Handle
+"""Look up an exported symbol."""
+
+extern "C" "sere_os_library_close"
+def _library_close(library: Handle) -> i32
+"""Unload a shared library."""
+
 extern "C" "sere_os_exit"
 def exit(code: i32) -> void
 """Exit the process with code."""
+
+# ---------------------------------------------------------------------------
+# Platform identity
+# ---------------------------------------------------------------------------
+
+def platform() -> Platform:
+    """Return the host operating-system family."""
+    name: str = _platform_name()
+    if name == "windows":
+        return Platform.Windows
+    if name == "linux":
+        return Platform.Linux
+    if name == "macos":
+        return Platform.Macos
+    return Platform.Unknown
+
+
+def platform_code() -> i32:
+    """Return the host family as a PLATFORM_* constant."""
+    kind: Platform = platform()
+    if kind == Platform.Windows:
+        return PLATFORM_WINDOWS
+    if kind == Platform.Linux:
+        return PLATFORM_LINUX
+    if kind == Platform.Macos:
+        return PLATFORM_MACOS
+    return PLATFORM_UNKNOWN
+
+
+def is_windows() -> bool:
+    """Return whether the host is Windows."""
+    return _platform_name() == "windows"
+
+
+def is_linux() -> bool:
+    """Return whether the host is Linux."""
+    return _platform_name() == "linux"
+
+
+def is_macos() -> bool:
+    """Return whether the host is macOS."""
+    return _platform_name() == "macos"
+
+
+def is_unix() -> bool:
+    """Return whether the host is Unix-like."""
+    return is_linux() or is_macos()
+
+
+def endianness() -> Endianness:
+    """Return the host byte order."""
+    if _endianness_code() == 0:
+        return Endianness.Little
+    return Endianness.Big
+
+
+def path_separator() -> str:
+    """Return the directory separator for this platform."""
+    if _separator_code() == 92:
+        return "\\"
+    return "/"
+
+
+def separator() -> str:
+    """Return the directory separator for this platform."""
+    return path_separator()
+
+
+def path_list_separator() -> str:
+    """Return the separator used between PATH entries."""
+    if _list_separator_code() == 59:
+        return ";"
+    return ":"
+
+
+def cpu_count() -> i64:
+    """Return the number of logical CPUs."""
+    return _logical_cpu_count() as i64
+
+
+# ---------------------------------------------------------------------------
+# Environment
+# ---------------------------------------------------------------------------
+
+def has_env(name: str) -> bool:
+    """Return whether an environment variable is set (even when empty)."""
+    return _env_has(name) != 0
+
+
+def setenv(name: str, value: str) -> bool:
+    """Set an environment variable."""
+    return _env_set(name, value) != 0
+
+
+def unsetenv(name: str) -> bool:
+    """Remove an environment variable."""
+    return _env_remove(name) != 0
+
+
+def getenv_or(name: str, fallback: str) -> str:
+    """Return an environment variable value, or fallback when unset."""
+    if has_env(name):
+        return getenv(name)
+    return fallback
+
+
+def env_items() -> list[EnvVar]:
+    """Return the environment as decoded name/value pairs."""
+    raw: list[str] = environ()
+    result: list[EnvVar] = []
+    for i in range(len(raw)):
+        entry: str = raw[i]
+        separator_index: i64 = string.find(entry, "=")
+        if separator_index < 0:
+            result.append(EnvVar(entry, ""))
+        else:
+            result.append(EnvVar(entry[0:separator_index], entry[separator_index + 1:]))
+    return result
+
+
+def env_lookup(name: str) -> str:
+    """Return an environment value by scanning the decoded environment."""
+    items: list[EnvVar] = env_items()
+    for i in range(len(items)):
+        if items[i].name == name:
+            return items[i].value
+    return ""
+
+# ---------------------------------------------------------------------------
+# Paths and directories
+# ---------------------------------------------------------------------------
+
+def is_absolute(path: str) -> bool:
+    """Test whether a path is absolute."""
+    return _is_absolute(path) != 0
+
+
+def exists(path: str) -> bool:
+    """Return whether a path exists."""
+    return _fs_exists(path) != 0
+
+
+def is_file(path: str) -> bool:
+    """Return whether a path is a regular file."""
+    return _fs_is_file(path) != 0
+
+
+def is_dir(path: str) -> bool:
+    """Return whether a path is a directory."""
+    return _fs_is_dir(path) != 0
+
+
+def is_symlink(path: str) -> bool:
+    """Return whether a path is a symbolic link."""
+    return _is_symlink(path) != 0
+
+
+def chdir(path: str) -> bool:
+    """Change the current working directory."""
+    return _chdir(path) != 0
+
+
+def listdir_sorted(path: str) -> list[str]:
+    """Return a directory's entries in ascending order."""
+    entries: list[str] = listdir(path)
+    count: i64 = len(entries)
+    passes: i64 = 0
+    while passes < count:
+        index: i64 = 0
+        while index + 1 < count:
+            if entries[index + 1] < entries[index]:
+                temporary: str = entries[index]
+                entries[index] = entries[index + 1]
+                entries[index + 1] = temporary
+            index = index + 1
+        passes = passes + 1
+    return entries
+
+
+def mkdir(path: str) -> bool:
+    """Create a directory."""
+    return mkdir_mode(path, 0o777)
+
+
+def mkdir_mode(path: str, mode: i32) -> bool:
+    """Create a directory with the given permission bits."""
+    return _mkdir_mode(path, mode) != 0
+
+
+def makedirs(path: str) -> bool:
+    """Create a directory and any missing parents; succeeds if it exists."""
+    return _makedirs(path, 0o777, 1) != 0
+
+
+def makedirs_mode(path: str, mode: i32) -> bool:
+    """Create a directory tree with the given permission bits."""
+    return _makedirs(path, mode, 1) != 0
+
+
+def rmdir(path: str) -> bool:
+    """Remove an empty directory."""
+    return _rmdir(path) != 0
+
+
+def remove(path: str) -> bool:
+    """Remove a file, symlink, or empty directory."""
+    return _fs_remove(path) != 0
+
+
+def remove_tree(path: str) -> bool:
+    """Recursively delete a directory tree without following symlinks."""
+    return _remove_tree(path, 0) != 0
+
+
+def walk(path: str) -> list[str]:
+    """Return every file path beneath a directory, depth first."""
+    found: list[str] = []
+    walk_into(path, found)
+    return found
+
+
+def walk_into(path: str, out: list[str]) -> void:
+    """Append every file beneath a directory to out."""
+    entries: list[str] = listdir(path)
+    for i in range(len(entries)):
+        child: str = join_path(path, entries[i])
+        if is_dir(child):
+            walk_into(child, out)
+        else:
+            out.append(child)
+
+# ---------------------------------------------------------------------------
+# Files and metadata
+# ---------------------------------------------------------------------------
+
+def kind(path: str) -> i32:
+    """Return the KIND_* code of a path."""
+    return _stat_kind(path, 1)
+
+
+def kind_of(path: str) -> FileKind:
+    """Return the FileKind of a path."""
+    code: i32 = _stat_kind(path, 1)
+    if code == KIND_FILE:
+        return FileKind.File
+    if code == KIND_DIRECTORY:
+        return FileKind.Directory
+    if code == KIND_SYMLINK:
+        return FileKind.Symlink
+    return FileKind.Other
+
+
+def file_size(path: str) -> i64:
+    """Return a path's size in bytes, or 0 when unreadable."""
+    return _stat_size(path, 1)
+
+
+def stat(path: str) -> FileStat:
+    """Return metadata for a path, following symbolic links."""
+    return stat_impl(path, 1)
+
+
+def lstat(path: str) -> FileStat:
+    """Return metadata for a path without following symbolic links."""
+    return stat_impl(path, 0)
+
+
+def stat_impl(path: str, follow: i32) -> FileStat:
+    """Build a FileStat from the native field accessors."""
+    if _fs_exists(path) == 0 and not is_symlink(path):
+        return FileStat(False, 0, 0, KIND_OTHER, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+    return FileStat(
+        True,
+        _stat_size(path, follow),
+        _stat_mode(path, follow),
+        _stat_kind(path, follow),
+        _stat_inode(path, follow),
+        _stat_device(path, follow),
+        _stat_links(path, follow),
+        _stat_uid(path, follow),
+        _stat_gid(path, follow),
+        _stat_atime_ns(path, follow),
+        _stat_mtime_ns(path, follow),
+        _stat_ctime_ns(path, follow),
+        _stat_birth_ns(path, follow))
+
+
+def rename(src: str, dst: str) -> bool:
+    """Rename a path."""
+    if _rename(src, dst) != 0:
+        return True
+    if is_windows():
+        return replace(src, dst)
+    return False
+
+
+def replace(src: str, dst: str) -> bool:
+    """Rename a path, replacing the destination when it exists."""
+    return _replace(src, dst) != 0
+
+
+def copy_file(src: str, dst: str, overwrite: bool = True) -> bool:
+    """Copy a file's bytes."""
+    flag: i32 = 0
+    if overwrite:
+        flag = 1
+    return _copy_file(src, dst, flag) != 0
+
+
+def copy(src: str, dst: str, overwrite: bool = True) -> bool:
+    """Copy a file, or a whole directory tree, to dst."""
+    if is_dir(src):
+        return copy_tree(src, dst, overwrite)
+    return copy_file(src, dst, overwrite)
+
+
+def copy_tree(src: str, dst: str, overwrite: bool = True) -> bool:
+    """Recursively copy a directory tree; symlinks are not followed."""
+    if not is_dir(src):
+        return False
+    if not exists(dst):
+        if not makedirs(dst):
+            return False
+    entries: list[str] = listdir(src)
+    for i in range(len(entries)):
+        from_path: str = join_path(src, entries[i])
+        to_path: str = join_path(dst, entries[i])
+        if is_symlink(from_path):
+            continue
+        if is_dir(from_path):
+            if not copy_tree(from_path, to_path, overwrite):
+                return False
+        else:
+            if not copy_file(from_path, to_path, overwrite):
+                return False
+    return True
+
+
+def symlink(target: str, link: str) -> bool:
+    """Create a symbolic link named link that points at target."""
+    return _symlink(target, link) != 0
+
+
+def hardlink(existing: str, link: str) -> bool:
+    """Create a hard link to an existing file."""
+    return _hardlink(existing, link) != 0
+
+
+def chmod(path: str, mode: i32) -> bool:
+    """Change a path's permission bits."""
+    return _chmod(path, mode) != 0
+
+
+def access(path: str, mode: i32) -> bool:
+    """Test a path against F_OK/R_OK/W_OK/X_OK; OR modes for combinations."""
+    return _access(path, mode) != 0
+
+
+def is_readable(path: str) -> bool:
+    """Return whether a path exists and is readable."""
+    return _access(path, R_OK) != 0
+
+
+def is_writable(path: str) -> bool:
+    """Return whether a path exists and is writable."""
+    return _access(path, W_OK) != 0
+
+
+def is_executable(path: str) -> bool:
+    """Return whether a path exists and is executable."""
+    return _access(path, X_OK) != 0
+
+
+def utime(path: str, access_ns: i64, modify_ns: i64) -> bool:
+    """Set a path's access and modification times."""
+    return _utime(path, access_ns, modify_ns) != 0
+
+
+def touch(path: str) -> bool:
+    """Create an empty file when missing, otherwise update its times."""
+    stamp: i64 = time_ns()
+    if exists(path):
+        return _utime(path, stamp, stamp) != 0
+    fd: i64 = open_fd(path, OPEN_WRITE + OPEN_CREATE)
+    if fd < 0:
+        return False
+    return close_fd(fd)
+
+
+def truncate(path: str, size: i64) -> bool:
+    """Resize a file to the given length."""
+    fd: i64 = open_fd(path, OPEN_WRITE)
+    if fd < 0:
+        return False
+    ok: bool = tdtruncate(fd, size)
+    return close_fd(fd) and ok
+
+
+def tdtruncate(fd: i64, size: i64) -> bool:
+    """Truncate an open file to a length."""
+    return _truncate_fd(fd, size) != 0
+
+# ---------------------------------------------------------------------------
+# Descriptors
+# ---------------------------------------------------------------------------
+
+def open_fd(path: str, flags: i32, mode: i32 = 0o666) -> i64:
+    """Open a raw file descriptor, or -1 on failure."""
+    return _open_fd_raw(path, flags, mode)
+
+
+def seek_fd(fd: i64, offset: i64, whence: i32 = 0) -> i64:
+    """Reposition a descriptor and return the new offset."""
+    return _seek_fd_raw(fd, offset, whence)
+
+
+def close_fd(fd: i64) -> bool:
+    """Close a raw file descriptor."""
+    if fd < 0:
+        return False
+    return _close_fd(fd) != 0
+
+
+def read_fd(fd: i64, size: i64 = 4096) -> list[i8]:
+    """Read up to size bytes from a descriptor."""
+    if fd < 0 or size <= 0:
+        return []
+    buffer: array[i8] = _byte_buffer(1, size)
+    count: i64 = _read_fd(fd, &buffer[0], size)
+    result: list[i8] = []
+    if count > 0:
+        for i in range(count):
+            result.append(buffer[i])
+    return result
+
+
+def write_fd(fd: i64, data: list[i8]) -> i64:
+    """Write a byte list to a descriptor and return the byte count."""
+    if fd < 0 or len(data) == 0:
+        return 0
+    return _write_fd(fd, &data[0], len(data) as i64)
+
+
+def read_all_fd(fd: i64, chunk: i64 = 65536) -> list[i8]:
+    """Read a descriptor to end of file."""
+    if fd < 0 or chunk <= 0:
+        return []
+    result: list[i8] = []
+    while True:
+        part: list[i8] = read_fd(fd, chunk)
+        if len(part) == 0:
+            break
+        for i in range(len(part)):
+            result.append(part[i])
+        if len(part) < chunk:
+            break
+    return result
+
+
+def read_bytes(path: str) -> list[i8]:
+    """Read a whole file as a byte list, or [] on failure."""
+    fd: i64 = open_fd(path, OPEN_READ)
+    if fd < 0:
+        return []
+    size: i64 = file_size(path)
+    result: list[i8] = []
+    if size > 0:
+        result = read_all_fd(fd, size)
+    close_fd(fd)
+    return result
+
+
+def write_bytes(path: str, data: list[i8]) -> i64:
+    """Write a byte list to a file, replacing its contents."""
+    fd: i64 = open_fd(path, OPEN_WRITE + OPEN_CREATE + OPEN_TRUNCATE)
+    if fd < 0:
+        return -1
+    written: i64 = write_fd(fd, data)
+    close_fd(fd)
+    return written
+
+
+def fsync(fd: i64) -> bool:
+    """Flush a descriptor's data and metadata to storage."""
+    return _fsync_fd(fd) != 0
+
+
+def fdatasync(fd: i64) -> bool:
+    """Flush a descriptor's data to storage."""
+    return _fdatasync_fd(fd) != 0
+
+
+def isatty(fd: i64 = 1) -> bool:
+    """Return whether a descriptor is a terminal."""
+    return _fd_isatty(fd) != 0
+
+
+def terminal_size(fd: i64 = 1) -> TerminalSize:
+    """Return a terminal's size; zeroes when the size is unknown."""
+    return TerminalSize(_terminal_columns(fd), _terminal_rows(fd))
+
+
+class FileDescriptor:
+    """A raw operating-system file descriptor."""
+
+    _fd: i64
+    _path: str
+
+    def __init__(self, path: str, flags: i32, mode: i32 = 0o666):
+        """Open a path and wrap its descriptor."""
+        self._path = path
+        self._fd = open_fd(path, flags, mode)
+
+    def valid(self) -> bool:
+        """Return whether the descriptor is open."""
+        return self._fd >= 0
+
+    def fileno(self) -> i64:
+        """Return the underlying descriptor number."""
+        return self._fd
+
+    def read(self, size: i64 = 4096) -> list[i8]:
+        """Read up to size bytes."""
+        return read_fd(self._fd, size)
+
+    def read_all(self) -> list[i8]:
+        """Read to end of file."""
+        return read_all_fd(self._fd)
+
+    def write(self, data: list[i8]) -> i64:
+        """Write bytes."""
+        return write_fd(self._fd, data)
+
+    def seek(self, offset: i64, whence: i32 = 0) -> i64:
+        """Reposition the descriptor."""
+        return seek_fd(self._fd, offset, whence)
+
+    def tell(self) -> i64:
+        """Return the current offset."""
+        return tell_fd(self._fd)
+
+    def size(self) -> i64:
+        """Return the current file size."""
+        return file_size(self._path)
+
+    def truncate(self, size: i64) -> bool:
+        """Truncate the file."""
+        return tdtruncate(self._fd, size)
+
+    def sync(self) -> bool:
+        """Flush the file's data and metadata to storage."""
+        return fsync(self._fd)
+
+    def duplicate(self) -> i64:
+        """Duplicate the descriptor."""
+        return dup_fd(self._fd)
+
+    def close(self) -> bool:
+        """Close the descriptor."""
+        if self._fd < 0:
+            return False
+        result: bool = close_fd(self._fd)
+        self._fd = -1
+        return result
+
+    def __enter__(self) -> FileDescriptor:
+        """Enter a context manager."""
+        return self
+
+    def __exit__(self) -> void:
+        """Leave a context manager, closing the descriptor."""
+        self.close()
+
+
+def open_descriptor(path: str, flags: i32, mode: i32 = 0o666) -> FileDescriptor:
+    """Open a path as a FileDescriptor."""
+    return FileDescriptor(path, flags, mode)
+
+# ---------------------------------------------------------------------------
+# Pipes
+# ---------------------------------------------------------------------------
+
+class Pipe:
+    """An anonymous pipe with a read end and a write end."""
+
+    _handle: Handle
+    read_fd: i64
+    write_fd: i64
+
+    def __init__(self):
+        """Create a pipe."""
+        self._handle = _pipe_new()
+        if self._handle is None:
+            self.read_fd = -1
+            self.write_fd = -1
+            return
+        self.read_fd = _pipe_read_fd(self._handle)
+        self.write_fd = _pipe_write_fd(self._handle)
+
+    def ok(self) -> bool:
+        """Return whether the pipe was created."""
+        return self.read_fd >= 0 and self.write_fd >= 0
+
+    def write(self, data: list[i8]) -> i64:
+        """Write bytes into the pipe."""
+        return write_fd(self.write_fd, data)
+
+    def read(self, size: i64 = 4096) -> list[i8]:
+        """Read up to size bytes from the pipe."""
+        return read_fd(self.read_fd, size)
+
+    def close(self) -> bool:
+        """Close both ends and release the pipe."""
+        if self._handle is None:
+            return False
+        result: bool = _pipe_close(self._handle) != 0
+        self._handle = None
+        self.read_fd = -1
+        self.write_fd = -1
+        return result
+
+    def __repr__(self) -> str:
+        """Describe the pipe."""
+        if self._handle is None:
+            return "<closed pipe>"
+        return f"<pipe read={self.read_fd} write={self.write_fd}>"
+
+# ---------------------------------------------------------------------------
+# Filesystems
+# ---------------------------------------------------------------------------
+
+def filesystem(path: str) -> FilesystemInfo:
+    """Return capacity information for the filesystem holding a path."""
+    total: i64 = fs_total_bytes(path)
+    if total <= 0:
+        return FilesystemInfo(False, 0, 0, 0, 0)
+    return FilesystemInfo(
+        True,
+        total,
+        fs_free_bytes(path),
+        fs_available_bytes(path),
+        fs_block_size(path))
+
+
+def disk_usage(path: str) -> FilesystemInfo:
+    """Alias of filesystem(); capacity information for path's volume."""
+    return filesystem(path)
+
+
+def total_space(path: str = ".") -> i64:
+    """Return the capacity of the filesystem holding path."""
+    return fs_total_bytes(path)
+
+
+def free_space(path: str = ".") -> i64:
+    """Return the space available to this user on path's filesystem."""
+    return fs_available_bytes(path)
+
+
+def filesystem_root(path: str) -> str:
+    """Return the root directory of the volume that holds path."""
+    absolute: str = absolute_path(path)
+    if len(absolute) == 0:
+        return ""
+    if is_windows():
+        if len(absolute) >= 2:
+            return absolute[0:2] + path_separator()
+        return absolute
+    return "/"
+
+# ---------------------------------------------------------------------------
+# Memory
+# ---------------------------------------------------------------------------
+
+def memory() -> MemoryInfo:
+    """Return physical and virtual memory information."""
+    total: i64 = memory_total()
+    if total <= 0:
+        return MemoryInfo(False, 0, 0, 0, 0)
+    return MemoryInfo(
+        True,
+        total,
+        memory_available(),
+        memory_total_virtual(),
+        memory_available_virtual())
+
+# ---------------------------------------------------------------------------
+# Processes and signals
+# ---------------------------------------------------------------------------
+
+def kill(pid_value: i64, signal_number: i32 = SIGTERM) -> bool:
+    """Send a signal to a process."""
+    if pid_value <= 0:
+        return False
+    return _kill(pid_value, signal_number) != 0
+
+
+def terminate(pid_value: i64) -> bool:
+    """Ask a process to terminate."""
+    return kill(pid_value, SIGTERM)
+
+
+def raise_signal(signal_number: i32) -> bool:
+    """Raise a signal in the current process."""
+    return _raise(signal_number) != 0
+
+# ---------------------------------------------------------------------------
+# Timing
+# ---------------------------------------------------------------------------
+
+def sleep_ns(nanoseconds: i64) -> void:
+    """Suspend the current thread for a duration in nanoseconds."""
+    _sleep_ns(nanoseconds)
+
+
+def sleep_ms(milliseconds: i64) -> void:
+    """Suspend the current thread for a duration in milliseconds."""
+    if milliseconds <= 0:
+        return
+    _sleep_ns(milliseconds * 1000000)
+
+
+def sleep(seconds: f64) -> void:
+    """Suspend the current thread for a duration in seconds."""
+    if seconds <= 0.0:
+        return
+    _sleep_ns((seconds * 1000000000.0) as i64)
+
+
+def monotonic_ms() -> i64:
+    """Return a monotonic clock reading in milliseconds."""
+    return monotonic_ns() / 1000000
+
+
+def time_ms() -> i64:
+    """Return the wall-clock time in milliseconds since the epoch."""
+    return time_ns() / 1000000
+
+
+def time_seconds() -> f64:
+    """Return the wall-clock time in seconds since the epoch."""
+    return (time_ns() as f64) / 1000000000.0
+
+# ---------------------------------------------------------------------------
+# Randomness
+# ---------------------------------------------------------------------------
+
+def random_bytes(count: i64) -> list[i8]:
+    """Return count cryptographically secure random bytes."""
+    if count <= 0:
+        return []
+    buffer: array[i8] = _byte_buffer(1, count)
+    if _random_bytes(&buffer[0], count) == 0:
+        return []
+    result: list[i8] = []
+    for i in range(count):
+        result.append(buffer[i])
+    return result
+
+
+def random_fill(buffer: array[i8]) -> bool:
+    """Fill a byte array with cryptographically secure random data."""
+    if len(buffer) == 0:
+        return False
+    return _random_bytes(&buffer[0], len(buffer) as i64) != 0
+
+
+def random_i64() -> i64:
+    """Return a random signed 64-bit integer."""
+    raw: list[i8] = random_bytes(8)
+    if len(raw) < 8:
+        return 0
+    value: i64 = 0
+    for i in range(8):
+        byte_value: i64 = raw[i] as i64
+        if byte_value < 0:
+            byte_value = byte_value + 256
+        value = value + byte_value * shift_bits(i)
+    return value
+
+
+def shift_bits(index: i64) -> i64:
+    """Return 256 raised to an index (little-endian byte placement)."""
+    result: i64 = 1
+    step: i64 = 0
+    while step < index:
+        result = result * 256
+        step = step + 1
+    return result
+
+# ---------------------------------------------------------------------------
+# Executables and dynamic libraries
+# ---------------------------------------------------------------------------
+
+def find_executable(name: str) -> str:
+    """Resolve an executable name against PATH."""
+    return which(name)
+
+
+def command_exists(name: str) -> bool:
+    """Return whether an executable can be found on PATH."""
+    return which(name) != ""
+
+
+class Library:
+    """A loaded shared library."""
+
+    _handle: Handle
+    _path: str
+
+    def __init__(self, path: str):
+        """Load a shared library."""
+        self._path = path
+        self._handle = _library_open(path)
+
+    def ok(self) -> bool:
+        """Return whether the library loaded."""
+        return self._handle is not None
+
+    def symbol(self, name: str) -> Handle:
+        """Return an exported symbol address, or None when missing."""
+        if self._handle is None:
+            return None
+        return _library_symbol(self._handle, name)
+
+    def has_symbol(self, name: str) -> bool:
+        """Return whether the library exports a symbol."""
+        return self.symbol(name) is not None
+
+    def close(self) -> bool:
+        """Unload the library."""
+        if self._handle is None:
+            return False
+        result: bool = _library_close(self._handle) != 0
+        self._handle = None
+        return result
+
+    def __enter__(self) -> Library:
+        """Enter a context manager."""
+        return self
+
+    def __exit__(self) -> void:
+        """Leave a context manager, unloading the library."""
+        self.close()
+
+    def __repr__(self) -> str:
+        """Describe the library."""
+        if self._handle is None:
+            return f"<closed library '{self._path}'>"
+        return f"<library '{self._path}'>"
+
+
+def load_library(path: str) -> Library:
+    """Load a shared library."""
+    return Library(path)
+
+# ---------------------------------------------------------------------------
+# Host summary
+# ---------------------------------------------------------------------------
+
+def describe() -> str:
+    """Return a one-line summary of the host and its resources."""
+    info: MemoryInfo = memory()
+    return _platform_name() + " " + arch() + " host=" + hostname() + " cpus=" + str(cpu_count()) + " memory=" + str(info.total)

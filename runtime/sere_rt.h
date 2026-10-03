@@ -232,6 +232,118 @@ void sere_os_getenv(const char* name, int64_t name_len, const char** out_data, i
 void* sere_os_listdir(const char* path, int64_t path_len);
 void sere_os_exit(int32_t code);
 
+/* ---- os: platform, system information, environment ---- */
+void sere_os_hostname(const char** out_data, int64_t* out_len);
+int64_t sere_os_page_size(void);
+int64_t sere_os_allocation_granularity(void);
+int64_t sere_os_physical_cpu_count(void);
+int32_t sere_os_endianness(void);
+int32_t sere_os_memory_info(int64_t* fields, int32_t field_count);
+int64_t sere_os_monotonic_ns(void);
+int64_t sere_os_system_time_ns(void);
+void sere_os_sleep_ns(int64_t nanoseconds);
+int32_t sere_os_env_has(const char* name, int64_t name_len);
+int32_t sere_os_env_set(const char* name, int64_t name_len, const char* value, int64_t value_len);
+int32_t sere_os_env_remove(const char* name, int64_t name_len);
+void* sere_os_env_all(void);
+int32_t sere_os_chdir(const char* path, int64_t path_len);
+void sere_os_home_dir(const char** out_data, int64_t* out_len);
+void sere_os_temp_dir(const char** out_data, int64_t* out_len);
+void sere_os_config_dir(const char** out_data, int64_t* out_len);
+void sere_os_cache_dir(const char** out_data, int64_t* out_len);
+void sere_os_data_dir(const char** out_data, int64_t* out_len);
+void sere_os_dev_null(const char** out_data, int64_t* out_len);
+void sere_os_newline(const char** out_data, int64_t* out_len);
+int32_t sere_os_path_separator(void);
+int32_t sere_os_path_list_separator(void);
+void sere_os_executable_path(const char** out_data, int64_t* out_len);
+void sere_os_which(const char* name, int64_t name_len, const char** out_data, int64_t* out_len);
+void sere_os_user_name(const char** out_data, int64_t* out_len);
+int64_t sere_os_user_id(void);
+int64_t sere_os_group_id(void);
+
+/* ---- os: path resolution ---- */
+void sere_os_path_normalize(const char* path, int64_t path_len, const char** out_data,
+                            int64_t* out_len);
+void sere_os_path_absolute(const char* path, int64_t path_len, const char** out_data,
+                           int64_t* out_len);
+void sere_os_path_real(const char* path, int64_t path_len, const char** out_data, int64_t* out_len);
+void sere_os_path_stem(const char* path, int64_t path_len, const char** out_data, int64_t* out_len);
+int32_t sere_os_is_symlink(const char* path, int64_t path_len);
+
+/* ---- os: file metadata and mutation ---- */
+int32_t sere_os_stat_fields(const char* path, int64_t path_len, int32_t follow, int64_t* fields,
+                            int32_t field_count);
+int32_t sere_os_mkdir_mode(const char* path, int64_t path_len, int32_t mode);
+int32_t sere_os_makedirs(const char* path, int64_t path_len, int32_t mode, int32_t exist_ok);
+int32_t sere_os_rmdir(const char* path, int64_t path_len);
+int32_t sere_os_remove_tree(const char* path, int64_t path_len, int32_t follow_links);
+int32_t sere_os_rename(const char* src, int64_t src_len, const char* dst, int64_t dst_len);
+int32_t sere_os_replace(const char* src, int64_t src_len, const char* dst, int64_t dst_len);
+int32_t sere_os_copy_file(const char* src, int64_t src_len, const char* dst, int64_t dst_len,
+                          int32_t overwrite);
+int32_t sere_os_symlink(const char* target, int64_t target_len, const char* link, int64_t link_len);
+void sere_os_readlink(const char* path, int64_t path_len, const char** out_data, int64_t* out_len);
+int32_t sere_os_hardlink(const char* existing, int64_t existing_len, const char* link,
+                         int64_t link_len);
+int32_t sere_os_chmod(const char* path, int64_t path_len, int32_t mode);
+int32_t sere_os_umask(int32_t mask);
+int32_t sere_os_access(const char* path, int64_t path_len, int32_t mode);
+int32_t sere_os_utime(const char* path, int64_t path_len, int64_t access_ns, int64_t modify_ns);
+
+/* ---- os: descriptors, pipes, terminals, filesystems ---- */
+int64_t sere_os_open_fd(const char* path, int64_t path_len, int32_t flags, int32_t mode);
+int32_t sere_os_close_fd(int64_t fd);
+int64_t sere_os_read_fd(int64_t fd, char* buffer, int64_t length);
+int64_t sere_os_write_fd(int64_t fd, const char* buffer, int64_t length);
+int64_t sere_os_seek_fd(int64_t fd, int64_t offset, int32_t whence);
+int64_t sere_os_tell_fd(int64_t fd);
+int32_t sere_os_truncate_fd(int64_t fd, int64_t size);
+int32_t sere_os_fsync_fd(int64_t fd);
+int32_t sere_os_fdatasync_fd(int64_t fd);
+int64_t sere_os_dup_fd(int64_t fd);
+int64_t sere_os_dup2_fd(int64_t fd, int64_t target);
+int32_t sere_os_pipe_fds(int64_t* out);
+int32_t sere_os_fd_isatty(int64_t fd);
+int32_t sere_os_fd_terminal_size(int64_t fd, int64_t* out);
+int32_t sere_os_filesystem_info(const char* path, int64_t path_len, int64_t* out);
+
+/* ---- os: randomness, dynamic libraries, signals ---- */
+int32_t sere_os_random_bytes(char* buffer, int64_t length);
+void* sere_os_library_open(const char* path, int64_t path_len);
+void* sere_os_library_symbol(void* library, const char* name, int64_t name_len);
+int32_t sere_os_library_close(void* library);
+int32_t sere_os_raise(int32_t signal_number);
+int32_t sere_os_kill(int64_t pid, int32_t signal_number);
+
+/* ---- os: scalar accessors for the aggregate queries ---- */
+int64_t sere_os_memory_total(void);
+int64_t sere_os_memory_available(void);
+int64_t sere_os_memory_total_virtual(void);
+int64_t sere_os_memory_available_virtual(void);
+int64_t sere_os_fs_total_bytes(const char* path, int64_t path_len);
+int64_t sere_os_fs_free_bytes(const char* path, int64_t path_len);
+int64_t sere_os_fs_available_bytes(const char* path, int64_t path_len);
+int64_t sere_os_fs_block_size(const char* path, int64_t path_len);
+int32_t sere_os_terminal_columns(int64_t fd);
+int32_t sere_os_terminal_rows(int64_t fd);
+int64_t sere_os_stat_size(const char* path, int64_t path_len, int32_t follow);
+int32_t sere_os_stat_mode(const char* path, int64_t path_len, int32_t follow);
+int64_t sere_os_stat_inode(const char* path, int64_t path_len, int32_t follow);
+int64_t sere_os_stat_device(const char* path, int64_t path_len, int32_t follow);
+int64_t sere_os_stat_links(const char* path, int64_t path_len, int32_t follow);
+int64_t sere_os_stat_uid(const char* path, int64_t path_len, int32_t follow);
+int64_t sere_os_stat_gid(const char* path, int64_t path_len, int32_t follow);
+int64_t sere_os_stat_atime_ns(const char* path, int64_t path_len, int32_t follow);
+int64_t sere_os_stat_mtime_ns(const char* path, int64_t path_len, int32_t follow);
+int64_t sere_os_stat_ctime_ns(const char* path, int64_t path_len, int32_t follow);
+int64_t sere_os_stat_birth_ns(const char* path, int64_t path_len, int32_t follow);
+int32_t sere_os_stat_kind(const char* path, int64_t path_len, int32_t follow);
+void* sere_os_pipe_new(void);
+int64_t sere_os_pipe_read_fd(void* pipe);
+int64_t sere_os_pipe_write_fd(void* pipe);
+int32_t sere_os_pipe_close(void* pipe);
+
 int64_t sere_time_now_ms(void);
 void sere_time_sleep_ms(int32_t ms);
 void sere_time_get_timestamp(const char** out_data, int64_t* out_len);
