@@ -383,6 +383,44 @@ std::unique_ptr<TypeExpr> Parser::parseTypeAtom() {
     return std::make_unique<TypeExpr>(
         SourceRange{start, previous().range().end}, "[]", std::move(args));
   }
+  if (match(TokenKind::LParen)) {
+    // `(str, i32)` is the tuple spelling of `tuple[str, i32]`. A parenthesised
+    // type with a single member and no trailing comma is just a grouping, so
+    // `(i32)` still means `i32` while `(i32,)` is a one-element tuple.
+    const SourceLocation start = previous().range().start;
+    std::vector<std::unique_ptr<TypeExpr>> members;
+    bool commaSeen = false;
+    skipNewlines();
+    if (check(TokenKind::RParen)) {
+      diagnostics_->error(peek().range(), "expected a type inside '( ... )'");
+      return nullptr;
+    }
+    while (true) {
+      skipNewlines();
+      std::unique_ptr<TypeExpr> member = parseTypeExpr();
+      if (member == nullptr) {
+        return nullptr;
+      }
+      members.push_back(std::move(member));
+      skipNewlines();
+      if (!match(TokenKind::Comma)) {
+        break;
+      }
+      commaSeen = true;
+      skipNewlines();
+      if (check(TokenKind::RParen)) {
+        break;
+      }
+    }
+    if (!consume(TokenKind::RParen, "expected ')' after tuple type")) {
+      return nullptr;
+    }
+    const SourceRange range{start, previous().range().end};
+    if (members.size() == 1 && !commaSeen) {
+      return std::move(members[0]);
+    }
+    return std::make_unique<TypeExpr>(range, "tuple", std::move(members));
+  }
   if (!check(TokenKind::Identifier)) {
     diagnostics_->error(peek().range(), "expected type name, found " + describeToken(peek()));
     return nullptr;

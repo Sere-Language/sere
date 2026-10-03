@@ -3415,15 +3415,26 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
                                          functions_.contains(expression.loweredName())
                                      ? expression.loweredName()
                                  : field == nullptr ? member.field() : field->llvmName;
+      // Each parameter takes its declared layout, so an argument whose Serem type
+      // differs (a handle passed where `Handle | None` is expected, say) is
+      // coerced here rather than reaching the backend unconverted.
+      const Type* signature = expression.callee().resolvedType();
       std::vector<serem::ValuePtr> args;
+      const auto pushArgument = [&](const Expr& argument) {
+        const std::size_t index = args.size();
+        const Type* expected = signature != nullptr && index < signature->paramTypes().size()
+                                   ? signature->paramTypes()[index]
+                                   : argument.resolvedType();
+        args.push_back(coerce(emitExpression(argument), argument.resolvedType(), expected));
+      };
       if (!expression.boundArguments().empty()) {
         for (const Expr* argument : expression.boundArguments()) {
           if (argument != nullptr)
-            args.push_back(emitExpression(*argument));
+            pushArgument(*argument);
         }
       } else {
         for (const auto& argument : expression.arguments())
-          args.push_back(emitExpression(*argument));
+          pushArgument(*argument);
       }
       if (expression.boundArguments().empty() && field != nullptr && symbol == field->llvmName)
         appendDefaults(symbol, args);
@@ -3679,13 +3690,16 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
       // than reaching the backend as a width the field slot cannot hold. A class
       // that declares `__init__` passes its parameters instead, and those are
       // checked against the constructor's own signature.
+      // Keyword binding can reorder the arguments, so the source type is only
+      // known when the call was written positionally.
+      const bool positional = expression.boundArguments().empty();
       std::size_t index = 0;
       for (const RecordField& field : record->fields()) {
         if (index >= args.size())
           break;
         if (field.isStatic)
           continue;
-        const Type* from = index < expression.arguments().size()
+        const Type* from = positional && index < expression.arguments().size()
                                ? expression.arguments()[index]->resolvedType()
                                : nullptr;
         args[index] = coerce(args[index], from, field.type);
@@ -3857,6 +3871,14 @@ serem::ValuePtr SeremGenerator::emitMember(const MemberExpr& expression) {
   if (!expression.compileTimeText().empty()) {
     return stringValue(expression.compileTimeText());
   }
+  // `pair.first` / `pair.second` read the leading tuple members.
+  if (const Type* tupleType = resolveType(expression.object().resolvedType());
+      tupleType != nullptr && tupleType->isGenericCtor("tuple") &&
+      (expression.field() == "first" || expression.field() == "second")) {
+    const std::size_t index = expression.field() == "first" ? 0 : 1;
+    return builder_->extract(emitExpression(expression.object()), index,
+                             lowerType(expression.resolvedType()));
+  }
   // Every enum member comes from the record sema built rather than from stored
   // state: `Color.Green` is its discriminant, `tone.value` that same number, and
   // `tone.name` the variant that number selects.
@@ -3948,6 +3970,16 @@ serem::ValuePtr SeremGenerator::emitMember(const MemberExpr& expression) {
 
 serem::ValuePtr SeremGenerator::emitIndex(const IndexExpr& expression) {
   const Type* objectType = expression.object().resolvedType();
+  // A tuple is an aggregate with one member per element, so indexing extracts a
+  // member rather than reaching the runtime `index` operation.
+  if (const Type* tupleType = resolveType(objectType);
+      tupleType != nullptr && tupleType->isGenericCtor("tuple") && expression.hasStart() &&
+      expression.start()->kind() == NodeKind::IntegerLiteral) {
+    const std::size_t index = static_cast<std::size_t>(
+        static_cast<const IntegerLiteral&>(*expression.start()).value());
+    return builder_->extract(emitExpression(expression.object()), index,
+                             lowerType(expression.resolvedType()));
+  }
   const Type* record = objectType == nullptr ? nullptr : objectType->valueType();
   if (record != nullptr && record->isRecord() && !expression.isSlice() && expression.hasStart() &&
       record->methodIndex("__getitem__") >= 0) {

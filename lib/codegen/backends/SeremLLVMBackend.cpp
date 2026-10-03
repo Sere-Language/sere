@@ -2036,8 +2036,14 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
           field = 1;
         }
         for (std::size_t index = 0; index < operands.size(); ++index) {
+          const unsigned slot = field + static_cast<unsigned>(index);
+          if (slot >= type->getStructNumElements()) {
+            break;
+          }
+          // A field stores its own layout, so an operand whose Serem type lowers
+          // differently (a pointer word for a handle, say) converts here.
           result = builder_->builder.CreateInsertValue(
-              result, operand(index), {field + static_cast<unsigned>(index)});
+              result, convert(operand(index), type->getStructElementType(slot)), {slot});
         }
       }
     } else if (!operands.empty()) {

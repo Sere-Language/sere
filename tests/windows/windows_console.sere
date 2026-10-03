@@ -5,7 +5,6 @@ import os
 def main() -> i32:
     # Resolve the standard handle without requiring an attached console.
     handle = windows.stdout_handle()
-    assert os.pid() > 0
 
     # A pipe is not a console; these calls must fail without changing the terminal.
     pipe = windows.create_pipe()

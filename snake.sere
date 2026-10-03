@@ -1,0 +1,229 @@
+import windows
+
+const WIDTH: i32 = 30
+const HEIGHT: i32 = 16
+
+
+def pressed(key: i32, alternate: i32) -> bool:
+    return windows.key_down(key) or windows.key_down(alternate)
+
+
+def food_position(snake: list[i32]) -> i32:
+    cell = (windows.tick_count64() % (WIDTH * HEIGHT)) as i32
+    while cell in snake:
+        cell = (cell + 1) % (WIDTH * HEIGHT)
+    return cell
+
+
+# Win32 text attributes: low nibble is foreground, high nibble is background.
+const PANEL_WIDTH: i32 = 64
+const PANEL_HEIGHT: i32 = 23
+const BORDER: u32 = 0x0B
+const TEXT: u32 = 0x07
+const MUTED: u32 = 0x08
+const HEAD: u16 = 0xE0
+const BODY: u16 = 0xA0
+const FOOD: u16 = 0x0C
+
+
+def label(handle: windows.Handle, x: i32, y: i32, text: str, color: u32) -> void:
+    windows.console_write_at(x, y, text, handle)
+    windows.console_fill_attribute(x, y, len(text) as u32, color, handle)
+
+
+def draw(handle: windows.Handle, snake: list[i32], food: i32, message: str,
+         left: i32, top: i32, status_color: u32 = 0x0B) -> void:
+    # Direct cell writes preserve the cursor and never scroll the terminal.
+    label(handle, left, top, " S E R E  /  S N A K E " + " " * 42, 0xB0)
+    score = len(snake) - 3
+    speed = max(55, 130 - score * 3)
+    label(handle, left, top + 1, " " * PANEL_WIDTH, TEXT)
+    label(handle, left + 1, top + 1, "SCORE " + str(score), 0x0E)
+    label(handle, left + 24, top + 1, "STEP " + str(speed) + " ms", 0x0A)
+    label(handle, left + 47, top + 1, "LENGTH " + str(len(snake)), BORDER)
+    label(handle, left + 1, top + 2, "+" + "-" * (WIDTH * 2) + "+", BORDER)
+    for y in range(HEIGHT):
+        row = "|"
+        colors: list[u16] = [BORDER as u16]
+        for x in range(WIDTH):
+            cell = y * WIDTH + x
+            color: u16 = 0x00
+            tile = "  "
+            if (x + y) % 2 == 0:
+                tile = ". "
+                color = 0x08
+            if cell == snake[0]:
+                tile = "@@"
+                color = HEAD
+            elif cell in snake:
+                tile = "  "
+                color = BODY
+            elif cell == food:
+                tile = "<>"
+                color = FOOD
+            row += tile
+            colors.append(color)
+            colors.append(color)
+        row += "|"
+        colors.append(BORDER as u16)
+        windows.console_write_at(left + 1, top + 3 + y, row, handle)
+        windows.console_write_attributes(left + 1, top + 3 + y, colors, handle)
+    label(handle, left + 1, top + HEIGHT + 3, "+" + "-" * (WIDTH * 2) + "+", BORDER)
+    label(handle, left, top + HEIGHT + 4, " " * PANEL_WIDTH, status_color)
+    label(handle, left + 2, top + HEIGHT + 4, message, status_color)
+    label(handle, left + 2, top + HEIGHT + 5,
+          "WASD / Arrows: move    Space: pause    Esc: quit", MUTED)
+    # A fill bar uses native console character and attribute operations.
+    filled = max(1, (len(snake) * PANEL_WIDTH / (WIDTH * HEIGHT)) as i32)
+    windows.console_fill_char(left, top + HEIGHT + 6, PANEL_WIDTH as u32, 32, handle)
+    windows.console_fill_attribute(left, top + HEIGHT + 6, PANEL_WIDTH as u32, 0x10, handle)
+    windows.console_fill_attribute(left, top + HEIGHT + 6, filled as u32, 0xA0, handle)
+
+
+def main() -> i32:
+    handle = windows.stdout_handle()
+    if not windows.is_console(handle):
+        print("Snake needs an interactive Windows console.")
+        return 1
+    info = windows.console_screen_info(handle)
+    if info == None:
+        print("Could not read the console screen.")
+        return 1
+    screen: windows.ConsoleScreenInfo = info as windows.ConsoleScreenInfo
+    view_width = screen.window_right - screen.window_left + 1
+    view_height = screen.window_bottom - screen.window_top + 1
+    if view_width < PANEL_WIDTH or view_height < PANEL_HEIGHT:
+        print("Resize the console to at least 64 columns and 23 rows, then run again.")
+        return 1
+    left = screen.window_left + ((view_width - PANEL_WIDTH) / 2) as i32
+    top = screen.window_top + ((view_height - PANEL_HEIGHT) / 2) as i32
+
+    # Save the cells we cover, including their colors, to restore the shell on exit.
+    saved_rows: list[str] = []
+    saved_colors: list[list[u16]] = []
+    for row in range(PANEL_HEIGHT):
+        saved_rows.append(windows.console_read_at(left, top + row, PANEL_WIDTH as u32, handle))
+        saved_colors.append(windows.console_read_attributes(left, top + row, PANEL_WIDTH as u32, handle))
+    cursor_visible = windows.console_cursor_visible(handle)
+    old_title = windows.console_title()
+    input_handle = windows.stdin_handle()
+    input_mode = windows.console_mode(input_handle)
+    if input_mode != None:
+        mode = input_mode as windows.DWORD
+        # Disable Quick Edit (selection freezes classic consoles), echo, and line buffering.
+        disabled = windows.ENABLE_QUICK_EDIT_MODE | windows.ENABLE_ECHO_INPUT | windows.ENABLE_LINE_INPUT
+        windows.set_console_mode(input_handle, (mode | windows.ENABLE_EXTENDED_FLAGS) & ~disabled)
+    windows.console_set_title("Sere Snake | WASD / Arrows | Space to pause")
+    windows.console_set_cursor_visible(False, handle)
+    for row in range(PANEL_HEIGHT):
+        windows.console_fill_char(left, top + row, PANEL_WIDTH as u32, 32, handle)
+        windows.console_fill_attribute(left, top + row, PANEL_WIDTH as u32, 0, handle)
+    quit_game = False
+    while not quit_game:
+        center = (HEIGHT / 2) as i32 * WIDTH + (WIDTH / 2) as i32
+        snake: list[i32] = [center, center - 1, center - 2]
+        dx = 1
+        dy = 0
+        food = food_position(snake)
+        alive = True
+        won = False
+        draw(handle, snake, food, "Collect red diamonds. Stay inside the cyan border.", left, top)
+        deadline = windows.tick_count64() + 130
+        turned = False
+        paused = False
+        space_was_down = windows.key_down(32)
+        while alive and not quit_game:
+            if windows.key_down(27):
+                quit_game = True
+                break
+            space_down = windows.key_down(32)
+            if space_down and not space_was_down:
+                paused = not paused
+                if paused:
+                    draw(handle, snake, food, "PAUSED  /  Press Space to resume", left, top, 0x0E)
+                    windows.console_set_title("Sere Snake | Paused")
+                else:
+                    draw(handle, snake, food, "Collect red diamonds. Stay inside the cyan border.", left, top)
+                    windows.console_set_title("Sere Snake | Score " + str(len(snake) - 3))
+                    deadline = windows.tick_count64() + 130
+            space_was_down = space_down
+            if paused:
+                windows.sleep(10)
+                continue
+            # Allow only one turn per step, so rapid inputs cannot reverse the snake.
+            if not turned:
+                if pressed(38, 87) and dy == 0:
+                    dx = 0
+                    dy = -1
+                    turned = True
+                elif pressed(40, 83) and dy == 0:
+                    dx = 0
+                    dy = 1
+                    turned = True
+                elif pressed(37, 65) and dx == 0:
+                    dx = -1
+                    dy = 0
+                    turned = True
+                elif pressed(39, 68) and dx == 0:
+                    dx = 1
+                    dy = 0
+                    turned = True
+            if windows.tick_count64() < deadline:
+                windows.sleep(5)
+                continue
+            x = snake[0] % WIDTH + dx
+            y = (snake[0] / WIDTH) as i32 + dy
+            head = y * WIDTH + x
+            eating = head == food
+            limit = len(snake)
+            if not eating:
+                limit -= 1
+            if x < 0 or x >= WIDTH or y < 0 or y >= HEIGHT:
+                alive = False
+            for index in range(limit):
+                if snake[index] == head:
+                    alive = False
+            if not alive:
+                break
+            if eating:
+                snake.append(snake[len(snake) - 1])
+            index = len(snake) - 1
+            while index > 0:
+                snake[index] = snake[index - 1]
+                index -= 1
+            snake[0] = head
+            if eating:
+                windows.console_set_title("Sere Snake | Score " + str(len(snake) - 3))
+                if len(snake) == WIDTH * HEIGHT:
+                    won = True
+                    alive = False
+                else:
+                    food = food_position(snake)
+            draw(handle, snake, food, "Collect red diamonds. Stay inside the cyan border.", left, top)
+            turned = False
+            delay = max(55, 130 - (len(snake) - 3) * 3)
+            deadline = windows.tick_count64() + delay
+        if not quit_game:
+            message = "Game over! R: restart / Esc: quit"
+            if won:
+                message = "You win! R: restart / Esc: quit"
+            color: u32 = 0x0C
+            if won:
+                color = 0x0A
+            windows.console_set_title("Sere Snake | " + message)
+            draw(handle, snake, food, message, left, top, color)
+            while not windows.key_down(82):
+                if windows.key_down(27):
+                    quit_game = True
+                    break
+                windows.sleep(10)
+    for row in range(PANEL_HEIGHT):
+        windows.console_write_at(left, top + row, saved_rows[row], handle)
+        windows.console_write_attributes(left, top + row, saved_colors[row], handle)
+    if input_mode != None:
+        windows.set_console_mode(input_handle, input_mode as windows.DWORD)
+    windows.console_set_attribute(screen.attributes as windows.DWORD, handle)
+    windows.console_set_cursor(screen.cursor_x, screen.cursor_y, handle)
+    windows.console_set_cursor_visible(cursor_visible, handle)
+    windows.console_set_title(old_title)
+    return 0

@@ -1602,6 +1602,18 @@ llvm::Value* IRGenerator::emitNarrowedAddress(llvm::IRBuilder<>& builder,
 
 llvm::Value* IRGenerator::emitIndex(llvm::IRBuilder<>& builder, const IndexExpr& expr) {
   const Type* objectType = resolveType(expr.object().resolvedType());
+  // A tuple is a value aggregate with a fixed member per element, so indexing
+  // it extracts a member instead of calling into the runtime.
+  if (objectType != nullptr && objectType->isGenericCtor("tuple") && expr.hasStart() &&
+      expr.start()->kind() == NodeKind::IntegerLiteral) {
+    llvm::Value* object = emitExpr(builder, expr.object());
+    if (object == nullptr) {
+      return nullptr;
+    }
+    const auto member =
+        static_cast<unsigned>(static_cast<const IntegerLiteral&>(*expr.start()).value());
+    return builder.CreateExtractValue(object, {member});
+  }
   if (objectType != nullptr && objectType->methodIndex("__getitem__") < 0) {
     objectType = objectType->valueType();
   }
@@ -5360,6 +5372,15 @@ llvm::Value* IRGenerator::emitExpr(llvm::IRBuilder<>& builder, const Expr& expr)
       if (field != nullptr && !field->llvmName.empty()) {
         return emitEnumUnit(builder, instanceType, enumTagFromField(field));
       }
+    }
+    // `pair.first` / `pair.second` read the leading tuple members.
+    if (instanceType != nullptr && instanceType->isGenericCtor("tuple") &&
+        (member.field() == "first" || member.field() == "second")) {
+      llvm::Value* object = emitExpr(builder, member.object());
+      if (object == nullptr) {
+        return nullptr;
+      }
+      return builder.CreateExtractValue(object, {member.field() == "first" ? 0u : 1u});
     }
     if (member.isUnboundMethod()) {
       const auto found = functions_.find(member.boundMethodLlvm());

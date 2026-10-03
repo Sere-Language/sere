@@ -1,0 +1,68 @@
+# `(A, B)` is the tuple spelling of `tuple[A, B]`, and a tuple's members are
+# readable by position (`t[0]`) and by name (`t.first`, `t.second`).
+
+
+def pair() -> (str, i32):
+    return ("answer", 42)
+
+
+def nested() -> (i32, (i32, str)):
+    return (1, (2, "inner"))
+
+
+def unpack() -> str:
+    first, second = pair()
+    return second as str
+
+
+def main() -> i32:
+    t: (str, i32) = pair()
+
+    # Positional access.
+    assert t[0] == "answer"
+    assert t[1] == 42
+
+    # Named access to the two leading members.
+    assert t.first == "answer"
+    assert t.second == 42
+
+    # Both type spellings name the same type, so they interoperate.
+    same: tuple[str, i32] = t
+    assert same.first == t[0]
+    assert pair().second == t.second
+
+    # A parenthesised type without a comma is just a grouping.
+    plain: (i32) = 7
+    assert plain == 7
+
+    # One element needs the trailing comma.
+    single: (str,) = ("only",)
+    assert single.first == "only"
+    assert single[0] == "only"
+
+    # Nested tuples index and name through each level.
+    deep: (i32, (i32, str)) = nested()
+    assert deep.first == 1
+    assert deep.second.first == 2
+    assert deep.second.second == "inner"
+    assert deep[1][1] == "inner"
+
+    # Tuples travel through containers and control flow.
+    pairs: list[(i32, i32)] = []
+    pairs.append((1, 2))
+    pairs.append((3, 4))
+    total: i32 = 0
+    for entry in pairs:
+        total = total + entry.first + entry[1]
+    assert total == 10
+
+    # Unpacking still reads the same members.
+    assert unpack() == 42
+
+    # A tuple built from values, not literals.
+    left: i32 = 5
+    right: str = "five"
+    built: (i32, str) = (left, right)
+    assert built.first == 5
+    assert built.second == "five"
+    return 0

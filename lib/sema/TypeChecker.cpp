@@ -2206,6 +2206,19 @@ const Type* TypeChecker::checkMember(MemberExpr& expr) {
     expr.setResolvedType(exported);
     return exported;
   }
+  // A tuple's members are positional, and `first`/`second` name the leading two.
+  if (objectType->isGenericCtor("tuple") &&
+      (expr.field() == "first" || expr.field() == "second")) {
+    const std::size_t index = expr.field() == "first" ? 0 : 1;
+    if (objectType->args().size() <= index) {
+      diagnostics_->error(expr.range(), quoteType(objectType) + " has no member '" +
+                                             expr.field() + "'");
+      return nullptr;
+    }
+    const Type* element = objectType->args()[index];
+    expr.setResolvedType(element);
+    return element;
+  }
   const RecordField* field = objectType->findField(expr.field());
   if (field != nullptr && field->isStatic && objectType->isEnum() &&
       !objectType->typeParams().empty() && expectedExprType_ != nullptr) {
@@ -2346,6 +2359,26 @@ const Type* TypeChecker::checkIndex(IndexExpr& expr) {
   const Type* indexType = checkExpr(*expr.start());
   if (indexType == nullptr) {
     return nullptr;
+  }
+  if (objectType->isGenericCtor("tuple")) {
+    // A tuple's members are fixed at compile time, so the index has to be a
+    // literal the checker can turn into a member position.
+    if (expr.start()->kind() != NodeKind::IntegerLiteral) {
+      diagnostics_->error(expr.start()->range(), "tuple index must be an integer literal");
+      diagnostics_->help("tuples hold fixed members; name one with `first` or `second`");
+      return nullptr;
+    }
+    const std::int64_t index = static_cast<const IntegerLiteral&>(*expr.start()).value();
+    if (index < 0 || static_cast<std::size_t>(index) >= objectType->args().size()) {
+      diagnostics_->error(expr.range(),
+                          "tuple index must be between 0 and " +
+                              std::to_string(objectType->args().size() - 1) + ", found " +
+                              std::to_string(index));
+      return nullptr;
+    }
+    const Type* element = objectType->args()[static_cast<std::size_t>(index)];
+    expr.setResolvedType(element);
+    return element;
   }
   if (objectType->isNamed("str")) {
     if (!indexType->isInteger()) {
