@@ -53,6 +53,18 @@ namespace {
   return static_cast<const NameExpr*>(&expr);
 }
 
+/// Runtime element kind for list search and equality: 1 strings, 2 f32, 3 f64,
+/// anything else compared bytewise. Shared with sere_list_equal.
+[[nodiscard]] int listCompareKind(const Type* element) {
+  if (element == nullptr) {
+    return 0;
+  }
+  return element->isNamed("str")   ? 1
+         : element->isNamed("f32") ? 2
+         : element->isNamed("f64") ? 3
+                                   : 0;
+}
+
 [[nodiscard]] bool recordHasTypeId(const Type* type) {
   return type != nullptr && type->isRecord() && !type->isEnum() && !type->isStruct();
 }
@@ -1949,23 +1961,31 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
     }
     if (name == "list.remove") {
       llvm::Function* fn = runtimeDecl(
-          "sere_list_remove_value", builder.getInt32Ty(), {builder.getPtrTy(), builder.getPtrTy()});
-      return i1(builder.CreateCall(fn, {object, slot(*expr.arguments()[0], elem)}));
+          "sere_list_remove_value", builder.getInt32Ty(),
+          {builder.getPtrTy(), builder.getPtrTy(), builder.getInt32Ty()});
+      return i1(builder.CreateCall(
+          fn, {object, slot(*expr.arguments()[0], elem), builder.getInt32(listCompareKind(elem))}));
     }
     if (name == "list.find" || name == "list.index") {
       llvm::Function* fn = runtimeDecl(
-          "sere_list_index_of", builder.getInt64Ty(), {builder.getPtrTy(), builder.getPtrTy()});
-      return builder.CreateCall(fn, {object, slot(*expr.arguments()[0], elem)});
+          "sere_list_index_of", builder.getInt64Ty(),
+          {builder.getPtrTy(), builder.getPtrTy(), builder.getInt32Ty()});
+      return builder.CreateCall(
+          fn, {object, slot(*expr.arguments()[0], elem), builder.getInt32(listCompareKind(elem))});
     }
     if (name == "list.count") {
       llvm::Function* fn = runtimeDecl(
-          "sere_list_count", builder.getInt64Ty(), {builder.getPtrTy(), builder.getPtrTy()});
-      return builder.CreateCall(fn, {object, slot(*expr.arguments()[0], elem)});
+          "sere_list_count", builder.getInt64Ty(),
+          {builder.getPtrTy(), builder.getPtrTy(), builder.getInt32Ty()});
+      return builder.CreateCall(
+          fn, {object, slot(*expr.arguments()[0], elem), builder.getInt32(listCompareKind(elem))});
     }
     if (name == "list.contains" || name == "list.has") {
       llvm::Function* fn = runtimeDecl(
-          "sere_list_contains", builder.getInt32Ty(), {builder.getPtrTy(), builder.getPtrTy()});
-      return i1(builder.CreateCall(fn, {object, slot(*expr.arguments()[0], elem)}));
+          "sere_list_contains", builder.getInt32Ty(),
+          {builder.getPtrTy(), builder.getPtrTy(), builder.getInt32Ty()});
+      return i1(builder.CreateCall(
+          fn, {object, slot(*expr.arguments()[0], elem), builder.getInt32(listCompareKind(elem))}));
     }
     if (name == "list.clear") {
       builder.CreateCall(runtimeDecl("sere_list_clear", builder.getVoidTy(), {builder.getPtrTy()}),
@@ -4287,10 +4307,13 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
                                                            builder.CreateExtractValue(left, {1})}),
                                        builder.getInt32(0));
     } else if (rightType != nullptr && rightType->isSequence()) {
-      llvm::Function* fn = runtimeDecl(
-          "sere_list_contains", builder.getInt32Ty(), {builder.getPtrTy(), builder.getPtrTy()});
+      llvm::Function* fn = runtimeDecl("sere_list_contains",
+                                       builder.getInt32Ty(),
+                                       {builder.getPtrTy(), builder.getPtrTy(),
+                                        builder.getInt32Ty()});
       contained = builder.CreateICmpNE(
-          builder.CreateCall(fn, {right, emitTempSlot(builder, left, leftType)}),
+          builder.CreateCall(fn, {right, emitTempSlot(builder, left, leftType),
+                                  builder.getInt32(listCompareKind(rightType->elementType()))}),
           builder.getInt32(0));
     } else if (rightType != nullptr && rightType->methodIndex("__contains__") >= 0) {
       llvm::Value* item = left;

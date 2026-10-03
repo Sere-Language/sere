@@ -94,6 +94,18 @@ namespace {
   return code;
 }
 
+/// Runtime comparison kind for list element search: 1 strings, 2 f32, 3 f64,
+/// anything else compared bytewise. Shared with sere_list_equal.
+[[nodiscard]] std::int32_t listCompareKind(const std::string& elementText) {
+  if (elementText == "str")
+    return 1;
+  if (elementText == "f32")
+    return 2;
+  if (elementText == "f64")
+    return 3;
+  return 0;
+}
+
 /// Key interpretation the runtime dict hashes with: 1 int32, 2 int64, 3 string,
 /// anything else compared bytewise.
 [[nodiscard]] std::int32_t dictKeyKindCode(const std::string& text) {
@@ -925,7 +937,10 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
         values_[&operation] = result;
       return result;
     }
-    if (operands[0]->type().kind() == serem::IRType::Kind::String) {
+    // The container (operand 1), not the search value (operand 0), decides the
+    // test: `needle in haystack` searches text, while `item in list` scans a
+    // list even when the item itself is a string.
+    if (operands[1]->type().kind() == serem::IRType::Kind::String) {
       llvm::Function* stringLength = module_->getFunction("strlen");
       if (stringLength == nullptr) {
         stringLength = llvm::Function::Create(
@@ -962,12 +977,14 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
         contains = llvm::Function::Create(
             llvm::FunctionType::get(
                 llvm::Type::getInt32Ty(*context_),
-                {llvm::PointerType::getUnqual(*context_), llvm::PointerType::getUnqual(*context_)},
+                {llvm::PointerType::getUnqual(*context_), llvm::PointerType::getUnqual(*context_),
+                 llvm::Type::getInt32Ty(*context_)},
                 false),
             llvm::Function::ExternalLinkage,
             "sere_list_contains",
             module_.get());
       }
+      const std::int32_t compareKind = listCompareKind(attribute(operation, "element"));
       llvm::Value* storage = nullptr;
       if (attribute(operation, "element") == "str") {
         llvm::StructType* stringType = llvm::StructType::get(
@@ -993,7 +1010,9 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
         builder_->builder.CreateStore(left, storage);
       }
       contained = builder_->builder.CreateICmpNE(
-          builder_->builder.CreateCall(contains, {right, storage}),
+          builder_->builder.CreateCall(
+              contains, {right, storage,
+                         llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_), compareKind)}),
           llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_), 0));
     }
     result = attribute(operation, "negated") == "true" ? builder_->builder.CreateNot(contained)
@@ -1172,8 +1191,12 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
             builder_->builder.CreateCall(runtime(functionName,
                                                  returnType,
                                                  {llvm::PointerType::getUnqual(*context_),
-                                                  llvm::PointerType::getUnqual(*context_)}),
-                                         {value, slot(item)});
+                                                  llvm::PointerType::getUnqual(*context_),
+                                                  llvm::Type::getInt32Ty(*context_)}),
+                                         {value, slot(item),
+                                          llvm::ConstantInt::get(
+                                              llvm::Type::getInt32Ty(*context_),
+                                              listCompareKind(attribute(operation, "element")))});
         return (name == "list.remove" || name == "list.contains" || name == "list.has")
                    ? builder_->builder.CreateICmpNE(call, llvm::ConstantInt::get(returnType, 0))
                    : call;
@@ -2030,7 +2053,6 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
                                          std::strtoll(attribute(operation, "length").c_str(),
                                                       nullptr, 10)))});
   } else if (opcode == "member.get") {
-    std::fprintf(stderr, "[Serem member.get] begin operands=%zu\\n", operands.size());
     unsigned index = 0;
     const std::string indexText = attribute(operation, "index");
     (void)std::from_chars(indexText.data(), indexText.data() + indexText.size(), index);
@@ -2042,20 +2064,11 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       result = type->isPointerTy() ? static_cast<llvm::Value*>(slot)
                                    : fromWord(ir.CreateLoad(ir.getInt64Ty(), slot), type);
     } else {
-      std::fprintf(stderr, "[Serem member.get] before object\\n");
       llvm::Value* object = operand(0);
-      std::fprintf(stderr, "[Serem member.get] after object %p\\n", static_cast<void*>(object));
       if (object != nullptr && object->getType()->isStructTy()) {
         result = builder_->builder.CreateExtractValue(object, {index});
       } else if (object != nullptr && operands[0]->type().pointee() != nullptr) {
-        std::fprintf(stderr, "[Serem member.get] before pointee\\n");
-        std::fprintf(stderr, "[Serem member.get] ptr type=%d pointee kind=%d index=%u\\n",
-                     static_cast<int>(operands[0]->type().kind()),
-                     static_cast<int>(operands[0]->type().pointee()->kind()),
-                     index);
         llvm::Type* record = lowerType(*operands[0]->type().pointee());
-        std::fprintf(stderr, "[Serem member.get] lowered record %p struct=%d\\n",
-                     static_cast<void*>(record), record->isStructTy());
         result = ir.CreateLoad(type, ir.CreateStructGEP(record, object, index));
       }
     }
@@ -2790,10 +2803,6 @@ std::unique_ptr<llvm::Module> SeremLLVMBackend::emit(const serem::IRModule& modu
     for (const auto& block : function->blocks()) {
       builder_->builder.SetInsertPoint(blockFor(function->name() + ":" + block->label()));
       for (const auto& operation : block->operations()) {
-        std::fprintf(stderr, "[Serem lower] %s:%s %s\\n",
-                     function->name().c_str(),
-                     block->label().c_str(),
-                     operation->opcode().c_str());
         (void)lowerValue(std::static_pointer_cast<serem::Value>(operation));
         if (builder_->builder.GetInsertBlock()->getTerminator() != nullptr)
           break;
@@ -2816,32 +2825,6 @@ std::unique_ptr<llvm::Module> SeremLLVMBackend::emit(const serem::IRModule& modu
   std::string verificationError;
   llvm::raw_string_ostream errors(verificationError);
   if (llvm::verifyModule(*module_, &errors)) {
-    const auto typeText = [](const llvm::Type* type) {
-      std::string text;
-      llvm::raw_string_ostream out(text);
-      type->print(out);
-      return out.str();
-    };
-    for (llvm::Function& function : *module_) {
-      const llvm::Type* returnType = function.getReturnType();
-      for (const llvm::BasicBlock& block : function) {
-        for (const llvm::Instruction& inst : block) {
-          if (const auto* ret = llvm::dyn_cast<llvm::ReturnInst>(&inst)) {
-            if (ret->getReturnValue() != nullptr &&
-                ret->getReturnValue()->getType() != returnType) {
-              fprintf(stderr, "[DBG] ret-type mismatch in function: @%s declared-return=%s bound-return=%s\n",
-                      function.getName().str().c_str(), typeText(returnType).c_str(),
-                      typeText(ret->getReturnValue()->getType()).c_str());
-              std::string body;
-              llvm::raw_string_ostream bodyOut(body);
-              function.print(bodyOut);
-              fwrite(body.data(), 1, body.size(), stderr);
-              fprintf(stderr, "\n[DBG] END FUNCTION\n");
-            }
-          }
-        }
-      }
-    }
     report("invalid Serem LLVM module: " + verificationError);
     return nullptr;
   }

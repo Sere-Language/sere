@@ -1399,6 +1399,44 @@ int32_t sere_list_contains_i32(void* list, int32_t value) {
   return 0;
 }
 
+/// Compares one stored list element against a candidate.
+///
+/// A `str` element is a SereStr (data, len) pair, so comparing the raw bytes
+/// would compare the buffer pointers instead of the text. `kind` follows the
+/// same encoding as sere_list_equal: 1 string, 2 f32, 3 f64, anything else
+/// compared bytewise.
+static int sere_list_element_equal(const char* element, const char* candidate, int64_t stride,
+                                   int32_t kind) {
+  if (kind == 1) {
+    SereStr left, right;
+    memcpy(&left, element, sizeof(left));
+    memcpy(&right, candidate, sizeof(right));
+    if (left.len != right.len) {
+      return 0;
+    }
+    if (left.len <= 0) {
+      return 1;
+    }
+    if (left.data == NULL || right.data == NULL) {
+      return left.data == right.data;
+    }
+    return memcmp(left.data, right.data, (size_t)left.len) == 0;
+  }
+  if (kind == 2) {
+    float left, right;
+    memcpy(&left, element, sizeof(left));
+    memcpy(&right, candidate, sizeof(right));
+    return left == right;
+  }
+  if (kind == 3) {
+    double left, right;
+    memcpy(&left, element, sizeof(left));
+    memcpy(&right, candidate, sizeof(right));
+    return left == right;
+  }
+  return memcmp(element, candidate, (size_t)stride) == 0;
+}
+
 int32_t sere_list_equal(void* left, void* right, int32_t kind) {
   const SereList* lhs = (const SereList*)left;
   const SereList* rhs = (const SereList*)right;
@@ -1429,14 +1467,14 @@ int32_t sere_list_equal(void* left, void* right, int32_t kind) {
   return 1;
 }
 
-int32_t sere_list_contains(void* list, const void* item) {
+int32_t sere_list_contains(void* list, const void* item, int32_t kind) {
   SereList* typed = (SereList*)list;
   if (typed == NULL || item == NULL || typed->data == NULL) {
     return 0;
   }
   for (int64_t index = 0; index < typed->len; ++index) {
-    if (memcmp((char*)typed->data + (size_t)(index * typed->stride), item,
-               (size_t)typed->stride) == 0) {
+    if (sere_list_element_equal((char*)typed->data + (size_t)(index * typed->stride),
+                                (const char*)item, typed->stride, kind)) {
       return 1;
     }
   }
@@ -1528,14 +1566,14 @@ void sere_list_pop_at(void* list, int64_t index, void* out_item) {
   sere_list_remove(list, index);
 }
 
-int32_t sere_list_remove_value(void* list, const void* item) {
+int32_t sere_list_remove_value(void* list, const void* item, int32_t kind) {
   SereList* typed = (SereList*)list;
   if (typed == NULL || item == NULL) {
     return 0;
   }
   for (int64_t index = 0; index < typed->len; ++index) {
-    if (memcmp((char*)typed->data + (size_t)(index * typed->stride), item,
-               (size_t)typed->stride) == 0) {
+    if (sere_list_element_equal((char*)typed->data + (size_t)(index * typed->stride),
+                                (const char*)item, typed->stride, kind)) {
       sere_list_remove(list, index);
       return 1;
     }
@@ -1543,29 +1581,29 @@ int32_t sere_list_remove_value(void* list, const void* item) {
   return 0;
 }
 
-int64_t sere_list_index_of(void* list, const void* item) {
+int64_t sere_list_index_of(void* list, const void* item, int32_t kind) {
   SereList* typed = (SereList*)list;
   if (typed == NULL || item == NULL) {
     return -1;
   }
   for (int64_t index = 0; index < typed->len; ++index) {
-    if (memcmp((char*)typed->data + (size_t)(index * typed->stride), item,
-               (size_t)typed->stride) == 0) {
+    if (sere_list_element_equal((char*)typed->data + (size_t)(index * typed->stride),
+                                (const char*)item, typed->stride, kind)) {
       return index;
     }
   }
   return -1;
 }
 
-int64_t sere_list_count(void* list, const void* item) {
+int64_t sere_list_count(void* list, const void* item, int32_t kind) {
   SereList* typed = (SereList*)list;
   if (typed == NULL || item == NULL) {
     return 0;
   }
   int64_t count = 0;
   for (int64_t index = 0; index < typed->len; ++index) {
-    if (memcmp((char*)typed->data + (size_t)(index * typed->stride), item,
-               (size_t)typed->stride) == 0) {
+    if (sere_list_element_equal((char*)typed->data + (size_t)(index * typed->stride),
+                                (const char*)item, typed->stride, kind)) {
       count += 1;
     }
   }

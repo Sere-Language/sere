@@ -121,9 +121,9 @@ void sere_list_insert(void* list, int64_t index, const void* item);
 void sere_list_remove(void* list, int64_t index);
 void sere_list_pop(void* list, void* out_item);
 void sere_list_pop_at(void* list, int64_t index, void* out_item);
-int32_t sere_list_remove_value(void* list, const void* item);
-int64_t sere_list_index_of(void* list, const void* item);
-int64_t sere_list_count(void* list, const void* item);
+int32_t sere_list_remove_value(void* list, const void* item, int32_t kind);
+int64_t sere_list_index_of(void* list, const void* item, int32_t kind);
+int64_t sere_list_count(void* list, const void* item, int32_t kind);
 void sere_list_clear(void* list);
 void* sere_list_copy(void* list);
 void sere_list_reverse(void* list);
@@ -185,7 +185,8 @@ int32_t sere_parse_float(const char* data, int64_t len, int32_t is_f32, double* 
 int32_t sere_parse_bool(const char* data, int64_t len, int32_t* out);
 int32_t sere_parse_none(const char* data, int64_t len);
 
-int32_t sere_list_contains(void* list, const void* item);
+// Element kind: 0 raw scalar/pointer bytes, 1 strings, 2 f32, 3 f64.
+int32_t sere_list_contains(void* list, const void* item, int32_t kind);
 // Element kind: 0 raw scalar/pointer bytes, 1 strings, 2 f32, 3 f64.
 int32_t sere_list_equal(void* left, void* right, int32_t kind);
 void* sere_list_concat(void* left, void* right);

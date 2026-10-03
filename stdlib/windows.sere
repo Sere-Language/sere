@@ -1,7 +1,588 @@
 # Win32 API. Import with: import windows
-# Real on Windows; stubs elsewhere. Gate extra code with:
+#
+# A low-level Windows platform layer: thin, typed wrappers over the Win32
+# primitives other Sere libraries build on (console/terminal toolkits,
+# process and pipe plumbing, synchronization, native windows). It is real on
+# Windows and safe stubs elsewhere, so gate host-specific use with:
+#
 #   if __windows__:
 #       windows.message_box("hi")
+#
+# Design rules:
+#   * Native work lives in C (runtime/sere_win.c); Sere wrappers are thin.
+#   * Strings cross the boundary as UTF-8 and use the W Win32 entry points.
+#   * Pointer-sized Win32 values (WPARAM/LPARAM/LRESULT/HANDLE) are never
+#     truncated into i32.
+#   * Every wrapper returns a predictable failure (False/None/zero) instead of
+#     crashing when the platform cannot satisfy it.
+
+import bytes
+
+# ---------------------------------------------------------------------------
+# Fixed-width Win32 aliases (section 18). Sere targets 64-bit Windows, so the
+# pointer-sized names are 64-bit.
+# ---------------------------------------------------------------------------
+type Handle = Ptr[i8]
+type WindowHandle = Handle
+type PseudoConsole = Handle
+type DWORD = u32
+type WORD = u16
+type BYTE = u8
+type BOOL = i32
+type UINT = u32
+type INT = i32
+type LONG = i32
+type ULONG = u32
+type WPARAM = u64
+type LPARAM = i64
+type LRESULT = i64
+type SIZE_T = u64
+type HWND = WindowHandle
+
+# ---------------------------------------------------------------------------
+# Enums
+# ---------------------------------------------------------------------------
+
+enum MessageBoxKind:
+    """Win32 message-box button combinations."""
+    Ok = 0
+    OkCancel = 1
+    AbortRetryIgnore = 2
+    YesNoCancel = 3
+    YesNo = 4
+    RetryCancel = 5
+
+enum MessageBoxIcon:
+    """Win32 message-box icon flags."""
+    None = 0 # type: ignore
+    Error = 16
+    Question = 32
+    Warning = 48
+    Info = 64
+
+enum VirtualKey:
+    """Win32 virtual-key codes (subset with stable documented values)."""
+    LButton = 1
+    RButton = 2
+    Cancel = 3
+    MButton = 4
+    XButton1 = 5
+    XButton2 = 6
+    Backspace = 8
+    Tab = 9
+    Clear = 12
+    Enter = 13
+    Shift = 16
+    Control = 17
+    Alt = 18
+    Pause = 19
+    CapsLock = 20
+    Escape = 27
+    Space = 32
+    PageUp = 33
+    PageDown = 34
+    End = 35
+    Home = 36
+    Left = 37
+    Up = 38
+    Right = 39
+    Down = 40
+    Select = 41
+    Print = 42
+    Execute = 43
+    PrintScreen = 44
+    Insert = 45
+    Delete = 46
+    Help = 47
+    Key0 = 48
+    Key1 = 49
+    Key2 = 50
+    Key3 = 51
+    Key4 = 52
+    Key5 = 53
+    Key6 = 54
+    Key7 = 55
+    Key8 = 56
+    Key9 = 57
+    A = 65
+    B = 66
+    C = 67
+    D = 68
+    E = 69
+    F = 70
+    G = 71
+    H = 72
+    I = 73
+    J = 74
+    K = 75
+    L = 76
+    M = 77
+    N = 78
+    O = 79
+    P = 80
+    Q = 81
+    R = 82
+    S = 83
+    T = 84
+    U = 85
+    V = 86
+    W = 87
+    X = 88
+    Y = 89
+    Z = 90
+    LeftWindows = 91
+    RightWindows = 92
+    Apps = 93
+    Numpad0 = 96
+    Numpad1 = 97
+    Numpad2 = 98
+    Numpad3 = 99
+    Numpad4 = 100
+    Numpad5 = 101
+    Numpad6 = 102
+    Numpad7 = 103
+    Numpad8 = 104
+    Numpad9 = 105
+    Multiply = 106
+    Add = 107
+    Separator = 108
+    Subtract = 109
+    Decimal = 110
+    Divide = 111
+    F1 = 112
+    F2 = 113
+    F3 = 114
+    F4 = 115
+    F5 = 116
+    F6 = 117
+    F7 = 118
+    F8 = 119
+    F9 = 120
+    F10 = 121
+    F11 = 122
+    F12 = 123
+    F13 = 124
+    F14 = 125
+    F15 = 126
+    F16 = 127
+    F17 = 128
+    F18 = 129
+    F19 = 130
+    F20 = 131
+    F21 = 132
+    F22 = 133
+    F23 = 134
+    F24 = 135
+    NumLock = 144
+    ScrollLock = 145
+    LeftShift = 160
+    RightShift = 161
+    LeftControl = 162
+    RightControl = 163
+    LeftMenu = 164
+    RightMenu = 165
+    Oem1 = 186
+    OemPlus = 187
+    OemComma = 188
+    OemMinus = 189
+    OemPeriod = 190
+    Oem2 = 191
+    Oem3 = 192
+    Oem4 = 219
+    Oem5 = 220
+    Oem6 = 221
+    Oem7 = 222
+    Oem8 = 223
+    Oem102 = 226
+
+enum StdHandle:
+    """GetStdHandle/SetStdHandle constant selectors."""
+    Input = -10
+    Output = -11
+    Error = -12
+
+enum ConsoleEventKind:
+    """Kind tag of a decoded console INPUT_RECORD."""
+    Unknown = 0
+    Key = 1
+    Mouse = 2
+    WindowBufferSize = 3
+    Focus = 4
+    Menu = 5
+
+enum HandleKind:
+    """Classification of a kernel handle from GetFileType."""
+    Unknown = 0
+    Disk = 1
+    Character = 2
+    Pipe = 3
+
+enum WaitResult:
+    """WaitForSingleObject/WaitForMultipleObjects result codes."""
+    Object0 = 0
+    Abandoned = 128
+    IoCompletion = 192
+    Timeout = 258
+    Failed = 4294967295
+
+enum ShowWindowCommand:
+    """ShowWindow nCmdShow values."""
+    Hide = 0
+    Shownormal = 1
+    Showminimized = 2
+    Showmaximized = 3
+    Shownoactivate = 4
+    Show = 5
+    Minimize = 6
+    Showminnoactive = 7
+    Showna = 8
+    Restore = 9
+    Showdefault = 10
+
+enum WindowMessage:
+    """Common Win32 window messages with their header values."""
+    Null = 0
+    Create = 1
+    Destroy = 2
+    Move = 3
+    Size = 5
+    Activate = 6
+    SetFocus = 7
+    KillFocus = 8
+    Enable = 10
+    SetRedraw = 11
+    SetText = 12
+    GetText = 13
+    GetTextLength = 14
+    Paint = 15
+    Close = 16
+    Quit = 18
+    EraseBkgnd = 20
+    KeyDown = 256
+    KeyUp = 257
+    Char = 258
+    SysKeyDown = 260
+    SysKeyUp = 261
+    Command = 273
+    MouseMove = 512
+    LButtonDown = 513
+    LButtonUp = 514
+    RButtonDown = 516
+    RButtonUp = 517
+    MButtonDown = 519
+    MButtonUp = 520
+    MouseWheel = 522
+    MouseHWheel = 526
+    SysCommand = 274
+    Timer = 275
+    EnterSizeMove = 561
+    ExitSizeMove = 562
+    User = 1024
+    App = 32768
+
+# ---------------------------------------------------------------------------
+# Constants: standard handles, code pages
+# ---------------------------------------------------------------------------
+const STD_INPUT_HANDLE: i32 = -10
+const STD_OUTPUT_HANDLE: i32 = -11
+const STD_ERROR_HANDLE: i32 = -12
+const ATTACH_PARENT_PROCESS: DWORD = 0xFFFFFFFF
+const CP_UTF8: DWORD = 65001
+
+# ---------------------------------------------------------------------------
+# Constants: GetFileType
+# ---------------------------------------------------------------------------
+const FILE_TYPE_UNKNOWN: DWORD = 0x0000
+const FILE_TYPE_DISK: DWORD = 0x0001
+const FILE_TYPE_CHAR: DWORD = 0x0002
+const FILE_TYPE_PIPE: DWORD = 0x0003
+
+# ---------------------------------------------------------------------------
+# Constants: console input modes (GetConsoleMode/SetConsoleMode)
+# ---------------------------------------------------------------------------
+const ENABLE_PROCESSED_INPUT: DWORD = 0x0001
+const ENABLE_LINE_INPUT: DWORD = 0x0002
+const ENABLE_ECHO_INPUT: DWORD = 0x0004
+const ENABLE_WINDOW_INPUT: DWORD = 0x0008
+const ENABLE_MOUSE_INPUT: DWORD = 0x0010
+const ENABLE_INSERT_MODE: DWORD = 0x0020
+const ENABLE_QUICK_EDIT_MODE: DWORD = 0x0040
+const ENABLE_EXTENDED_FLAGS: DWORD = 0x0080
+const ENABLE_AUTO_POSITION: DWORD = 0x0100
+const ENABLE_VIRTUAL_TERMINAL_INPUT: DWORD = 0x0200
+
+# ---------------------------------------------------------------------------
+# Constants: console output modes
+# ---------------------------------------------------------------------------
+const ENABLE_PROCESSED_OUTPUT: DWORD = 0x0001
+const ENABLE_WRAP_AT_EOL_OUTPUT: DWORD = 0x0002
+const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004
+const DISABLE_NEWLINE_AUTO_RETURN: DWORD = 0x0008
+const ENABLE_LVB_GRID_WORLDWIDE: DWORD = 0x0010
+
+# ---------------------------------------------------------------------------
+# Constants: console text attributes
+# ---------------------------------------------------------------------------
+const FOREGROUND_BLUE: DWORD = 0x0001
+const FOREGROUND_GREEN: DWORD = 0x0002
+const FOREGROUND_RED: DWORD = 0x0004
+const FOREGROUND_INTENSITY: DWORD = 0x0008
+const BACKGROUND_BLUE: DWORD = 0x0010
+const BACKGROUND_GREEN: DWORD = 0x0020
+const BACKGROUND_RED: DWORD = 0x0040
+const BACKGROUND_INTENSITY: DWORD = 0x0080
+const COMMON_LVB_LEADING_BYTE: DWORD = 0x0100
+const COMMON_LVB_TRAILING_BYTE: DWORD = 0x0200
+const COMMON_LVB_GRID_HORIZONTAL: DWORD = 0x0400
+const COMMON_LVB_GRID_LVERTICAL: DWORD = 0x0800
+const COMMON_LVB_GRID_RVERTICAL: DWORD = 0x1000
+const COMMON_LVB_REVERSE_VIDEO: DWORD = 0x4000
+const COMMON_LVB_UNDERSCORE: DWORD = 0x8000
+
+# ---------------------------------------------------------------------------
+# Constants: control-key state (KEY_EVENT_RECORD.dwControlKeyState)
+# ---------------------------------------------------------------------------
+const RIGHT_ALT_PRESSED: DWORD = 0x0001
+const LEFT_ALT_PRESSED: DWORD = 0x0002
+const RIGHT_CTRL_PRESSED: DWORD = 0x0004
+const LEFT_CTRL_PRESSED: DWORD = 0x0008
+const SHIFT_PRESSED: DWORD = 0x0010
+const NUMLOCK_ON: DWORD = 0x0020
+const SCROLLLOCK_ON: DWORD = 0x0040
+const CAPSLOCK_ON: DWORD = 0x0080
+const ENHANCED_KEY: DWORD = 0x0100
+
+# ---------------------------------------------------------------------------
+# Constants: console mouse buttons and event flags
+# ---------------------------------------------------------------------------
+const FROM_LEFT_1ST_BUTTON_PRESSED: DWORD = 0x0001
+const RIGHTMOST_BUTTON_PRESSED: DWORD = 0x0002
+const FROM_LEFT_2ND_BUTTON_PRESSED: DWORD = 0x0004
+const FROM_LEFT_3RD_BUTTON_PRESSED: DWORD = 0x0008
+const FROM_LEFT_4TH_BUTTON_PRESSED: DWORD = 0x0010
+const MOUSE_MOVED: DWORD = 0x0001
+const DOUBLE_CLICK: DWORD = 0x0002
+const MOUSE_WHEELED: DWORD = 0x0004
+const MOUSE_HWHEELED: DWORD = 0x0008
+
+# ---------------------------------------------------------------------------
+# Constants: handle flags
+# ---------------------------------------------------------------------------
+const HANDLE_FLAG_INHERIT: DWORD = 0x00000001
+const HANDLE_FLAG_PROTECT_FROM_CLOSE: DWORD = 0x00000002
+const DUPLICATE_CLOSE_SOURCE: DWORD = 0x00000001
+const DUPLICATE_SAME_ACCESS: DWORD = 0x00000002
+
+# ---------------------------------------------------------------------------
+# Constants: process access rights
+# ---------------------------------------------------------------------------
+const PROCESS_TERMINATE: DWORD = 0x0001
+const PROCESS_CREATE_THREAD: DWORD = 0x0002
+const PROCESS_VM_OPERATION: DWORD = 0x0008
+const PROCESS_VM_READ: DWORD = 0x0010
+const PROCESS_VM_WRITE: DWORD = 0x0020
+const PROCESS_DUP_HANDLE: DWORD = 0x0040
+const PROCESS_CREATE_PROCESS: DWORD = 0x0080
+const PROCESS_SET_QUOTA: DWORD = 0x0100
+const PROCESS_SET_INFORMATION: DWORD = 0x0200
+const PROCESS_QUERY_INFORMATION: DWORD = 0x0400
+const PROCESS_SUSPEND_RESUME: DWORD = 0x0800
+const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000
+const SYNCHRONIZE: DWORD = 0x00100000
+const PROCESS_ALL_ACCESS: DWORD = 0x001F0FFF
+
+# ---------------------------------------------------------------------------
+# Constants: wait
+# ---------------------------------------------------------------------------
+const INFINITE: DWORD = 0xFFFFFFFF
+const WAIT_OBJECT_0: DWORD = 0
+const WAIT_ABANDONED: DWORD = 0x80
+const WAIT_TIMEOUT: DWORD = 0x102
+const WAIT_IO_COMPLETION: DWORD = 0xC0
+const WAIT_FAILED: DWORD = 0xFFFFFFFF
+
+# ---------------------------------------------------------------------------
+# Constants: map virtual key
+# ---------------------------------------------------------------------------
+const MAPVK_VK_TO_VSC: DWORD = 0
+const MAPVK_VSC_TO_VK: DWORD = 1
+const MAPVK_VK_TO_CHAR: DWORD = 2
+const MAPVK_VSC_TO_VK_EX: DWORD = 3
+const MAPVK_VK_TO_VSC_EX: DWORD = 4
+
+# ---------------------------------------------------------------------------
+# Constants: window styles
+# ---------------------------------------------------------------------------
+const WS_OVERLAPPED: DWORD = 0x00000000
+const WS_CAPTION: DWORD = 0x00C00000
+const WS_SYSMENU: DWORD = 0x00080000
+const WS_THICKFRAME: DWORD = 0x00040000
+const WS_MINIMIZEBOX: DWORD = 0x00020000
+const WS_MAXIMIZEBOX: DWORD = 0x00010000
+const WS_OVERLAPPEDWINDOW: DWORD = 0x00CF0000
+const WS_POPUP: DWORD = 0x80000000
+const WS_CHILD: DWORD = 0x40000000
+const WS_MINIMIZE: DWORD = 0x20000000
+const WS_VISIBLE: DWORD = 0x10000000
+const WS_DISABLED: DWORD = 0x08000000
+const WS_CLIPSIBLINGS: DWORD = 0x04000000
+const WS_CLIPCHILDREN: DWORD = 0x02000000
+const WS_MAXIMIZE: DWORD = 0x01000000
+const WS_BORDER: DWORD = 0x00800000
+const WS_DLGFRAME: DWORD = 0x00400000
+const WS_VSCROLL: DWORD = 0x00200000
+const WS_HSCROLL: DWORD = 0x00100000
+const WS_EX_TOPMOST: DWORD = 0x00000008
+const WS_EX_TRANSPARENT: DWORD = 0x00000020
+const WS_EX_TOOLWINDOW: DWORD = 0x00000080
+const WS_EX_WINDOWEDGE: DWORD = 0x00000100
+const WS_EX_CLIENTEDGE: DWORD = 0x00000200
+const WS_EX_APPWINDOW: DWORD = 0x00040000
+const WS_EX_LAYERED: DWORD = 0x00080000
+const WS_EX_NOACTIVATE: DWORD = 0x08000000
+
+# ---------------------------------------------------------------------------
+# Constants: SetWindowPos flags, z-order anchors, PeekMessage flags
+# ---------------------------------------------------------------------------
+const SWP_NOSIZE: DWORD = 0x0001
+const SWP_NOMOVE: DWORD = 0x0002
+const SWP_NOZORDER: DWORD = 0x0004
+const SWP_NOREDRAW: DWORD = 0x0008
+const SWP_NOACTIVATE: DWORD = 0x0010
+const SWP_FRAMECHANGED: DWORD = 0x0020
+const SWP_SHOWWINDOW: DWORD = 0x0040
+const SWP_HIDEWINDOW: DWORD = 0x0080
+const SWP_NOCOPYBITS: DWORD = 0x0100
+const SWP_NOOWNERZORDER: DWORD = 0x0200
+const SWP_NOSENDCHANGING: DWORD = 0x0400
+
+const ANCHOR_TOP: i32 = 0
+const ANCHOR_BOTTOM: i32 = 1
+const ANCHOR_TOPMOST: i32 = 2
+const ANCHOR_NOTOPMOST: i32 = 3
+
+const PM_NOREMOVE: DWORD = 0x0000
+const PM_REMOVE: DWORD = 0x0001
+const PM_NOYIELD: DWORD = 0x0002
+
+# ---------------------------------------------------------------------------
+# Constants: message-loop result codes from get_message/peek_message
+# ---------------------------------------------------------------------------
+const MESSAGE_ERROR: i32 = -1
+const MESSAGE_QUIT: i32 = 0
+const MESSAGE_READY: i32 = 1
+
+# ---------------------------------------------------------------------------
+# Structs
+# ---------------------------------------------------------------------------
+
+struct Point:
+    """A screen coordinate pair (desktop cursor space)."""
+    x: i32
+    y: i32
+
+struct Size:
+    """A width and height pair."""
+    width: i32
+    height: i32
+
+struct Rect:
+    """A rectangle in left/top/right/bottom coordinates."""
+    left: i32
+    top: i32
+    right: i32
+    bottom: i32
+
+struct ConsoleCoord:
+    """A console character-cell coordinate."""
+    x: i32
+    y: i32
+
+struct ConsoleRect:
+    """A console character-cell rectangle (inclusive corners)."""
+    left: i32
+    top: i32
+    right: i32
+    bottom: i32
+
+struct ConsoleScreenInfo:
+    """Decoded CONSOLE_SCREEN_BUFFER_INFO."""
+    buffer_width: i32
+    buffer_height: i32
+    cursor_x: i32
+    cursor_y: i32
+    attributes: i32
+    window_left: i32
+    window_top: i32
+    window_right: i32
+    window_bottom: i32
+    max_width: i32
+    max_height: i32
+
+struct KeyEvent:
+    """Decoded KEY_EVENT_RECORD."""
+    key_down: bool
+    repeat_count: i32
+    virtual_key: i32
+    scan_code: i32
+    char_code: i32
+    control_state: i32
+
+struct MouseEvent:
+    """Decoded MOUSE_EVENT_RECORD."""
+    x: i32
+    y: i32
+    button_state: i32
+    control_state: i32
+    flags: i32
+
+struct ConsoleInputEvent:
+    """One decoded console INPUT_RECORD.
+
+    `kind` selects which fields carry meaning; the others are zero:
+
+      * Key              -> key_down, repeat_count, virtual_key, scan_code,
+                            char_code, control_state
+      * Mouse            -> mouse_x, mouse_y, button_state, control_state,
+                            event_flags
+      * WindowBufferSize -> size_x, size_y
+      * Focus            -> focus_set
+      * Menu             -> menu_command
+    """
+    kind: ConsoleEventKind
+    key_down: bool
+    repeat_count: i32
+    virtual_key: i32
+    scan_code: i32
+    char_code: i32
+    control_state: i32
+    mouse_x: i32
+    mouse_y: i32
+    button_state: i32
+    event_flags: i32
+    size_x: i32
+    size_y: i32
+    focus_set: bool
+    menu_command: i32
+
+struct WindowMessageEvent:
+    """A decoded Win32 MSG."""
+    window: WindowHandle
+    message: DWORD
+    wparam: WPARAM
+    lparam: LPARAM
+    time: DWORD
+    x: i32
+    y: i32
+
+struct Pipe:
+    """A read/write pair returned by create_pipe."""
+    read: Handle
+    write: Handle
+
+# ---------------------------------------------------------------------------
+# Core / identity / desktop / paths (existing public API)
+# ---------------------------------------------------------------------------
 
 extern "C" "sere_win_available"
 def _available() -> i32
@@ -16,8 +597,16 @@ def _beep(freq: i32, ms: i32) -> i32
 """Play a Windows system beep."""
 
 extern "C" "sere_win_last_error"
-def last_error() -> i32
-"""Return the last Windows error code."""
+def last_error() -> DWORD
+"""Return the last Windows error code (Win32 GetLastError)."""
+
+extern "C" "sere_win_set_last_error"
+def set_last_error(code: DWORD) -> void
+"""Set the calling thread's last-error code."""
+
+extern "C" "sere_win_error_message"
+def error_message(code: DWORD) -> str
+"""Format a Win32 error code, with trailing whitespace trimmed."""
 
 extern "C" "sere_win_computer_name"
 def computer_name() -> str
@@ -29,15 +618,15 @@ def user_name() -> str
 
 extern "C" "sere_win_cursor_x"
 def cursor_x() -> i32
-"""Return the cursor x coordinate."""
+"""Return the desktop cursor x coordinate."""
 
 extern "C" "sere_win_cursor_y"
 def cursor_y() -> i32
-"""Return the cursor y coordinate."""
+"""Return the desktop cursor y coordinate."""
 
 extern "C" "sere_win_set_cursor"
 def _set_cursor(x: i32, y: i32) -> i32
-"""Set the cursor screen coordinates."""
+"""Set the desktop cursor screen coordinates."""
 
 extern "C" "sere_win_screen_width"
 def screen_width() -> i32
@@ -46,6 +635,14 @@ def screen_width() -> i32
 extern "C" "sere_win_screen_height"
 def screen_height() -> i32
 """Return the primary screen height."""
+
+extern "C" "sere_win_virtual_screen_width"
+def virtual_screen_width() -> i32
+"""Return the virtual screen width."""
+
+extern "C" "sere_win_virtual_screen_height"
+def virtual_screen_height() -> i32
+"""Return the virtual screen height."""
 
 extern "C" "sere_win_clipboard_get"
 def clipboard_get() -> str
@@ -56,11 +653,15 @@ def _clipboard_set(text: str) -> i32
 """Set the system clipboard text."""
 
 extern "C" "sere_win_foreground"
-def foreground() -> Ptr[i8]
+def foreground() -> WindowHandle
 """Return the foreground window handle."""
 
+extern "C" "sere_win_foreground_title"
+def foreground_title() -> str
+"""Return the foreground window title."""
+
 extern "C" "sere_win_window_text"
-def window_text(hwnd: Ptr[i8]) -> str
+def window_text(hwnd: WindowHandle) -> str
 """Return the text of a window."""
 
 extern "C" "sere_win_debug"
@@ -73,15 +674,19 @@ def _open(path: str) -> i32
 
 extern "C" "sere_win_process_id"
 def process_id() -> i32
-"""Return the foreground process ID."""
+"""Return the current process ID."""
 
 extern "C" "sere_win_thread_id"
 def thread_id() -> i32
-"""Return the foreground thread ID."""
+"""Return the current thread ID."""
 
 extern "C" "sere_win_tick_count"
 def tick_count() -> i32
-"""Return the Windows tick count."""
+"""Return the low 32 bits of the Windows tick count."""
+
+extern "C" "sere_win_tick_count64"
+def tick_count64() -> u64
+"""Return the 64-bit Windows tick count in milliseconds."""
 
 extern "C" "sere_win_sleep"
 def _sleep(milliseconds: i32) -> void
@@ -123,99 +728,20 @@ extern "C" "sere_win_full_path"
 def full_path(path: str) -> str
 """Return the fully qualified Windows path."""
 
-extern "C" "sere_win_foreground_title"
-def foreground_title() -> str
-"""Return the foreground window title."""
-
-extern "C" "sere_win_virtual_screen_width"
-def virtual_screen_width() -> i32
-"""Return the virtual screen width."""
-
-extern "C" "sere_win_virtual_screen_height"
-def virtual_screen_height() -> i32
-"""Return the virtual screen height."""
-
-extern "C" "sere_win_key_down"
-def _key_down(virtual_key: i32) -> i32
-"""Test whether a virtual key is pressed."""
-
-extern "C" "sere_win_show_cursor"
-def _show_cursor(visible: i32) -> i32
-"""Show or hide the Windows cursor."""
-
 extern "C" "sere_win_os_version"
 def os_version() -> str
 """Return the Windows OS version."""
 
-enum MessageBoxKind:
-    """Win32 message-box button combinations."""
-    Ok = 0
-    OkCancel = 1
-    AbortRetryIgnore = 2
-    YesNoCancel = 3
-    YesNo = 4
-    RetryCancel = 5
-
-enum MessageBoxIcon:
-    """Win32 message-box icon flags."""
-    None = 0 # type: ignore
-    Error = 16
-    Question = 32
-    Warning = 48
-    Info = 64
-
-enum VirtualKey:
-    """Common Win32 virtual-key codes."""
-    Backspace = 8
-    Tab = 9
-    Enter = 13
-    Escape = 27
-    Space = 32
-    Left = 37
-    Up = 38
-    Right = 39
-    Down = 40
-    Insert = 45
-    Delete = 46
-    Home = 36
-    End = 35
-    PageUp = 33
-    PageDown = 34
-    Shift = 16
-    Control = 17
-    Alt = 18
-    Windows = 91
-    F1 = 112
-    F2 = 113
-    F3 = 114
-    F4 = 115
-    F5 = 116
-    F6 = 117
-    F7 = 118
-    F8 = 119
-    F9 = 120
-    F10 = 121
-    F11 = 122
-    F12 = 123
-
-struct Point:
-    """A screen coordinate pair."""
-    x: i32
-    y: i32
-
-struct Size:
-    """A width and height pair."""
-    width: i32
-    height: i32
-
-type Handle = Ptr[i8]
+extern "C" "sere_win_show_cursor"
+def _show_cursor(visible: i32) -> i32
+"""Show or hide the desktop cursor."""
 
 def available() -> bool:
     """Return whether the Windows API is available."""
     return _available() as bool
 
 def message_box(text: str, title: str = "Sere", kind: i32 = 0) -> i32:
-    """Display a native message box."""
+    """Display a native message box and return the pressed button id."""
     return _message_box(text, title, kind)
 
 def alert(text: str, title: str, kind: MessageBoxKind, icon: MessageBoxIcon) -> i32:
@@ -227,16 +753,20 @@ def beep(freq: i32, ms: i32) -> bool:
     return _beep(freq, ms) as bool
 
 def set_cursor(x: i32, y: i32) -> bool:
-    """Move the cursor to screen coordinates."""
+    """Move the desktop cursor to screen coordinates."""
     return _set_cursor(x, y) as bool
 
 def cursor() -> Point:
-    """Return the current cursor position."""
+    """Return the desktop cursor position."""
     return Point(cursor_x(), cursor_y())
 
 def screen() -> Size:
     """Return the primary screen size."""
     return Size(screen_width(), screen_height())
+
+def virtual_screen() -> Size:
+    """Return the virtual desktop size."""
+    return Size(virtual_screen_width(), virtual_screen_height())
 
 def clipboard_set(text: str) -> bool:
     """Set the system clipboard text."""
@@ -270,14 +800,1168 @@ def delete_file(path: str) -> bool:
     """Delete a file."""
     return _delete_file(path) as bool
 
-def key_down(virtual_key: i32) -> bool:
-    """Return whether a virtual key is pressed."""
-    return _key_down(virtual_key) as bool
-
 def show_cursor(visible: bool) -> bool:
-    """Show or hide the cursor."""
+    """Show or hide the desktop cursor."""
     return _show_cursor(visible as i32) as bool
 
-def virtual_screen() -> Size:
-    """Return the virtual desktop size."""
-    return Size(virtual_screen_width(), virtual_screen_height())
+# ---------------------------------------------------------------------------
+# Handles
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_win_handle_valid"
+def _handle_valid(handle: Handle) -> i32
+"""Test whether a handle is neither NULL nor INVALID_HANDLE_VALUE."""
+
+extern "C" "sere_win_handle_is_null"
+def _handle_is_null(handle: Handle) -> i32
+"""Test whether a handle is NULL."""
+
+extern "C" "sere_win_close_handle"
+def _close_handle(handle: Handle) -> i32
+"""Close a kernel handle."""
+
+extern "C" "sere_win_duplicate_handle"
+def _duplicate_handle(handle: Handle, access: DWORD, options: DWORD) -> Handle
+"""Duplicate a handle into the current process."""
+
+extern "C" "sere_win_current_process_handle"
+def _current_process_handle() -> Handle
+"""Return the current process pseudo-handle."""
+
+extern "C" "sere_win_current_thread_handle"
+def _current_thread_handle() -> Handle
+"""Return the current thread pseudo-handle."""
+
+extern "C" "sere_win_std_handle"
+def _std_handle(which: i32) -> Handle
+"""Return a standard-device handle."""
+
+extern "C" "sere_win_set_std_handle"
+def _set_std_handle(which: i32, handle: Handle) -> i32
+"""Set a standard-device handle."""
+
+extern "C" "sere_win_get_handle_information"
+def _get_handle_information(handle: Handle, out_flags: Ptr[u32]) -> i32
+"""Read a handle's flags."""
+
+extern "C" "sere_win_set_handle_information"
+def _set_handle_information(handle: Handle, mask: DWORD, flags: DWORD) -> i32
+"""Change the selected flags of a handle."""
+
+def stdin_handle() -> Handle:
+    """Return the standard input handle, or None when there is no console."""
+    return _std_handle(STD_INPUT_HANDLE)
+
+def stdout_handle() -> Handle:
+    """Return the standard output handle, or None when there is no console."""
+    return _std_handle(STD_OUTPUT_HANDLE)
+
+def stderr_handle() -> Handle:
+    """Return the standard error handle, or None when there is no console."""
+    return _std_handle(STD_ERROR_HANDLE)
+
+def set_stdin_handle(handle: Handle) -> bool:
+    """Redirect standard input to handle."""
+    return _set_std_handle(STD_INPUT_HANDLE, handle) as bool
+
+def set_stdout_handle(handle: Handle) -> bool:
+    """Redirect standard output to handle."""
+    return _set_std_handle(STD_OUTPUT_HANDLE, handle) as bool
+
+def set_stderr_handle(handle: Handle) -> bool:
+    """Redirect standard error to handle."""
+    return _set_std_handle(STD_ERROR_HANDLE, handle) as bool
+
+def current_process_handle() -> Handle:
+    """Return the current process pseudo-handle (always valid, never close it)."""
+    return _current_process_handle()
+
+def current_thread_handle() -> Handle:
+    """Return the current thread pseudo-handle (always valid, never close it)."""
+    return _current_thread_handle()
+
+def handle_valid(handle: Handle) -> bool:
+    """Return whether handle is neither NULL nor INVALID_HANDLE_VALUE."""
+    return _handle_valid(handle) as bool
+
+def handle_null(handle: Handle) -> bool:
+    """Return whether handle is NULL."""
+    return _handle_is_null(handle) as bool
+
+def close_handle(handle: Handle) -> bool:
+    """Close a kernel handle and return whether it succeeded."""
+    return _close_handle(handle) as bool
+
+def duplicate_handle(handle: Handle, access: DWORD = 0, options: DWORD = DUPLICATE_SAME_ACCESS) -> Handle:
+    """Duplicate a handle into the current process, or return None on failure."""
+    return _duplicate_handle(handle, access, options)
+
+def handle_information(handle: Handle) -> DWORD | None:
+    """Return a handle's flags, or None when it cannot be queried."""
+    flags: DWORD = 0
+    if _get_handle_information(handle, &flags) == 0:
+        return None
+    return flags
+
+def set_handle_information(handle: Handle, mask: DWORD, flags: DWORD) -> bool:
+    """Change the selected flags of a handle."""
+    return _set_handle_information(handle, mask, flags) as bool
+
+def set_handle_inherit(handle: Handle, inherit: bool) -> bool:
+    """Enable or disable inheritance for handle."""
+    value: DWORD = HANDLE_FLAG_INHERIT if inherit else 0
+    return set_handle_information(handle, HANDLE_FLAG_INHERIT, value)
+
+# ---------------------------------------------------------------------------
+# Process and thread
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_win_open_process"
+def _open_process(access: DWORD, inherit: i32, process_id: DWORD) -> Handle
+"""Open a process by ID."""
+
+extern "C" "sere_win_terminate_process"
+def _terminate_process(handle: Handle, exit_code: DWORD) -> i32
+"""Terminate a process."""
+
+extern "C" "sere_win_exit_code_process"
+def _exit_code_process(handle: Handle, out_code: Ptr[u32]) -> i32
+"""Read a process's exit code."""
+
+def open_process(access: DWORD, inherit: bool, process_id: DWORD) -> Handle:
+    """Open a process by ID and access mask, or return None on failure."""
+    return _open_process(access, 1 if inherit else 0, process_id)
+
+def terminate_process(handle: Handle, exit_code: DWORD = 0) -> bool:
+    """Terminate a process with an exit code."""
+    return _terminate_process(handle, exit_code) as bool
+
+def exit_code_process(handle: Handle) -> DWORD | None:
+    """Return a process's exit code, or None on failure."""
+    code: DWORD = 0
+    if _exit_code_process(handle, &code) == 0:
+        return None
+    return code
+
+# ---------------------------------------------------------------------------
+# Wait
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_win_wait_single"
+def _wait_single(handle: Handle, milliseconds: DWORD) -> DWORD
+"""Wait for one handle."""
+
+extern "C" "sere_win_wait_multiple"
+def _wait_multiple(handles: list[Handle], wait_all: i32, milliseconds: DWORD) -> DWORD
+"""Wait for several handles."""
+
+def wait(handle: Handle, milliseconds: DWORD = INFINITE) -> DWORD:
+    """Wait for a handle; returns a WAIT_* code (INFINITE waits forever)."""
+    return _wait_single(handle, milliseconds)
+
+def wait_multiple(handles: list[Handle], wait_all: bool = False, milliseconds: DWORD = INFINITE) -> DWORD:
+    """Wait for several handles; returns a WAIT_* code."""
+    return _wait_multiple(handles, 1 if wait_all else 0, milliseconds)
+
+def wait_timeout(handle: Handle, milliseconds: DWORD) -> bool:
+    """Return whether handle became signaled within the timeout."""
+    return _wait_single(handle, milliseconds) == WAIT_OBJECT_0
+
+# ---------------------------------------------------------------------------
+# Synchronization
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_win_event_create"
+def _event_create(manual_reset: i32, initial_state: i32) -> Handle
+"""Create an event object."""
+
+extern "C" "sere_win_event_set"
+def _event_set(handle: Handle) -> i32
+"""Set an event to signaled."""
+
+extern "C" "sere_win_event_reset"
+def _event_reset(handle: Handle) -> i32
+"""Reset an event to nonsignaled."""
+
+extern "C" "sere_win_event_pulse"
+def _event_pulse(handle: Handle) -> i32
+"""Pulse an event (release waiters, then reset)."""
+
+extern "C" "sere_win_mutex_create"
+def _mutex_create(initial_owner: i32) -> Handle
+"""Create a mutex."""
+
+extern "C" "sere_win_mutex_release"
+def _mutex_release(handle: Handle) -> i32
+"""Release a mutex."""
+
+extern "C" "sere_win_semaphore_create"
+def _semaphore_create(initial_count: i32, maximum_count: i32) -> Handle
+"""Create a semaphore."""
+
+extern "C" "sere_win_semaphore_release"
+def _semaphore_release(handle: Handle, release_count: i32, out_previous: Ptr[i32]) -> i32
+"""Release a semaphore."""
+
+def event_create(manual_reset: bool = False, initial_state: bool = False) -> Handle:
+    """Create an event object, or return None on failure."""
+    return _event_create(1 if manual_reset else 0, 1 if initial_state else 0)
+
+def event_set(handle: Handle) -> bool:
+    """Set an event to signaled."""
+    return _event_set(handle) as bool
+
+def event_reset(handle: Handle) -> bool:
+    """Reset an event to nonsignaled."""
+    return _event_reset(handle) as bool
+
+def event_pulse(handle: Handle) -> bool:
+    """Pulse an event."""
+    return _event_pulse(handle) as bool
+
+def mutex_create(initial_owner: bool = False) -> Handle:
+    """Create a mutex, or return None on failure."""
+    return _mutex_create(1 if initial_owner else 0)
+
+def mutex_release(handle: Handle) -> bool:
+    """Release a mutex."""
+    return _mutex_release(handle) as bool
+
+def semaphore_create(initial_count: i32, maximum_count: i32) -> Handle:
+    """Create a semaphore, or return None on failure."""
+    return _semaphore_create(initial_count, maximum_count)
+
+def semaphore_release(handle: Handle, release_count: i32 = 1) -> i32 | None:
+    """Release a semaphore; returns the previous count, or None on failure."""
+    previous: i32 = 0
+    if _semaphore_release(handle, release_count, &previous) == 0:
+        return None
+    return previous
+
+# ---------------------------------------------------------------------------
+# Pipes
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_win_create_pipe"
+def _create_pipe(size: DWORD, out_read: Ptr[Handle], out_write: Ptr[Handle]) -> i32
+"""Create an anonymous pipe."""
+
+def create_pipe(size: DWORD = 0) -> Pipe:
+    """Create an anonymous pipe; both ends are inheritable. Raises on failure."""
+    read_handle: Handle = None
+    write_handle: Handle = None
+    if _create_pipe(size, &read_handle, &write_handle) == 0:
+        raise RuntimeError("CreatePipe failed")
+    return Pipe(read_handle, write_handle)
+
+# ---------------------------------------------------------------------------
+# Console handles and modes
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_win_handle_is_console"
+def _handle_is_console(handle: Handle) -> i32
+"""Test whether a handle is a console handle."""
+
+extern "C" "sere_win_console_mode"
+def _console_mode(handle: Handle, out_mode: Ptr[u32]) -> i32
+"""Read a console handle's mode."""
+
+extern "C" "sere_win_set_console_mode"
+def _set_console_mode(handle: Handle, mode: DWORD) -> i32
+"""Set a console handle's mode."""
+
+def is_console(handle: Handle) -> bool:
+    """Return whether handle refers to a console (GetConsoleMode succeeds)."""
+    return _handle_is_console(handle) as bool
+
+def console_mode(handle: Handle) -> DWORD | None:
+    """Return a console handle's mode, or None when it is not a console."""
+    mode: DWORD = 0
+    if _console_mode(handle, &mode) == 0:
+        return None
+    return mode
+
+def set_console_mode(handle: Handle, mode: DWORD) -> bool:
+    """Set a console handle's mode from a full mode value."""
+    return _set_console_mode(handle, mode) as bool
+
+def console_mode_enable(handle: Handle, flags: DWORD) -> bool:
+    """Turn on the given mode flags, preserving the others."""
+    mode = console_mode(handle)
+    if mode == None:
+        return False
+    return set_console_mode(handle, mode | flags)
+
+def console_mode_disable(handle: Handle, flags: DWORD) -> bool:
+    """Turn off the given mode flags, preserving the others."""
+    mode = console_mode(handle)
+    if mode == None:
+        return False
+    return set_console_mode(handle, mode & ~flags)
+
+# ---------------------------------------------------------------------------
+# Console input events
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_win_console_event_count"
+def _console_event_count(handle: Handle) -> DWORD
+"""Return the number of pending console input events."""
+
+extern "C" "sere_win_console_read_event"
+def _console_read_event(handle: Handle, fields: Ptr[i32], field_count: i32) -> i32
+"""Read one console input event (blocking)."""
+
+extern "C" "sere_win_console_peek_event"
+def _console_peek_event(handle: Handle, fields: Ptr[i32], field_count: i32) -> i32
+"""Peek at one console input event (non-blocking)."""
+
+extern "C" "sere_win_console_flush_input"
+def _console_flush_input(handle: Handle) -> i32
+"""Discard all pending console input."""
+
+def console_event_count(handle: Handle) -> DWORD:
+    """Return the number of pending console input events (0 for a non-console)."""
+    return _console_event_count(handle)
+
+def _decode_event(fields: list[i32]) -> ConsoleInputEvent:
+    return ConsoleInputEvent(
+        fields[0] as ConsoleEventKind,
+        fields[1] != 0,
+        fields[2],
+        fields[3],
+        fields[4],
+        fields[5],
+        fields[6],
+        fields[1],
+        fields[2],
+        fields[3],
+        fields[5],
+        fields[1],
+        fields[2],
+        fields[1] != 0,
+        fields[1])
+
+def console_read_event(handle: Handle | None = None) -> ConsoleInputEvent | None:
+    """Read one input event, blocking until one is available.
+
+    Defaults to the standard input handle. Returns None when handle is not a
+    console or the read failed.
+    """
+    target: Handle = (stdin_handle() if handle == None else handle) as Handle
+    fields: list[i32] = [0, 0, 0, 0, 0, 0, 0, 0]
+    if _console_read_event(target, &fields[0], 8) == 0:
+        return None
+    return _decode_event(fields)
+
+def console_peek_event(handle: Handle | None = None) -> ConsoleInputEvent | None:
+    """Peek at one input event without removing it (non-blocking).
+
+    Returns None when nothing is pending or handle is not a console.
+    """
+    target: Handle = stdin_handle() if handle == None else handle
+    fields: list[i32] = [0, 0, 0, 0, 0, 0, 0, 0]
+    if _console_peek_event(target, &fields[0], 8) == 0:
+        return None
+    return _decode_event(fields)
+
+def console_flush_input(handle: Handle | None = None) -> bool:
+    """Discard all pending console input events."""
+    target: Handle = (stdin_handle() if handle == None else handle) as Handle
+    return _console_flush_input(target) as bool
+
+# ---------------------------------------------------------------------------
+# Console cursor and screen buffer information
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_win_console_screen_info"
+def _console_screen_info(handle: Handle, out_fields: Ptr[i32], field_count: i32) -> i32
+"""Read CONSOLE_SCREEN_BUFFER_INFO into a flat field buffer."""
+
+extern "C" "sere_win_console_cursor_info"
+def _console_cursor_info(handle: Handle, out_size: Ptr[u32], out_visible: Ptr[i32]) -> i32
+"""Read CONSOLE_CURSOR_INFO."""
+
+extern "C" "sere_win_console_set_cursor_info"
+def _console_set_cursor_info(handle: Handle, size: u32, visible: i32) -> i32
+"""Write CONSOLE_CURSOR_INFO."""
+
+extern "C" "sere_win_console_set_cursor_pos"
+def _console_set_cursor_pos(handle: Handle, x: i32, y: i32) -> i32
+"""Set the console cursor cell."""
+
+extern "C" "sere_win_console_largest_size"
+def _console_largest_size(handle: Handle, out_width: Ptr[i32], out_height: Ptr[i32]) -> i32
+"""Size of the largest possible console window."""
+
+extern "C" "sere_win_console_set_buffer_size"
+def _console_set_buffer_size(handle: Handle, width: i32, height: i32) -> i32
+"""Resize the console screen buffer."""
+
+extern "C" "sere_win_console_set_window_rect"
+def _console_set_window_rect(handle: Handle, absolute: i32, left: i32, top: i32, right: i32, bottom: i32) -> i32
+"""Set the console window rectangle."""
+
+extern "C" "sere_win_set_console_text_attribute"
+def _set_console_text_attribute(handle: Handle, attribute: i32) -> i32
+"""Set the current console text attribute."""
+
+def console_screen_info(handle: Handle | None = None) -> ConsoleScreenInfo | None:
+    """Return decoded console screen-buffer info, or None (default stdout)."""
+    target: Handle = stdout_handle() if handle == None else handle
+    fields: list[i32] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    if _console_screen_info(target, &fields[0], 11) == 0:
+        return None
+    return ConsoleScreenInfo(
+        fields[0], fields[1], fields[2], fields[3], fields[4],
+        fields[5], fields[6], fields[7], fields[8], fields[9], fields[10])
+
+def console_width(handle: Handle | None = None) -> i32:
+    """Return the visible console window width in cells."""
+    info = console_screen_info(handle)
+    if info == None:
+        return 0
+    return info.window_right - info.window_left + 1
+
+def console_height(handle: Handle | None = None) -> i32:
+    """Return the visible console window height in cells."""
+    info = console_screen_info(handle)
+    if info == None:
+        return 0
+    return info.window_bottom - info.window_top + 1
+
+def console_buffer_width(handle: Handle | None = None) -> i32:
+    """Return the console screen buffer width in cells."""
+    info = console_screen_info(handle)
+    if info == None:
+        return 0
+    return info.buffer_width
+
+def console_buffer_height(handle: Handle | None = None) -> i32:
+    """Return the console screen buffer height in cells."""
+    info = console_screen_info(handle)
+    if info == None:
+        return 0
+    return info.buffer_height
+
+def console_cursor(handle: Handle | None = None) -> ConsoleCoord | None:
+    """Return the console cursor cell, or None."""
+    info = console_screen_info(handle)
+    if info == None:
+        return None
+    return ConsoleCoord(info.cursor_x, info.cursor_y)
+
+def console_set_cursor(x: i32, y: i32, handle: Handle | None = None) -> bool:
+    """Move the console cursor to a cell (not the desktop mouse cursor)."""
+    target: Handle = stdout_handle() if handle == None else handle
+    return _console_set_cursor_pos(target, x, y) as bool
+
+def console_cursor_size(handle: Handle | None = None) -> i32:
+    """Return the console cursor size as a percentage 1..100 (0 on failure)."""
+    target: Handle = stdout_handle() if handle == None else handle
+    size: u32 = 0
+    visible: i32 = 0
+    if _console_cursor_info(target, &size, &visible) == 0:
+        return 0
+    return size as i32
+
+def console_cursor_visible(handle: Handle | None = None) -> bool:
+    """Return whether the console cursor is visible."""
+    target: Handle = stdout_handle() if handle == None else handle
+    size: u32 = 0
+    visible: i32 = 0
+    if _console_cursor_info(target, &size, &visible) == 0:
+        return False
+    return visible != 0
+
+def console_set_cursor_visible(visible: bool, handle: Handle | None = None) -> bool:
+    """Show or hide the console cursor, keeping its current size."""
+    target: Handle = stdout_handle() if handle == None else handle
+    size: u32 = 25
+    current: i32 = 0
+    if _console_cursor_info(target, &size, &current) == 0:
+        size = 25
+    return _console_set_cursor_info(target, size, 1 if visible else 0) as bool
+
+def console_set_cursor_size(size: i32, handle: Handle | None = None) -> bool:
+    """Set the console cursor size percentage (1..100), keeping visibility."""
+    target: Handle = stdout_handle() if handle == None else handle
+    current_size: u32 = 0
+    visible: i32 = 0
+    if _console_cursor_info(target, &current_size, &visible) == 0:
+        visible = 1
+    return _console_set_cursor_info(target, size as u32, visible) as bool
+
+def console_largest_size(handle: Handle | None = None) -> Size | None:
+    """Return the largest possible console window size, or None."""
+    target: Handle = stdout_handle() if handle == None else handle
+    width: i32 = 0
+    height: i32 = 0
+    if _console_largest_size(target, &width, &height) == 0:
+        return None
+    return Size(width, height)
+
+def console_set_buffer_size(width: i32, height: i32, handle: Handle | None = None) -> bool:
+    """Resize the console screen buffer."""
+    target: Handle = stdout_handle() if handle == None else handle
+    return _console_set_buffer_size(target, width, height) as bool
+
+def console_set_window_rect(rect: ConsoleRect, absolute: bool = False, handle: Handle | None = None) -> bool:
+    """Set the console window rectangle (absolute or window-relative)."""
+    target: Handle = stdout_handle() if handle == None else handle
+    return _console_set_window_rect(target, 1 if absolute else 0, rect.left, rect.top, rect.right, rect.bottom) as bool
+
+def console_set_attribute(attribute: DWORD, handle: Handle | None = None) -> bool:
+    """Set the current console text attribute (see FOREGROUND_*/BACKGROUND_*)."""
+    target: Handle = stdout_handle() if handle == None else handle
+    return _set_console_text_attribute(target, attribute as i32) as bool
+
+# ---------------------------------------------------------------------------
+# Positioned console screen-buffer I/O
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_win_fill_console_chars"
+def _fill_console_chars(handle: Handle, char_code: i32, count: DWORD, x: i32, y: i32, out_written: Ptr[u32]) -> i32
+"""Fill a run of cells with a character."""
+
+extern "C" "sere_win_fill_console_attrs"
+def _fill_console_attrs(handle: Handle, attribute: i32, count: DWORD, x: i32, y: i32, out_written: Ptr[u32]) -> i32
+"""Fill a run of cells with an attribute."""
+
+extern "C" "sere_win_write_console_output_chars"
+def _write_console_output_chars(handle: Handle, data: str, x: i32, y: i32, out_written: Ptr[u32]) -> i32
+"""Write text to a screen-buffer cell run."""
+
+extern "C" "sere_win_write_console_output_attrs"
+def _write_console_output_attrs(handle: Handle, attrs: list[u16], x: i32, y: i32, out_written: Ptr[u32]) -> i32
+"""Write a run of cell attributes."""
+
+extern "C" "sere_win_read_console_output_chars"
+def _read_console_output_chars(handle: Handle, x: i32, y: i32, count: DWORD) -> str
+"""Read text from a screen-buffer cell run."""
+
+extern "C" "sere_win_read_console_output_attrs"
+def _read_console_output_attrs(handle: Handle, x: i32, y: i32, attrs: list[u16]) -> i32
+"""Read attributes from a screen-buffer cell run into attrs."""
+
+extern "C" "sere_win_scroll_console"
+def _scroll_console(handle: Handle, left: i32, top: i32, right: i32, bottom: i32, dx: i32, dy: i32, fill_char: i32, fill_attr: i32) -> i32
+"""Scroll a screen-buffer region."""
+
+def console_write_at(x: i32, y: i32, text: str, handle: Handle | None = None) -> bool:
+    """Write text starting at cell (x, y) without moving the cursor."""
+    target: Handle = stdout_handle() if handle == None else handle
+    written: DWORD = 0
+    return _write_console_output_chars(target, text, x, y, &written) != 0
+
+def console_fill_char(x: i32, y: i32, count: DWORD, char_code: i32 = 32, handle: Handle | None = None) -> bool:
+    """Fill count cells from (x, y) with a character (default space)."""
+    target: Handle = stdout_handle() if handle == None else handle
+    written: DWORD = 0
+    return _fill_console_chars(target, char_code, count, x, y, &written) != 0
+
+def console_fill_attribute(x: i32, y: i32, count: DWORD, attribute: DWORD = 0, handle: Handle | None = None) -> bool:
+    """Fill count cells from (x, y) with a text attribute."""
+    target: Handle = stdout_handle() if handle == None else handle
+    written: DWORD = 0
+    return _fill_console_attrs(target, attribute as i32, count, x, y, &written) != 0
+
+def console_write_attributes(x: i32, y: i32, attributes: list[u16], handle: Handle | None = None) -> bool:
+    """Write a run of cell attributes starting at (x, y)."""
+    target: Handle = stdout_handle() if handle == None else handle
+    written: DWORD = 0
+    return _write_console_output_attrs(target, attributes, x, y, &written) != 0
+
+def console_read_at(x: i32, y: i32, count: DWORD, handle: Handle | None = None) -> str:
+    """Read count characters starting at cell (x, y)."""
+    target: Handle = stdout_handle() if handle == None else handle
+    return _read_console_output_chars(target, x, y, count)
+
+def _zeros_u16(count: i32) -> list[u16]:
+    """Return a list of `count` zero u16 values."""
+    out: list[u16] = []
+    i: i32 = 0
+    while i < count:
+        out.append(0)
+        i = i + 1
+    return out
+
+def console_read_attributes(x: i32, y: i32, count: DWORD, handle: Handle | None = None) -> list[u16]:
+    """Read count cell attributes starting at (x, y)."""
+    target: Handle = stdout_handle() if handle == None else handle
+    attrs: list[u16] = _zeros_u16(count as i32)
+    if _read_console_output_attrs(target, x, y, attrs) == 0:
+        return []
+    return attrs
+
+def console_scroll(rect: ConsoleRect, dx: i32, dy: i32, fill_char: i32 = 32, fill_attr: DWORD = 0, handle: Handle | None = None) -> bool:
+    """Scroll a region by (dx, dy), filling the vacated band."""
+    target: Handle = stdout_handle() if handle == None else handle
+    return _scroll_console(target, rect.left, rect.top, rect.right, rect.bottom, dx, dy, fill_char, fill_attr as i32) != 0
+
+def console_clear(handle: Handle | None = None) -> bool:
+    """Clear the whole screen buffer to spaces and home the cursor."""
+    target: Handle = stdout_handle() if handle == None else handle
+    info = console_screen_info(target)
+    if info == None:
+        return False
+    total: DWORD = (info.buffer_width * info.buffer_height) as DWORD
+    written: DWORD = 0
+    ok: bool = _fill_console_chars(target, 32, total, 0, 0, &written) != 0
+    ok = _fill_console_attrs(target, info.attributes, total, 0, 0, &written) != 0 and ok
+    console_set_cursor(0, 0, target)
+    return ok
+
+# ---------------------------------------------------------------------------
+# Direct console I/O
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_win_write_console"
+def _write_console(handle: Handle, data: str, out_written: Ptr[u32]) -> i32
+"""Write text through WriteConsoleW."""
+
+extern "C" "sere_win_read_console"
+def _read_console(handle: Handle, max_chars: DWORD) -> str
+"""Read text through ReadConsoleW."""
+
+def console_write(handle: Handle, text: str) -> i32:
+    """Write text (no newline added); returns the character count or -1."""
+    written: DWORD = 0
+    if _write_console(handle, text, &written) == 0:
+        return -1
+    return written as i32
+
+def console_read(handle: Handle, max_chars: i32 = 4096) -> str:
+    """Read up to max_chars characters (no newline added); empty on failure."""
+    if max_chars <= 0:
+        return ""
+    return _read_console(handle, max_chars as DWORD)
+
+# ---------------------------------------------------------------------------
+# Raw handle I/O (byte oriented)
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_win_handle_write"
+def _handle_write(handle: Handle, data: list[byte], out_written: Ptr[u32]) -> i32
+"""Write a byte buffer with WriteFile."""
+
+extern "C" "sere_win_handle_read"
+def _handle_read(handle: Handle, count: i64) -> list[byte]
+"""Read bytes with ReadFile."""
+
+def handle_write(handle: Handle, data: list[byte]) -> i32:
+    """Write bytes to a file/pipe handle; returns the count written or -1."""
+    written: DWORD = 0
+    if _handle_write(handle, data, &written) == 0:
+        return -1
+    return written as i32
+
+def handle_read(handle: Handle, count: i64) -> list[byte]:
+    """Read up to count bytes from a file/pipe handle (empty at EOF)."""
+    if count <= 0:
+        return bytes.zeros(0)
+    return _handle_read(handle, count)
+
+# ---------------------------------------------------------------------------
+# Handle kinds (console vs pipe vs file)
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_win_get_file_type"
+def _get_file_type(handle: Handle) -> DWORD
+"""Return the GetFileType classification."""
+
+def file_type(handle: Handle) -> DWORD:
+    """Return the raw FILE_TYPE_* value for a handle."""
+    return _get_file_type(handle)
+
+def handle_kind(handle: Handle) -> HandleKind:
+    """Classify a handle as disk, character device, pipe, or unknown."""
+    kind: DWORD = _get_file_type(handle)
+    if kind == FILE_TYPE_DISK:
+        return HandleKind.Disk
+    if kind == FILE_TYPE_CHAR:
+        return HandleKind.Character
+    if kind == FILE_TYPE_PIPE:
+        return HandleKind.Pipe
+    return HandleKind.Unknown
+
+def handle_is_pipe(handle: Handle) -> bool:
+    """Return whether a handle is a pipe (stdout redirected to a pipe)."""
+    return _get_file_type(handle) == FILE_TYPE_PIPE
+
+def handle_is_file(handle: Handle) -> bool:
+    """Return whether a handle is a disk file."""
+    return _get_file_type(handle) == FILE_TYPE_DISK
+
+# ---------------------------------------------------------------------------
+# Console title, allocation, and code pages
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_win_console_title"
+def console_title() -> str
+"""Return the current console title."""
+
+extern "C" "sere_win_set_console_title"
+def _set_console_title(title: str) -> i32
+"""Set the console title."""
+
+extern "C" "sere_win_console_original_title"
+def console_original_title() -> str
+"""Return the console's original title."""
+
+extern "C" "sere_win_alloc_console"
+def _alloc_console() -> i32
+"""Allocate a console for the process."""
+
+extern "C" "sere_win_free_console"
+def _free_console() -> i32
+"""Detach the process from its console."""
+
+extern "C" "sere_win_attach_console"
+def _attach_console(process_id: DWORD) -> i32
+"""Attach to another process's console."""
+
+extern "C" "sere_win_console_window"
+def console_window() -> Handle
+"""Return the HWND of the console window, or None."""
+
+extern "C" "sere_win_get_console_cp"
+def get_console_cp() -> DWORD
+"""Return the console input code page."""
+
+extern "C" "sere_win_set_console_cp"
+def _set_console_cp(code_page: DWORD) -> i32
+"""Set the console input code page."""
+
+extern "C" "sere_win_get_console_output_cp"
+def get_console_output_cp() -> DWORD
+"""Return the console output code page."""
+
+extern "C" "sere_win_set_console_output_cp"
+def _set_console_output_cp(code_page: DWORD) -> i32
+"""Set the console output code page."""
+
+def console_set_title(title: str) -> bool:
+    """Set the console title."""
+    return _set_console_title(title) as bool
+
+def alloc_console() -> bool:
+    """Create a new console for the current process."""
+    return _alloc_console() as bool
+
+def free_console() -> bool:
+    """Detach the current process from its console."""
+    return _free_console() as bool
+
+def attach_console(process_id: DWORD = ATTACH_PARENT_PROCESS) -> bool:
+    """Attach to a console; defaults to the parent process's console."""
+    return _attach_console(process_id) as bool
+
+def set_console_cp(code_page: DWORD) -> bool:
+    """Set the console input code page (CP_UTF8 for UTF-8)."""
+    return _set_console_cp(code_page) as bool
+
+def set_console_output_cp(code_page: DWORD) -> bool:
+    """Set the console output code page (CP_UTF8 for UTF-8)."""
+    return _set_console_output_cp(code_page) as bool
+
+def console_supports_vt(handle: Handle | None = None) -> bool:
+    """Return whether the console already has VT processing enabled."""
+    target: Handle = stdout_handle() if handle == None else handle
+    mode = console_mode(target)
+    if mode == None:
+        return False
+    return (mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0
+
+def console_enable_vt(handle: Handle | None = None) -> bool:
+    """Enable VT output processing on the console (returns False if not one)."""
+    return console_mode_enable(stdout_handle() if handle == None else handle, ENABLE_VIRTUAL_TERMINAL_PROCESSING)
+
+def console_enable_vt_input(handle: Handle | None = None) -> bool:
+    """Enable VT input processing on the console input handle."""
+    return console_mode_enable(stdin_handle() if handle == None else handle, ENABLE_VIRTUAL_TERMINAL_INPUT)
+
+def console_enable_raw_input(handle: Handle | None = None) -> bool:
+    """Switch console input to raw-ish mode for a full-screen application.
+
+    Disables line input, echo, and cooked processing; enables window and mouse
+    input plus extended flags. Returns whether the mode was set.
+    """
+    mode = console_mode(stdin_handle() if handle == None else handle)
+    if mode == None:
+        return False
+    raw: DWORD = mode
+    raw = raw & ~ENABLE_LINE_INPUT
+    raw = raw & ~ENABLE_ECHO_INPUT
+    raw = raw & ~ENABLE_PROCESSED_INPUT
+    raw = raw | ENABLE_WINDOW_INPUT
+    raw = raw | ENABLE_MOUSE_INPUT
+    raw = raw | ENABLE_EXTENDED_FLAGS
+    return set_console_mode(stdin_handle() if handle == None else handle, raw)
+
+# ---------------------------------------------------------------------------
+# Keyboard
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_win_get_key_state"
+def _get_key_state(virtual_key: i32) -> i32
+"""Return GetKeyState (low bit toggled, high bit pressed)."""
+
+extern "C" "sere_win_key_state_raw"
+def _key_state_raw(virtual_key: i32) -> i32
+"""Return GetAsyncKeyState."""
+
+extern "C" "sere_win_get_keyboard_state"
+def _get_keyboard_state(state: list[byte]) -> i32
+"""Read the 256-byte keyboard state table."""
+
+extern "C" "sere_win_to_unicode"
+def _to_unicode(virtual_key: i32, scan_code: i32, state: list[byte], flags: i32) -> str
+"""Translate a virtual key to UTF-16 text."""
+
+extern "C" "sere_win_map_virtual_key"
+def _map_virtual_key(code: DWORD, map_type: DWORD) -> DWORD
+"""Map between virtual-key, scan, and character codes."""
+
+def key_pressed(virtual_key: i32) -> bool:
+    """Return whether a virtual key is currently down (GetKeyState)."""
+    return (_get_key_state(virtual_key) & 0x8000) != 0
+
+def key_toggled(virtual_key: i32) -> bool:
+    """Return whether a toggle key (Caps/Num/Scroll Lock) is on (GetKeyState)."""
+    return (_get_key_state(virtual_key) & 0x0001) != 0
+
+def key_down(virtual_key: i32) -> bool:
+    """Return whether a virtual key is pressed (GetAsyncKeyState)."""
+    return _key_down(virtual_key) as bool
+
+def keyboard_state() -> list[byte]:
+    """Return the 256-byte keyboard state table (empty when unavailable)."""
+    state: list[byte] = bytes.zeros(256)
+    if _get_keyboard_state(state) == 0:
+        return bytes.zeros(0)
+    return state
+
+def to_unicode(virtual_key: i32, scan_code: i32, state: list[byte], flags: i32 = 0) -> str:
+    """Translate a virtual key + scan code to text using a keyboard state table."""
+    if len(state) < 256:
+        return ""
+    return _to_unicode(virtual_key, scan_code, state, flags)
+
+def map_virtual_key(code: DWORD, map_type: DWORD = MAPVK_VK_TO_VSC) -> DWORD:
+    """Map between virtual-key codes, scan codes, and characters."""
+    return _map_virtual_key(code, map_type)
+
+# ---------------------------------------------------------------------------
+# Window messages: numeric constants for comparisons
+# ---------------------------------------------------------------------------
+const WM_QUIT: DWORD = 0x0012
+const WM_CLOSE: DWORD = 0x0010
+const WM_DESTROY: DWORD = 0x0002
+const WM_SIZE: DWORD = 0x0005
+const WM_KEYDOWN: DWORD = 0x0100
+const WM_KEYUP: DWORD = 0x0101
+const WM_CHAR: DWORD = 0x0102
+
+# ---------------------------------------------------------------------------
+# Window handles
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_win_active_window"
+def _active_window() -> Handle
+"""Return the active window of the calling thread."""
+
+extern "C" "sere_win_focus_window"
+def _focus_window() -> Handle
+"""Return the window with keyboard focus."""
+
+extern "C" "sere_win_set_foreground_window"
+def _set_foreground_window(window: WindowHandle) -> i32
+"""Bring a window to the foreground."""
+
+extern "C" "sere_win_bring_window_to_top"
+def _bring_window_to_top(window: WindowHandle) -> i32
+"""Raise a window to the top of the z-order."""
+
+extern "C" "sere_win_show_window"
+def _show_window(window: WindowHandle, command: i32) -> i32
+"""Show or hide a window."""
+
+extern "C" "sere_win_is_window"
+def _is_window(window: WindowHandle) -> i32
+"""Test whether a handle is a window."""
+
+extern "C" "sere_win_is_window_visible"
+def _is_window_visible(window: WindowHandle) -> i32
+"""Test whether a window is visible."""
+
+extern "C" "sere_win_is_iconic"
+def _is_iconic(window: WindowHandle) -> i32
+"""Test whether a window is minimized."""
+
+extern "C" "sere_win_is_zoomed"
+def _is_zoomed(window: WindowHandle) -> i32
+"""Test whether a window is maximized."""
+
+extern "C" "sere_win_set_window_text"
+def _set_window_text(window: WindowHandle, data: str) -> i32
+"""Set a window's title text."""
+
+extern "C" "sere_win_get_window_rect"
+def _get_window_rect(window: WindowHandle, out_fields: Ptr[i32], field_count: i32) -> i32
+"""Read a window rectangle."""
+
+extern "C" "sere_win_get_client_rect"
+def _get_client_rect(window: WindowHandle, out_fields: Ptr[i32], field_count: i32) -> i32
+"""Read a client rectangle."""
+
+extern "C" "sere_win_move_window"
+def _move_window(window: WindowHandle, x: i32, y: i32, width: i32, height: i32, repaint: i32) -> i32
+"""Move and resize a window."""
+
+extern "C" "sere_win_set_window_pos"
+def _set_window_pos(window: WindowHandle, anchor: i32, x: i32, y: i32, width: i32, height: i32, flags: DWORD) -> i32
+"""Reposition a window with SetWindowPos."""
+
+extern "C" "sere_win_update_window"
+def _update_window(window: WindowHandle) -> i32
+"""Force a window repaint."""
+
+extern "C" "sere_win_destroy_window"
+def _destroy_window(window: WindowHandle) -> i32
+"""Destroy a window."""
+
+def window_valid(window: WindowHandle) -> bool:
+    """Return whether a handle is a real window."""
+    return _is_window(window) as bool
+
+def window_visible(window: WindowHandle) -> bool:
+    """Return whether a window is visible."""
+    return _is_window_visible(window) as bool
+
+def window_iconic(window: WindowHandle) -> bool:
+    """Return whether a window is minimized."""
+    return _is_iconic(window) as bool
+
+def window_zoomed(window: WindowHandle) -> bool:
+    """Return whether a window is maximized."""
+    return _is_zoomed(window) as bool
+
+def window_title(window: WindowHandle) -> str:
+    """Return a window's title text (alias of window_text)."""
+    return window_text(window)
+
+def window_set_title(window: WindowHandle, title: str) -> bool:
+    """Set a window's title text."""
+    return _set_window_text(window, title) as bool
+
+def _decode_rect(fields: list[i32]) -> Rect:
+    return Rect(fields[0], fields[1], fields[2], fields[3])
+
+def window_rect(window: WindowHandle) -> Rect:
+    """Return a window's screen rectangle (zeroed on failure)."""
+    fields: list[i32] = [0, 0, 0, 0]
+    if _get_window_rect(window, &fields[0], 4) == 0:
+        return Rect(0, 0, 0, 0)
+    return _decode_rect(fields)
+
+def window_client_rect(window: WindowHandle) -> Rect:
+    """Return a window's client rectangle (zeroed on failure)."""
+    fields: list[i32] = [0, 0, 0, 0]
+    if _get_client_rect(window, &fields[0], 4) == 0:
+        return Rect(0, 0, 0, 0)
+    return _decode_rect(fields)
+
+def window_move(window: WindowHandle, x: i32, y: i32, width: i32, height: i32, repaint: bool = True) -> bool:
+    """Move and resize a window."""
+    return _move_window(window, x, y, width, height, 1 if repaint else 0) as bool
+
+def window_set_pos(window: WindowHandle, x: i32, y: i32, width: i32, height: i32, flags: DWORD = 0, anchor: i32 = ANCHOR_TOP) -> bool:
+    """Reposition a window with SetWindowPos flags."""
+    return _set_window_pos(window, anchor, x, y, width, height, flags) as bool
+
+def window_show(window: WindowHandle, command: ShowWindowCommand = ShowWindowCommand.Show) -> bool:
+    """Show or hide a window (returns its previous visibility)."""
+    return _show_window(window, command.value) != 0
+
+def window_update(window: WindowHandle) -> bool:
+    """Force an immediate repaint."""
+    return _update_window(window) as bool
+
+def window_destroy(window: WindowHandle) -> bool:
+    """Destroy a window."""
+    return _destroy_window(window) as bool
+
+def active_window() -> WindowHandle:
+    """Return the active window of the calling thread."""
+    return _active_window()
+
+def focus_window() -> WindowHandle:
+    """Return the window with keyboard focus."""
+    return _focus_window()
+
+def set_foreground_window(window: WindowHandle) -> bool:
+    """Bring a window to the foreground."""
+    return _set_foreground_window(window) as bool
+
+def bring_window_to_top(window: WindowHandle) -> bool:
+    """Raise a window to the top of the z-order."""
+    return _bring_window_to_top(window) as bool
+
+# ---------------------------------------------------------------------------
+# Window class, creation, and messages
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_win_register_window_class"
+def _register_window_class(name: str, style: DWORD, wnd_proc: Ptr[i8], class_extra: i32, window_extra: i32, background: Ptr[i8]) -> DWORD
+"""Register a window class (wnd_proc NULL selects DefWindowProcW)."""
+
+extern "C" "sere_win_unregister_window_class"
+def _unregister_window_class(name: str) -> i32
+"""Unregister a window class."""
+
+extern "C" "sere_win_create_window"
+def _create_window(class_name: str, window_name: str, style: DWORD, ex_style: DWORD, x: i32, y: i32, width: i32, height: i32, parent: WindowHandle, menu: Handle) -> WindowHandle
+"""Create a window."""
+
+extern "C" "sere_win_def_window_proc"
+def def_window_proc(window: WindowHandle, message: DWORD, wparam: WPARAM, lparam: LPARAM) -> LRESULT
+"""Call DefWindowProcW for default message handling."""
+
+extern "C" "sere_win_get_message"
+def _get_message(out_fields: Ptr[i32], field_count: i32, out_window: Ptr[WindowHandle], out_wparam: Ptr[i64], out_lparam: Ptr[i64]) -> i32
+"""Retrieve one message (blocking)."""
+
+extern "C" "sere_win_peek_message"
+def _peek_message(out_fields: Ptr[i32], field_count: i32, out_window: Ptr[WindowHandle], out_wparam: Ptr[i64], out_lparam: Ptr[i64], min_message: DWORD, max_message: DWORD, flags: DWORD) -> i32
+"""Peek for a message (non-blocking)."""
+
+extern "C" "sere_win_translate_message"
+def _translate_message(fields: Ptr[i32], field_count: i32, window: WindowHandle, wparam: WPARAM, lparam: LPARAM) -> i32
+"""Translate a message."""
+
+extern "C" "sere_win_dispatch_message"
+def _dispatch_message(fields: Ptr[i32], field_count: i32, window: WindowHandle, wparam: WPARAM, lparam: LPARAM) -> LRESULT
+"""Dispatch a message to its window procedure."""
+
+extern "C" "sere_win_post_quit_message"
+def post_quit_message(exit_code: i32) -> void
+"""Post WM_QUIT to the calling thread's message queue."""
+
+def register_window_class(name: str, style: DWORD = 0, wnd_proc: Handle | None = None, class_extra: i32 = 0, window_extra: i32 = 0, background: Handle | None = None) -> DWORD:
+    """Register a window class and return its atom (0 on failure).
+
+    A custom Win32 WNDPROC must be a native function pointer. Sere cannot yet
+    turn a `def` into one, so pass None (the default) to use DefWindowProcW and
+    document. See the module notes on the callback limitation.
+    """
+    return _register_window_class(name, style, wnd_proc, class_extra, window_extra, background)
+
+def unregister_window_class(name: str) -> bool:
+    """Unregister a window class."""
+    return _unregister_window_class(name) as bool
+
+def create_window(class_name: str, window_name: str = "", style: DWORD = WS_OVERLAPPEDWINDOW, ex_style: DWORD = 0, x: i32 = 128, y: i32 = 128, width: i32 = 640, height: i32 = 480, parent: WindowHandle | None = None, menu: Handle | None = None) -> WindowHandle:
+    """Create a window, or return None on failure."""
+    return _create_window(class_name, window_name, style, ex_style, x, y, width, height, parent, menu)
+
+def get_message() -> WindowMessageEvent | None:
+    """Block for the next message; None after WM_QUIT or on error."""
+    fields: list[i32] = [0, 0, 0, 0]
+    window: WindowHandle = None
+    wparam: i64 = 0
+    lparam: i64 = 0
+    status: i32 = _get_message(&fields[0], 4, &window, &wparam, &lparam)
+    if status != MESSAGE_READY:
+        return None
+    return WindowMessageEvent(window, fields[0] as DWORD, wparam as WPARAM, lparam, fields[1] as DWORD, fields[2], fields[3])
+
+def peek_message(flags: DWORD = PM_REMOVE, min_message: DWORD = 0, max_message: DWORD = 0) -> WindowMessageEvent | None:
+    """Peek for a message without blocking; None when the queue is empty."""
+    fields: list[i32] = [0, 0, 0, 0]
+    window: WindowHandle = None
+    wparam: i64 = 0
+    lparam: i64 = 0
+    if _peek_message(&fields[0], 4, &window, &wparam, &lparam, min_message, max_message, flags) == 0:
+        return None
+    return WindowMessageEvent(window, fields[0] as DWORD, wparam as WPARAM, lparam, fields[1] as DWORD, fields[2], fields[3])
+
+def translate_message(event: WindowMessageEvent) -> bool:
+    """Translate keyboard messages (fills the character queue)."""
+    fields: list[i32] = [event.message as i32, event.time as i32, event.x, event.y]
+    return _translate_message(&fields[0], 4, event.window, event.wparam, event.lparam) != 0
+
+def dispatch_message(event: WindowMessageEvent) -> LRESULT:
+    """Dispatch a message to the window's procedure (DefWindowProc by default)."""
+    fields: list[i32] = [event.message as i32, event.time as i32, event.x, event.y]
+    return _dispatch_message(&fields[0], 4, event.window, event.wparam, event.lparam)
+
+def post_message(window: WindowHandle, message: DWORD, wparam: WPARAM = 0, lparam: LPARAM = 0) -> bool:
+    """Post a message to a window's queue."""
+    return _post_message(window, message, wparam, lparam) as bool
+
+def send_message(window: WindowHandle, message: DWORD, wparam: WPARAM = 0, lparam: LPARAM = 0) -> LRESULT:
+    """Send a message to a window and wait for its result."""
+    return _send_message(window, message, wparam, lparam)
+
+def run_message_loop_until(window: WindowHandle) -> bool:
+    """Pump messages until WM_QUIT or until window is destroyed.
+
+    Dispatches each message through dispatch_message (which reaches the class's
+    WNDPROC). For a class registered without a custom WNDPROC that is
+    DefWindowProcW, so closing the window destroys it and this returns once the
+    window no longer exists.
+    """
+    while True:
+        event = peek_message(PM_REMOVE)
+        if event != None:
+            if event.message == WM_QUIT:
+                return True
+            translate_message(event)
+            dispatch_message(event)
+        elif not window_valid(window):
+            return True
+
+def run_message_loop() -> bool:
+    """Pump messages until WM_QUIT is received."""
+    while True:
+        event = get_message()
+        if event == None:
+            return True
+        translate_message(event)
+        dispatch_message(event)
+
+# ---------------------------------------------------------------------------
+# Pseudoconsole (ConPTY)
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_win_conpty_available"
+def _conpty_available() -> i32
+"""Test whether the ConPTY entry points exist on this host."""
+
+extern "C" "sere_win_pseudo_console_create"
+def _pseudo_console_create(columns: i32, rows: i32, input_read: Handle, output_write: Handle) -> PseudoConsole
+"""Create a pseudoconsole."""
+
+extern "C" "sere_win_pseudo_console_resize"
+def _pseudo_console_resize(pseudo: PseudoConsole, columns: i32, rows: i32) -> i32
+"""Resize a pseudoconsole."""
+
+extern "C" "sere_win_pseudo_console_close"
+def _pseudo_console_close(pseudo: PseudoConsole) -> void
+"""Close a pseudoconsole."""
+
+def conpty_available() -> bool:
+    """Return whether ConPTY is available on this host."""
+    return _conpty_available() as bool
+
+def pseudo_console_create(input_read: Handle, output_write: Handle, columns: i32 = 80, rows: i32 = 25) -> PseudoConsole:
+    """Create a pseudoconsole over a pipe pair, or return None on failure."""
+    return _pseudo_console_create(columns, rows, input_read, output_write)
+
+def pseudo_console_resize(pseudo: PseudoConsole, columns: i32, rows: i32) -> bool:
+    """Resize a pseudoconsole."""
+    return _pseudo_console_resize(pseudo, columns, rows) as bool
+
+def pseudo_console_close(pseudo: PseudoConsole) -> void:
+    """Close a pseudoconsole and release its resources."""
+    _pseudo_console_close(pseudo)

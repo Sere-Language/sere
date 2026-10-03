@@ -2154,7 +2154,10 @@ uint32_t sere_win_register_window_class(const char* name,
                                         int32_t class_extra,
                                         int32_t window_extra,
                                         void* background) {
-  void* proc = winWindowProc(wnd_proc);
+  // A NULL callback selects the default window procedure. Sere cannot produce a
+  // native WNDPROC pointer yet, so this is the only usable path from Sere today;
+  // a non-NULL value must be the Sere callable fat pair described above.
+  void* proc = wnd_proc == NULL ? (void*)DefWindowProcW : winWindowProc(wnd_proc);
   if (proc == NULL) {
     return 0;
   }
