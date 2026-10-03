@@ -553,11 +553,25 @@ void sere_os_getcwd(const char** out_data, int64_t* out_len) {
   outStr(getcwdImpl(), out_data, out_len);
 }
 
+#ifdef _WIN32
+/// Reads a UTF-8-named environment variable through the wide API.
+static SereStr osEnvWide(const char* name, int64_t name_len);
+#endif
+
 static SereStr getenvImpl(const char* name, int64_t name_len) {
   char* key = toCString(name, name_len);
   if (key == NULL) {
     return emptyStr();
   }
+#ifdef _WIN32
+  // The wide API is the source of truth because env_set writes through it, and
+  // the CRT's narrow copy can lag behind a SetEnvironmentVariable call.
+  SereStr wide = osEnvWide(key, (int64_t)strlen(key));
+  if (wide.len > 0) {
+    free(key);
+    return wide;
+  }
+#endif
   const char* value = getenv(key);
   free(key);
   return copyCString(value == NULL ? "" : value);

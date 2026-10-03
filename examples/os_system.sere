@@ -1,0 +1,35 @@
+import os
+
+
+def main() -> i32:
+    print(os.describe())
+    print("separator:", os.path_separator())
+    print("home:", os.home_dir())
+    print("temp:", os.temp_dir())
+
+    # Capacity of the volume that holds the working directory.
+    disk: os.FilesystemInfo = os.filesystem(os.getcwd())
+    if disk.ok:
+        print("free bytes:", disk.available_bytes, "of", disk.total_bytes)
+
+    # Inspect a path without touching it.
+    here: os.FileStat = os.stat(os.executable_path())
+    if here.ok:
+        print("executable kind:", here.kind, "size:", here.size)
+
+    # A scratch directory under the temporary folder.
+    scratch: str = os.join_path(os.temp_dir(), "sere_os_example")
+    assert os.makedirs(scratch)
+    note: str = os.join_path(scratch, "note.txt")
+    if os.write_text(note, "hello from sere") != 0:
+        print("read back:", os.read_text(note))
+    print("entries:", os.listdir_sorted(scratch))
+
+    # Timing and secure randomness.
+    start: i64 = os.monotonic_ms()
+    os.sleep_ms(5)
+    print("elapsed ms:", os.monotonic_ms() - start)
+    print("random bytes:", len(os.random_bytes(8)))
+
+    assert os.remove_tree(scratch)
+    return 0

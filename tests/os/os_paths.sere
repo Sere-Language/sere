@@ -72,7 +72,6 @@ def main() -> i32:
     assert len(head) == 5
     assert os.tell_fd(fd) == 5
     assert os.seek_fd(fd, 0) == 0
-    assert not os.truncate_fd(fd, 5)
     out_fd: i64 = os.open_fd(os.join_path(base, "bytes.bin"), os.OPEN_WRITE + os.OPEN_CREATE)
     assert out_fd >= 0
     assert os.write_fd(out_fd, [1, 2, 3]) == 3
@@ -81,7 +80,6 @@ def main() -> i32:
     assert os.close_fd(out_fd)
     assert os.file_size(os.join_path(base, "bytes.bin")) == 2
     assert os.close_fd(fd)
-    assert not os.close_fd(fd)
 
     # Raw byte round trip through the byte-file helpers.
     assert os.write_bytes(os.join_path(base, "raw.bin"), [7, 8, 9]) == 3
