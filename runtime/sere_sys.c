@@ -2362,6 +2362,19 @@ int32_t sere_os_stat_fields(const char* path, int64_t path_len, int32_t follow, 
   ctime.HighPart = data.ftCreationTime.dwHighDateTime;
   fields[9] = (int64_t)((ctime.QuadPart - 116444736000000000ULL) * 100ULL);
   fields[10] = fields[9];
+  // GetFileAttributesEx cannot report the link count or a stable file identity,
+  // so open the path and ask the handle instead. Failure leaves those fields 0.
+  HANDLE handle = CreateFileW(wide, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+  if (handle != INVALID_HANDLE_VALUE) {
+    BY_HANDLE_FILE_INFORMATION details;
+    if (GetFileInformationByHandle(handle, &details)) {
+      fields[2] = ((int64_t)details.nFileIndexHigh << 32) | (int64_t)details.nFileIndexLow;
+      fields[3] = (int64_t)details.dwVolumeSerialNumber;
+      fields[4] = (int64_t)details.nNumberOfLinks;
+    }
+    CloseHandle(handle);
+  }
   free(wide);
   return 1;
 #else

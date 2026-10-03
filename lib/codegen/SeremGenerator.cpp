@@ -3672,6 +3672,25 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
                                field->payloadTypes[index]);
         }
       }
+    } else if (record != nullptr && !record->isEnum() &&
+               methodSymbol(expression.resolvedType(), "__init__").empty()) {
+      // A record built field by field stores each field at its declared layout,
+      // so a narrower argument (a bare integer literal, say) widens here rather
+      // than reaching the backend as a width the field slot cannot hold. A class
+      // that declares `__init__` passes its parameters instead, and those are
+      // checked against the constructor's own signature.
+      std::size_t index = 0;
+      for (const RecordField& field : record->fields()) {
+        if (index >= args.size())
+          break;
+        if (field.isStatic)
+          continue;
+        const Type* from = index < expression.arguments().size()
+                               ? expression.arguments()[index]->resolvedType()
+                               : nullptr;
+        args[index] = coerce(args[index], from, field.type);
+        ++index;
+      }
     }
     return builder_->operation(
         "construct",

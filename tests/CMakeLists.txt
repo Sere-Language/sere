@@ -16,7 +16,7 @@ foreach(source IN LISTS SERE_FEATURE_TESTS)
 endforeach()
 
 # Focused standard-library regressions. Windows tests avoid interactive desktop APIs.
-set(SERE_STDLIB_TEST_GROUPS sockets wsgi)
+set(SERE_STDLIB_TEST_GROUPS os sockets wsgi)
 if(WIN32)
   list(APPEND SERE_STDLIB_TEST_GROUPS windows)
 endif()

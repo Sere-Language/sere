@@ -1,0 +1,69 @@
+import os
+
+
+def main() -> i32:
+    # Platform identity and fixed host properties.
+    assert os.platform_code() >= 0
+    assert os.platform_code() <= 3
+    assert len(os.arch()) > 0
+    assert len(os.hostname()) > 0
+    assert len(os.user_name()) > 0
+    assert len(os.executable_path()) > 0
+    assert len(os.getcwd()) > 0
+    assert os.cpu_count() > 0
+    assert os.physical_cpu_count() > 0
+    assert os.page_size() > 0
+    assert os.allocation_granularity() > 0
+    assert len(os.path_separator()) == 1
+    assert len(os.path_list_separator()) == 1
+    assert len(os.newline()) > 0
+    assert len(os.dev_null()) > 0
+    assert os.is_windows() == (os.platform_code() == os.PLATFORM_WINDOWS)
+
+    # Memory.
+    memory: os.MemoryInfo = os.memory()
+    assert memory.ok
+    assert memory.total > 0
+    assert memory.available > 0
+    assert memory.total_virtual > 0
+    assert memory.available_virtual >= 0
+
+    # Filesystem capacity.
+    capacity: os.FilesystemInfo = os.filesystem(os.getcwd())
+    assert capacity.ok
+    assert capacity.total_bytes > 0
+    assert capacity.block_size > 0
+    assert capacity.available_bytes > 0
+    assert os.total_space(os.getcwd()) == capacity.total_bytes
+    assert os.free_space(os.getcwd()) == capacity.available_bytes
+    assert os.filesystem_root(os.getcwd()) != ""
+
+    # Clocks: wall clock advances and the monotonic reading never goes back.
+    assert os.time_ns() > 0
+    assert os.time_ms() > 0
+    assert os.time_seconds() > 0.0
+    start: i64 = os.monotonic_ns()
+    assert start > 0
+    os.sleep_ms(2)
+    assert os.monotonic_ns() >= start
+    os.sleep_ns(1000000)
+
+    # Secure randomness.
+    blob: list[i8] = os.random_bytes(16)
+    assert len(blob) == 16
+    other: list[i8] = os.random_bytes(16)
+    assert len(other) == 16
+    assert blob != other
+    raw: i64 = os.random_i64()
+    assert raw == raw
+
+    # Terminals report a size of zero rather than failing when redirected.
+    size: os.TerminalSize = os.terminal_size(1)
+    assert size.columns >= 0
+    assert size.rows >= 0
+    assert os.isatty(1) == os.isatty(1)
+
+    # PATH lookup never crashes, whatever the host has installed.
+    assert not os.command_exists("definitely-not-a-real-command")
+    assert len(os.which("definitely-not-a-real-command")) == 0
+    return 0

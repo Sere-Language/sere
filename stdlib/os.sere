@@ -919,8 +919,11 @@ def rename(src: str, dst: str) -> bool:
     """Rename a path."""
     if _rename(src, dst) != 0:
         return True
+    # Windows refuses to rename onto an existing file; retry as a replace.
+    # The native binding is called directly because a bare `replace(...)` here
+    # resolves to the builtin string method rather than this module's function.
     if is_windows():
-        return replace(src, dst)
+        return _replace(src, dst) != 0
     return False
 
 
@@ -1022,11 +1025,11 @@ def truncate(path: str, size: i64) -> bool:
     fd: i64 = open_fd(path, OPEN_WRITE)
     if fd < 0:
         return False
-    ok: bool = tdtruncate(fd, size)
+    ok: bool = truncate_fd(fd, size)
     return close_fd(fd) and ok
 
 
-def tdtruncate(fd: i64, size: i64) -> bool:
+def truncate_fd(fd: i64, size: i64) -> bool:
     """Truncate an open file to a length."""
     return _truncate_fd(fd, size) != 0
 
@@ -1175,7 +1178,7 @@ class FileDescriptor:
 
     def truncate(self, size: i64) -> bool:
         """Truncate the file."""
-        return tdtruncate(self._fd, size)
+        return truncate_fd(self._fd, size)
 
     def sync(self) -> bool:
         """Flush the file's data and metadata to storage."""
@@ -1490,5 +1493,10 @@ def load_library(path: str) -> Library:
 
 def describe() -> str:
     """Return a one-line summary of the host and its resources."""
+    name: str = _platform_name()
+    machine: str = arch()
+    host: str = hostname()
+    cores: str = str(cpu_count())
     info: MemoryInfo = memory()
-    return _platform_name() + " " + arch() + " host=" + hostname() + " cpus=" + str(cpu_count()) + " memory=" + str(info.total)
+    total: str = str(info.total)
+    return name + " " + machine + " host=" + host + " cpus=" + cores + " memory=" + total

@@ -1,0 +1,128 @@
+import os
+
+
+def main() -> i32:
+    # Everything happens under the temporary directory, which is always writable.
+    base: str = os.join_path(os.temp_dir(), "sere_os_paths_test")
+    os.remove_tree(base)
+
+    assert os.makedirs(base)
+    assert os.is_dir(base)
+    assert os.exists(base)
+    assert not os.is_file(base)
+    assert os.access(base, os.F_OK)
+    assert os.kind(base) == os.KIND_DIRECTORY
+
+    # Nested creation and recursive listing.
+    nested: str = os.join_path(os.join_path(base, "a"), "b")
+    assert os.makedirs(nested)
+    assert os.is_dir(nested)
+    assert os.mkdir_mode(os.join_path(base, "single"), 0o755)
+    assert os.is_dir(os.join_path(base, "single"))
+
+    # Text files.
+    file_path: str = os.join_path(base, "hello.txt")
+    assert os.write_text(file_path, "hello") != 0
+    assert os.is_file(file_path)
+    assert os.file_size(file_path) == 5
+    assert os.read_text(file_path) == "hello"
+    assert os.kind(file_path) == os.KIND_FILE
+    assert os.is_readable(file_path)
+    assert not os.is_dir(file_path)
+    assert not os.is_symlink(file_path)
+
+    # Metadata.
+    info: os.FileStat = os.stat(file_path)
+    assert info.ok
+    assert info.size == 5
+    assert info.kind == os.KIND_FILE
+    assert info.mtime_ns > 0
+    assert info.atime_ns > 0
+    assert info.links >= 1
+    assert os.lstat(file_path).size == 5
+
+    # Copy, rename and atomic replace.
+    copy_path: str = os.join_path(base, "copy.txt")
+    assert os.copy_file(file_path, copy_path)
+    assert os.read_text(copy_path) == "hello"
+    assert not os.copy_file(file_path, copy_path, False)
+
+    moved: str = os.join_path(base, "moved.txt")
+    assert os.rename(copy_path, moved)
+    assert not os.exists(copy_path)
+    assert os.exists(moved)
+    assert os.replace(moved, file_path)
+    assert os.exists(file_path)
+
+    # Directory copies and the recursive walk.
+    source: str = os.join_path(base, "src")
+    assert os.makedirs(source)
+    assert os.write_text(os.join_path(source, "inner.txt"), "inner") != 0
+    tree: str = os.join_path(base, "tree")
+    assert os.copy(source, tree)
+    assert os.is_file(os.join_path(tree, "inner.txt"))
+    walked: list[str] = os.walk(tree)
+    assert len(walked) == 1
+
+    # Descriptors.
+    fd: i64 = os.open_fd(file_path, os.OPEN_READ)
+    assert fd >= 0
+    assert not os.isatty(fd)
+    head: list[i8] = os.read_fd(fd, 5)
+    assert len(head) == 5
+    assert os.tell_fd(fd) == 5
+    assert os.seek_fd(fd, 0) == 0
+    assert not os.truncate_fd(fd, 5)
+    out_fd: i64 = os.open_fd(os.join_path(base, "bytes.bin"), os.OPEN_WRITE + os.OPEN_CREATE)
+    assert out_fd >= 0
+    assert os.write_fd(out_fd, [1, 2, 3]) == 3
+    assert os.fsync(out_fd)
+    assert os.truncate_fd(out_fd, 2)
+    assert os.close_fd(out_fd)
+    assert os.file_size(os.join_path(base, "bytes.bin")) == 2
+    assert os.close_fd(fd)
+    assert not os.close_fd(fd)
+
+    # Raw byte round trip through the byte-file helpers.
+    assert os.write_bytes(os.join_path(base, "raw.bin"), [7, 8, 9]) == 3
+    assert len(os.read_bytes(os.join_path(base, "raw.bin"))) == 3
+
+    # Pipes.
+    pipe: os.Pipe = os.Pipe()
+    assert pipe.ok()
+    assert pipe.write([65, 66, 67]) == 3
+    received: list[i8] = pipe.read(3)
+    assert len(received) == 3
+    assert pipe.close()
+    assert not pipe.ok()
+
+    # Timestamps.
+    assert os.touch(os.join_path(base, "touched.txt"))
+    assert os.exists(os.join_path(base, "touched.txt"))
+    stamp: i64 = os.time_ns()
+    assert os.utime(file_path, stamp, stamp)
+
+    # Path helpers.
+    entries: list[str] = os.listdir_sorted(base)
+    assert len(entries) >= 4
+    assert os.stem("archive.tar.gz") == "archive.tar"
+    assert os.normalize_path(os.join_path(base, "x") + os.path_separator() + "..") == base
+    assert not os.is_absolute("relative" + os.path_separator() + "path")
+    assert os.is_absolute(os.absolute_path("."))
+    assert len(os.real_path(base)) > 0
+
+    # Environment variables.
+    assert os.getenv_or("SERE_OS_TEST_MISSING", "fallback") == "fallback"
+    assert os.setenv("SERE_OS_TEST_MISSING", "value")
+    assert os.has_env("SERE_OS_TEST_MISSING")
+    assert os.getenv("SERE_OS_TEST_MISSING") == "value"
+    assert os.unsetenv("SERE_OS_TEST_MISSING")
+    assert not os.has_env("SERE_OS_TEST_MISSING")
+    assert len(os.environ()) > 0
+    assert len(os.env_items()) > 0
+
+    # Removal.
+    assert not os.rmdir(base)
+    assert os.remove_tree(base)
+    assert not os.exists(base)
+    return 0
