@@ -1,0 +1,6 @@
+# GitHub language detection for Sere sources (see docs/linguist.md).
+*.sere linguist-language=Sere linguist-detectable text eol=lf
+*.slib binary
+*.lib binary
+*.dll binary
+*.exe binary

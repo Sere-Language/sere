@@ -454,7 +454,7 @@ int32_t sere_win_available(void);
 int32_t sere_win_message_box(
     const char* text, int64_t text_len, const char* title, int64_t title_len, int32_t flags);
 int32_t sere_win_beep(int32_t freq, int32_t ms);
-int32_t sere_win_last_error(void);
+uint32_t sere_win_last_error(void);
 void sere_win_computer_name(const char** out_data, int64_t* out_len);
 void sere_win_user_name(const char** out_data, int64_t* out_len);
 int32_t sere_win_cursor_x(void);
@@ -487,6 +487,179 @@ int32_t sere_win_virtual_screen_height(void);
 int32_t sere_win_key_down(int32_t virtual_key);
 int32_t sere_win_show_cursor(int32_t visible);
 void sere_win_os_version(const char** out_data, int64_t* out_len);
+
+void sere_win_set_last_error(uint32_t code);
+void sere_win_error_message(uint32_t code, const char** out_data, int64_t* out_len);
+uint64_t sere_win_tick_count64(void);
+
+int32_t sere_win_handle_valid(void* handle);
+int32_t sere_win_handle_is_null(void* handle);
+int32_t sere_win_close_handle(void* handle);
+void* sere_win_duplicate_handle(void* handle, uint32_t access, uint32_t options);
+void* sere_win_current_process_handle(void);
+void* sere_win_current_thread_handle(void);
+void* sere_win_std_handle(int32_t which);
+int32_t sere_win_set_std_handle(int32_t which, void* handle);
+int32_t sere_win_get_handle_information(void* handle, uint32_t* out_flags);
+int32_t sere_win_set_handle_information(void* handle, uint32_t mask, uint32_t flags);
+
+void* sere_win_open_process(uint32_t access, int32_t inherit, uint32_t process_id);
+int32_t sere_win_terminate_process(void* handle, uint32_t exit_code);
+int32_t sere_win_exit_code_process(void* handle, uint32_t* out_code);
+
+uint32_t sere_win_wait_single(void* handle, uint32_t milliseconds);
+uint32_t sere_win_wait_multiple(void* handles, int32_t wait_all, uint32_t milliseconds);
+
+void* sere_win_event_create(int32_t manual_reset, int32_t initial_state);
+int32_t sere_win_event_set(void* handle);
+int32_t sere_win_event_reset(void* handle);
+int32_t sere_win_event_pulse(void* handle);
+void* sere_win_mutex_create(int32_t initial_owner);
+int32_t sere_win_mutex_release(void* handle);
+void* sere_win_semaphore_create(int32_t initial_count, int32_t maximum_count);
+int32_t sere_win_semaphore_release(void* handle, int32_t release_count, int32_t* out_previous);
+
+int32_t sere_win_create_pipe(uint32_t size, void** out_read, void** out_write);
+
+int32_t sere_win_handle_is_console(void* handle);
+int32_t sere_win_console_mode(void* handle, uint32_t* out_mode);
+int32_t sere_win_set_console_mode(void* handle, uint32_t mode);
+
+uint32_t sere_win_console_event_count(void* handle);
+int32_t sere_win_console_read_event(void* handle, int32_t* fields, int32_t field_count);
+int32_t sere_win_console_peek_event(void* handle, int32_t* fields, int32_t field_count);
+int32_t sere_win_console_flush_input(void* handle);
+
+int32_t sere_win_console_screen_info(void* handle, int32_t* fields, int32_t field_count);
+int32_t sere_win_console_cursor_info(void* handle, uint32_t* out_size, int32_t* out_visible);
+int32_t sere_win_console_set_cursor_info(void* handle, uint32_t size, int32_t visible);
+int32_t sere_win_console_set_cursor_pos(void* handle, int32_t x, int32_t y);
+int32_t sere_win_console_largest_size(void* handle, int32_t* out_width, int32_t* out_height);
+int32_t sere_win_console_set_buffer_size(void* handle, int32_t width, int32_t height);
+int32_t sere_win_console_set_window_rect(
+    void* handle, int32_t absolute, int32_t left, int32_t top, int32_t right, int32_t bottom);
+int32_t sere_win_set_console_text_attribute(void* handle, int32_t attribute);
+
+int32_t sere_win_fill_console_chars(
+    void* handle, int32_t char_code, uint32_t count, int32_t x, int32_t y, uint32_t* out_written);
+int32_t sere_win_fill_console_attrs(
+    void* handle, int32_t attribute, uint32_t count, int32_t x, int32_t y, uint32_t* out_written);
+int32_t sere_win_write_console_output_chars(
+    void* handle, const char* data, int64_t data_len, int32_t x, int32_t y, uint32_t* out_written);
+int32_t sere_win_write_console_output_attrs(
+    void* handle, void* attrs, int32_t x, int32_t y, uint32_t* out_written);
+void sere_win_read_console_output_chars(
+    void* handle, int32_t x, int32_t y, uint32_t count, const char** out_data, int64_t* out_len);
+int32_t sere_win_read_console_output_attrs(void* handle, int32_t x, int32_t y, void* attrs);
+int32_t sere_win_scroll_console(void* handle,
+                                int32_t left,
+                                int32_t top,
+                                int32_t right,
+                                int32_t bottom,
+                                int32_t dx,
+                                int32_t dy,
+                                int32_t fill_char,
+                                int32_t fill_attr);
+
+int32_t sere_win_write_console(
+    void* handle, const char* data, int64_t data_len, uint32_t* out_written);
+void sere_win_read_console(
+    void* handle, uint32_t max_chars, const char** out_data, int64_t* out_len);
+
+int32_t sere_win_handle_write(void* handle, void* data, uint32_t* out_written);
+void* sere_win_handle_read(void* handle, int64_t count);
+
+uint32_t sere_win_get_file_type(void* handle);
+
+void sere_win_console_title(const char** out_data, int64_t* out_len);
+int32_t sere_win_set_console_title(const char* data, int64_t data_len);
+void sere_win_console_original_title(const char** out_data, int64_t* out_len);
+int32_t sere_win_alloc_console(void);
+int32_t sere_win_free_console(void);
+int32_t sere_win_attach_console(uint32_t process_id);
+void* sere_win_console_window(void);
+uint32_t sere_win_get_console_cp(void);
+int32_t sere_win_set_console_cp(uint32_t code_page);
+uint32_t sere_win_get_console_output_cp(void);
+int32_t sere_win_set_console_output_cp(uint32_t code_page);
+
+int32_t sere_win_get_key_state(int32_t virtual_key);
+int32_t sere_win_key_state_raw(int32_t virtual_key);
+int32_t sere_win_get_keyboard_state(void* state);
+void sere_win_to_unicode(int32_t virtual_key,
+                         int32_t scan_code,
+                         void* state,
+                         int32_t flags,
+                         const char** out_data,
+                         int64_t* out_len);
+uint32_t sere_win_map_virtual_key(uint32_t code, uint32_t map_type);
+
+void* sere_win_active_window(void);
+void* sere_win_focus_window(void);
+int32_t sere_win_set_foreground_window(void* window);
+int32_t sere_win_bring_window_to_top(void* window);
+int32_t sere_win_show_window(void* window, int32_t command);
+int32_t sere_win_is_window(void* window);
+int32_t sere_win_is_window_visible(void* window);
+int32_t sere_win_is_iconic(void* window);
+int32_t sere_win_is_zoomed(void* window);
+int32_t sere_win_set_window_text(void* window, const char* data, int64_t data_len);
+int32_t sere_win_get_window_rect(void* window, int32_t* fields, int32_t field_count);
+int32_t sere_win_get_client_rect(void* window, int32_t* fields, int32_t field_count);
+int32_t sere_win_move_window(
+    void* window, int32_t x, int32_t y, int32_t width, int32_t height, int32_t repaint);
+int32_t sere_win_set_window_pos(
+    void* window, int32_t anchor, int32_t x, int32_t y, int32_t width, int32_t height,
+    uint32_t flags);
+int32_t sere_win_update_window(void* window);
+int32_t sere_win_destroy_window(void* window);
+int32_t sere_win_post_message(void* window, uint32_t message, uint64_t wparam, int64_t lparam);
+int64_t sere_win_send_message(void* window, uint32_t message, uint64_t wparam, int64_t lparam);
+
+uint32_t sere_win_register_window_class(const char* name,
+                                        int64_t name_len,
+                                        uint32_t style,
+                                        void* wnd_proc,
+                                        int32_t class_extra,
+                                        int32_t window_extra,
+                                        void* background);
+int32_t sere_win_unregister_window_class(const char* name, int64_t name_len);
+void* sere_win_create_window(const char* class_name,
+                             int64_t class_len,
+                             const char* window_name,
+                             int64_t window_len,
+                             uint32_t style,
+                             uint32_t ex_style,
+                             int32_t x,
+                             int32_t y,
+                             int32_t width,
+                             int32_t height,
+                             void* parent,
+                             void* menu);
+int64_t sere_win_def_window_proc(void* window, uint32_t message, uint64_t wparam, int64_t lparam);
+
+int32_t sere_win_get_message(
+    int32_t* fields, int32_t field_count, void** out_window, int64_t* out_wparam,
+    int64_t* out_lparam);
+int32_t sere_win_peek_message(int32_t* fields,
+                              int32_t field_count,
+                              void** out_window,
+                              int64_t* out_wparam,
+                              int64_t* out_lparam,
+                              uint32_t min_message,
+                              uint32_t max_message,
+                              uint32_t flags);
+int32_t sere_win_translate_message(
+    int32_t* fields, int32_t field_count, void* window, uint64_t wparam, int64_t lparam);
+int64_t sere_win_dispatch_message(
+    int32_t* fields, int32_t field_count, void* window, uint64_t wparam, int64_t lparam);
+void sere_win_post_quit_message(int32_t exit_code);
+
+int32_t sere_win_conpty_available(void);
+void* sere_win_pseudo_console_create(
+    int32_t columns, int32_t rows, void* input_read, void* output_write);
+int32_t sere_win_pseudo_console_resize(void* pseudo, int32_t columns, int32_t rows);
+void sere_win_pseudo_console_close(void* pseudo);
 
 int32_t sere_gl_available(void);
 void* sere_gl_window_new(const char* title, int64_t title_len, int32_t width, int32_t height);

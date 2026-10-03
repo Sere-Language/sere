@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add a Python-inspired Sere formatter with 4-space indentation, clean whitespace, declaration spacing, and final newlines
+
 ## 0.2.10
 
 - **Docstrings are documented**: `def`, `class`, `struct`, and `enum` declarations take a leading string literal with a summary, `Args:`, `Returns:`, `Raises:`, `Example:`, and `Note:` sections

@@ -1,5 +1,5 @@
 /// @file ProjectInit.cpp
-/// Scaffolds a Sere project with src, libs, venv, and scripts/activate.
+/// Scaffolds a Sere project with src, libs, and a local toolchain.
 
 #include "sere/driver/ProjectInit.h"
 
@@ -156,238 +156,6 @@ void makeExecutable(const std::filesystem::path& path) {
          "# Build loose C/C++ files in libs/native when enabled.\n"
          "native = false\n"
          "\n# Custom tool settings belong in [tool.<name>] tables.\n";
-}
-
-[[nodiscard]] bool writeActivateScripts(const std::filesystem::path& root) {
-  const char* bashActivate = R"SH(#!/usr/bin/env bash
-# Source into the current shell:
-#   . ./scripts/activate
-# Leave with: deactivate
-
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-find_sere() {
-  if [[ -x "$ROOT/venv/bin/sere" ]]; then
-    echo "$ROOT/venv/bin/sere"
-    return
-  fi
-  if [[ -x "$ROOT/venv/bin/sere.exe" ]]; then
-    echo "$ROOT/venv/bin/sere.exe"
-    return
-  fi
-  if [[ -f "$ROOT/venv/sere.cfg" ]]; then
-    local home
-    home="$(sed -n 's/^[[:space:]]*home[[:space:]]*=[[:space:]]*//p' "$ROOT/venv/sere.cfg" | head -n 1 | tr -d '"')"
-    if [[ -n "$home" && -x "$home/sere" ]]; then
-      echo "$home/sere"
-      return
-    fi
-    if [[ -n "$home" && -x "$home/sere.exe" ]]; then
-      echo "$home/sere.exe"
-      return
-    fi
-  fi
-  command -v sere 2>/dev/null || true
-}
-
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  echo "Activate in this shell with:"
-  echo "  . ./scripts/activate"
-  exit 1
-fi
-
-if [[ -n "${SERE_ACTIVE:-}" ]]; then
-  echo "Already in ${SERE_PROJECT_NAME}."
-  return 0
-fi
-
-_SERE_OLD_PATH="$PATH"
-_SERE_OLD_PS1="${PS1:-}"
-export SERE_ACTIVE=1
-export SERE_PROJECT_ROOT="$ROOT"
-export SERE_PROJECT_NAME="$(basename "$ROOT")"
-export SERE_VENV_BIN="$ROOT/venv/bin"
-if [[ -f "$ROOT/venv/stdlib/prelude.sere" ]]; then
-  export SERE_STDLIB="$ROOT/venv/stdlib"
-fi
-SERE="$(find_sere)"
-  SERE_BIN=""
-  if [[ -n "$SERE" ]]; then
-    SERE_BIN="$(cd "$(dirname "$SERE")" && pwd)"
-    export SERE_HOME="$SERE_BIN"
-    export PATH="$SERE_BIN:$SERE_VENV_BIN:$PATH"
-else
-  export PATH="$SERE_VENV_BIN:$PATH"
-fi
-cd "$ROOT"
-PS1="(sere:${SERE_PROJECT_NAME}) \\w \\$ "
-deactivate() {
-  export PATH="$_SERE_OLD_PATH"
-  PS1="$_SERE_OLD_PS1"
-  unset SERE_ACTIVE SERE_PROJECT_ROOT SERE_PROJECT_NAME SERE_VENV_BIN
-  unset -f deactivate find_sere
-  echo "Sere project deactivated."
-}
-echo "Sere project: ${SERE_PROJECT_NAME}"
-if [[ -n "$SERE" ]]; then
-  echo "  compiler  $SERE"
-else
-  echo "  compiler  not found (run bin/sere-path)"
-fi
-echo "  commands  sere build | sere run | sere clean | deactivate"
-)SH";
-  const char* psActivate = R"PS(# Activate this Sere project in the current PowerShell:
-#   . .\scripts\activate.ps1
-# Leave with: deactivate
-
-$Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-
-function Find-SereCompiler([string]$ProjectRoot) {
-  $candidates = @(
-    (Join-Path $ProjectRoot 'venv\bin\sere.exe'),
-    (Join-Path $ProjectRoot 'venv\bin\sere')
-  )
-  $cfg = Join-Path $ProjectRoot 'venv\sere.cfg'
-  if (Test-Path $cfg) {
-    foreach ($line in Get-Content $cfg) {
-      if ($line -match '^\s*home\s*=\s*(.+)$') {
-        $home = $Matches[1].Trim().Trim('"')
-        $candidates += (Join-Path $home 'sere.exe')
-        $candidates += (Join-Path $home 'sere')
-      }
-    }
-  }
-  $cmd = Get-Command sere -ErrorAction SilentlyContinue
-  if ($cmd) { $candidates += $cmd.Source }
-  foreach ($path in $candidates) {
-    if ($path -and (Test-Path $path)) { return $path }
-  }
-  return $null
-}
-
-$Sourced = $MyInvocation.InvocationName -eq '.'
-if (-not $Sourced) {
-  Write-Host "Activate in this shell with:"
-  Write-Host "  . .\scripts\activate.ps1"
-  return
-}
-
-if ($env:SERE_ACTIVE) {
-  Write-Host "Already in $($env:SERE_PROJECT_NAME)."
-  return
-}
-
-$Name = Split-Path $Root -Leaf
-$toml = Join-Path $Root 'sere.toml'
-if (Test-Path $toml) {
-  $Section = ''
-  foreach ($line in Get-Content $toml) {
-    if ($line -match '^\s*\[([^]]+)\]') { $Section = $Matches[1]; continue }
-    if ($Section -in @('', 'project') -and $line -match '^\s*name\s*=\s*"?([^"#]+)"?') { $Name = $Matches[1].Trim() }
-  }
-}
-
-$Sere = Find-SereCompiler $Root
-$SereBin = if ($Sere) { Split-Path $Sere -Parent } else { Join-Path $Root 'venv\bin' }
-$VenvBin = Join-Path $Root 'venv\bin'
-$Stdlib = Join-Path $Root 'venv\stdlib'
-if (-not (Test-Path (Join-Path $Stdlib 'prelude.sere'))) {
-  $near = Join-Path $SereBin 'stdlib'
-  if (Test-Path (Join-Path $near 'prelude.sere')) { $Stdlib = $near }
-}
-
-$global:_SerePrev = @{
-  PATH = $env:PATH
-  SERE_ACTIVE = $env:SERE_ACTIVE
-  SERE_PROJECT_ROOT = $env:SERE_PROJECT_ROOT
-  SERE_PROJECT_NAME = $env:SERE_PROJECT_NAME
-  SERE_VENV_BIN = $env:SERE_VENV_BIN
-  SERE_STDLIB = $env:SERE_STDLIB
-  SERE_HOME = $env:SERE_HOME
-  Prompt = $function:prompt
-}
-
-$env:SERE_ACTIVE = '1'
-$env:SERE_PROJECT_ROOT = $Root
-$env:SERE_PROJECT_NAME = $Name
-$env:SERE_VENV_BIN = $VenvBin
-$env:SERE_STDLIB = $Stdlib
-$env:SERE_HOME = $SereBin
-$env:PATH = "$SereBin;$VenvBin;$env:PATH"
-Set-Location $Root
-
-function global:prompt {
-  "(sere:$env:SERE_PROJECT_NAME) $($executionContext.SessionState.Path.CurrentLocation.ProviderPath)> "
-}
-
-function global:deactivate {
-  if (-not $global:_SerePrev) { return }
-  $env:PATH = $global:_SerePrev.PATH
-  $env:SERE_ACTIVE = $global:_SerePrev.SERE_ACTIVE
-  $env:SERE_PROJECT_ROOT = $global:_SerePrev.SERE_PROJECT_ROOT
-  $env:SERE_PROJECT_NAME = $global:_SerePrev.SERE_PROJECT_NAME
-  $env:SERE_VENV_BIN = $global:_SerePrev.SERE_VENV_BIN
-  $env:SERE_STDLIB = $global:_SerePrev.SERE_STDLIB
-  $env:SERE_HOME = $global:_SerePrev.SERE_HOME
-  if ($global:_SerePrev.Prompt) {
-    Set-Item function:global:prompt $global:_SerePrev.Prompt
-  }
-  Remove-Item function:global:deactivate -ErrorAction SilentlyContinue
-  Remove-Variable _SerePrev -Scope Global -ErrorAction SilentlyContinue
-  Write-Host "Sere project deactivated."
-}
-
-Remove-Item function:Find-SereCompiler -ErrorAction SilentlyContinue
-Write-Host "Sere project: $Name"
-if ($Sere) { Write-Host "  compiler  $Sere" } else { Write-Host "  compiler  not found (run .\bin\sere-path.ps1)" }
-Write-Host "  stdlib    $env:SERE_STDLIB"
-Write-Host "  commands  sere build | sere run | sere clean | deactivate"
-)PS";
-  const char* batActivate = R"CMD(@echo off
-rem Stay in this cmd session:
-rem   call scripts\activate.bat
-rem Leave with: deactivate
-
-set "ROOT=%~dp0.."
-for %%I in ("%ROOT%") do set "ROOT=%%~fI"
-
-if defined SERE_ACTIVE (
-  echo Already in %SERE_PROJECT_NAME%.
-  exit /b 0
-)
-
-set "SERE_OLD_PATH=%PATH%"
-set "SERE_OLD_PROMPT=%PROMPT%"
-set "SERE_ACTIVE=1"
-set "SERE_PROJECT_ROOT=%ROOT%"
-for %%I in ("%ROOT%") do set "SERE_PROJECT_NAME=%%~nxI"
-set "SERE_VENV_BIN=%ROOT%\venv\bin"
-if exist "%ROOT%\venv\stdlib\prelude.sere" set "SERE_STDLIB=%ROOT%\venv\stdlib"
-if exist "%ROOT%\venv\bin\sere.exe" set "PATH=%ROOT%\venv\bin;%PATH%"
-if exist "%ROOT%\venv\sere.cfg" (
-  for /f "tokens=1,* delims==" %%A in ('findstr /b /c:"home" "%ROOT%\venv\sere.cfg"') do (
-    set "SERE_HOME=%%~B"
-  )
-)
-if defined SERE_HOME (
-  set "SERE_HOME=%SERE_HOME: =%"
-  set "PATH=%SERE_HOME%;%PATH%"
-)
-cd /d "%ROOT%"
-prompt (sere:%SERE_PROJECT_NAME%) $P$G
-doskey deactivate=set "PATH=%SERE_OLD_PATH%" $T prompt %SERE_OLD_PROMPT% $T set "SERE_ACTIVE=" $T echo Sere project deactivated.
-echo Sere project: %SERE_PROJECT_NAME%
-echo   commands  sere build ^| sere run ^| sere clean ^| deactivate
-echo   note      use "call scripts\activate.bat" so PATH stays in this window
-)CMD";
-  const std::filesystem::path activate = root / "scripts" / "activate";
-  const bool ok = writeText(activate, bashActivate) &&
-                  writeText(root / "scripts" / "activate.ps1", psActivate) &&
-                  writeText(root / "scripts" / "activate.bat", batActivate);
-  if (ok) {
-    makeExecutable(activate);
-  }
-  return ok;
 }
 
 [[nodiscard]] bool writePathScripts(const std::filesystem::path& root) {
@@ -605,15 +373,9 @@ namespace {
       "====================\n"
       "src/       Sere sources (entry: src/main.sere)\n"
       "libs/      Sere modules and native C++ extensions\n"
-      "venv/      local stdlib, headers, compiler copy, and nested-shell rc\n"
-      "scripts/   activate this project in your current terminal\n"
+      "venv/      local stdlib, headers, and compiler copy\n"
       "bin/       built programs plus sere-path (puts the compiler on PATH)\n"
       "\n"
-      "Stay in this terminal (recommended):\n"
-      "  . ./scripts/activate           bash\n"
-      "  . .\\scripts\\activate.ps1      PowerShell\n"
-      "  call scripts\\activate.bat     cmd\n"
-      "  deactivate                     restore PATH and this prompt\n"
       "\n"
       "Put the compiler on PATH (this machine):\n"
       "  .\\bin\\sere-path.ps1\n"
@@ -637,7 +399,7 @@ namespace {
          writeText(root / ".gitignore", gitignore) &&
          writeText(root / ".gitattributes", kGitAttributes) &&
          writeText(root / "README.txt", readme) &&
-         writeActivateScripts(root) && writePathScripts(root);
+         writePathScripts(root);
 }
 
 [[nodiscard]] std::filesystem::path stdlibBesideCompiler(const std::filesystem::path& compilerDir) {
@@ -833,7 +595,6 @@ int initSereProject(const std::filesystem::path& name,
   std::filesystem::create_directories(root / "src", fsError);
   std::filesystem::create_directories(root / "libs" / "native", fsError);
   std::filesystem::create_directories(root / "bin", fsError);
-  std::filesystem::create_directories(root / "scripts", fsError);
   std::filesystem::create_directories(root / "venv" / "bin", fsError);
   std::filesystem::create_directories(root / "venv" / "include" / "sere" / "api", fsError);
   std::filesystem::create_directories(root / "venv" / "lib", fsError);
@@ -854,10 +615,7 @@ int initSereProject(const std::filesystem::path& name,
     return 1;
   }
   std::cout << "created Sere project '" << root.string() << "'\n";
-  std::cout << "  PowerShell:  . .\\scripts\\activate.ps1\n";
-  std::cout << "  cmd:         call scripts\\activate.bat\n";
-  std::cout << "  bash:        . ./scripts/activate\n";
-  std::cout << "  then:        sere build | sere run | deactivate\n";
+  std::cout << "  commands:    sere build | sere run | sere clean\n";
   std::cout << "  compiler:    .\\bin\\sere-path.ps1\n";
   std::cout << "               .\\bin\\sere-path.ps1 -Persistent\n";
   return 0;

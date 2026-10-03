@@ -1,0 +1,17 @@
+from wsgi.headers import Headers
+
+
+def main() -> i32:
+    fields: Headers = Headers([("Set-Cookie", "a=1"), ("set-cookie", "b=2")])
+    assert fields.get("SET-cookie", "missing") == "a=1"
+    assert len(fields.get_all("SET-COOKIE")) == 2
+    snapshot = fields.items()
+    fields.set("Set-Cookie", "c=3")
+    assert len(snapshot) == 2
+    assert len(fields.items()) == 1
+    assert fields.get("set-cookie", "missing") == "c=3"
+    fields.remove("SET-COOKIE")
+    assert not fields.contains("set-cookie")
+    assert fields.get("missing", "fallback") == "fallback"
+    fields.remove("missing")
+    return 0

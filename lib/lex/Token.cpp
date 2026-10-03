@@ -56,6 +56,7 @@ constexpr KeywordEntry kKeywords[] = {
     {"struct", TokenKind::KeywordStruct},
     {"super", TokenKind::KeywordSuper},
     {"try", TokenKind::KeywordTry},
+    {"type", TokenKind::KeywordType},
     {"while", TokenKind::KeywordWhile},
     {"with", TokenKind::KeywordWith},
 };

@@ -19,6 +19,7 @@ New-Item -ItemType Directory -Path $ExtStaging | Out-Null
 $Files = @(
   "package.json",
   "extension.js",
+  "formatter.js",
   "language-configuration.json",
   "README.md",
   "CHANGELOG.md",

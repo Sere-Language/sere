@@ -302,6 +302,8 @@ serem::IRType SeremGenerator::lowerType(const Type* type) const {
         usedTypeNames_.insert(base->canonical()->name());
     }
   }
+  if (type->isUnion())
+    return serem::IRType::structType("union", {serem::IRType::i32(), serem::IRType::i64()});
   if (type->isNamed("bool"))
     return serem::IRType::boolType();
   if (type->isInteger())
@@ -415,6 +417,7 @@ SeremGenerator::emit(const Module& module,
   for (std::size_t index = 0; index < modules.size(); ++index) {
     const Module& current = *modules[index];
     const std::string& key = moduleKeys[index];
+    moduleGlobals_.try_emplace(key);
     for (const std::unique_ptr<Stmt>& statement : current.statements()) {
       if (statement == nullptr || statement->kind() != NodeKind::VarDecl)
         continue;
@@ -523,13 +526,15 @@ SeremGenerator::emit(const Module& module,
           continue;
         }
         for (const std::unique_ptr<FunctionDef>& method : classDef.methods()) {
-          if (!prefix.empty() && method->modulePrefix().empty())
-            functionNames_[method.get()] = prefix + "_" + functionName(*method);
+          if (!prefix.empty() && method->modulePrefix().empty()) {
+            functionNames_[method.get()] = prefix + "_" + classDef.name() + "." + method->name();
+          }
           const Type* type = functionType(*method);
           if (type != nullptr) {
-            functions_.insert_or_assign(functionName(*method), lowerType(type));
-            definitions_[functionName(*method)] = method.get();
-            methodSymbols_[classDef.name() + "::" + method->name()] = functionName(*method);
+            const std::string symbol = functionName(*method);
+            functions_.insert_or_assign(symbol, lowerType(type));
+            definitions_[symbol] = method.get();
+            methodSymbols_[classDef.name() + "::" + method->name()] = symbol;
           }
         }
       } else if (statement != nullptr && statement->kind() == NodeKind::EnumDef) {
@@ -1014,11 +1019,7 @@ bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbo
     return true;
   }
   function_ = &module_->addFunction(std::move(irFunction));
-  if (!function.modulePrefix().empty()) {
-    currentModuleKey_ = moduleGlobals_.contains(function.modulePrefix())
-                            ? function.modulePrefix()
-                            : rootModuleKey_;
-  }
+  currentModuleKey_ = function.modulePrefix().empty() ? rootModuleKey_ : function.modulePrefix();
   currentOwnerClass_ = function.ownerClass();
   function_->setAsync(function.isAsync());
   function_->setGenerator(function.isGenerator());
@@ -3343,6 +3344,8 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
         for (const auto& argument : expression.arguments())
           args.push_back(emitExpression(*argument));
       }
+      if (expression.boundArguments().empty() && field != nullptr && symbol == field->llvmName)
+        appendDefaults(symbol, args);
       return builder_->call(std::make_shared<serem::FunctionRef>(
                                 symbol, lowerType(expression.callee().resolvedType())),
                             std::move(args),
@@ -3605,23 +3608,27 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
   }
   if (expression.callee().kind() == NodeKind::MemberExpr && !expression.isMethod()) {
     const auto& member = static_cast<const MemberExpr&>(expression.callee());
-    if (member.object().kind() == NodeKind::NameExpr) {
-      const auto& object = static_cast<const NameExpr&>(member.object());
-      const std::string qualified = object.name() + "_" + member.field();
-      const auto found = functions_.find(qualified);
+    if (member.object().kind() == NodeKind::NameExpr && member.object().resolvedType() != nullptr &&
+        member.object().resolvedType()->isModule()) {
+      const RecordField* field = member.object().resolvedType()->findField(member.field());
+      const std::string symbol = !expression.loweredName().empty() &&
+                                         functions_.contains(expression.loweredName())
+                                     ? expression.loweredName()
+                                     : field == nullptr ? member.field() : field->llvmName;
+      const auto found = functions_.find(symbol);
       if (found != functions_.end()) {
-        const auto& bound = expression.boundArguments();
-        if (!bound.empty()) {
-          for (const Expr* argument : bound)
-            if (argument != nullptr)
-              args.push_back(emitExpression(*argument));
-        } else {
+        for (const Expr* argument : expression.boundArguments()) {
+          if (argument != nullptr)
+            args.push_back(emitExpression(*argument));
+        }
+        if (expression.boundArguments().empty()) {
           for (const auto& argument : expression.arguments())
             args.push_back(emitExpression(*argument));
         }
-        appendDefaults(qualified, args);
-        return builder_->call(std::make_shared<serem::FunctionRef>(qualified, found->second),
-                              args,
+        if (field != nullptr && symbol == field->llvmName)
+          appendDefaults(symbol, args);
+        return builder_->call(std::make_shared<serem::FunctionRef>(symbol, found->second),
+                              std::move(args),
                               lowerType(expression.resolvedType()));
       }
     }
@@ -3683,14 +3690,18 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
       serem::ValuePtr callee = std::make_shared<serem::FunctionRef>(
           symbol, lowerType(expression.callee().resolvedType()));
       args.push_back(emitExpression(member.object()));
-      for (const Expr* argument : expression.boundArguments()) {
-        if (argument != nullptr)
-          args.push_back(emitExpression(*argument));
-      }
-      if (expression.boundArguments().empty())
+      if (!expression.boundArguments().empty()) {
+        for (const Expr* argument : expression.boundArguments()) {
+          if (argument != nullptr)
+            args.push_back(emitExpression(*argument));
+        }
+      } else {
         for (const std::unique_ptr<Expr>& argument : expression.arguments()) {
           args.push_back(emitExpression(*argument));
         }
+      }
+      if (expression.boundArguments().empty())
+        appendDefaults(symbol, args);
       return builder_->call(
           std::move(callee), std::move(args), lowerType(expression.resolvedType()));
     }
@@ -3718,14 +3729,25 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
   if (callee == nullptr) {
     callee = emitExpression(expression.callee());
   }
-  for (const std::unique_ptr<Expr>& argument : expression.arguments()) {
-    const Type* expected = signature != nullptr && args.size() < signature->paramTypes().size()
-                               ? signature->paramTypes()[args.size()]
-                               : argument->resolvedType();
-    args.push_back(coerce(emitExpression(*argument), argument->resolvedType(), expected));
+  if (!expression.boundArguments().empty()) {
+    for (const Expr* argument : expression.boundArguments()) {
+      if (argument == nullptr)
+        continue;
+      const Type* expected = signature != nullptr && args.size() < signature->paramTypes().size()
+                                 ? signature->paramTypes()[args.size()]
+                                 : argument->resolvedType();
+      args.push_back(coerce(emitExpression(*argument), argument->resolvedType(), expected));
+    }
+  } else {
+    for (const std::unique_ptr<Expr>& argument : expression.arguments()) {
+      const Type* expected = signature != nullptr && args.size() < signature->paramTypes().size()
+                                 ? signature->paramTypes()[args.size()]
+                                 : argument->resolvedType();
+      args.push_back(coerce(emitExpression(*argument), argument->resolvedType(), expected));
+    }
+    if (callee != nullptr && callee->valueKind() == serem::ValueKind::FunctionRef)
+      appendDefaults(static_cast<const serem::FunctionRef&>(*callee).name(), args);
   }
-  if (callee != nullptr && callee->valueKind() == serem::ValueKind::FunctionRef)
-    appendDefaults(static_cast<const serem::FunctionRef&>(*callee).name(), args);
   return builder_->call(std::move(callee), std::move(args), lowerType(expression.resolvedType()));
 }
 

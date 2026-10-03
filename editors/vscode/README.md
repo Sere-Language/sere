@@ -15,7 +15,8 @@ The language server is the same `sere` binary (`sere --lsp`).
 - Parameter hints, signature help, and inlay hints
 - Go to definition, type definition, implementation, and references
 - Rename, document highlight, document / workspace symbols
-- Folding, format-on-request, and code lens reference counts
+- Folding, document formatting, and code lens reference counts
+- Python-inspired formatting: 4-space indentation, tidy whitespace, blank lines between top-level declarations, and a final newline
 - `# type: ignore` and `# type[NameError]: ignore` suppress diagnostics
 - Commands: compile the current file, `sere build`, `sere run`
 

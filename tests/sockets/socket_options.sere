@@ -1,0 +1,23 @@
+import socket
+
+
+def main() -> i32:
+    sock: socket.Socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+    assert sock.getblocking()
+    sock.settimeout(0.0)
+    assert not sock.getblocking()
+    assert sock.gettimeout() == 0.0
+    sock.setblocking(True)
+    assert sock.getblocking()
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    assert sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR) == 1
+    assert len(sock.recv(0)) == 0
+    rejected: bool = False
+    try:
+        sock.recv(-1)
+    except ValueError:
+        rejected = True
+    assert rejected
+    sock.close()
+    sock.close()
+    return 0

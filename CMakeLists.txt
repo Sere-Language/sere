@@ -65,7 +65,7 @@ if(WIN32)
       -BuildDir "${CMAKE_BINARY_DIR}" -LlvmRoot "${LLVM_TOOLS_BINARY_DIR}/.."
     DEPENDS sere
     USES_TERMINAL
-    COMMENT "Package portable Sere and per-user installer into releases/${SERE_VERSION_STRING}"
+    COMMENT "Package portable Sere and per-user installer into releases/${PROJECT_VERSION}"
     VERBATIM
   )
 endif()

@@ -1,0 +1,14 @@
+type Number = i32 | i64
+
+class Tagged:
+    type: str
+
+    def __init__(self, value: str) -> void:
+        self.type = value
+
+def main() -> i32:
+    number: Number = 42
+    assert number == 42
+    tagged: Tagged = Tagged("kind")
+    assert tagged.type == "kind"
+    return 0

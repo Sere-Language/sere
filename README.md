@@ -163,18 +163,15 @@ Additional configure options are accepted, for example
 
 ## Projects
 
-A project is a directory with a `sere.toml`, a `src/` tree, a `libs/` folder for dependencies, and a `venv/` holding a copy of the standard library. `sere init` writes all of it, then the activation script puts that project's environment in front of the one you already have:
+A project is a directory with a `sere.toml`, a `src/` tree, a `libs/` folder for dependencies, and a `venv/` holding a copy of the standard library. `sere init` writes all of it; run its commands from the project directory in your usual terminal:
 
 ```powershell
 .\bin\sere.exe init myapp
 cd myapp
-. .\scripts\activate.ps1
 sere build
 sere run
-deactivate
 ```
 
-Dot-source `scripts/activate.ps1` so the new environment lands in the terminal you already have. `deactivate` puts the old `PATH` and prompt back; it does not close the window. Running `activate.ps1` without the leading dot just prints the dot-source command to use.
 
 `sere build` compiles `[paths].entry`, which is `src/main.sere` unless you point it elsewhere, and `sere run` builds and then executes `bin/<name>.exe`. `[build].output` selects a different path and `[build].opt` picks an optimization level. `sere build` also takes the compiler options, such as `--emit-llvm`, `--emit-asm`, `--backend=serem`, or `--no-transformers`. Every argument after `run` is passed to your program:
 
@@ -419,7 +416,7 @@ build/          CMake build trees (gitignored)
 bin/            locally built sere.exe plus the sere-path helpers
 dist/           VSIX, ZIP, and installer outputs (gitignored)
 editors/vscode  language grammar and LSP client
-scripts/        bootstrap, sere-path, project activation templates, Inno Setup helper
+scripts/        bootstrap, sere-path, Inno Setup helper
 cmake/          LLVM discovery and warning policy
 docs/           language reference and compiler handbook
 packaging/      Windows installer templates

@@ -1,0 +1,11 @@
+import windows
+
+
+def main() -> i32:
+    assert windows.available()
+    assert windows.process_id() > 0
+    assert windows.thread_id() > 0
+    assert windows.process_id() == windows.process_id()
+    assert len(windows.computer_name()) > 0
+    assert len(windows.user_name()) > 0
+    return 0

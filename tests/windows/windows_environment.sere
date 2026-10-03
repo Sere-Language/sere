@@ -1,0 +1,13 @@
+import windows
+
+
+def main() -> i32:
+    # Environment changes are confined to this test process.
+    key: str = "SERE_WINDOWS_TEST_ENVIRONMENT"
+    assert windows.env_set(key, "first value")
+    assert windows.env_get(key) == "first value"
+    assert windows.env_set(key, "replacement")
+    assert windows.env_get(key) == "replacement"
+    assert windows.env_set(key, "")
+    assert windows.env_get(key) == ""
+    return 0

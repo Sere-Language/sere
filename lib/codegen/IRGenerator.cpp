@@ -1463,6 +1463,10 @@ llvm::Value* IRGenerator::emitAddress(llvm::IRBuilder<>& builder, const Expr& ex
     if (objectType->isTypeObject() && objectType->typeObjectInstance() != nullptr) {
       objectType = objectType->typeObjectInstance()->canonical();
     }
+    if (objectType->isModule()) {
+      const auto found = globals_.find(member.field());
+      return found == globals_.end() ? nullptr : found->second;
+    }
     const RecordField* field = objectType->findField(member.field());
     if (field != nullptr && field->isStatic) {
       const std::string globalName =
@@ -1852,6 +1856,10 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
                                           {builder.getPtrTy(), builder.getInt64Ty()}),
                               {data, len});
   }
+  if (name == "list.len") {
+    return builder.CreateCall(runtimeDecl("sere_list_len", builder.getInt64Ty(),
+                                          {builder.getPtrTy()}), {object});
+  }
   if (name == "list.decode") {
     llvm::Value* data = builder.CreateAlloca(builder.getPtrTy());
     llvm::Value* len = builder.CreateAlloca(builder.getInt64Ty());
@@ -1859,7 +1867,8 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
                                    builder.getVoidTy(),
                                    {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()}),
                        {object, data, len});
-    return builder.CreateLoad(builder.getPtrTy(), data);
+    return packStr(builder, builder.CreateLoad(builder.getPtrTy(), data),
+                   builder.CreateLoad(builder.getInt64Ty(), len));
   }
   if (name == "iterator.close") {
     auto* function = builder.GetInsertBlock()->getParent();
@@ -5225,7 +5234,7 @@ llvm::Value* IRGenerator::emitExpr(llvm::IRBuilder<>& builder, const Expr& expr)
     if (literal.isByte() || (type != nullptr && (type->isNamed("i8") || type->isNamed("u8")))) {
       return builder.getInt8(static_cast<std::uint8_t>(literal.value()));
     }
-    return builder.getInt32(static_cast<std::uint32_t>(literal.value()));
+    return llvm::ConstantInt::get(lower(type), literal.value(), true);
   }
   case NodeKind::FloatLiteral: {
     const auto& literal = static_cast<const FloatLiteral&>(expr);
@@ -6987,6 +6996,7 @@ std::unique_ptr<llvm::Module> IRGenerator::emit(const Module& ast,
   std::string verifyError;
   llvm::raw_string_ostream errorStream(verifyError);
   if (llvm::verifyModule(*module, &errorStream)) {
+    llvm::errs() << errorStream.str();
     reportCodegenFailure(firstLineOf(errorStream.str()));
     return nullptr;
   }
@@ -7674,7 +7684,8 @@ llvm::FunctionType* IRGenerator::llvmFunctionTypeFrom(const Type* type) {
   }
   std::vector<llvm::Type*> params;
   for (const Type* param : type->paramTypes()) {
-    params.push_back(lower(param));
+    params.push_back(recordHasTypeId(resolveType(param))
+                         ? llvm::PointerType::getUnqual(*context_) : lower(param));
   }
   llvm::Type* ret = type->returnType() == nullptr || type->returnType()->isVoidLike()
                         ? llvm::Type::getVoidTy(*context_)
@@ -7695,7 +7706,8 @@ llvm::FunctionType* IRGenerator::llvmFunctionTypeFromCall(const CallExpr& expr) 
       if (param != nullptr && param->isEllipsis()) {
         break;
       }
-      params.push_back(lower(param));
+      params.push_back(recordHasTypeId(resolveType(param))
+                         ? llvm::PointerType::getUnqual(*context_) : lower(param));
     }
     for (std::size_t index = params.size(); index < expr.arguments().size(); ++index) {
       params.push_back(lower(expr.arguments()[index]->resolvedType()));

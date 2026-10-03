@@ -1,0 +1,39 @@
+import socket
+import bytes
+
+
+def main() -> i32:
+    listener: socket.Socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+    listener.settimeout(2.0)
+    listener.bind(("127.0.0.1", 0))
+    host, port = listener.getsockname()
+    assert host == "127.0.0.1"
+    assert port > 0
+    listener.listen(1)
+    client: socket.Socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+    client.settimeout(2.0)
+    client.connect((host, port))
+    server, remote = listener.accept()
+    server.settimeout(2.0)
+    client.sendall(bytes.from_str("hello"))
+    client.shutdown(socket.SHUT_WR)
+    received: str = ""
+    while True:
+        chunk: list[byte] = server.recv(2)
+        if len(chunk) == 0:
+            break
+        received = received + bytes.to_str(chunk)
+    assert received == "hello"
+    server.sendall(bytes.from_str("ok"))
+    server.shutdown(socket.SHUT_WR)
+    reply: str = ""
+    while True:
+        reply_chunk: list[byte] = client.recv(2)
+        if len(reply_chunk) == 0:
+            break
+        reply = reply + bytes.to_str(reply_chunk)
+    assert reply == "ok"
+    server.close()
+    client.close()
+    listener.close()
+    return 0

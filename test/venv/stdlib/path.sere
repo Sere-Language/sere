@@ -1,0 +1,20 @@
+# Path string helpers. Import with: import path
+# join() takes two parts; nest calls for more: path.join(path.join(a, b), c)
+
+extern "C" "sere_path_join"
+def join(left: str, right: str) -> str
+
+extern "C" "sere_path_dirname"
+def dirname(value: str) -> str
+
+extern "C" "sere_path_basename"
+def basename(value: str) -> str
+
+extern "C" "sere_path_ext"
+def ext(value: str) -> str
+
+extern "C" "sere_path_is_abs"
+def _is_abs(value: str) -> i32
+
+def is_abs(value: str) -> bool:
+    return _is_abs(value) as bool

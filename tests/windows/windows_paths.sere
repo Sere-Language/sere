@@ -1,0 +1,14 @@
+import windows
+
+
+def main() -> i32:
+    current: str = windows.current_directory()
+    temporary: str = windows.temp_directory()
+    assert len(current) > 0
+    assert len(temporary) > 0
+    assert windows.directory_exists(current)
+    assert windows.directory_exists(temporary)
+    assert not windows.file_exists(current)
+    assert windows.full_path(".") == current
+    assert windows.full_path(current) == current
+    return 0

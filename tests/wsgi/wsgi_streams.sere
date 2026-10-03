@@ -1,0 +1,25 @@
+from wsgi.types import InputStream, ErrorStream
+import bytes
+
+
+def main() -> i32:
+    stream: InputStream = InputStream(bytes.from_str("one\ntwo"))
+    assert len(stream.read(0)) == 0
+    assert bytes.to_str(stream.readline(2)) == "on"
+    assert bytes.to_str(stream.readline(-1)) == "e\n"
+    assert bytes.to_str(stream.read(-1)) == "two"
+    assert len(stream.read(1)) == 0
+    stream.close()
+    stream.close()
+    rejected: bool = False
+    try:
+        stream.read(1)
+    except ValueError:
+        rejected = True
+    assert rejected
+    errors: ErrorStream = ErrorStream(True)
+    errors.write("first")
+    errors.writelines([" second", "\n"])
+    errors.flush()
+    assert errors.text == "first second\n"
+    return 0

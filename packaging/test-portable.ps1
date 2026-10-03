@@ -16,6 +16,9 @@ try {
   if ([IO.Path]::GetFullPath($info.stdlib) -ne [IO.Path]::GetFullPath((Join-Path $Package 'stdlib'))) { throw 'Compiler selected an unexpected standard library' }
   & $sere init smoke
   if ($LASTEXITCODE) { throw 'Portable init failed' }
+  foreach ($activation in @('activate', 'activate.ps1', 'activate.bat')) {
+    if (Test-Path (Join-Path 'smoke\scripts' $activation)) { throw 'Project created a shell activation script' }
+  }
   if (Test-Path 'smoke\venv\stdlib\stdlib') { throw 'Nested stdlib created' }
   Set-Location smoke
   $info = & '.\venv\bin\sere.exe' --print-env | ConvertFrom-Json

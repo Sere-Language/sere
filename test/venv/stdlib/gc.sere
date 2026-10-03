@@ -1,0 +1,66 @@
+# Pluggable garbage collectors. Import with: import gc
+#
+# Builtins: "none" (explicit free), "mark_sweep" (conservative, needs roots),
+# "arena" (bump; collect() resets the heap).
+#
+#   gc.use("mark_sweep")
+#   p = alloc[i32]()
+#   gc.add_root(p as Ptr[i8])
+#   gc.collect()
+#
+# Custom collectors: implement SereGcVTable in C, call sere_gc_install from
+# sere_mod_init, then `sere main.sere --link my_gc.lib`.
+# Install before the program allocates. Switching mid-run can leak.
+
+import string
+
+extern "C" "sere_gc_use"
+def _use(name: str) -> i32
+
+extern "C" "sere_gc_name"
+def name() -> str
+
+extern "C" "sere_gc_collect"
+def collect() -> void
+
+extern "C" "sere_gc_add_root"
+def add_root(pointer: Ptr[i8]) -> void
+
+extern "C" "sere_gc_remove_root"
+def remove_root(pointer: Ptr[i8]) -> void
+
+extern "C" "sere_gc_retain"
+def retain(pointer: Ptr[i8]) -> void
+
+extern "C" "sere_gc_release"
+def release(pointer: Ptr[i8]) -> void
+
+extern "C" "sere_gc_bytes_in_use"
+def bytes_in_use() -> i64
+
+extern "C" "sere_gc_bytes_allocated"
+def bytes_allocated() -> i64
+
+extern "C" "sere_gc_live_blocks"
+def live_blocks() -> i64
+
+extern "C" "sere_gc_collections"
+def collections() -> i64
+
+extern "C" "sere_alloc"
+def alloc_bytes(size: i64) -> Ptr[i8]
+
+extern "C" "sere_free"
+def free_bytes(pointer: Ptr[i8]) -> void
+
+def use(name: str) -> bool:
+    return _use(name) as bool
+
+def is_none() -> bool:
+    return string.eq(name(), "none")
+
+def is_mark_sweep() -> bool:
+    return string.eq(name(), "mark_sweep")
+
+def is_arena() -> bool:
+    return string.eq(name(), "arena")

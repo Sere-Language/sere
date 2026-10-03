@@ -1,0 +1,104 @@
+# Pythonic stderr logger. Import with: import log
+#
+#   import log
+#   logger = log.get_logger("app")
+#   logger.info("booted")          # default level is Info, so this prints
+#   logger.warning("uh oh")
+#   logger.set_level(log.Level.Debug)
+#   logger.debug("detail")         # now emitted
+#
+# Each enabled record is written to stderr as:
+#   <timestamp> [LEVEL] <logger>: <message>
+
+import io
+import time
+
+
+
+enum Level:
+    Trace = 0
+    Debug = 10
+    Info = 20
+    Warning = 30
+    Error = 40
+    Critical = 50
+
+    def get_name(self) -> str:
+        match self:
+            case Level.Trace:
+                return "trace"
+            case Level.Debug:
+                return "debug"
+            case Level.Info:
+                return "info"
+            case Level.Warning:
+                return "warn"
+            case Level.Error:
+                return "error"
+            case Level.Critical:
+                return "critical"
+
+class LogRecord:
+    logger_name: str
+    message: str
+    level: Level
+    timestamp: str
+
+    def __init__(self, logger_name: str, message: str, level: Level, timestamp: str) -> None:
+        self.logger_name = logger_name
+        self.message = message
+        self.level = level
+        self.timestamp = timestamp
+
+def write(level: str, text: str) -> void:
+    io.eprint("[")
+    io.eprint(level)
+    io.eprint("] ")
+    io.eprint(text)
+    io.eprint_nl()
+
+class Formatter:
+    def format(self, record: LogRecord) -> str:
+        return f"{record.timestamp} [{record.level.get_name().upper()}] {record.logger_name.capitalize()}: {record.message}"
+
+class Logger:
+    name: str
+    @private level: Level
+
+    def __init__(self, name: str, level: Level = Level.Info) -> None:
+        self.name = name
+        self.level = level
+
+    def get_level(self) -> Level:
+        return self.level
+
+    def set_level(self, level: Level) -> None:
+        self.level = level
+
+    def log(self, level: Level, message: str) -> void:
+        if level.value < self.level.value:
+            return
+        record = LogRecord(self.name, message, level, time.get_timestamp())
+        io.eprint(Formatter().format(record))
+        io.eprint_nl()
+
+    def trace(self, message: str) -> void:
+        self.log(Level.Trace, message)
+
+    def debug(self, message: str) -> void:
+        self.log(Level.Debug, message)
+
+    def info(self, message: str) -> void:
+        self.log(Level.Info, message)
+
+    def warning(self, message: str) -> void:
+        self.log(Level.Warning, message)
+
+    def error(self, message: str) -> void:
+        self.log(Level.Error, message)
+
+    def critical(self, message: str) -> void:
+        self.log(Level.Critical, message)
+
+def get_logger(name: str, level: Level = Level.Info) -> Logger:
+    return Logger(name, level)

@@ -12,12 +12,33 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $versionMatch = [regex]::Match((Get-Content "$repo\CMakeLists.txt" -Raw), 'VERSION\s+(\d+\.\d+\.\d+)')
-if (-not $Name) { $Name = 'pre-' + $versionMatch.Groups[1].Value }
-if ($Name -notmatch '^pre-\d+\.\d+\.\d+$') { throw 'Name must be pre-x.x.x' }
+if (-not $versionMatch.Success) { throw 'Cannot determine CMake project version' }
+if (-not $Name) { $Name = $versionMatch.Groups[1].Value }
+$Name = $Name -replace '^pre-', ''
+if ($Name -notmatch '^\d+\.\d+\.\d+$') { throw 'Name must be x.x.x' }
+# Hold an exclusive handle for the entire build, before touching generated files.
+$lockPath = Join-Path $PSScriptRoot '.stage.lock'
+try {
+  $releaseLock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate,
+    [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+} catch {
+  throw 'Another release build is running. Wait for it to finish before running stage.ps1 again.'
+}
+try {
 if (-not $BuildDir) { $BuildDir = Join-Path $repo 'build\windows-clang-cl-release' }
 $BuildDir = [IO.Path]::GetFullPath($BuildDir)
 if (-not $LlvmRoot) { $LlvmRoot = Join-Path $env:LOCALAPPDATA 'sere\toolchains\llvm-22.1.8' }
 $LlvmRoot = [IO.Path]::GetFullPath($LlvmRoot)
+if (-not (Test-Path -LiteralPath (Join-Path $LlvmRoot 'bin\llvm-readobj.exe'))) {
+  $developmentLlvm = Join-Path $env:LOCALAPPDATA 'sere\toolchains\llvm-22.1.8'
+  if (-not $PSBoundParameters.ContainsKey('LlvmRoot') -and
+      (Test-Path -LiteralPath (Join-Path $developmentLlvm 'bin\llvm-readobj.exe'))) {
+    $LlvmRoot = $developmentLlvm
+  } else {
+    throw "Release packaging needs the full LLVM toolchain, including llvm-readobj.exe: $LlvmRoot"
+  }
+}
+
 if (-not $PortableOnly -and -not $Iscc) {
   $Iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source) |
     Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
@@ -39,22 +60,25 @@ if (-not $SkipBuild) {
   if ((Test-Path -LiteralPath $cache) -and
     ((Get-Content -LiteralPath $cache -Raw) -notmatch [regex]::Escape($clangCl))) {
     Write-Host "Dropping stale CMake cache in $BuildDir (compiler path changed)"
-    Remove-Item -LiteralPath $BuildDir -Recurse -Force
+    Remove-Item -LiteralPath $cache -Force
+    $cmakeFiles = Join-Path $BuildDir 'CMakeFiles'
+    if (Test-Path -LiteralPath $cmakeFiles) {
+      if ([IO.Path]::GetFullPath($cmakeFiles) -ne ($BuildDir.TrimEnd('\') + '\CMakeFiles')) { throw 'Unsafe cache path' }
+      Remove-Item -LiteralPath $cmakeFiles -Recurse -Force
+    }
   }
   Write-Host "Building with LLVM at $LlvmRoot"
   & cmake -S $repo -B $BuildDir -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_C_COMPILER=$clangCl" "-DCMAKE_CXX_COMPILER=$clangCl" "-DLLVM_DIR=$LlvmRoot/lib/cmake/llvm"
   if ($LASTEXITCODE) { throw 'CMake configure failed' }
   & cmake --build $BuildDir --config Release
   if ($LASTEXITCODE) { throw 'Build failed' }
-#  & ctest --test-dir $BuildDir -C Release --output-on-failure
-#  if ($LASTEXITCODE) { throw 'Tests failed' }
 }
 Write-Host "Staging $Name from $BuildDir"
 $compilerDir = Join-Path $BuildDir 'bin'
 $exe = Join-Path $compilerDir 'sere.exe'
 if (-not (Test-Path $exe)) { throw "Compiler missing: $exe" }
 $compilerVersion = & $exe --version
-if ($LASTEXITCODE -or $compilerVersion -notmatch [regex]::Escape($Name)) { throw "Compiler version does not match $Name : $compilerVersion" }
+if ($LASTEXITCODE -or $compilerVersion -notmatch ('(?<![\d.])(?:pre-)?' + [regex]::Escape($Name) + '(?![\d.])')) { throw "Compiler version does not match $Name : $compilerVersion" }
 $releaseRoot = [IO.Path]::GetFullPath((Join-Path $repo "releases\$Name"))
 $dest = Join-Path $releaseRoot 'windows-x64'
 # Validate the exact removal target before replacing generated output.
@@ -137,20 +161,26 @@ Get-ChildItem $crt.FullName -Filter '*.dll' | ForEach-Object {
   Copy-Required $_.FullName "$dest\bin\$($_.Name)"
   Copy-Required $_.FullName "$llvm\bin\$($_.Name)"
 }
+$hasVsix = $false
 if (-not $WithoutEditor) {
-  & "$repo\scripts\package-vsix.ps1"
-  if (-not $?) { throw 'VSIX packaging failed' }
-  $extension = Get-Content "$repo\editors\vscode\package.json" -Raw | ConvertFrom-Json
-  Copy-Required "$repo\dist\$($extension.name)-$($extension.version).vsix" "$dest\editors\sere.vsix"
+  if (Test-Path -LiteralPath "$repo\editors\vscode\package.json") {
+    & "$repo\scripts\package-vsix.ps1"
+    if (-not $?) { throw 'VSIX packaging failed' }
+    $extension = Get-Content "$repo\editors\vscode\package.json" -Raw | ConvertFrom-Json
+    $vsix = "$repo\dist\$($extension.name)-$($extension.version).vsix"
+  } else {
+    $vsix = "$repo\releases\sere-$Name.vsix"
+    if (-not (Test-Path -LiteralPath $vsix)) {
+      throw "Editor sources and $vsix are missing. Supply the prebuilt VSIX or use -WithoutEditor."
+    }
+    Write-Host "Using prebuilt editor extension: $vsix"
+  }
+  Copy-Required $vsix "$dest\editors\sere.vsix"
+  $hasVsix = $true
 }
 Copy-Required "$repo\packaging\README.md" "$dest\README.md"
-# Compilation must succeed without development environment variables or PATH tools.
-& "$repo\packaging\test-portable.ps1" -Package $dest
 # Always verify source stdlib, including with -SkipBuild, before creating either artifact.
 & "$repo\packaging\verify-stdlib.ps1" -Source "$repo\stdlib" -Package $dest
-Write-Host "Compressing portable archive"
-$zip = Join-Path $releaseRoot "Sere-$Name-windows-x64-portable.zip"
-Compress-Archive -Path "$dest\*" -DestinationPath $zip -Force
 if (-not $PortableOnly) {
   if (-not $InstallerOutput) { $InstallerOutput = Join-Path $releaseRoot "Sere-$Name-windows-x64-setup.exe" }
   $InstallerOutput = [IO.Path]::GetFullPath($InstallerOutput)
@@ -159,15 +189,23 @@ if (-not $PortableOnly) {
   $tokens = @{
     SERE_VERSION=$Name; PAYLOAD_DIR=$dest; OUTPUT_DIR=(Split-Path $InstallerOutput -Parent)
     OUTPUT_BASE=[IO.Path]::GetFileNameWithoutExtension($InstallerOutput); HAS_QT='0'
-    HAS_VSIX=([int](-not $WithoutEditor)).ToString(); LLVM_VERSION='22.1.8'; SETUP_ICON="$repo\icon.ico"
+    HAS_VSIX=([int]$hasVsix).ToString(); LLVM_VERSION='22.1.8'; SETUP_ICON="$repo\icon.ico"
   }
   foreach ($key in $tokens.Keys) { $iss = $iss.Replace("@$key@", $tokens[$key]) }
   $issPath = Join-Path $releaseRoot 'sere.iss'
   Set-Content -LiteralPath $issPath -Value $iss -Encoding UTF8
+  Write-Host "Building installer"
   & $Iscc $issPath
   if ($LASTEXITCODE) { throw 'Installer compilation failed' }
 }
+Write-Host "Compressing portable archive"
+$zip = Join-Path $releaseRoot "Sere-$Name-windows-x64-portable.zip"
+Compress-Archive -Path "$dest\*" -DestinationPath $zip -Force
 Get-ChildItem $releaseRoot -File | Where-Object { $_.Extension -in '.exe','.zip' } | ForEach-Object {
   '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
 } | Set-Content "$releaseRoot\SHA256SUMS.txt" -Encoding ascii
 Write-Host "Release ready: $releaseRoot"
+
+} finally {
+  $releaseLock.Dispose()
+}

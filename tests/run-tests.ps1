@@ -154,6 +154,14 @@ try {
       $matchesCategory = @($Category | Where-Object { $folder.Name -like $_ }).Count -gt 0
       if (-not $matchesCategory) { continue }
       foreach ($file in Get-ChildItem -LiteralPath $folder.FullName -Filter '*.sere' -File -Recurse | Sort-Object FullName) {
+        # Import-only fixture trees carry a marker instead of executable entry points.
+        $ancestor = $file.Directory
+        $fixture = $false
+        while ($ancestor -and $ancestor.FullName.StartsWith($folder.FullName)) {
+          if (Test-Path -LiteralPath (Join-Path $ancestor.FullName '.test-fixtures')) { $fixture = $true; break }
+          $ancestor = $ancestor.Parent
+        }
+        if ($fixture) { continue }
         $relative = $file.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/')
         if ($relative -like $Filter) {
           [pscustomobject]@{ Category = $folder.Name; Name = $relative; Source = $file.FullName }

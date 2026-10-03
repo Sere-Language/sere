@@ -20,10 +20,9 @@ Use it when a terminal and an editor appear to use different installations.
 ```powershell
 sere init hello
 cd hello
-. .\scripts\activate.ps1
 ```
 
-The leading dot activates the project in the current terminal. Replace
+Replace
 `src/main.sere` with:
 
 ```sere
@@ -47,8 +46,7 @@ before executing. Use `sere build` to build without running; the default Windows
 output is `bin/hello.exe`. Returning zero from `main` indicates success.
 
 Use `sere run first second` to pass arguments to your program: everything after
-`run` is handed to it unchanged, so program flags do not need a separator. When
-finished, run `deactivate` to restore the terminal's previous environment.
+`run` is handed to it unchanged, so program flags do not need a separator.
 
 ## Move code into a module
 

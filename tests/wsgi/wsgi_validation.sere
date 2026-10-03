@@ -1,0 +1,32 @@
+from wsgi.headers import parse_length, validate_status, validate_name, validate_value, is_hop_by_hop
+
+
+def main() -> i32:
+    assert parse_length("0") == 0
+    assert parse_length("123") == 123
+    assert validate_status("200 OK") == 200
+    assert is_hop_by_hop("Connection")
+    assert not is_hop_by_hop("Content-Type")
+    rejected: i32 = 0
+    try:
+        parse_length("-1")
+    except ValueError:
+        rejected += 1
+    try:
+        parse_length("9223372036854775808")
+    except ValueError:
+        rejected += 1
+    try:
+        validate_status("100 Continue")
+    except ValueError:
+        rejected += 1
+    try:
+        validate_name("bad name")
+    except ValueError:
+        rejected += 1
+    try:
+        validate_value("safe\r\nInjected: yes")
+    except ValueError:
+        rejected += 1
+    assert rejected == 5
+    return 0

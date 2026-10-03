@@ -1,0 +1,107 @@
+# Win32 API. Import with: import windows
+# Real on Windows; stubs elsewhere. Gate extra code with:
+#   if __windows__:
+#       windows.message_box("hi")
+
+extern "C" "sere_win_available"
+def _available() -> i32
+
+extern "C" "sere_win_message_box"
+def _message_box(text: str, title: str, flags: i32) -> i32
+
+extern "C" "sere_win_beep"
+def _beep(freq: i32, ms: i32) -> i32
+
+extern "C" "sere_win_last_error"
+def last_error() -> i32
+
+extern "C" "sere_win_computer_name"
+def computer_name() -> str
+
+extern "C" "sere_win_user_name"
+def user_name() -> str
+
+extern "C" "sere_win_cursor_x"
+def cursor_x() -> i32
+
+extern "C" "sere_win_cursor_y"
+def cursor_y() -> i32
+
+extern "C" "sere_win_set_cursor"
+def _set_cursor(x: i32, y: i32) -> i32
+
+extern "C" "sere_win_screen_width"
+def screen_width() -> i32
+
+extern "C" "sere_win_screen_height"
+def screen_height() -> i32
+
+extern "C" "sere_win_clipboard_get"
+def clipboard_get() -> str
+
+extern "C" "sere_win_clipboard_set"
+def _clipboard_set(text: str) -> i32
+
+extern "C" "sere_win_foreground"
+def foreground() -> Ptr[i8]
+
+extern "C" "sere_win_window_text"
+def window_text(hwnd: Ptr[i8]) -> str
+
+extern "C" "sere_win_debug"
+def debug(text: str) -> void
+
+extern "C" "sere_win_open"
+def _open(path: str) -> i32
+
+enum MessageBoxKind:
+    Ok = 0
+    OkCancel = 1
+    AbortRetryIgnore = 2
+    YesNoCancel = 3
+    YesNo = 4
+    RetryCancel = 5
+
+enum MessageBoxIcon:
+    None = 0 # type: ignore
+    Error = 16
+    Question = 32
+    Warning = 48
+    Info = 64
+
+struct Point:
+    x: i32
+    y: i32
+
+struct Size:
+    width: i32
+    height: i32
+
+type Handle = Ptr[i8]
+
+def available() -> bool:
+    return _available() as bool
+
+def message_box(text: str, title: str = "Sere", kind: i32 = 0) -> i32:
+    return _message_box(text, title, kind)
+
+def alert(text: str, title: str, kind: MessageBoxKind, icon: MessageBoxIcon) -> i32:
+    return _message_box(text, title, kind.value + icon.value)
+
+def beep(freq: i32, ms: i32) -> bool:
+    return _beep(freq, ms) as bool
+
+def set_cursor(x: i32, y: i32) -> bool:
+    return _set_cursor(x, y) as bool
+
+def cursor() -> Point:
+    return Point(cursor_x(), cursor_y())
+
+def screen() -> Size:
+    return Size(screen_width(), screen_height())
+
+def clipboard_set(text: str) -> bool:
+    return _clipboard_set(text) as bool
+
+def open(path: str) -> bool:
+    return _open(path) as bool

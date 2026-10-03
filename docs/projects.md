@@ -5,12 +5,10 @@
 ```powershell
 sere init hello
 cd hello
-. .\scripts\activate.ps1
 sere build
 sere run
 sere run first second
 sere build --emit-llvm -o bin/hello.ll
-deactivate
 ```
 
 `build` compiles the configured entry, and takes the compiler options
@@ -20,7 +18,7 @@ build does.
 `run` builds the executable and then executes it: **every argument after `run`
 is passed to the program**, including arguments that look like compiler flags.
 Write compiler options before the command word (`sere --opt=O2 run first second`)
-when you need them. Dot-source activation to use the current terminal.
+when you need them.
 
 Build settings come from three places, in this order: the command line, then the
 manifest, then the `O0` default. A command-line switch always wins, so
@@ -34,7 +32,6 @@ manifest, then the `O0` default. A command-line switch always wins, so
 | `libs/` | Drop-in Sere libraries and native dependencies |
 | `bin/` | Application output and local compiler helpers |
 | `venv/` | Project environment and standard-library copy |
-| `scripts/activate.ps1` | PowerShell activation |
 | `dist/` | Packed library output |
 
 Start with the [getting-started walkthrough](getting-started.md) for a complete

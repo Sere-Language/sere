@@ -1,0 +1,23 @@
+import socket
+import bytes
+
+
+def main() -> i32:
+    receiver: socket.Socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, 0)
+    receiver.settimeout(2.0)
+    receiver.bind(("127.0.0.1", 0))
+    host, port = receiver.getsockname()
+    sender: socket.Socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, 0)
+    sender.settimeout(2.0)
+    assert sender.sendto(bytes.from_str("datagram"), (host, port)) == 8
+    payload, peer = receiver.recvfrom(64)
+    assert bytes.to_str(payload) == "datagram"
+    peer_host, peer_port = peer
+    assert peer_host == "127.0.0.1"
+    assert peer_port > 0
+    assert receiver.sendto(bytes.from_str("ack"), peer) == 3
+    reply, address = sender.recvfrom(64)
+    assert bytes.to_str(reply) == "ack"
+    sender.close()
+    receiver.close()
+    return 0

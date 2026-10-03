@@ -1,0 +1,2 @@
+extern "C" "native_add"
+def add(left: i32, right: i32) -> i32

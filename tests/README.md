@@ -81,3 +81,27 @@ Artifacts from previous runs are retained. Exit codes are `0` for all passing,
 `1` for test failures, and `2` for setup/runner errors or incomplete runs. An
 empty selection is an error, not a passing suite. `-TestRoot` can point at a
 different directory with the same category layout.
+
+## Standard-library tests
+
+Focused executable regressions live in `sockets/`, `wsgi/`, and `windows/`.
+CTest compiles and runs each `.sere` file through both LLVM and Serem.
+Windows tests are registered only on Windows and exercise noninteractive APIs.
+Socket tests use loopback addresses, ephemeral ports, and bounded receive timeouts.
+
+After configuring the build, run all three groups:
+
+```powershell
+ctest --test-dir build/windows-clang-cl-release -L "sockets|wsgi|windows" --output-on-failure
+```
+
+Use `-L sockets`, `-L wsgi`, or `-L windows` to select one group. A nonzero
+exit, assertion, compilation error, or timeout fails the test. The runner limits
+compilation to 60 seconds and execution to 20 seconds. Regressions stay enabled
+when they expose compiler or runtime defects.
+
+The PowerShell runner also discovers these folders automatically:
+
+```powershell
+.\tests\run-tests.ps1 -Category sockets,wsgi,windows
+```

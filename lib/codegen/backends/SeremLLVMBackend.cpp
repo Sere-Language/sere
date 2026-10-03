@@ -698,12 +698,23 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       return result;
     }
     llvm::Value* address = ir.CreateCall(item, {operand(0), convert(operand(1), ir.getInt64Ty())});
-    if (opcode == "index.address")
+    const bool pointerBackedAggregate = type->isStructTy() &&
+                                        elementKindCode(attribute(operation, "element.kind")) == 6;
+    if (pointerBackedAggregate) {
+      llvm::Value* stored = ir.CreateLoad(ir.getPtrTy(), address);
+      if (opcode == "index.address")
+        result = stored;
+      else if (opcode == "index.set")
+        ir.CreateStore(operand(2), stored);
+      else
+        result = ir.CreateLoad(type, stored);
+    } else if (opcode == "index.address") {
       result = address;
-    else if (opcode == "index.set")
+    } else if (opcode == "index.set") {
       ir.CreateStore(operand(2), address);
-    else
+    } else {
       result = ir.CreateLoad(type, address);
+    }
   } else if (opcode == "index.delete") {
     // Removing an entry mutates the container rather than the value it held.
     if (attribute(operation, "container") == "dict") {
@@ -858,6 +869,10 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
           llvm::StructType::get(*context_, {llvm::PointerType::getUnqual(*context_), indexType});
       result =
           builder_->builder.CreateExtractValue(builder_->builder.CreateLoad(stringType, slot), {0});
+    } else if (type->isStructTy() &&
+               elementKindCode(attribute(operation, "element.kind")) == 6) {
+      llvm::Value* aggregate = builder_->builder.CreateLoad(ir.getPtrTy(), slot);
+      result = builder_->builder.CreateLoad(type, aggregate);
     } else {
       result = builder_->builder.CreateLoad(type, slot);
     }
@@ -1046,6 +1061,10 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
           runtime("sere_bytes_from_str", llvm::PointerType::getUnqual(*context_),
                   {llvm::PointerType::getUnqual(*context_), llvm::Type::getInt64Ty(*context_)}),
           {value, builder_->builder.CreateCall(length, {value})});
+    } else if (name == "list.len") {
+      result = builder_->builder.CreateCall(
+          runtime("sere_list_len", llvm::Type::getInt64Ty(*context_),
+                  {llvm::PointerType::getUnqual(*context_)}), {value});
     } else if (name == "list.decode") {
       llvm::Value* data = builder_->builder.CreateAlloca(llvm::PointerType::getUnqual(*context_));
       llvm::Value* lengthSlot = builder_->builder.CreateAlloca(llvm::Type::getInt64Ty(*context_));
@@ -1056,8 +1075,23 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
           {value, data, lengthSlot});
       result = builder_->builder.CreateLoad(llvm::PointerType::getUnqual(*context_), data);
     }
+    if (name == "list.len" || name == "list.decode" || name == "str.encode") {
+      values_[&operation] = result;
+      return result;
+    }
     if (name.starts_with("list.")) {
       auto slot = [&](llvm::Value* item) {
+        if (item->getType()->isStructTy() &&
+            elementKindCode(attribute(operation, "element.kind")) == 6) {
+          llvm::Value* aggregate = builder_->builder.CreateCall(
+              runtime("sere_alloc", llvm::PointerType::getUnqual(*context_),
+                      {llvm::Type::getInt64Ty(*context_)}),
+              {llvm::ConstantExpr::getSizeOf(item->getType())});
+          builder_->builder.CreateStore(item, aggregate);
+          llvm::AllocaInst* storage = builder_->builder.CreateAlloca(value->getType());
+          builder_->builder.CreateStore(aggregate, storage);
+          return static_cast<llvm::Value*>(storage);
+        }
         if (attribute(operation, "element") == "str") {
           llvm::StructType* stringType = llvm::StructType::get(
               *context_,
@@ -1732,13 +1766,22 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
             false);
         push = llvm::Function::Create(
             pushType, llvm::Function::ExternalLinkage, "sere_list_push", module_.get());
-      }
-      llvm::Type* elementType = layout.first;
-      for (std::size_t index = 0; index < operands.size(); ++index) {
-        llvm::Value* item = operand(index);
-        if (item == nullptr)
-          continue;
-        if (item->getType()->isIntegerTy(1) && elementType->isIntegerTy(8)) {
+      }        llvm::Type* elementType = layout.first;
+        for (std::size_t index = 0; index < operands.size(); ++index) {
+          llvm::Value* item = operand(index);
+          if (item == nullptr)
+            continue;
+          if (elementType->isPointerTy() && item->getType()->isStructTy()) {
+            llvm::Value* aggregate = ir.CreateCall(
+                module_->getOrInsertFunction("sere_alloc", ir.getPtrTy(), ir.getInt64Ty()),
+                {llvm::ConstantExpr::getSizeOf(item->getType())});
+            ir.CreateStore(item, aggregate);
+            llvm::AllocaInst* slot = ir.CreateAlloca(elementType);
+            ir.CreateStore(aggregate, slot);
+            ir.CreateCall(push, {result, slot});
+            continue;
+          }
+          if (item->getType()->isIntegerTy(1) && elementType->isIntegerTy(8)) {
           item = builder_->builder.CreateZExt(item, elementType);
         } else if (item->getType()->isIntegerTy() && elementType->isIntegerTy() &&
                    item->getType() != elementType) {
@@ -1987,6 +2030,7 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
                                          std::strtoll(attribute(operation, "length").c_str(),
                                                       nullptr, 10)))});
   } else if (opcode == "member.get") {
+    std::fprintf(stderr, "[Serem member.get] begin operands=%zu\\n", operands.size());
     unsigned index = 0;
     const std::string indexText = attribute(operation, "index");
     (void)std::from_chars(indexText.data(), indexText.data() + indexText.size(), index);
@@ -1998,11 +2042,20 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       result = type->isPointerTy() ? static_cast<llvm::Value*>(slot)
                                    : fromWord(ir.CreateLoad(ir.getInt64Ty(), slot), type);
     } else {
+      std::fprintf(stderr, "[Serem member.get] before object\\n");
       llvm::Value* object = operand(0);
+      std::fprintf(stderr, "[Serem member.get] after object %p\\n", static_cast<void*>(object));
       if (object != nullptr && object->getType()->isStructTy()) {
         result = builder_->builder.CreateExtractValue(object, {index});
       } else if (object != nullptr && operands[0]->type().pointee() != nullptr) {
+        std::fprintf(stderr, "[Serem member.get] before pointee\\n");
+        std::fprintf(stderr, "[Serem member.get] ptr type=%d pointee kind=%d index=%u\\n",
+                     static_cast<int>(operands[0]->type().kind()),
+                     static_cast<int>(operands[0]->type().pointee()->kind()),
+                     index);
         llvm::Type* record = lowerType(*operands[0]->type().pointee());
+        std::fprintf(stderr, "[Serem member.get] lowered record %p struct=%d\\n",
+                     static_cast<void*>(record), record->isStructTy());
         result = ir.CreateLoad(type, ir.CreateStructGEP(record, object, index));
       }
     }
@@ -2737,6 +2790,10 @@ std::unique_ptr<llvm::Module> SeremLLVMBackend::emit(const serem::IRModule& modu
     for (const auto& block : function->blocks()) {
       builder_->builder.SetInsertPoint(blockFor(function->name() + ":" + block->label()));
       for (const auto& operation : block->operations()) {
+        std::fprintf(stderr, "[Serem lower] %s:%s %s\\n",
+                     function->name().c_str(),
+                     block->label().c_str(),
+                     operation->opcode().c_str());
         (void)lowerValue(std::static_pointer_cast<serem::Value>(operation));
         if (builder_->builder.GetInsertBlock()->getTerminator() != nullptr)
           break;

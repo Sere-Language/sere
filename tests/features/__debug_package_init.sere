@@ -1,0 +1,38 @@
+import init_package
+from init_package.shadow import value as file_value
+from init_package import answer, Marker
+from init_package.child import answer as nested_answer
+import wsgi
+from wsgi import Headers
+import io
+
+def main() -> i32:
+    io.eprint("checkpoint 1"); io.eprint_nl()
+    assert init_package.answer() == 42
+    io.eprint("checkpoint 2"); io.eprint_nl()
+    assert answer() == 42
+    io.eprint("checkpoint 3"); io.eprint_nl()
+    assert answer(value=43) == 43
+    io.eprint("checkpoint 4"); io.eprint_nl()
+    assert init_package.answer(value=44) == 44
+    io.eprint("checkpoint 5"); io.eprint_nl()
+    assert nested_answer() == 42
+    io.eprint("checkpoint 6"); io.eprint_nl()
+    assert file_value() == 3
+    io.eprint("checkpoint 7"); io.eprint_nl()
+    assert init_package.entry_name() == "init_package"
+    marker: Marker = Marker()
+    io.eprint("checkpoint 8"); io.eprint_nl()
+    assert marker.value() == 7
+    headers: Headers = Headers()
+    io.eprint("checkpoint 9 before headers.add"); io.eprint_nl()
+    headers.add("Content-Type", "text/plain")
+    io.eprint("checkpoint 10"); io.eprint_nl()
+    assert headers.get("content-type") == "text/plain"
+    fields: wsgi.Headers = wsgi.Headers()
+    io.eprint("checkpoint 11 before module headers"); io.eprint_nl()
+    fields.add("X-Package", "yes")
+    io.eprint("checkpoint 12"); io.eprint_nl()
+    assert fields.get("x-package") == "yes"
+    io.eprint("package debug ok"); io.eprint_nl()
+    return 0

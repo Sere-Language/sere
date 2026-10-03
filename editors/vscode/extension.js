@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 const vscode = require("vscode");
+const { formatSere } = require("./formatter");
 
 const TOKEN_TYPES = [
   "namespace",
@@ -1381,29 +1382,17 @@ function activate(context) {
     }),
     vscode.languages.registerDocumentFormattingEditProvider("sere", {
       provideDocumentFormattingEdits(document) {
-        return session
-          .request("textDocument/formatting", {
-            textDocument: { uri: document.uri.toString() },
-            options: { tabSize: 4, insertSpaces: true },
-          })
-          .then((result) => {
-            const items = Array.isArray(result) ? result : [];
-            return items.map((item) => vscode.TextEdit.replace(fromRange(item.range), item.newText));
-          });
-      },
-    }),
-    vscode.languages.registerDocumentRangeFormattingEditProvider("sere", {
-      provideDocumentRangeFormattingEdits(document, range) {
-        return session
-          .request("textDocument/rangeFormatting", {
-            textDocument: { uri: document.uri.toString() },
-            range: { start: toPosition(range.start), end: toPosition(range.end) },
-            options: { tabSize: 4, insertSpaces: true },
-          })
-          .then((result) => {
-            const items = Array.isArray(result) ? result : [];
-            return items.map((item) => vscode.TextEdit.replace(fromRange(item.range), item.newText));
-          });
+        const source = document.getText();
+        const formatted = formatSere(source);
+        if (formatted === source) {
+          return [];
+        }
+        return [
+          vscode.TextEdit.replace(
+            new vscode.Range(document.positionAt(0), document.positionAt(source.length)),
+            formatted,
+          ),
+        ];
       },
     }),
     vscode.languages.registerCodeActionsProvider(

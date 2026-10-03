@@ -336,6 +336,52 @@ void bindModuleExports(TypeChecker& checker,
               symbol.function = &function;
               break;
             }
+            for (const auto& dependencyItem : dependency->statements()) {
+              if (dependencyItem->kind() != NodeKind::ImportStmt)
+                continue;
+              const auto& dependencyImport = static_cast<const ImportStmt&>(*dependencyItem);
+              if (!dependencyImport.isFrom() || dependencyImport.star())
+                continue;
+              for (std::size_t importedIndex = 0;
+                   importedIndex < dependencyImport.names().size();
+                   ++importedIndex) {
+                if (dependencyImport.boundName(importedIndex) != field.name)
+                  continue;
+                const std::string importedModule = joinPath(dependencyImport.modulePath());
+                const Type* importedType = types.moduleType(importedModule);
+                if (importedType == nullptr && !dependencyImport.modulePath().empty())
+                  importedType = types.moduleType(dependencyImport.modulePath().back());
+                const RecordField* importedField =
+                    importedType == nullptr
+                        ? nullptr
+                        : importedType->findField(dependencyImport.names()[importedIndex]);
+                if (importedField != nullptr && importedField->llvmName == field.llvmName) {
+                  for (const auto& nestedDependency : dependencies) {
+                    for (const auto& nestedItem : nestedDependency->statements()) {
+                      if (nestedItem->kind() != NodeKind::FunctionDef)
+                        continue;
+                      auto& nestedFunction = static_cast<FunctionDef&>(*nestedItem);
+                      const std::string nestedName =
+                          nestedFunction.isExtern()
+                              ? nestedFunction.externName()
+                              : nestedFunction.modulePrefix() + "_" + nestedFunction.name();
+                      if (nestedName == field.llvmName) {
+                        symbol.function = &nestedFunction;
+                        break;
+                      }
+                    }
+                    if (symbol.function != nullptr)
+                      break;
+                  }
+                }
+                if (symbol.function != nullptr)
+                  break;
+              }
+              if (symbol.function != nullptr)
+                break;
+            }
+            if (symbol.function != nullptr)
+              break;
           }
           if (symbol.function != nullptr) {
             break;
@@ -749,10 +795,15 @@ const std::vector<std::filesystem::path>& Frontend::importedModulePaths() const 
 }
 
 std::vector<std::string> Frontend::importedModuleNames() const {
-  std::vector<std::string> names;
-  names.reserve(importIndex_.size());
+  // importIndex_ is a hash map keyed by module name, so its iteration order is
+  // unrelated to imported_, the vector that holds the parsed modules. Consumers
+  // pair the two positionally, so rebuild the names by the stored index to keep
+  // every module aligned with its key.
+  std::vector<std::string> names(imported_.size());
   for (const auto& entry : importIndex_) {
-    names.push_back(entry.first);
+    if (entry.second < names.size()) {
+      names[entry.second] = entry.first;
+    }
   }
   return names;
 }

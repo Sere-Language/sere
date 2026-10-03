@@ -32,6 +32,7 @@ const std::vector<BuiltinMember>& table() {
       // Iterators are what `for` loops and explicit iterators hand back.
       {BuiltinReceiver::Iterator, "close", "close()", "", -1},
 
+      {BuiltinReceiver::List, "len", "len() -> i64", "", -1},
       {BuiltinReceiver::List, "append", "append(value)", "value", -1},
       {BuiltinReceiver::List, "push", "push(value)", "value", -1},
       {BuiltinReceiver::List, "decode", "decode() -> str", "", -1},

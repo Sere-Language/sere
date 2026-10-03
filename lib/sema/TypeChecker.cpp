@@ -4024,6 +4024,11 @@ TypeChecker::checkBuiltinMethod(CallExpr& expr, const Type* objectType, const st
   }
   if (objectType->isList()) {
     const Type* elem = objectType->elementType();
+    if (name == "len") {
+      if (!argCount(0, "len() takes no arguments"))
+        return nullptr;
+      return finish(types_->i64Type());
+    }
     if (name == "decode" && elem != nullptr && elem->canonical()->isNamed("u8")) {
       if (!expr.arguments().empty()) {
         diagnostics_->error(expr.range(), "decode() takes no arguments");
@@ -4296,13 +4301,31 @@ const Type* TypeChecker::checkMethodCall(CallExpr& expr) {
       return nullptr;
     }
     const Type* functionType = exported->type;
+    const Symbol* exportedSymbol = nullptr;
     if (const NameExpr* moduleName = asName(member.object())) {
-      if (const Symbol* symbol = lookup(moduleName->name() + "." + member.field());
-          symbol != nullptr && symbol->function != nullptr) {
-        functionType = specializeCall(expr, *symbol);
+      exportedSymbol = lookup(moduleName->name() + "." + member.field());
+      if (exportedSymbol != nullptr && exportedSymbol->function != nullptr) {
+        functionType = specializeCall(expr, *exportedSymbol);
         if (functionType == nullptr)
           return nullptr;
       }
+    }
+    if (exportedSymbol != nullptr && exportedSymbol->function != nullptr) {
+      const FunctionDef& function = *exportedSymbol->function;
+      if (!validateParamList(function.params(), function.range()) ||
+          !checkFunctionArguments(expr,
+                                  function.params(),
+                                  functionType->paramTypes(),
+                                  member.field())) {
+        return nullptr;
+      }
+      if (expr.loweredName().empty()) {
+        expr.setLoweredName(exported->llvmName.empty() ? member.field() : exported->llvmName);
+      }
+      expr.setParamNames(exported->paramNames);
+      member.setResolvedType(functionType);
+      expr.setResolvedType(functionType->returnType());
+      return functionType->returnType();
     }
     if (expr.arguments().size() < exported->requiredArgs ||
         expr.arguments().size() > functionType->paramTypes().size()) {
@@ -4642,7 +4665,9 @@ const Type* TypeChecker::checkExpr(Expr& expr) {
   switch (expr.kind()) {
   case NodeKind::IntegerLiteral: {
     const auto& literal = static_cast<const IntegerLiteral&>(expr);
-    const Type* type = literal.isByte() ? types_->i8Type() : types_->i32Type();
+    const Type* type = literal.isByte() ? types_->i8Type()
+                         : literal.value() > 2147483647LL || literal.value() < -2147483648LL
+                             ? types_->i64Type() : types_->i32Type();
     expr.setResolvedType(type);
     return type;
   }
@@ -6486,8 +6511,10 @@ bool TypeChecker::bindLocalClassImports(Module& module) {
                            : classDef->name() + "_" + method->name();
       for (const ParamDecl& param : method->params()) {
         alias.paramNames.push_back(param.name);
+        if (param.defaultValue == nullptr) {
+          ++alias.requiredArgs;
+        }
       }
-      alias.requiredArgs = method->params().size();
       module.addExportAlias(std::move(alias));
     }
   }
@@ -6535,7 +6562,13 @@ bool TypeChecker::collectExports(Module& module) {
       alias.isPublic = true;
       alias.paramNames = symbol->paramNames;
       if (symbol->function != nullptr) {
-        alias.requiredArgs = symbol->function->params().size();
+        const FunctionDef& function = *symbol->function;
+        alias.llvmName = function.isExtern() ? function.externName()
+                                             : function.modulePrefix() + "_" + function.name();
+        for (const ParamDecl& param : function.params()) {
+          if (param.defaultValue == nullptr)
+            ++alias.requiredArgs;
+        }
       }
       module.addExportAlias(std::move(alias));
     }
