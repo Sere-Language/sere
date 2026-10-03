@@ -422,6 +422,16 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
         return ir.CreateLoad(target, slot);
       }
     }
+    {
+      std::string sourceText;
+      std::string targetText;
+      llvm::raw_string_ostream sourceOut(sourceText);
+      llvm::raw_string_ostream targetOut(targetText);
+      source->print(sourceOut);
+      target->print(targetOut);
+      llvm::errs() << "[serem convert] source=" << sourceOut.str()
+                   << " target=" << targetOut.str() << "\n";
+    }
     report("unsupported Serem value conversion");
     return llvm::UndefValue::get(target);
   };

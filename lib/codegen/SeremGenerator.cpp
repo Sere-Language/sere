@@ -2360,10 +2360,17 @@ serem::ValuePtr SeremGenerator::emitExpression(const Expr& expression) {
     return emitComprehension(static_cast<const ComprehensionExpr&>(expression));
   case NodeKind::TernaryExpr: {
     const auto& ternary = static_cast<const TernaryExpr&>(expression);
-    return builder_->select(emitExpression(ternary.condition()),
-                            emitExpression(ternary.thenValue()),
-                            emitExpression(ternary.elseValue()),
-                            lowerType(expression.resolvedType()));
+    const Type* resultType = expression.resolvedType();
+    // Both arms must arrive as the ternary's result type; a `T` arm and a
+    // `T | None` arm otherwise reach `select` with different layouts.
+    serem::ValuePtr thenValue = emitExpression(ternary.thenValue());
+    serem::ValuePtr elseValue = emitExpression(ternary.elseValue());
+    if (resultType != nullptr) {
+      thenValue = coerce(std::move(thenValue), ternary.thenValue().resolvedType(), resultType);
+      elseValue = coerce(std::move(elseValue), ternary.elseValue().resolvedType(), resultType);
+    }
+    return builder_->select(emitExpression(ternary.condition()), std::move(thenValue),
+                            std::move(elseValue), lowerType(resultType));
   }
   case NodeKind::WalrusExpr: {
     const auto& walrus = static_cast<const WalrusExpr&>(expression);

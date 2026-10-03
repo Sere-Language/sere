@@ -7083,16 +7083,30 @@ llvm::Value* IRGenerator::emitTernary(llvm::IRBuilder<>& builder, const TernaryE
   llvm::BasicBlock* elseBlock = llvm::BasicBlock::Create(*context_, "tern.else", function);
   llvm::BasicBlock* merge = llvm::BasicBlock::Create(*context_, "tern.end", function);
   builder.CreateCondBr(cond, thenBlock, elseBlock);
+  // A ternary's branches must share the result type. Without this, a branch
+  // typed `T` and a branch typed `T | None` lower to different LLVM shapes and
+  // the phi below is built with mismatched incoming values. Coercion runs
+  // inside each branch block so the emitted instructions dominate the phi.
+  const Type* resultType = resolveType(expr.resolvedType());
   builder.SetInsertPoint(thenBlock);
   llvm::Value* thenValue = emitExpr(builder, expr.thenValue());
+  if (thenValue != nullptr && resultType != nullptr) {
+    thenValue =
+        emitCoerce(builder, thenValue, resolveType(expr.thenValue().resolvedType()), resultType);
+  }
   llvm::BasicBlock* thenEnd = builder.GetInsertBlock();
   builder.CreateBr(merge);
   builder.SetInsertPoint(elseBlock);
   llvm::Value* elseValue = emitExpr(builder, expr.elseValue());
+  if (elseValue != nullptr && resultType != nullptr) {
+    elseValue =
+        emitCoerce(builder, elseValue, resolveType(expr.elseValue().resolvedType()), resultType);
+  }
   llvm::BasicBlock* elseEnd = builder.GetInsertBlock();
   builder.CreateBr(merge);
   builder.SetInsertPoint(merge);
-  if (thenValue == nullptr || elseValue == nullptr) {
+  if (thenValue == nullptr || elseValue == nullptr ||
+      thenValue->getType() != elseValue->getType()) {
     return nullptr;
   }
   llvm::PHINode* phi = builder.CreatePHI(thenValue->getType(), 2, "tern.phi");
