@@ -919,6 +919,85 @@ int64_t sere_hash_combine(int64_t left, int64_t right) {
   return (int64_t)mix;
 }
 
+// SplitMix64 finalizer: avalanches every input bit across every output bit, so
+// changing one bit of the input flips roughly half of the output bits. Used for
+// individual values and as an optional final step for streaming hashers.
+static uint64_t mix64(uint64_t value) {
+  value ^= value >> 30;
+  value *= 0xBF58476D1CE4E5B9ULL;
+  value ^= value >> 27;
+  value *= 0x94D049BB133111EBULL;
+  value ^= value >> 31;
+  return value;
+}
+
+// The FNV-1a 64-bit offset basis, exposed so streaming hashers can restart from
+// the same seed that sere_hash_fnv1a uses.
+int64_t sere_hash_basis(void) { return (int64_t)14695981039346656037ULL; }
+
+// Fold more bytes into a running FNV-1a 64-bit state.
+int64_t sere_hash_update(int64_t state, const char* data, int64_t len) {
+  uint64_t hash = (uint64_t)state;
+  if (data == NULL || len <= 0) {
+    return (int64_t)hash;
+  }
+  for (int64_t index = 0; index < len; ++index) {
+    hash ^= (uint8_t)data[index];
+    hash *= 1099511628211ULL;
+  }
+  return (int64_t)hash;
+}
+
+// Optional avalanche step for hash-table use. Values folded through FNV-1a keep
+// their low bits biased, which matters when a bucket index is state % capacity.
+int64_t sere_hash_finish(int64_t state) { return (int64_t)mix64((uint64_t)state); }
+
+// Entry points for callers that pass a byte buffer and an explicit length. They
+// duplicate sere_hash_fnv1a / sere_hash_update deliberately: a module cannot
+// declare the same C symbol twice with different signatures, because the second
+// declaration replaces the first one's argument marshalling.
+int64_t sere_hash_fnv1a_bytes(const char* data, int64_t len) {
+  return sere_hash_fnv1a(data, len);
+}
+
+int64_t sere_hash_update_bytes(int64_t state, const char* data, int64_t len) {
+  return sere_hash_update(state, data, len);
+}
+
+int64_t sere_hash_int(int64_t value) { return (int64_t)mix64((uint64_t)value); }
+
+// Boolean hashing is domain separated from integer hashing so that
+// hash_bool(True) differs from hash_int(1).
+int64_t sere_hash_bool(int32_t value) {
+  return (int64_t)mix64(0xB001000000000000ULL | (value != 0 ? 1ULL : 0ULL));
+}
+
+// -0.0 and 0.0 compare equal, so they must hash equal; all NaNs are folded onto
+// a single canonical pattern for the same reason.
+int64_t sere_hash_f64(double value) {
+  uint64_t bits = 0;
+  if (value == 0.0) {
+    bits = 0;
+  } else if (isnan(value)) {
+    bits = 0x7FF8000000000000ULL;
+  } else {
+    memcpy(&bits, &value, sizeof(bits));
+  }
+  return (int64_t)mix64(0xF700000000000000ULL ^ bits);
+}
+
+int64_t sere_hash_f32(float value) {
+  uint32_t bits = 0;
+  if (value == 0.0f) {
+    bits = 0;
+  } else if (isnan(value)) {
+    bits = 0x7FC00000U;
+  } else {
+    memcpy(&bits, &value, sizeof(bits));
+  }
+  return (int64_t)mix64(0xF300000000000000ULL ^ (uint64_t)bits);
+}
+
 static void cstrOut(const char* text, const char** out_data, int64_t* out_len) {
   if (out_data != NULL) {
     *out_data = text == NULL ? "" : text;

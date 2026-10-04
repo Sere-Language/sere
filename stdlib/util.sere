@@ -1,4 +1,0 @@
-def double(value: i32) -> i32:
-    """Return value multiplied by two."""
-    return value + value
-

@@ -1,0 +1,82 @@
+import hash
+
+
+def bit_difference(left: i64, right: i64) -> i32:
+    """Return how many of the 64 bits differ between two digests."""
+    difference: i64 = left ^ right
+    count: i32 = 0
+    index: i32 = 0
+    while index < 64:
+        if ((difference >> index) & 1) == 1:
+            count = count + 1
+        index = index + 1
+    return count
+
+
+def main() -> i32:
+    # SplitMix64 finalizer vectors over the 64-bit two's complement value.
+    assert hash.hash_int(0) == 0
+    assert hash.hash_int(1) == 6238072747940578789
+    assert hash.hash_int(2) == -2606959012126976886
+    assert hash.hash_int(-1) == -5417735806833148549
+    assert hash.hash_int(-9223372036854775807 - 1) == 2720858781877447050
+    assert hash.hash_int(9223372036854775807) == 6514504133438201533
+
+    # The same number hashes alike whatever width it was stored in.
+    assert hash.hash_i32(1) == hash.hash_int(1)
+    assert hash.hash_i64(1) == hash.hash_int(1)
+    assert hash.hash_u64(1) == hash.hash_int(1)
+    assert hash.hash_i32(-1) == hash.hash_int(-1)
+
+    # Neighbouring integers land far apart: flipping one input bit flips many
+    # output bits, which is what keeps a table's buckets evenly used.
+    assert bit_difference(hash.hash_int(12345), hash.hash_int(12346)) > 16
+    index: i32 = 0
+    mask: i64 = 1
+    while index < 32:
+        flipped: i64 = hash.hash_int(12345 ^ mask)
+        assert bit_difference(hash.hash_int(12345), flipped) > 8
+        mask = mask * 2
+        index = index + 1
+
+    # Distinct small integers stay distinct.
+    seen: list[i64] = []
+    counter: i64 = 0
+    while counter < 256:
+        digest: i64 = hash.hash_int(counter)
+        for existing in seen:
+            assert existing != digest
+        seen.append(digest)
+        counter = counter + 1
+
+    # Booleans are a separate domain from the integers they resemble.
+    assert hash.hash_bool(False) == -5664962961854364342
+    assert hash.hash_bool(True) == 498446707773517658
+    assert hash.hash_bool(True) != hash.hash_bool(False)
+    assert hash.hash_bool(True) != hash.hash_int(1)
+    assert hash.hash_bool(False) != hash.hash_int(0)
+
+    # Floats hash from their IEEE-754 bits, after canonicalising the two cases
+    # where equality and bit equality disagree.
+    assert hash.hash_float(0.0) == -3330539396268278665
+    assert hash.hash_float(-0.0) == hash.hash_float(0.0)
+    assert hash.hash_float(1.5) == -1712168944669191915
+    assert hash.hash_float(-1.0) == -6709079048293332951
+    assert hash.hash_float(1.0) != hash.hash_int(1)
+    assert hash.hash_float(1.0) != hash.hash_float(-1.0)
+    assert hash.hash_float(1.5) != hash.hash_float(1.5000000000000002)
+
+    big: f64 = 1e308
+    infinity: f64 = big * big
+    assert hash.hash_float(infinity) == -6701829586430296005
+    nan: f64 = infinity - infinity
+    assert hash.hash_float(nan) == 1862040140082328107
+    assert hash.hash_float(nan) == hash.hash_float(nan)
+
+    # 32-bit floats are their own domain: they never collide with f64 values.
+    assert hash.hash_float32(1.5) == 7885518691786843748
+    assert hash.hash_float32(1.5) == hash.hash_f32(1.5)
+    assert hash.hash_float32(1.5) != hash.hash_float(1.5)
+    assert hash.hash_float32(0.0) == hash.hash_float32(-0.0)
+    assert hash.hash_float32(1.5) != hash.hash_float32(1.75)
+    return 0

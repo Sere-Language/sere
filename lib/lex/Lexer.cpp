@@ -317,26 +317,40 @@ Token Lexer::lexFromLineStart() {
 }
 
 Token Lexer::nextToken() {
-  if (!pending_.empty()) {
-    Token token = std::move(pending_.front());
-    pending_.erase(pending_.begin());
-    return token;
-  }
-  if (atLineStart_ && parenDepth_ == 0) {
-    return lexFromLineStart();
-  }
-  skipHorizontalWhitespace();
-  if (peek() == '#') {
-    while (!isAtEnd() && peek() != '\n') {
-      advance();
+  for (;;) {
+    if (!pending_.empty()) {
+      Token token = std::move(pending_.front());
+      pending_.erase(pending_.begin());
+      return token;
     }
-  }
-  if (isAtEnd()) {
-    queueDedents(0);
-    pending_.push_back(makeToken(TokenKind::EndOfFile, offset_, offset_));
-    Token token = std::move(pending_.front());
-    pending_.erase(pending_.begin());
-    return token;
+    if (atLineStart_ && parenDepth_ == 0) {
+      return lexFromLineStart();
+    }
+    skipHorizontalWhitespace();
+    if (peek() == '#') {
+      while (!isAtEnd() && peek() != '\n') {
+        advance();
+      }
+    }
+    if (isAtEnd()) {
+      queueDedents(0);
+      pending_.push_back(makeToken(TokenKind::EndOfFile, offset_, offset_));
+      Token token = std::move(pending_.front());
+      pending_.erase(pending_.begin());
+      return token;
+    }
+    // A line break inside brackets is insignificant: it continues the current
+    // expression instead of ending the logical line, so drop it and keep scanning.
+    // This is what lets a binary operator such as '+' open a continuation line,
+    // matching Python's implicit line joining inside (), [], and {}.
+    if ((peek() == '\n' || peek() == '\r') && parenDepth_ > 0) {
+      if (peek() == '\r' && peek(1) == '\n') {
+        advance();
+      }
+      advance();
+      continue;
+    }
+    break;
   }
   const std::size_t start = offset_;
   const char character = advance();

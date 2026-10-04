@@ -1,0 +1,56 @@
+import env
+import fs
+import hash
+
+
+def main() -> i32:
+    directory: str = env.get("TEMP")
+    if len(directory) == 0:
+        directory = "."
+    path: str = directory + "/sere_hash_file_test.bin"
+    content: str = "sere hashing test\n"
+
+    assert fs.write_text(path, content)
+    assert fs.exists(path)
+
+    # A file digests exactly like its text, and like its bytes.
+    assert hash.file(path) == hash.fnv1a(content)
+    assert hash.file(path) == hash.fnv1a("sere hashing test\n")
+    assert hash.file(path) != hash.fnv1a("")
+    assert hash.file(path) != hash.fnv1a("sere hashing test")
+
+    # The digest is stable across calls, and matches is the one-shot comparison.
+    assert hash.file(path) == hash.file(path)
+    assert hash.file_matches(path, hash.fnv1a(content))
+    assert not hash.file_matches(path, hash.fnv1a("something else"))
+
+    # Rewriting the file with different content changes the digest.
+    assert fs.write_text(path, content + "more\n")
+    assert hash.file(path) == hash.fnv1a(content + "more\n")
+    assert not hash.file_matches(path, hash.fnv1a(content))
+    assert fs.remove(path)
+    assert not fs.exists(path)
+
+    # A missing file raises FileHashError rather than returning a plausible
+    # digest, so a deleted file can never be mistaken for an unchanged one.
+    caught: bool = False
+    try:
+        hash.file(path)
+    except hash.FileHashError as error:
+        caught = True
+        assert len(error.message) > 0
+    assert caught
+
+    caught = False
+    try:
+        hash.file_matches(path, hash.fnv1a(content))
+    except hash.FileHashError:
+        caught = True
+    assert caught
+
+    # An empty file hashes to the offset basis, the digest of no bytes at all.
+    assert fs.write_text(path, "")
+    assert hash.file(path) == hash.new_state()
+    assert hash.file(path) == hash.fnv1a("")
+    assert fs.remove(path)
+    return 0

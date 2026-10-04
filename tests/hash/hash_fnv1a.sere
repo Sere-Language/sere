@@ -1,0 +1,71 @@
+import hash
+
+
+def main() -> i32:
+    # FNV-1a 64-bit reference vectors, including the empty string (the offset
+    # basis) and the published "a" case.
+    assert hash.fnv1a("") == -3750763034362895579
+    assert hash.fnv1a("a") == -5808556873153909620
+    assert hash.fnv1a("ab") == 620445648566982762
+    assert hash.fnv1a("abc") == -1792535898324117685
+    assert hash.fnv1a("abcd") == -281581062704388899
+    assert hash.fnv1a("ABC") == -418867640628133141
+    assert hash.new_state() == hash.fnv1a("")
+
+    # A one-character change, or a transposition, changes the digest.
+    assert hash.fnv1a("abc") != hash.fnv1a("abd")
+    assert hash.fnv1a("abc") != hash.fnv1a("acb")
+    assert hash.fnv1a("abc") != hash.fnv1a("aBC")
+    assert hash.fnv1a("abc") != hash.fnv1a("abc ")
+
+    # Hashing is deterministic: the same bytes always give the same digest,
+    # however the string was built.
+    built: str = ""
+    built = built + "ab"
+    built = built + "c"
+    assert hash.fnv1a(built) == hash.fnv1a("abc")
+    assert hash.hash_str("abc") == hash.fnv1a("abc")
+
+    # UTF-8 text hashes over its encoded bytes, and a signed buffer of the same
+    # bytes hashes identically.
+    assert hash.fnv1a("é") == 775207407765167617
+    assert hash.fnv1a("é") == hash.hash_bytes([195, 169])
+    assert hash.fnv1a("é") == hash.hash_i8_bytes([-61, -87])
+
+    # A byte list folds exactly the bytes of the equivalent text.
+    assert hash.hash_bytes([97, 98, 99]) == hash.fnv1a("abc")
+    assert hash.hash_bytes([]) == hash.fnv1a("")
+    assert hash.hash_bytes([97]) == hash.fnv1a("a")
+    assert hash.hash_bytes([97, 98]) != hash.hash_bytes([98, 97])
+    assert hash.hash_i8_bytes([]) == hash.fnv1a("")
+    assert hash.hash_i8_bytes([97, 98, 99]) == hash.hash_bytes([97, 98, 99])
+    assert hash.hash_i8_bytes([-128, 127]) == hash.hash_bytes([128, 127])
+
+    # Streaming is equivalent to hashing the concatenation, for every split.
+    state: i64 = hash.new_state()
+    assert state == hash.fnv1a("")
+    state = hash.fnv1a_update(state, "abc")
+    assert state == hash.fnv1a("abc")
+    assert hash.fnv1a_update(hash.fnv1a_update(hash.new_state(), "ab"), "c") == hash.fnv1a("abc")
+    assert hash.fnv1a_update(hash.new_state(), "") == hash.new_state()
+    assert hash.fnv1a_update_bytes(hash.new_state(), [97, 98, 99]) == hash.fnv1a("abc")
+    assert hash.fnv1a_update_i8_bytes(hash.fnv1a_update(state, ""), []) == hash.fnv1a("abc")
+
+    # Digests are wide enough that ordinary near-miss keys stay apart.
+    assert hash.fnv1a("sere") != hash.fnv1a("eres")
+    assert hash.fnv1a("sere") != hash.fnv1a("sere ")
+    assert hash.fnv1a("sere") != hash.fnv1a("Sere")
+
+    # Hexadecimal form: 16 lowercase digits, most significant first.
+    assert hash.hex_digest(hash.fnv1a("abc")) == "e71fa2190541574b"
+    assert hash.hex_digest(0) == "0000000000000000"
+    assert hash.hex_digest(1) == "0000000000000001"
+    assert hash.hex_digest(255) == "00000000000000ff"
+    assert hash.hex_digest(-1) == "ffffffffffffffff"
+    assert hash.hex_digest(-3750763034362895579) == "cbf29ce484222325"
+    assert len(hash.hex_digest(hash.fnv1a("x"))) == 16
+    assert hash.to_hex(255) == hash.hex_digest(255)
+
+    assert hash.matches("abc", hash.fnv1a("abc"))
+    assert not hash.matches("abd", hash.fnv1a("abc"))
+    return 0

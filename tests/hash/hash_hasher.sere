@@ -1,0 +1,89 @@
+import hash
+
+
+def main() -> i32:
+    # A text-only stream reproduces the one-shot digest, however it is chunked.
+    assert hash.Hasher().finish() == hash.new_state()
+    assert hash.Hasher().write("").finish() == hash.fnv1a("")
+    assert hash.Hasher().write("abc").finish() == hash.fnv1a("abc")
+    assert hash.Hasher().write("a").write("b").write("c").finish() == hash.fnv1a("abc")
+    assert hash.Hasher().write("ab").write("c").finish() == hash.fnv1a("abc")
+    assert hash.Hasher().write("abc").write("").finish() == hash.fnv1a("abc")
+
+    # Byte writes fold the same bytes, and an empty list folds nothing.
+    assert hash.Hasher().write_bytes([97, 98, 99]).finish() == hash.fnv1a("abc")
+    assert hash.Hasher().write_i8_bytes([97, 98]).write("c").finish() == hash.fnv1a("abc")
+    assert hash.Hasher().write_i8_bytes([-61, -87]).finish() == hash.fnv1a("é")
+
+    nothing: list[byte] = []
+    assert hash.Hasher().write_bytes(nothing).finish() == hash.new_state()
+    assert hash.Hasher().write_bytes(nothing).write_bytes([97]).write("bc").finish() == hash.fnv1a("abc")
+
+    hasher: hash.Hasher = hash.Hasher()
+    hasher.write_bytes([])
+    assert hasher.finish() == hash.new_state()
+
+    # Write order is significant, and so are field boundaries.
+    assert hash.Hasher().write("ab").finish() != hash.Hasher().write("ba").finish()
+    assert hash.Hasher().write_int(1).write_int(2).finish() != hash.Hasher().write_int(2).write_int(1).finish()
+    assert hash.Hasher().write_int(1).write_int(2).finish() != hash.Hasher().write_int(12).finish()
+    # Raw text writes are a byte stream, so splitting text does not matter...
+    assert hash.Hasher().write("1").write("2").finish() == hash.Hasher().write("12").finish()
+    # ...while write_string records the length, so it does.
+    assert hash.Hasher().write_string("1").write_string("2").finish() != hash.Hasher().write_string("12").finish()
+    assert hash.Hasher().write_string("ab").finish() == hash.Hasher().write_string("ab").finish()
+
+    # Every type folds into its own domain.
+    as_int: i64 = hash.Hasher().write_int(1).finish()
+    as_int32: i64 = hash.Hasher().write_int32(1).finish()
+    as_bool: i64 = hash.Hasher().write_bool(True).finish()
+    as_float: i64 = hash.Hasher().write_float(1.0).finish()
+    as_float32: i64 = hash.Hasher().write_float32(1.0).finish()
+    assert as_int != as_int32
+    assert as_int != as_bool
+    assert as_int != as_float
+    assert as_int != as_float32
+    assert as_int32 != as_bool
+    assert as_int32 != as_float
+    assert as_int32 != as_float32
+    assert as_bool != as_float
+    assert as_bool != as_float32
+    assert as_float != as_float32
+    assert hash.Hasher().write_int32(1).finish() == hash.Hasher().write_int32(1).finish()
+    assert hash.Hasher().write_bool(True).finish() != hash.Hasher().write_bool(False).finish()
+    assert hash.Hasher().write_float(-0.0).finish() == hash.Hasher().write_float(0.0).finish()
+    assert hash.Hasher().write_float(0.0).finish() != hash.Hasher().write_float(0.1).finish()
+
+    # Labelled fields: the label and its length are part of the digest.
+    assert hash.Hasher().write_field("x", 1).finish() == hash.Hasher().write_field("x", 1).finish()
+    assert hash.Hasher().write_field("x", 1).finish() != hash.Hasher().write_field("y", 1).finish()
+    assert hash.Hasher().write_field("x", 1).finish() != hash.Hasher().write_field("x", 2).finish()
+    assert hash.Hasher().write_field("ab", 7).finish() != hash.Hasher().write_field("a", 7).finish()
+    # A record hashed field by field is stable, and order sensitive.
+    left: i64 = hash.Hasher().write_field("x", 1).write_field("y", 2).finish()
+    right: i64 = hash.Hasher().write_field("x", 1).write_field("y", 2).finish()
+    swapped: i64 = hash.Hasher().write_field("y", 2).write_field("x", 1).finish()
+    assert left == right
+    assert left != swapped
+
+    # Tags keep user-defined domains apart.
+    assert hash.Hasher().write_tag(1).write_int(1).finish() != hash.Hasher().write_tag(2).write_int(1).finish()
+
+    # copy() snapshots a prefix, reset() starts over, digest() avalanches.
+    stream: hash.Hasher = hash.Hasher()
+    stream.write("abc")
+    snapshot: hash.Hasher = stream.copy()
+    stream.write("d")
+    assert stream.finish() == hash.fnv1a("abcd")
+    assert snapshot.finish() == hash.fnv1a("abc")
+    assert stream.digest() == hash.finalize(stream.finish())
+    assert stream.digest() != stream.finish()
+    assert stream.reset().finish() == hash.new_state()
+
+    # A seed starts the stream anywhere, including at the offset basis.
+    assert hash.Hasher(hash.new_state()).finish() == hash.new_state()
+    assert hash.Hasher(hash.fnv1a("abc")).write("d").finish() == hash.fnv1a("abcd")
+    assert hash.Hasher(1).finish() == 1
+
+    assert repr(hash.Hasher().write("x")) == "Hasher(" + hash.hex_digest(hash.fnv1a("x")) + ")"
+    return 0

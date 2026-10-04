@@ -1,0 +1,780 @@
+# Cryptographically secure primitives. Import with: import crypto
+#
+# This module is deliberately narrow: it exposes the primitives an application
+# actually needs and steers callers toward safe defaults. Every algorithm is
+# implemented by the operating system's vetted cryptographic provider (Windows
+# CNG / bcrypt.dll); nothing here is a hand-rolled cipher. The Sere layer adds
+# validation, safe defaults, clear errors, and documentation.
+#
+# Guiding rules:
+#   * randomness comes from the OS CSPRNG, never a seeded PRNG;
+#   * secrets are compared with `constant_time_equal`, not `==`;
+#   * passwords are stretched with a dedicated KDF, never a bare hash;
+#   * encryption always authenticates, and decryption never returns
+#     unauthenticated plaintext;
+#   * failures raise CryptoError instead of returning a sentinel.
+#
+# Binary values are `list[byte]`, the same type the `bytes` module uses.
+#
+# Text helpers: use `bytes.hex` / `bytes.from_hex` for hexadecimal and
+# `encoding.b64encode` / `encoding.b64decode` for base64. They are not
+# duplicated here.
+#
+# Relationship to other modules:
+#   * `hash` is non-cryptographic (FNV-1a, for hash tables and checksums). Use
+#     this module whenever an attacker can influence the input or a secret.
+#   * `random` is a deterministic XorShift PRNG. It is fine for sampling and
+#     games and must never be used for keys, tokens, salts, or nonces.
+#
+# Typical high-level use:
+#     import crypto
+#     key = crypto.generate_key(32)
+#     sealed = crypto.seal(key, crypto.random_bytes(64))
+#     plain = crypto.open(key, sealed)
+
+import bytes
+import encoding
+import string
+
+PASSWORD_ITERATIONS: i64 = 600000
+"""Default PBKDF2-HMAC-SHA256 iterations used by `password_hash`."""
+
+PASSWORD_SALT_BYTES: i64 = 16
+"""Salt size in bytes for stored password hashes."""
+
+PASSWORD_KEY_BYTES: i64 = 32
+"""Derived key size in bytes for stored password hashes."""
+
+# ---------------------------------------------------------------------------
+# Errors
+# ---------------------------------------------------------------------------
+
+class CryptoError(Exception):
+    """Raised when a cryptographic operation fails.
+
+    Covers invalid key/nonce sizes, authentication failures, malformed encoded
+    passwords, unavailable backends, and a failing random source. It never
+    carries secret material in its message.
+    """
+    pass
+
+# ---------------------------------------------------------------------------
+# Native bindings
+#
+# Every native function validates its arguments and raises CryptoError rather
+# than returning a sentinel, so the wrappers below only add size checks and
+# documentation. Algorithm ids match runtime/sere_crypto.c.
+# ---------------------------------------------------------------------------
+
+_SHA256: i32 = 1
+_SHA384: i32 = 2
+_SHA512: i32 = 3
+_SHA3_256: i32 = 4
+_SHA3_512: i32 = 5
+_HMAC_SHA256: i32 = 101
+_HMAC_SHA512: i32 = 102
+
+extern "C" "sere_crypto_random_bytes"
+def _random_bytes(length: i64) -> list[byte]
+"""Return length bytes from the operating system CSPRNG."""
+
+extern "C" "sere_crypto_random_u64"
+def _random_u64() -> u64
+"""Return 64 uniform random bits from the operating system CSPRNG."""
+
+extern "C" "sere_crypto_hash"
+def _hash(algorithm: i32, data: list[byte]) -> list[byte]
+"""Return the digest of data for a native algorithm id."""
+
+extern "C" "sere_crypto_hash_new"
+def _hash_new(algorithm: i32) -> i64
+"""Open an incremental hash context and return its handle."""
+
+extern "C" "sere_crypto_hmac_new"
+def _hmac_new(algorithm: i32, key: list[byte]) -> i64
+"""Open an incremental HMAC context and return its handle."""
+
+extern "C" "sere_crypto_hash_update"
+def _hash_update(handle: i64, data: list[byte]) -> void
+"""Fold data into an open hash or MAC context."""
+
+extern "C" "sere_crypto_hash_finish"
+def _hash_finish(handle: i64) -> list[byte]
+"""Finalize a context and return its digest, freeing the handle."""
+
+extern "C" "sere_crypto_hash_free"
+def _hash_free(handle: i64) -> void
+"""Abandon a context without producing a digest."""
+
+extern "C" "sere_crypto_hmac_sha256"
+def _hmac_sha256(key: list[byte], data: list[byte]) -> list[byte]
+"""Return HMAC-SHA-256(key, data)."""
+
+extern "C" "sere_crypto_hmac_sha512"
+def _hmac_sha512(key: list[byte], data: list[byte]) -> list[byte]
+"""Return HMAC-SHA-512(key, data)."""
+
+extern "C" "sere_crypto_pbkdf2_sha256"
+def _pbkdf2_sha256(password: list[byte], salt: list[byte], iterations: i64, length: i64) -> list[byte]
+"""Return a PBKDF2-HMAC-SHA256 derived key."""
+
+extern "C" "sere_crypto_hkdf_sha256"
+def _hkdf_sha256(key_material: list[byte], salt: list[byte], info: list[byte], length: i64) -> list[byte]
+"""Return HKDF-SHA256(key_material, salt, info) of the requested length."""
+
+extern "C" "sere_crypto_aes_gcm_encrypt"
+def _aes_gcm_encrypt(key: list[byte], nonce: list[byte], plaintext: list[byte], aad: list[byte]) -> list[byte]
+"""Return AES-256-GCM ciphertext followed by the 16-byte tag."""
+
+extern "C" "sere_crypto_aes_gcm_decrypt"
+def _aes_gcm_decrypt(key: list[byte], nonce: list[byte], ciphertext: list[byte], aad: list[byte]) -> list[byte]
+"""Verify and decrypt AES-256-GCM ciphertext followed by its tag."""
+
+extern "C" "sere_crypto_chacha20_poly1305_encrypt"
+def _chacha20_poly1305_encrypt(key: list[byte], nonce: list[byte], plaintext: list[byte], aad: list[byte]) -> list[byte]
+"""Return ChaCha20-Poly1305 ciphertext followed by the 16-byte tag."""
+
+extern "C" "sere_crypto_chacha20_poly1305_decrypt"
+def _chacha20_poly1305_decrypt(key: list[byte], nonce: list[byte], ciphertext: list[byte], aad: list[byte]) -> list[byte]
+"""Verify and decrypt ChaCha20-Poly1305 ciphertext followed by its tag."""
+
+extern "C" "sere_crypto_zero"
+def _zero(data: list[byte]) -> void
+"""Overwrite a byte list with zeros in a way the optimizer cannot remove."""
+
+extern "C" "sere_crypto_secure_equal"
+def _secure_equal(left: list[byte], right: list[byte]) -> bool
+"""Compare two byte lists in time independent of their contents."""
+
+extern "C" "sere_crypto_x25519_new"
+def _x25519_new() -> i64
+"""Generate an X25519 key pair and return its handle."""
+
+extern "C" "sere_crypto_x25519_from_private"
+def _x25519_from_private(private_key: list[byte]) -> i64
+"""Import a raw 32-byte X25519 private key and return its handle."""
+
+extern "C" "sere_crypto_x25519_public"
+def _x25519_public(handle: i64) -> list[byte]
+"""Return the raw 32-byte public key for a handle."""
+
+extern "C" "sere_crypto_x25519_private"
+def _x25519_private(handle: i64) -> list[byte]
+"""Return the raw 32-byte private key for a handle."""
+
+extern "C" "sere_crypto_x25519_agree"
+def _x25519_agree(handle: i64, peer_public_key: list[byte]) -> list[byte]
+"""Return the raw 32-byte X25519 shared secret."""
+
+extern "C" "sere_crypto_x25519_free"
+def _x25519_free(handle: i64) -> void
+"""Release an X25519 key pair."""
+
+# ---------------------------------------------------------------------------
+# Secure randomness
+# ---------------------------------------------------------------------------
+
+def random_bytes(length: i64) -> list[byte]:
+    """Return length bytes from the operating system CSPRNG.
+
+    Use this for keys, nonces, salts, tokens, and IVs. It is suitable whenever
+    an attacker must not be able to predict or reproduce the output. Raises
+    CryptoError for a negative length or if the random source fails.
+    """
+    if length < 0:
+        raise CryptoError("length must be non-negative")
+    out: list[byte] = _random_bytes(length)
+    return out
+
+def random_u64() -> u64:
+    """Return a uniform 64-bit unsigned integer from the OS CSPRNG."""
+    value: u64 = _random_u64()
+    return value
+
+def random_token(length: i64) -> str:
+    """Return a hexadecimal token built from length random bytes.
+
+    A token of n bytes has 8n bits of entropy. Use it for session ids,
+    password-reset codes, and API keys that must be unguessable. Raises
+    CryptoError for a non-positive length.
+    """
+    if length <= 0:
+        raise CryptoError("token length must be positive")
+    return bytes.hex(random_bytes(length))
+
+def generate_key(length: i64) -> list[byte]:
+    """Return a fresh random key of length bytes.
+
+    Prefer the algorithm-specific helpers below so the length always matches
+    what the cipher expects.
+    """
+    if length <= 0 or length > 1024:
+        raise CryptoError("key length must be between 1 and 1024 bytes")
+    out: list[byte] = _random_bytes(length)
+    return out
+
+def generate_aes256_key() -> list[byte]:
+    """Return a fresh 32-byte AES-256 key."""
+    return generate_key(32)
+
+def generate_chacha20_key() -> list[byte]:
+    """Return a fresh 32-byte ChaCha20-Poly1305 key."""
+    return generate_key(32)
+
+# ---------------------------------------------------------------------------
+# Hashing
+#
+# One-shot helpers for small inputs. For large files or streams use the
+# incremental classes so the whole input is never buffered at once.
+# ---------------------------------------------------------------------------
+
+def sha256(data: list[byte]) -> list[byte]:
+    """Return the 32-byte SHA-256 digest of data."""
+    out: list[byte] = _hash(_SHA256, data)
+    return out
+
+def sha256_hex(data: list[byte]) -> str:
+    """Return the SHA-256 digest of data as lowercase hexadecimal."""
+    return bytes.hex(sha256(data))
+
+def sha384(data: list[byte]) -> list[byte]:
+    """Return the 48-byte SHA-384 digest of data."""
+    out: list[byte] = _hash(_SHA384, data)
+    return out
+
+def sha384_hex(data: list[byte]) -> str:
+    """Return the SHA-384 digest of data as lowercase hexadecimal."""
+    return bytes.hex(sha384(data))
+
+def sha512(data: list[byte]) -> list[byte]:
+    """Return the 64-byte SHA-512 digest of data."""
+    out: list[byte] = _hash(_SHA512, data)
+    return out
+
+def sha512_hex(data: list[byte]) -> str:
+    """Return the SHA-512 digest of data as lowercase hexadecimal."""
+    return bytes.hex(sha512(data))
+
+def sha3_256(data: list[byte]) -> list[byte]:
+    """Return the 32-byte SHA3-256 (FIPS 202) digest of data.
+
+    Raises CryptoError when the host provider does not implement SHA-3.
+    """
+    out: list[byte] = _hash(_SHA3_256, data)
+    return out
+
+def sha3_256_hex(data: list[byte]) -> str:
+    """Return the SHA3-256 digest of data as lowercase hexadecimal."""
+    return bytes.hex(sha3_256(data))
+
+def sha3_512(data: list[byte]) -> list[byte]:
+    """Return the 64-byte SHA3-512 (FIPS 202) digest of data."""
+    out: list[byte] = _hash(_SHA3_512, data)
+    return out
+
+def sha3_512_hex(data: list[byte]) -> str:
+    """Return the SHA3-512 digest of data as lowercase hexadecimal."""
+    return bytes.hex(sha3_512(data))
+
+class _Hasher:
+    """Shared incremental hasher implementation."""
+
+    _handle: i64
+    _done: bool
+
+    def __init__(self, algorithm: i32) -> void:
+        handle: i64 = _hash_new(algorithm)
+        self._handle = handle
+        self._done = False
+
+    def update(self, data: list[byte]) -> _Hasher:
+        """Absorb data into the running digest and return self.
+
+        Raises CryptoError if the hasher was already finalized with finish() or
+        released with close().
+        """
+        if self._done:
+            raise CryptoError("cannot update a finalized hasher")
+        _hash_update(self._handle, data)
+        return self
+
+    def finish(self) -> list[byte]:
+        """Finalize and return the digest, releasing the hasher.
+
+        The hasher cannot be used again; call update() before finish(). Calling
+        finish() (or close()) a second time raises CryptoError.
+        """
+        if self._done:
+            raise CryptoError("hasher is already finalized")
+        self._done = True
+        out: list[byte] = _hash_finish(self._handle)
+        self._handle = 0
+        return out
+
+    def hexdigest(self) -> str:
+        """Finalize and return the digest as lowercase hexadecimal."""
+        return bytes.hex(self.finish())
+
+    def close(self) -> void:
+        """Release the hasher without producing a digest. Safe to call twice."""
+        if not self._done:
+            self._done = True
+            _hash_free(self._handle)
+            self._handle = 0
+
+class Sha256(_Hasher):
+    """Incremental SHA-256 hasher."""
+    def __init__(self) -> void:
+        super().__init__(_SHA256)
+
+class Sha384(_Hasher):
+    """Incremental SHA-384 hasher."""
+    def __init__(self) -> void:
+        super().__init__(_SHA384)
+
+class Sha512(_Hasher):
+    """Incremental SHA-512 hasher."""
+    def __init__(self) -> void:
+        super().__init__(_SHA512)
+
+class Sha3_256(_Hasher):
+    """Incremental SHA3-256 hasher."""
+    def __init__(self) -> void:
+        super().__init__(_SHA3_256)
+
+class Sha3_512(_Hasher):
+    """Incremental SHA3-512 hasher."""
+    def __init__(self) -> void:
+        super().__init__(_SHA3_512)
+
+# ---------------------------------------------------------------------------
+# Message authentication (HMAC)
+#
+# HMAC is not hash(key + message): it is the standardized construction built on
+# a cryptographic hash. Never replace it with a plain digest.
+# ---------------------------------------------------------------------------
+
+def hmac_sha256(key: list[byte], data: list[byte]) -> list[byte]:
+    """Return the 32-byte HMAC-SHA-256 of data under key.
+
+    Use it to authenticate a message with a shared secret. Verify the result
+    with constant_time_equal, never `==`. Keys shorter than the block size
+    (64 bytes) are the norm; an empty key is accepted but is only safe for
+    domain separation, not authentication.
+    """
+    out: list[byte] = _hmac_sha256(key, data)
+    return out
+
+def hmac_sha256_hex(key: list[byte], data: list[byte]) -> str:
+    """Return the HMAC-SHA-256 of data as lowercase hexadecimal."""
+    return bytes.hex(hmac_sha256(key, data))
+
+def hmac_sha512(key: list[byte], data: list[byte]) -> list[byte]:
+    """Return the 64-byte HMAC-SHA-512 of data under key."""
+    out: list[byte] = _hmac_sha512(key, data)
+    return out
+
+def hmac_sha512_hex(key: list[byte], data: list[byte]) -> str:
+    """Return the HMAC-SHA-512 of data as lowercase hexadecimal."""
+    return bytes.hex(hmac_sha512(key, data))
+
+class _Mac:
+    """Shared incremental HMAC implementation."""
+
+    _handle: i64
+    _done: bool
+
+    def __init__(self, algorithm: i32, key: list[byte]) -> void:
+        handle: i64 = _hmac_new(algorithm, key)
+        self._handle = handle
+        self._done = False
+
+    def update(self, data: list[byte]) -> _Mac:
+        """Absorb data into the running MAC and return self."""
+        if self._done:
+            raise CryptoError("cannot update a finalized MAC")
+        _hash_update(self._handle, data)
+        return self
+
+    def finish(self) -> list[byte]:
+        """Finalize and return the MAC, releasing the context."""
+        if self._done:
+            raise CryptoError("MAC is already finalized")
+        self._done = True
+        out: list[byte] = _hash_finish(self._handle)
+        self._handle = 0
+        return out
+
+    def hexdigest(self) -> str:
+        """Finalize and return the MAC as lowercase hexadecimal."""
+        return bytes.hex(self.finish())
+
+    def close(self) -> void:
+        """Release the MAC context without producing a tag."""
+        if not self._done:
+            self._done = True
+            _hash_free(self._handle)
+            self._handle = 0
+
+class HmacSha256(_Mac):
+    """Incremental HMAC-SHA-256."""
+    def __init__(self, key: list[byte]) -> void:
+        super().__init__(_HMAC_SHA256, key)
+
+class HmacSha512(_Mac):
+    """Incremental HMAC-SHA-512."""
+    def __init__(self, key: list[byte]) -> void:
+        super().__init__(_HMAC_SHA512, key)
+
+# ---------------------------------------------------------------------------
+# Key derivation
+# ---------------------------------------------------------------------------
+
+def pbkdf2_sha256(
+    password: list[byte], salt: list[byte], iterations: i64, length: i64
+) -> list[byte]:
+    """Derive a key of length bytes with PBKDF2-HMAC-SHA256.
+
+    Password-based key derivation for interoperability and for password
+    storage when Argon2 is unavailable (see `password_hash`). `iterations`
+    must be positive; pick a value so one derivation takes an appreciable
+    fraction of a second on the deployment hardware. The salt must be unique
+    per password and at least 16 random bytes; it is not secret and may be
+    stored alongside the output.
+    """
+    if iterations <= 0:
+        raise CryptoError("iteration count must be positive")
+    if length <= 0:
+        raise CryptoError("derived key length must be positive")
+    out: list[byte] = _pbkdf2_sha256(password, salt, iterations, length)
+    return out
+
+def hkdf_sha256(
+    key_material: list[byte], salt: list[byte], info: list[byte], length: i64
+) -> list[byte]:
+    """Derive a key of length bytes with HKDF-SHA256 (RFC 5869).
+
+    Use it to turn a shared secret or high-entropy key into one or more
+    purpose-bound keys. `salt` may be empty; `info` is a non-secret context
+    string (for example "aes-key" or a protocol name) that separates keys
+    derived from the same material. The output length must be at most
+    255 * 32 bytes.
+    """
+    if length <= 0:
+        raise CryptoError("derived key length must be positive")
+    out: list[byte] = _hkdf_sha256(key_material, salt, info, length)
+    return out
+
+# ---------------------------------------------------------------------------
+# Password storage
+#
+# Passwords must never be stored with a plain hash. These helpers salt and
+# stretch each password with PBKDF2 and encode everything needed to verify it
+# later into a single self-describing string, so the caller never manages salts
+# by hand.
+# ---------------------------------------------------------------------------
+
+_PASSWORD_PREFIX: str = "pbkdf2-sha256"
+
+def _parse_positive_int(text: str) -> i64:
+    """Parse a decimal integer, returning -1 when text is not a positive one."""
+    if len(text) == 0:
+        return -1
+    value: i64 = 0
+    index: i64 = 0
+    while index < len(text):
+        digit: i64 = string.find("0123456789", text[index])
+        if digit < 0:
+            return -1
+        value = value * 10 + digit
+        if value > 1000000000:
+            return -1
+        index += 1
+    if value <= 0:
+        return -1
+    return value
+
+def password_hash(password: str) -> str:
+    """Return a self-describing encoded hash of password for storage.
+
+    The result is `pbkdf2-sha256$<iterations>$<base64 salt>$<base64 key>` and
+    contains everything `password_verify` needs. A fresh random salt is
+    generated each time, so hashing the same password twice yields different
+    encodings. Store the whole string; never store the password itself.
+    """
+    encoded: str = password_hash_with(password, PASSWORD_ITERATIONS)
+    return encoded
+
+def password_hash_with(password: str, iterations: i64) -> str:
+    """Like `password_hash` but with an explicit iteration count.
+
+    Only lower the count for tests; it must be high enough that guessing is
+    expensive. Raises CryptoError when iterations is below the safe minimum.
+    """
+    if iterations < 10000:
+        raise CryptoError("iteration count must be at least 10000")
+    salt: list[byte] = _random_bytes(PASSWORD_SALT_BYTES)
+    derived: list[byte] = _pbkdf2_sha256(
+        bytes.from_str(password), salt, iterations, PASSWORD_KEY_BYTES
+    )
+    salt_text: str = encoding.b64encode(bytes.to_str(salt))
+    key_text: str = encoding.b64encode(bytes.to_str(derived))
+    encoded: str = _PASSWORD_PREFIX + "$" + str(iterations) + "$" + salt_text + "$" + key_text
+    return encoded
+
+def password_verify(password: str, encoded: str) -> bool:
+    """Return whether password matches a string produced by `password_hash`.
+
+    Uses a constant-time comparison of the derived keys. Returns False for a
+    malformed or truncated encoding rather than raising, so callers can treat
+    every mismatch the same way.
+    """
+    parts: list[str] = string.split(encoded, "$")
+    if len(parts) != 4:
+        return False
+    if parts[0] != _PASSWORD_PREFIX:
+        return False
+    iterations: i64 = _parse_positive_int(parts[1])
+    if iterations < 0:
+        return False
+    if iterations > 100000000:
+        return False
+    salt: list[byte] = bytes.from_str(encoding.b64decode(parts[2]))
+    expected: list[byte] = bytes.from_str(encoding.b64decode(parts[3]))
+    if len(salt) < 8 or len(expected) < 16:
+        return False
+    derived: list[byte] = _pbkdf2_sha256(
+        bytes.from_str(password), salt, iterations, len(expected) as i64
+    )
+    return constant_time_equal(derived, expected)
+
+# ---------------------------------------------------------------------------
+# Authenticated encryption (AEAD)
+#
+# The low-level functions take an explicit nonce. A nonce must never repeat
+# under the same key: reusing one with GCM or ChaCha20-Poly1305 reveals the
+# authentication key and can expose plaintext. Prefer `seal` / `open`, which
+# generate a fresh random nonce for every message.
+#
+# Output layout: ciphertext followed by the 16-byte authentication tag. The
+# decrypting side verifies the tag before any plaintext is returned; on
+# failure it raises CryptoError and yields nothing.
+# ---------------------------------------------------------------------------
+
+def aes_gcm_encrypt(
+    key: list[byte], nonce: list[byte], plaintext: list[byte], aad: list[byte]
+) -> list[byte]:
+    """Encrypt with AES-256-GCM, returning ciphertext || 16-byte tag.
+
+    key: exactly 32 bytes. nonce: exactly 12 bytes, unique per encryption.
+    aad: additional authenticated (but not encrypted) data; may be empty.
+    """
+    if len(key) != 32:
+        raise CryptoError("AES-256-GCM key must be 32 bytes")
+    if len(nonce) != 12:
+        raise CryptoError("AES-GCM nonce must be 12 bytes")
+    out: list[byte] = _aes_gcm_encrypt(key, nonce, plaintext, aad)
+    return out
+
+def aes_gcm_decrypt(
+    key: list[byte], nonce: list[byte], ciphertext: list[byte], aad: list[byte]
+) -> list[byte]:
+    """Verify and decrypt AES-256-GCM input of the form ciphertext || tag.
+
+    Raises CryptoError if the tag does not authenticate the ciphertext, the
+    nonce, and the additional data. Plaintext is never returned on failure.
+    """
+    if len(key) != 32:
+        raise CryptoError("AES-256-GCM key must be 32 bytes")
+    if len(nonce) != 12:
+        raise CryptoError("AES-GCM nonce must be 12 bytes")
+    if len(ciphertext) < 16:
+        raise CryptoError("ciphertext is too short to contain an authentication tag")
+    out: list[byte] = _aes_gcm_decrypt(key, nonce, ciphertext, aad)
+    return out
+
+def chacha20_poly1305_encrypt(
+    key: list[byte], nonce: list[byte], plaintext: list[byte], aad: list[byte]
+) -> list[byte]:
+    """Encrypt with ChaCha20-Poly1305, returning ciphertext || 16-byte tag.
+
+    key: exactly 32 bytes. nonce: exactly 12 bytes, unique per encryption.
+    aad: additional authenticated data; may be empty.
+    """
+    if len(key) != 32:
+        raise CryptoError("ChaCha20-Poly1305 key must be 32 bytes")
+    if len(nonce) != 12:
+        raise CryptoError("ChaCha20-Poly1305 nonce must be 12 bytes")
+    out: list[byte] = _chacha20_poly1305_encrypt(key, nonce, plaintext, aad)
+    return out
+
+def chacha20_poly1305_decrypt(
+    key: list[byte], nonce: list[byte], ciphertext: list[byte], aad: list[byte]
+) -> list[byte]:
+    """Verify and decrypt ChaCha20-Poly1305 input of the form ciphertext || tag.
+
+    Raises CryptoError if authentication fails; no plaintext is returned.
+    """
+    if len(key) != 32:
+        raise CryptoError("ChaCha20-Poly1305 key must be 32 bytes")
+    if len(nonce) != 12:
+        raise CryptoError("ChaCha20-Poly1305 nonce must be 12 bytes")
+    if len(ciphertext) < 16:
+        raise CryptoError("ciphertext is too short to contain an authentication tag")
+    out: list[byte] = _chacha20_poly1305_decrypt(key, nonce, ciphertext, aad)
+    return out
+
+# Sealed-message format, version 1:
+#   byte 0      format version (1)
+#   byte 1      algorithm id (1 = AES-256-GCM)
+#   bytes 2..13 random 12-byte nonce
+#   bytes 14..  ciphertext || 16-byte tag
+# The header is authenticated implicitly because the whole sealed value is
+# parsed before decryption and the version/algorithm select the cipher.
+_SEAL_VERSION: i64 = 1
+_SEAL_AES_GCM: i64 = 1
+_SEAL_HEADER_BYTES: i64 = 14
+
+def seal(key: list[byte], plaintext: list[byte]) -> list[byte]:
+    """Encrypt plaintext under key with a fresh nonce; returns a sealed message.
+
+    This is the recommended way to encrypt. The 32-byte key is used with
+    AES-256-GCM, and the returned value embeds a version, the algorithm id, a
+    random nonce, the ciphertext, and the tag, so it can be stored or sent as
+    one opaque value. Decrypt with `open`.
+    """
+    return seal_with_aad(key, plaintext, bytes.zeros(0))
+
+def seal_with_aad(key: list[byte], plaintext: list[byte], aad: list[byte]) -> list[byte]:
+    """Like `seal` but authenticates additional data that is not encrypted.
+
+    The same aad must be supplied to `open_with_aad`; a mismatch raises
+    CryptoError. Use it to bind a message to context such as a recipient id or
+    a sequence number.
+    """
+    if len(key) != 32:
+        raise CryptoError("seal key must be 32 bytes")
+    nonce: list[byte] = _random_bytes(12)
+    body: list[byte] = _aes_gcm_encrypt(key, nonce, plaintext, aad)
+    header: list[byte] = bytes.from_hex("0101")
+    return bytes.concat(bytes.concat(header, nonce), body)
+
+def open(key: list[byte], sealed: list[byte]) -> list[byte]:
+    """Decrypt a value produced by `seal`.
+
+    Raises CryptoError if the sealed value is malformed, uses an unknown
+    version or algorithm, or fails authentication.
+    """
+    return open_with_aad(key, sealed, bytes.zeros(0))
+
+def open_with_aad(key: list[byte], sealed: list[byte], aad: list[byte]) -> list[byte]:
+    """Decrypt a value produced by `seal_with_aad` with the same additional data."""
+    if len(key) != 32:
+        raise CryptoError("seal key must be 32 bytes")
+    if len(sealed) < _SEAL_HEADER_BYTES + 16:
+        raise CryptoError("sealed value is truncated")
+    version: i64 = sealed[0] as i64
+    algorithm: i64 = sealed[1] as i64
+    if version != _SEAL_VERSION:
+        raise CryptoError("unsupported sealed-message version")
+    if algorithm != _SEAL_AES_GCM:
+        raise CryptoError("unsupported sealed-message algorithm")
+    nonce: list[byte] = sealed[2:14]
+    body: list[byte] = sealed[14:]
+    plaintext: list[byte] = _aes_gcm_decrypt(key, nonce, body, aad)
+    return plaintext
+
+# ---------------------------------------------------------------------------
+# Security helpers
+# ---------------------------------------------------------------------------
+
+def constant_time_equal(left: list[byte], right: list[byte]) -> bool:
+    """Compare two byte lists without leaking their contents through timing.
+
+    Use it for MACs, tags, tokens, and any other secret-dependent comparison;
+    ordinary equality may short-circuit on the first differing byte. Lengths
+    are not secret and are compared normally.
+    """
+    return _secure_equal(left, right)
+
+def zero(data: list[byte]) -> void:
+    """Overwrite a byte list with zeros.
+
+    Call it on temporary key or plaintext buffers when they are no longer
+    needed. A plain loop can be optimized away; this delegates to the
+    platform's compiler-resistant wipe.
+    """
+    _zero(data)
+
+# ---------------------------------------------------------------------------
+# X25519 key agreement
+#
+# X25519 is a Diffie-Hellman function over Curve25519. It is not a signature
+# scheme: it proves nothing about who sent a message. Combine it with an
+# authenticated channel or a signature when that matters.
+# ---------------------------------------------------------------------------
+
+class X25519KeyPair:
+    """An X25519 key pair for Diffie-Hellman key agreement."""
+
+    _handle: i64
+    _closed: bool
+
+    def __init__(self, handle: i64) -> void:
+        self._handle = handle
+        self._closed = False
+
+    def public_key(self) -> list[byte]:
+        """Return the 32-byte public key to share with the peer."""
+        if self._closed:
+            raise CryptoError("key pair is closed")
+        out: list[byte] = _x25519_public(self._handle)
+        return out
+
+    def private_key(self) -> list[byte]:
+        """Return the 32-byte private key, for persistence.
+
+        Handle the result as a secret: never log it, and wipe it with
+        `crypto.zero` when finished.
+        """
+        if self._closed:
+            raise CryptoError("key pair is closed")
+        out: list[byte] = _x25519_private(self._handle)
+        return out
+
+    def agree(self, peer_public_key: list[byte]) -> list[byte]:
+        """Return the 32-byte shared secret with a peer's public key.
+
+        Both sides compute the same secret. Feed it through `hkdf_sha256`
+        before using it as an encryption key. Raises CryptoError for a
+        malformed peer key or a closed pair.
+        """
+        if self._closed:
+            raise CryptoError("key pair is closed")
+        if len(peer_public_key) != 32:
+            raise CryptoError("X25519 public key must be 32 bytes")
+        out: list[byte] = _x25519_agree(self._handle, peer_public_key)
+        return out
+
+    def close(self) -> void:
+        """Release the key material. Safe to call more than once."""
+        if not self._closed:
+            self._closed = True
+            _x25519_free(self._handle)
+            self._handle = 0
+
+def x25519_generate() -> X25519KeyPair:
+    """Return a new, random X25519 key pair."""
+    handle: i64 = _x25519_new()
+    return X25519KeyPair(handle)
+
+def x25519_from_private(private_key: list[byte]) -> X25519KeyPair:
+    """Rebuild an X25519 key pair from a 32-byte private key.
+
+    Use it to load a previously stored key. Raises CryptoError if the key is
+    not 32 bytes or is rejected by the backend.
+    """
+    if len(private_key) != 32:
+        raise CryptoError("X25519 private key must be 32 bytes")
+    handle: i64 = _x25519_from_private(private_key)
+    return X25519KeyPair(handle)

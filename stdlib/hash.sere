@@ -1,13 +1,222 @@
-# Hash helpers. Import with: import hash
-# fnv1a is FNV-1a 64-bit over UTF-8 / raw string bytes.
+# Non-cryptographic hashing. Import with: import hash
+#
+# Deterministic: every digest here is a pure function of its input. The same
+# input produces the same 64-bit value in every run, on every machine, and on
+# either backend, so digests can be persisted to disk, compared between
+# processes, or used as cache keys. Nothing depends on addresses, process
+# state, a salt, or the iteration order of a container.
+#
+# Not cryptographic: FNV-1a and SplitMix64 are public, invertible algorithms
+# with published collisions, and an attacker who chooses the input can force
+# collisions on purpose. Use a cryptographic digest (SHA-2, BLAKE) for
+# passwords, signatures, tokens, or any value an attacker influences.
+#
+# Algorithms:
+#   fnv1a, Hasher.write()   FNV-1a 64-bit over raw bytes
+#                           (offset basis 0xCBF29CE484222325,
+#                            prime 0x100000001B3)
+#   hash_int and friends    SplitMix64 finalizer over the value's 64 bits
+#   combine                 order-sensitive mix of two digests
+#   finalize                SplitMix64 avalanche, applied before a modulo
+#
+# Typical uses: keying a hash table by Sere values, sharding work (see bucket),
+# checksumming text or files for change detection (see file, matches), and
+# building cache keys from several fields (see Hasher).
+
+# FNV-1a 64-bit offset basis (0xCBF29CE484222325): the state every stream
+# starts from.
+OFFSET_BASIS: i64 = -3750763034362895579
+
+# FNV-1a 64-bit prime (0x100000001B3).
+FNV_PRIME: i64 = 1099511628211
+
+# Type tags for Hasher's typed writes. The tag is folded as one byte before the
+# value's digest, so an i64, an i32, a bool, and an f64 never fold the same
+# bytes even when their bit patterns agree.
+TAG_INT: i64 = 1
+TAG_I32: i64 = 2
+TAG_BOOL: i64 = 3
+TAG_F64: i64 = 4
+TAG_F32: i64 = 5
+TAG_FIELD: i64 = 6
+TAG_STRING: i64 = 7
+
+HEX_DIGITS: str = "0123456789abcdef"
+
+# ---------------------------------------------------------------------------
+# Byte-level primitives
+# ---------------------------------------------------------------------------
 
 extern "C" "sere_hash_fnv1a"
 def fnv1a(text: str) -> i64
-"""Return the FNV-1a hash of text."""
+"""Return the FNV-1a 64-bit digest of the raw bytes of text."""
+
+extern "C" "sere_hash_update"
+def fnv1a_update(state: i64, text: str) -> i64
+"""Fold the raw bytes of text into a running FNV-1a 64-bit state."""
+
+extern "C" "sere_hash_fnv1a_bytes"
+def _fnv1a_bytes(data: Ptr[i8], length: i64) -> i64
+"""Return the FNV-1a 64-bit digest of a byte buffer."""
+
+extern "C" "sere_hash_update_bytes"
+def _fnv1a_update_bytes(state: i64, data: Ptr[i8], length: i64) -> i64
+"""Fold a byte buffer into a running FNV-1a 64-bit state."""
+
+extern "C" "sere_hash_basis"
+def new_state() -> i64
+"""Return the FNV-1a 64-bit offset basis, the start of a new stream."""
+
+extern "C" "sere_hash_finish"
+def _avalanche(state: i64) -> i64
+"""Avalanche a 64-bit state so every input bit affects every output bit."""
+
+# ---------------------------------------------------------------------------
+# Value digests
+# ---------------------------------------------------------------------------
+
+def hash_str(text: str) -> i64:
+    """Return the digest of a string, over its raw UTF-8 bytes."""
+    return fnv1a(text)
+
+def hash_bytes(data: list[byte]) -> i64:
+    """Return the digest of a byte list."""
+    if len(data) == 0:
+        return new_state()
+    return _fnv1a_bytes(&data[0] as Ptr[i8], len(data) as i64)
+
+def hash_i8_bytes(data: list[i8]) -> i64:
+    """Return the digest of a signed byte buffer, as os.read_bytes returns."""
+    if len(data) == 0:
+        return new_state()
+    return _fnv1a_bytes(&data[0], len(data) as i64)
+
+def fnv1a_update_bytes(state: i64, data: list[byte]) -> i64:
+    """Fold a byte list into a running FNV-1a 64-bit state."""
+    if len(data) == 0:
+        return state
+    return _fnv1a_update_bytes(state, &data[0] as Ptr[i8], len(data) as i64)
+
+def fnv1a_update_i8_bytes(state: i64, data: list[i8]) -> i64:
+    """Fold a signed byte buffer into a running FNV-1a 64-bit state."""
+    if len(data) == 0:
+        return state
+    return _fnv1a_update_bytes(state, &data[0], len(data) as i64)
+
+extern "C" "sere_hash_int"
+def hash_int(value: i64) -> i64
+"""Return the digest of a 64-bit integer."""
+
+def hash_u64(value: u64) -> i64:
+    """Return the digest of an unsigned 64-bit integer."""
+    return hash_int(value as i64)
+
+def hash_i32(value: i32) -> i64:
+    """Return the digest of a 32-bit integer, sign extended to 64 bits.
+
+    So hash_i32(v) == hash_int(v as i64): the same number hashes alike whatever
+    width it was stored in.
+    """
+    return hash_int(value as i64)
+
+extern "C" "sere_hash_bool"
+def hash_bool(value: bool) -> i64
+"""Return the digest of a boolean, kept distinct from the integers 0 and 1."""
+
+extern "C" "sere_hash_f64"
+def hash_float(value: f64) -> i64
+"""Return the digest of a float from its IEEE-754 bits.
+
+-0.0 and 0.0 compare equal and hash equal; every NaN hashes alike. Note that a
+NaN is not equal to itself, so NaNs are unusable as hash-table keys.
+"""
+
+extern "C" "sere_hash_f32"
+def hash_float32(value: f32) -> i64
+"""Return the digest of a 32-bit float from its IEEE-754 bits."""
+
+def hash_f32(value: f32) -> i64:
+    """Return the digest of a 32-bit float from its IEEE-754 bits."""
+    return hash_float32(value)
+
+def hash_int32(value: i32) -> i64:
+    """Return the digest of a 32-bit integer"""
+    return hash_i32(value)
+
+def hash_i64(value: i64) -> i64:
+    """Return the digest of a 64-bit integer."""
+    return hash_int(value)
+
+# ---------------------------------------------------------------------------
+# Combining digests
+# ---------------------------------------------------------------------------
 
 extern "C" "sere_hash_combine"
 def combine(left: i64, right: i64) -> i64
-"""Combine two hash values."""
+"""Combine two digests into one, order sensitively.
+
+combine(a, b) differs from combine(b, a), so fields folded in a different order
+produce a different digest.
+"""
+
+def combine_all(values: list[i64]) -> i64:
+    """Combine digests in order; an empty list yields the offset basis."""
+    state: i64 = new_state()
+    for value in values:
+        state = combine(state, value)
+    return state
+
+def combine_ints(values: list[i64]) -> i64:
+    """Digest a list of integers in order."""
+    state: i64 = new_state()
+    for value in values:
+        state = combine(state, hash_int(value))
+    return state
+
+def combine_strings(values: list[str]) -> i64:
+    """Digest a list of strings in order."""
+    state: i64 = new_state()
+    for value in values:
+        state = combine(state, fnv1a(value))
+    return state
+
+def finalize(state: i64) -> i64:
+    """Return an avalanched copy of a digest.
+
+    FNV-1a leaves its low bits weakly mixed, and a modulo reads exactly those
+    bits, so call finalize before reducing a digest to a bucket index. It is not
+    applied by fnv1a itself: digests stay the plain FNV-1a values that other
+    tools compute.
+    """
+    return _avalanche(state)
+
+def bucket(digest: i64, count: i64) -> i64:
+    """Map a digest onto a bucket index in [0, count).
+
+    Use it for sharding and for table selection: every digest lands in one of
+    count buckets, and a small change to the input moves the result to an
+    unrelated bucket.
+    """
+    if count <= 0:
+        raise ValueError("bucket count must be positive")
+    # Clear the sign bit first: a negative modulo would yield a negative index.
+    return (finalize(digest) & 9223372036854775807) % count
+
+def xor(left: i64, right: i64) -> i64:
+    """Combine two digests commutatively, for order-insensitive digests.
+
+    Use it to digest a set: xor of the members' digests ignores their order, and
+    combine() is the order-sensitive alternative.
+    """
+    return left ^ right
+
+# ---------------------------------------------------------------------------
+# Text and file checksums
+# ---------------------------------------------------------------------------
+
+def matches(text: str, digest: i64) -> bool:
+    """Return whether text hashes to a previously recorded digest."""
+    return fnv1a(text) == digest
 
 class FileHashError(Exception):
     """Raised when a file cannot be hashed."""
@@ -20,3 +229,169 @@ class FileHashError(Exception):
 extern "C" "sere_hash_file"
 def file(path: str) -> i64
 """Return the FNV-1a hash of a file."""
+
+def file_matches(path: str, digest: i64) -> bool:
+    """Return whether a file's digest matches a previously recorded one.
+
+    Raises FileHashError when the file cannot be read, so a missing file is
+    never mistaken for a changed one.
+    """
+    return file(path) == digest
+
+# ---------------------------------------------------------------------------
+# Streaming hasher
+# ---------------------------------------------------------------------------
+
+class Hasher:
+    """Incremental FNV-1a 64-bit hasher.
+
+    Text and byte writes fold raw bytes, so writing text in pieces equals
+    writing the concatenation, and a text-only stream ends on fnv1a(text).
+    Typed writes fold a type tag and the eight little-endian bytes of the
+    value's own digest, which keeps types apart and spreads small integers
+    widely.
+
+    Prefer typed writes over a formatted string: f"{a}:{b}" collides when a
+    field contains the separator, while write_int(a).write_int(b) cannot.
+    """
+
+    state: i64
+
+    def __init__(self, seed: i64 = OFFSET_BASIS):
+        """Create a hasher; seed defaults to the FNV-1a offset basis."""
+        self.state = seed
+
+    def reset(self) -> Hasher:
+        """Restart the stream from the offset basis."""
+        self.state = OFFSET_BASIS
+        return self
+
+    def copy(self) -> Hasher:
+        """Return an independent hasher positioned at the same state.
+
+        Use it to digest a shared prefix once and then branch.
+        """
+        snapshot: Hasher = Hasher(self.state)
+        return snapshot
+
+    def write(self, text: str) -> Hasher:
+        """Fold the raw bytes of text."""
+        self.state = fnv1a_update(self.state, text)
+        return self
+
+    def write_bytes(self, data: list[byte]) -> Hasher:
+        """Fold the bytes of a byte list."""
+        if len(data) > 0:
+            self.state = _fnv1a_update_bytes(self.state, &data[0] as Ptr[i8], len(data) as i64)
+        return self
+
+    def write_i8_bytes(self, data: list[i8]) -> Hasher:
+        """Fold the bytes of a signed byte buffer."""
+        if len(data) > 0:
+            self.state = _fnv1a_update_bytes(self.state, &data[0], len(data) as i64)
+        return self
+
+    def write_tag(self, tag: i64) -> Hasher:
+        """Fold a domain-separation tag, using its low byte."""
+        self.state = _fnv_byte(self.state, tag)
+        return self
+
+    def write_int(self, value: i64) -> Hasher:
+        """Fold a 64-bit integer."""
+        self.state = _fnv_byte(self.state, TAG_INT)
+        self.state = _fnv_i64(self.state, hash_int(value))
+        return self
+
+    def write_int32(self, value: i32) -> Hasher:
+        """Fold a 32-bit integer, distinctly from an i64."""
+        self.state = _fnv_byte(self.state, TAG_I32)
+        self.state = _fnv_i64(self.state, hash_int(value as i64))
+        return self
+
+    def write_bool(self, value: bool) -> Hasher:
+        """Fold a boolean."""
+        self.state = _fnv_byte(self.state, TAG_BOOL)
+        self.state = _fnv_i64(self.state, hash_bool(value))
+        return self
+
+    def write_float(self, value: f64) -> Hasher:
+        """Fold a float; 0.0 and -0.0 fold alike, as they compare equal."""
+        self.state = _fnv_byte(self.state, TAG_F64)
+        self.state = _fnv_i64(self.state, hash_float(value))
+        return self
+
+    def write_float32(self, value: f32) -> Hasher:
+        """Fold a 32-bit float, distinctly from an f64."""
+        self.state = _fnv_byte(self.state, TAG_F32)
+        self.state = _fnv_i64(self.state, hash_float32(value))
+        return self
+
+    def write_string(self, text: str) -> Hasher:
+        """Fold a string as a length-prefixed field.
+
+        Unlike write(), this records the length first, so a string can never run
+        into the bytes that follow it.
+        """
+        self.state = _fnv_byte(self.state, TAG_STRING)
+        self.state = _fnv_byte(self.state, len(text) as i64)
+        self.state = fnv1a_update(self.state, text)
+        return self
+
+    def write_field(self, label: str, value: i64) -> Hasher:
+        """Fold a named integer field, one call per field of a record.
+
+        The label's length is folded before the label, so "ab" + value can never
+        be confused with "a" + a different value.
+        """
+        self.state = _fnv_byte(self.state, TAG_FIELD)
+        self.state = _fnv_byte(self.state, len(label) as i64)
+        self.state = fnv1a_update(self.state, label)
+        self.state = _fnv_i64(self.state, hash_int(value))
+        return self
+
+    def finish(self) -> i64:
+        """Return the stream digest, equal to fnv1a() for a text-only stream."""
+        return self.state
+
+    def digest(self) -> i64:
+        """Return the avalanched stream digest, for bucket indexes."""
+        return finalize(self.state)
+
+    def __repr__(self) -> str:
+        """Return the stream digest as hexadecimal text."""
+        return f"Hasher({hex_digest(self.state)})"
+
+# ---------------------------------------------------------------------------
+# Formatting
+# ---------------------------------------------------------------------------
+
+def hex_digest(value: i64) -> str:
+    """Return a digest as 16 lowercase hexadecimal digits, most significant first."""
+    text: str = ""
+    index: i32 = 15
+    while index >= 0:
+        nibble: i64 = (value >> (index * 4)) & 15
+        text = text + HEX_DIGITS[nibble as i32]
+        index = index - 1
+    return text
+
+def to_hex(value: i64) -> str:
+    """Return a digest as 16 lowercase hexadecimal digits."""
+    return hex_digest(value)
+
+# ---------------------------------------------------------------------------
+# Internals
+# ---------------------------------------------------------------------------
+
+def _fnv_byte(state: i64, byte: i64) -> i64:
+    """Fold one byte into an FNV-1a 64-bit state."""
+    return (state ^ (byte & 255)) * FNV_PRIME
+
+def _fnv_i64(state: i64, value: i64) -> i64:
+    """Fold a 64-bit value into an FNV-1a state, least significant byte first."""
+    result: i64 = state
+    index: i32 = 0
+    while index < 8:
+        result = _fnv_byte(result, (value >> (index * 8)) & 255)
+        index = index + 1
+    return result

@@ -1,0 +1,84 @@
+import hash
+
+
+def main() -> i32:
+    # combine is order sensitive: the same two digests in the other order give a
+    # different result, so field order cannot be lost.
+    assert hash.combine(1, 2) == -7046029254386353066
+    assert hash.combine(2, 1) == -7046029254386353004
+    assert hash.combine(1, 2) != hash.combine(2, 1)
+    assert hash.combine(0, 0) != hash.combine(0, 1)
+    assert hash.combine(7, 7) == hash.combine(7, 7)
+
+    # combine_all folds a list in order; an empty list is the offset basis.
+    assert hash.combine_all([]) == hash.new_state()
+    assert hash.combine_all([1, 2, 3]) == -8953036599834593584
+    assert hash.combine_all([1, 2, 3]) != hash.combine_all([3, 2, 1])
+    assert hash.combine_all([1, 2]) != hash.combine_all([1, 2, 3])
+    assert hash.combine_all([1, 0]) != hash.combine_all([1, 0, 0])
+    assert hash.combine_all([1]) == hash.combine(hash.new_state(), 1)
+
+    # Typed list digests agree with folding the same values by hand.
+    expected: i64 = hash.combine(hash.new_state(), hash.hash_int(1))
+    expected = hash.combine(expected, hash.hash_int(2))
+    assert hash.combine_ints([1, 2]) == expected
+    assert hash.combine_ints([1, 2]) != hash.combine_ints([2, 1])
+    assert hash.combine_ints([]) == hash.new_state()
+
+    # Strings are length-free in combine_strings, so a different split of the
+    # same characters must not collide.
+    assert hash.combine_strings(["ab", "c"]) == hash.combine_strings(["ab", "c"])
+    assert hash.combine_strings(["ab", "c"]) != hash.combine_strings(["a", "bc"])
+    assert hash.combine_strings(["ab", "c"]) != hash.combine_strings(["c", "ab"])
+
+    # finalize avalanches: it is the step that makes a digest safe to reduce to a
+    # bucket index, and it is idempotent in neither direction.
+    assert hash.finalize(0) == 0
+    assert hash.finalize(hash.new_state()) == -780787492076525413
+    assert hash.finalize(1) != 1
+    assert hash.finalize(2) != 2
+    assert hash.finalize(hash.finalize(1)) != hash.finalize(1)
+
+    # Every bucket is reachable and every index stays in range.
+    counts: list[i32] = []
+    index: i32 = 0
+    while index < 16:
+        counts.append(0)
+        index = index + 1
+    value: i64 = 0
+    while value < 512:
+        slot: i64 = hash.bucket(hash.hash_int(value), 16)
+        assert slot >= 0
+        assert slot < 16
+        counts[slot as i32] = counts[slot as i32] + 1
+        value = value + 1
+    index = 0
+    while index < 16:
+        assert counts[index] > 0
+        index = index + 1
+
+    # One bucket holds everything, and a bucket index is stable.
+    assert hash.bucket(1, 1) == 0
+    assert hash.bucket(hash.fnv1a("k"), 8) == hash.bucket(hash.fnv1a("k"), 8)
+    assert hash.bucket(hash.new_state(), 1024) < 1024
+
+    # Similar keys spread over the buckets instead of piling into one.
+    used: list[i64] = []
+    index = 0
+    while index < 32:
+        spread: i64 = hash.bucket(hash.fnv1a("key" + str(index)), 8)
+        found: bool = False
+        for existing in used:
+            if existing == spread:
+                found = True
+        if not found:
+            used.append(spread)
+        index = index + 1
+    assert len(used) >= 4
+
+    # xor combines commutatively, for digests that must ignore ordering.
+    assert hash.xor(1, 2) == hash.xor(2, 1)
+    assert hash.xor(0, 5) == 5
+    assert hash.xor(hash.fnv1a("x"), hash.fnv1a("y")) == hash.xor(hash.fnv1a("y"), hash.fnv1a("x"))
+    assert hash.xor(hash.fnv1a("x"), hash.fnv1a("y")) != hash.xor(hash.fnv1a("x"), hash.fnv1a("z"))
+    return 0

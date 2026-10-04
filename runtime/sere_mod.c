@@ -125,8 +125,9 @@ static int32_t isIntegerKind(int32_t kind) {
 }
 
 static uint64_t hashBytes(const void* data, int64_t length) {
+  // FNV-1a 64-bit, matching hash.fnv1a's offset basis and prime.
   const unsigned char* bytes = (const unsigned char*)data;
-  uint64_t hash = 1469598103934665603ULL;
+  uint64_t hash = 14695981039346656037ULL;
   for (int64_t index = 0; index < length; ++index) {
     hash ^= (uint64_t)bytes[index];
     hash *= 1099511628211ULL;
@@ -146,8 +147,10 @@ static uint64_t objectHash(const Sere_Object* object) {
   case Sere_KindI64:
     return (uint64_t)object->i * 1099511628211ULL;
   case Sere_KindF64: {
+    // -0.0 equals 0.0, so both must hash alike or lookups would miss.
+    const double value = object->f == 0.0 ? 0.0 : object->f;
     uint64_t bits = 0;
-    memcpy(&bits, &object->f, sizeof(bits));
+    memcpy(&bits, &value, sizeof(bits));
     return bits;
   }
   case Sere_KindStr:

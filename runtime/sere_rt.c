@@ -757,7 +757,9 @@ typedef struct {
 } SereDict;
 
 static uint64_t hashBytes(const char* data, size_t length) {
-  uint64_t hash = 1469598103934665603ULL;
+  // FNV-1a 64-bit, sharing the offset basis and prime of hash.fnv1a so that a
+  // digest computed in Sere code agrees with the one containers use.
+  uint64_t hash = 14695981039346656037ULL;
   for (size_t index = 0; index < length; ++index) {
     hash ^= (unsigned char)data[index];
     hash *= 1099511628211ULL;

@@ -609,9 +609,18 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       result = floating ? builder_->builder.CreateFCmp(comparison, left, right)
                         : builder_->builder.CreateICmp(comparison, left, right);
     }
-  } else if (opcode == "neg")
-    result = builder_->builder.CreateNeg(operand(0));
-  else if (opcode == "not" || opcode == "invert")
+  } else if (opcode == "neg") {
+    // LLVM's CreateNeg is an integer subtraction from zero, which is invalid for
+    // floating-point operands, so floats are negated directly. Constant floats
+    // then fold to a negated constant instead of an unusable constant
+    // expression (and -0.0 keeps its sign).
+    llvm::Value* operandValue = operand(0);
+    if (operandValue != nullptr) {
+      result = operandValue->getType()->isFloatingPointTy()
+                   ? builder_->builder.CreateFNeg(operandValue)
+                   : builder_->builder.CreateNeg(operandValue);
+    }
+  } else if (opcode == "not" || opcode == "invert")
     result = builder_->builder.CreateNot(operand(0));
   else if (opcode == "alloca") {
     const serem::IRType* element = operation.type().pointee();

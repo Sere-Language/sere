@@ -589,6 +589,43 @@ int32_t sere_random_bits(int32_t bits);
 int64_t sere_hash_fnv1a(const char* data, int64_t len);
 int64_t sere_hash_file(const char* path, int64_t path_len);
 int64_t sere_hash_combine(int64_t left, int64_t right);
+int64_t sere_hash_basis(void);
+int64_t sere_hash_update(int64_t state, const char* data, int64_t len);
+int64_t sere_hash_fnv1a_bytes(const char* data, int64_t len);
+int64_t sere_hash_update_bytes(int64_t state, const char* data, int64_t len);
+int64_t sere_hash_finish(int64_t state);
+int64_t sere_hash_int(int64_t value);
+int64_t sere_hash_bool(int32_t value);
+int64_t sere_hash_f64(double value);
+int64_t sere_hash_f32(float value);
+
+// Cryptography (see sere_crypto.c and stdlib/crypto.sere). Byte buffers cross
+// the boundary as `list[byte]`; failures raise `CryptoError` instead of
+// returning a sentinel.
+void* sere_crypto_random_bytes(int64_t length);
+uint64_t sere_crypto_random_u64(void);
+void* sere_crypto_hash(int32_t algorithm, void* data);
+int64_t sere_crypto_hash_new(int32_t algorithm);
+int64_t sere_crypto_hmac_new(int32_t algorithm, void* key);
+void sere_crypto_hash_update(int64_t handle, void* data);
+void* sere_crypto_hash_finish(int64_t handle);
+void sere_crypto_hash_free(int64_t handle);
+void* sere_crypto_hmac_sha256(void* key, void* data);
+void* sere_crypto_hmac_sha512(void* key, void* data);
+void* sere_crypto_pbkdf2_sha256(void* password, void* salt, int64_t iterations, int64_t length);
+void* sere_crypto_hkdf_sha256(void* key_material, void* salt, void* info, int64_t length);
+void* sere_crypto_aes_gcm_encrypt(void* key, void* nonce, void* plaintext, void* aad);
+void* sere_crypto_aes_gcm_decrypt(void* key, void* nonce, void* ciphertext, void* aad);
+void* sere_crypto_chacha20_poly1305_encrypt(void* key, void* nonce, void* plaintext, void* aad);
+void* sere_crypto_chacha20_poly1305_decrypt(void* key, void* nonce, void* ciphertext, void* aad);
+void sere_crypto_zero(void* buffer);
+int32_t sere_crypto_secure_equal(void* left, void* right);
+int64_t sere_crypto_x25519_new(void);
+int64_t sere_crypto_x25519_from_private(void* private_value);
+void* sere_crypto_x25519_public(int64_t handle);
+void* sere_crypto_x25519_private(int64_t handle);
+void* sere_crypto_x25519_agree(int64_t handle, void* peer_public);
+void sere_crypto_x25519_free(int64_t handle);
 
 void sere_sys_platform(const char** out_data, int64_t* out_len);
 void sere_sys_arch(const char** out_data, int64_t* out_len);

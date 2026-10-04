@@ -22,6 +22,7 @@ add_library(sere_runtime
   sere_socket.c
   sere_proc.c
   sere_icon.c
+  sere_crypto.c
 )
 
 # Metadata `sys` reports about the build and the compilation target. The target
@@ -60,6 +61,7 @@ if(WIN32)
     advapi32
     winhttp
     ws2_32
+    bcrypt
   )
 else()
   target_link_libraries(sere_runtime PUBLIC m ${CMAKE_DL_LIBS} pthread)
