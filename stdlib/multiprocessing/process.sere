@@ -14,7 +14,6 @@ Both restrictions are checked and reported rather than silently degraded.
 """
 
 import string
-import time
 
 import multiprocessing.reduction as reduction
 from multiprocessing.exceptions import ProcessError, PicklingError
@@ -68,7 +67,7 @@ def cpu_count() -> i32
 """Return the number of usable CPUs."""
 
 extern "C" "sere_mp_authkey"
-def _authkey() -> str
+def _random_authkey() -> str
 """Return a fresh cryptographically random authentication key."""
 
 # ---------------------------------------------------------------------------
@@ -90,14 +89,14 @@ def _next_name() -> str:
     return "Process-" + str(_next_index)
 
 
-def authkey() -> str:
+def current_authkey() -> str:
     """Return the authentication key shared by this process's family.
 
-    Generated once per process from the platform's cryptographic random source,
-    so it is not predictable from a process id or the clock.
+    Generated once per process from the platform's cryptographic random
+    source, so it is not predictable from a process id or the clock.
     """
     if len(_authkey_cache) == 0:
-        _authkey_cache = _authkey()
+        _authkey_cache = _random_authkey()
     return _authkey_cache
 
 
@@ -111,24 +110,30 @@ class Process:
 
     ``Process(target=worker, args=[...])`` starts a real child process running
     the registered function ``worker``. Targets receive the argument list as
-    ``list[Any]``; cast each element to the type you sent::
+    ``list[Any]``, so cast each element to the type you sent::
 
         def worker(args: list[Any]) -> void:
             print(args[0] as str)
 
-        static _worker = multiprocessing.expose("worker", worker)
+        static _worker: bool = multiprocessing.expose("worker", worker)
 
     Subclassing works for the parent-side API, but overriding `run()` cannot
-    change what a child executes: the child has no way to reconstruct an
-    arbitrary subclass instance. Use a registered `target` instead.
+    change what a child executes: a child cannot reconstruct an arbitrary
+    subclass instance. Register a `target` instead.
     """
 
+    # Public, Python-named fields. Accessors are declared over the fields they
+    # back, which is the Sere idiom; a property with no setter is read-only
+    # from outside, like Python's.
+    name: str
+    daemon: bool
+    pid: i64
+    ident: i64
+    authkey: str
+    exitcode: Any
     _target: Any
     _args: list[Any]
-    _name: str
-    _daemon: bool
     _handle: Ptr[i8]
-    _pid: i64
     _started: bool
     _closed: bool
 
@@ -146,52 +151,47 @@ class Process:
             raise ProcessError("keyword arguments for the target are not supported")
         self._target = target
         self._args = reduction.to_any_list(args)
-        self._name = name
-        if len(self._name) == 0:
-            self._name = _next_name()
+        self.name = name
+        if len(self.name) == 0:
+            self.name = _next_name()
         if isinstance(daemon, None):
-            self._daemon = False
+            self.daemon = False
         else:
-            self._daemon = daemon as bool
+            self.daemon = daemon as bool
         self._handle = None
-        self._pid = -1
+        self.pid = -1
+        self.ident = -1
+        self.authkey = ""
+        self.exitcode = None
         self._started = False
         self._closed = False
 
-    # -- properties ------------------------------------------------------
+    # -- accessors -------------------------------------------------------
 
     @public name.get:
-        """The process's name."""
-        return self._name
+        return self.name
 
     @public name.set(value: str) -> void:
-        """Rename the process."""
-        self._name = value
+        self.name = value
 
     @public daemon.get:
-        """Whether this process is a daemon: it is stopped when the parent exits."""
-        return self._daemon
+        return self.daemon
 
     @public daemon.set(value: bool) -> void:
-        """Change the daemon flag; only meaningful before `start()`."""
         if self._started:
             raise ProcessError("cannot change the daemon flag after start()")
-        self._daemon = value
+        self.daemon = value
 
     @public pid.get:
-        """The child's process id, or -1 before it starts."""
-        return self._pid
+        return self.pid
 
     @public ident.get:
-        """The child's process id (Python's `ident` alias for `pid`)."""
-        return self._pid
+        return self.ident
 
     @public authkey.get:
-        """This process family's authentication key."""
-        return authkey()
+        return current_authkey()
 
     @public exitcode.get:
-        """The child's exit status, or `None` while it is still running."""
         if self._handle is None:
             return None
         if _is_alive(self._handle) == 1:
@@ -217,11 +217,12 @@ class Process:
             raise PicklingError("the target is not registered; declare it with " +
                                 "multiprocessing.expose('name', fn) at the top level")
         payload: list[byte] = reduction.pack_call(name, self._args)
-        handle: Ptr[i8] = _spawn(payload, self._daemon as i32)
+        handle: Ptr[i8] = _spawn(payload, self.daemon as i32)
         if handle is None:
             raise ProcessError("failed to start the process")
         self._handle = handle
-        self._pid = _pid(handle)
+        self.pid = _pid(handle)
+        self.ident = self.pid
         self._started = True
         _children.append(self)
 
@@ -229,7 +230,7 @@ class Process:
         """Run the target in this process (what a child effectively does)."""
         if isinstance(self._target, None):
             raise ProcessError("no target was given")
-        reduction.call_target(self._target, reduction.reduce_all(self._args))
+        reduction.call_target(self._target, self._args)
 
     def join(self, timeout: f64 = -1.0) -> void:
         """Wait for the child to finish, or for `timeout` seconds to pass."""
@@ -270,7 +271,7 @@ class Process:
             return
         _kill(self._handle)
 
-    def close(self) -> None:
+    def close(self) -> void:
         """Release the parent's handle to the child."""
         if self._closed:
             return
@@ -281,7 +282,7 @@ class Process:
 
     def __repr__(self) -> str:
         """Return a Python-style representation."""
-        return "<Process " + self._name + " pid=" + str(self._pid) + ">"
+        return "<Process " + self.name + " pid=" + str(self.pid) + ">"
 
 
 # ---------------------------------------------------------------------------
@@ -293,9 +294,10 @@ def current_process() -> Process:
     """Return the Process object for the calling process."""
     if not _current_ready:
         main: Process = Process(target=None, name="MainProcess")
-        main._pid = self_pid()
+        main.pid = self_pid()
+        main.ident = main.pid
         main._started = True
-        main._daemon = False
+        main.daemon = False
         _current = main
         _current_ready = True
     return _current as Process
@@ -304,8 +306,8 @@ def current_process() -> Process:
 def parent_process() -> Any:
     """Return the parent process, or `None` for a top-level process.
 
-    Children are launched by re-running the executable, so a child does not
-    know its parent's name; this reports whether there is a parent at all.
+    A child is launched by re-running the executable, so it does not know its
+    parent, and this reports whether there is a parent at all.
     """
     return None
 
