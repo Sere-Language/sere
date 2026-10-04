@@ -244,6 +244,9 @@ void sere_clear_error(void);
 int32_t sere_error_isa(const char* name);
 const char* sere_error_type(void);
 const char* sere_error_message(int64_t* out_len);
+int32_t sere_error_active(void);
+const char* sere_error_active_type(void);
+const char* sere_error_active_message(int64_t* out_len);
 void sere_panic(const char* message, int64_t len);
 int32_t
 sere_parse_int(const char* data, int64_t len, int32_t bits, int32_t is_signed, int64_t* out);
@@ -257,6 +260,103 @@ int32_t sere_list_contains(void* list, const void* item, int32_t kind);
 int32_t sere_list_equal(void* left, void* right, int32_t kind);
 void* sere_list_concat(void* left, void* right);
 void* sere_list_repeat(void* list, int64_t count);
+
+/* ---- multiprocessing (`runtime/multiprocessing`) ----
+ * A boxed `Any` as the native backend lays it out: the type's display name and
+ * a pointer to a buffer holding the payload at that type's ABI size. The wire
+ * codec both reads and builds these, which is what lets values survive a
+ * process boundary with their Sere types intact. */
+typedef struct {
+  const char* name;
+  void* data;
+} SereMpAny;
+
+/* Process control. */
+void* sere_mp_spawn(void* payload_list, int32_t daemon);
+int32_t sere_mp_wait(void* process, int64_t timeout_ms);
+int32_t sere_mp_is_alive(void* process);
+int32_t sere_mp_exit_code(void* process);
+int64_t sere_mp_pid(void* process);
+int64_t sere_mp_self_pid(void);
+void sere_mp_terminate(void* process);
+void sere_mp_kill(void* process);
+void sere_mp_close(void* process);
+void* sere_mp_sentinel(void* process);
+int64_t sere_mp_sentinel_value(void* process);
+int32_t sere_mp_cpu_count(void);
+int64_t sere_mp_now_ms(void);
+void sere_mp_register_target(const char* name, int64_t name_len, const void* box);
+void* sere_mp_lookup_target(const char* name, int64_t name_len);
+void sere_mp_target_name(void* fn, const char** out_data, int64_t* out_len);
+void sere_mp_target_name_box(const void* box, const char** out_data, int64_t* out_len);
+void sere_mp_set_rebuilder(const void* box);
+void sere_mp_call_target(const void* box, void* args_list);
+int32_t sere_mp_active_children(void);
+void* sere_mp_child_at(int32_t index);
+void sere_mp_forget_child(void* process);
+void sere_mp_bootstrap(int32_t argc, char** argv);
+void sere_mp_shutdown(void);
+
+/* Wire codec. */
+void* sere_mp_pack_call(const char* name, int64_t name_len, void* args_list);
+void* sere_mp_unpack_args(void* byte_list);
+void* sere_mp_to_any_list(const void* box);
+void* sere_mp_pack_any(const void* box);
+void sere_mp_unpack_any_into(void* byte_list, void* out_box);
+
+/* Pipes and connections. */
+int32_t sere_mp_pipe_duplex(void** a, void** b);
+int32_t sere_mp_pipe_simplex(void** read_end, void** write_end);
+void* sere_mp_conn_from_handles(int64_t read_handle, int64_t write_handle, int32_t owns_read,
+                                int32_t owns_write);
+int64_t sere_mp_conn_read_handle(void* conn);
+int64_t sere_mp_conn_write_handle(void* conn);
+int64_t sere_mp_conn_read(void* conn, void* buffer, int64_t capacity, int64_t timeout_ms);
+int32_t sere_mp_conn_write(void* conn, const void* data, int64_t len);
+int32_t sere_mp_conn_poll(void* conn, int64_t timeout_ms);
+int32_t sere_mp_conn_send_frame(void* conn, void* bytes);
+void* sere_mp_conn_recv_frame(void* conn, int64_t timeout_ms, int32_t* status);
+void sere_mp_conn_close_read(void* conn);
+void sere_mp_conn_close_write(void* conn);
+void sere_mp_conn_close(void* conn);
+int32_t sere_mp_conn_readable(void* conn);
+int32_t sere_mp_conn_writable(void* conn);
+int32_t sere_mp_conn_closed(void* conn);
+
+/* Shared memory. */
+void* sere_mp_shm_create(const char* name, int64_t size);
+void* sere_mp_shm_open(const char* name);
+void* sere_mp_shm_ptr(void* shm);
+int64_t sere_mp_shm_size(void* shm);
+void sere_mp_shm_close(void* shm);
+void sere_mp_shm_unlink(void* shm);
+int32_t sere_mp_shm_unlink_name(const char* name);
+
+/* Named semaphores, locks and events. */
+void* sere_mp_sem_create(const char* name, int64_t initial, int64_t maximum);
+void* sere_mp_sem_open(const char* name);
+int32_t sere_mp_sem_wait(void* sem, int64_t timeout_ms);
+int32_t sere_mp_sem_try_wait(void* sem);
+void sere_mp_sem_post(void* sem);
+void sere_mp_sem_close(void* sem);
+void sere_mp_sem_unlink(void* sem);
+void* sere_mp_event_create(const char* name, int32_t manual_reset);
+void* sere_mp_event_open(const char* name);
+int32_t sere_mp_event_wait(void* event, int64_t timeout_ms);
+void sere_mp_event_set(void* event);
+void sere_mp_event_clear(void* event);
+void sere_mp_event_close(void* event);
+void sere_mp_event_unlink(void* event);
+int32_t sere_mp_wait_many(void* handle_list, int64_t timeout_ms);
+
+/* Misc. */
+void sere_mp_make_name(const char* prefix,
+                       int64_t prefix_len,
+                       const char** out_data,
+                       int64_t* out_len);
+void sere_mp_authkey(const char** out_data, int64_t* out_len);
+void* sere_mp_ptr_offset(void* base, int64_t offset);
+void sere_mp_raise(const char* message, int64_t message_len);
 
 void sere_io_read_line(const char** out_data, int64_t* out_len);
 void sere_io_eprint(const char* data, int64_t len);
@@ -620,12 +720,6 @@ void* sere_crypto_chacha20_poly1305_encrypt(void* key, void* nonce, void* plaint
 void* sere_crypto_chacha20_poly1305_decrypt(void* key, void* nonce, void* ciphertext, void* aad);
 void sere_crypto_zero(void* buffer);
 int32_t sere_crypto_secure_equal(void* left, void* right);
-int64_t sere_crypto_x25519_new(void);
-int64_t sere_crypto_x25519_from_private(void* private_value);
-void* sere_crypto_x25519_public(int64_t handle);
-void* sere_crypto_x25519_private(int64_t handle);
-void* sere_crypto_x25519_agree(int64_t handle, void* peer_public);
-void sere_crypto_x25519_free(int64_t handle);
 
 void sere_sys_platform(const char** out_data, int64_t* out_len);
 void sere_sys_arch(const char** out_data, int64_t* out_len);

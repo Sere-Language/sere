@@ -31,6 +31,13 @@ def main() -> i32:
     assert gc.use("mark_sweep")
     assert sys.gc_name() == "mark_sweep"
 
+    # The counters are the collector's own bookkeeping, so they move for memory
+    # allocated through the collector. List storage comes from the allocator the
+    # compiler emits, not from the collector, so it is not what these count.
+    block: Ptr[i8] = gc.alloc_bytes(4096)
+    gc.add_root(block)
+    assert gc.bytes_allocated() > before.bytes_allocated
+
     scratch: list[i32] = []
     for index in range(64):
         scratch.append(index)
@@ -39,12 +46,16 @@ def main() -> i32:
     sys.gc_collect()
     after: sys.GCStats = sys.gc_stats()
     assert after.collections > before.collections
+    assert after.bytes_allocated > before.bytes_allocated
+    assert after.bytes_in_use >= 4096
     assert after.name == "mark_sweep"
     assert after.bytes_allocated >= after.bytes_in_use
 
     # Live objects stay live across a collection.
     assert len(scratch) == 64
     assert scratch[63] == 63
+    gc.remove_root(block)
+    gc.free_bytes(block)
 
     heap: sys.MemoryStats = sys.heap_stats()
     assert heap.allocated >= heap.live

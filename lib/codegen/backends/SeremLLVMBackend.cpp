@@ -2289,9 +2289,10 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
         ir.CreateCall(isa, {builder_->builder.CreateGlobalString(attribute(operation, "type"))}),
         ir.getInt32(0));
   } else if (opcode == "error.bind") {
-    // The stored object is the exception instance pointer; recover it so the
-    // bound name is the same class reference `raise` stored.
-    llvm::Value* slot = ir.CreateAlloca(ir.getPtrTy());
+    // A Sere `raise` stores the instance it built, which is recovered as it is.
+    // A raise from the runtime — hash.file or os.* reporting a failure — stores
+    // only a type name and a message, so the bound name gets a fresh instance
+    // carrying the pending message instead of whatever the empty frame held.
     llvm::Function* copy = module_->getFunction("sere_error_copy_object");
     if (copy == nullptr) {
       copy = llvm::Function::Create(
@@ -2300,9 +2301,56 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
           "sere_error_copy_object",
           module_.get());
     }
-    ir.CreateCall(copy,
-                  {slot, ir.getInt64(module_->getDataLayout().getTypeAllocSize(ir.getPtrTy()))});
-    result = ir.CreateLoad(ir.getPtrTy(), slot);
+    llvm::Value* slot = ir.CreateAlloca(ir.getPtrTy());
+    ir.CreateStore(llvm::ConstantPointerNull::get(ir.getPtrTy()), slot);
+    ir.CreateCall(
+        copy, {slot, ir.getInt64(module_->getDataLayout().getTypeAllocSize(ir.getPtrTy()))});
+    llvm::Value* stored = ir.CreateLoad(ir.getPtrTy(), slot);
+    const serem::IRType* element = operation.type().pointee();
+    llvm::Type* record = element == nullptr ? nullptr : lowerType(*element);
+    if (record == nullptr || !record->isStructTy()) {
+      result = stored;
+    } else {
+      auto alloc = module_->getOrInsertFunction("sere_alloc", ir.getPtrTy(), ir.getInt64Ty());
+      llvm::Value* instance = ir.CreateCall(alloc, {llvm::ConstantExpr::getSizeOf(record)});
+      ir.CreateStore(llvm::Constant::getNullValue(record), instance);
+      const std::string typeIdText = attribute(operation, "type.id");
+      if (!typeIdText.empty() && record->getStructNumElements() > 0 &&
+          record->getStructElementType(0)->isIntegerTy(32)) {
+        std::int32_t typeId = 0;
+        (void)std::from_chars(typeIdText.data(), typeIdText.data() + typeIdText.size(), typeId);
+        ir.CreateStore(llvm::ConstantInt::get(record->getStructElementType(0), typeId),
+                       ir.CreateStructGEP(record, instance, 0));
+      }
+      unsigned field = 0;
+      bool hasField = false;
+      const std::string fieldText = attribute(operation, "field");
+      if (!fieldText.empty() && fieldText != "-1") {
+        (void)std::from_chars(fieldText.data(), fieldText.data() + fieldText.size(), field);
+        hasField = true;
+      }
+      if (hasField && field < record->getStructNumElements() &&
+          record->getStructElementType(field)->isPointerTy()) {
+        // `str` is a null-terminated `char*` in the Serem ABI. The text is
+        // copied because the binding outlives the error frame that owns it.
+        auto message =
+            module_->getOrInsertFunction("sere_error_message", ir.getPtrTy(), ir.getPtrTy());
+        auto concat =
+            module_->getOrInsertFunction("sere_str_concat_data", ir.getPtrTy(), ir.getPtrTy(),
+                                         ir.getInt64Ty(), ir.getPtrTy(), ir.getInt64Ty(),
+                                         ir.getPtrTy());
+        llvm::Value* lengthSlot = ir.CreateAlloca(ir.getInt64Ty());
+        llvm::Value* text = ir.CreateCall(message, {lengthSlot});
+        llvm::Value* length = ir.CreateLoad(ir.getInt64Ty(), lengthSlot);
+        llvm::Value* copied = ir.CreateCall(
+            concat, {llvm::ConstantPointerNull::get(ir.getPtrTy()), ir.getInt64(0), text, length,
+                     ir.CreateAlloca(ir.getInt64Ty())});
+        llvm::Value* fields = ir.CreateLoad(record, instance);
+        fields = ir.CreateInsertValue(fields, copied, {field});
+        ir.CreateStore(fields, instance);
+      }
+      result = ir.CreateSelect(ir.CreateIsNotNull(stored), stored, instance);
+    }
   } else if (opcode == "error.enter") {
     llvm::Function* enter = module_->getFunction("sere_error_enter");
     if (enter == nullptr) {

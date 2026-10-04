@@ -585,13 +585,13 @@ void sere_runtime_debug_write(const char* data, int64_t len) {
  * exception state
  * ========================================================================== */
 
-int32_t sere_runtime_has_exception(void) { return sere_has_error(); }
+int32_t sere_runtime_has_exception(void) { return sere_error_active(); }
 
-/// The most derived class name of the handled exception. The runtime stores the
+/// The most derived class name of the active exception. The runtime stores the
 /// inheritance chain separated by ';', and callers want the first entry.
 void sere_runtime_exception_type(const char** out_data, int64_t* out_len) {
-  const char* name = sere_error_type();
-  if (name == NULL) {
+  const char* name = sere_error_active_type();
+  if (name == NULL || name[0] == '\0') {
     rtOut(rtEmpty(), out_data, out_len);
     return;
   }
@@ -605,7 +605,7 @@ void sere_runtime_exception_type(const char** out_data, int64_t* out_len) {
 
 void sere_runtime_exception_message(const char** out_data, int64_t* out_len) {
   int64_t length = 0;
-  const char* text = sere_error_message(&length);
+  const char* text = sere_error_active_message(&length);
   if (text == NULL || length <= 0) {
     rtOut(rtEmpty(), out_data, out_len);
     return;

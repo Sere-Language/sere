@@ -1,0 +1,67 @@
+import crypto
+import bytes
+
+
+def main() -> i32:
+    # RFC 7914 PBKDF2-HMAC-SHA256 known-answer vectors.
+    assert bytes.hex(crypto.pbkdf2_sha256(bytes.from_str("password"), bytes.from_str("salt"), 1, 32)) == "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b"
+    assert bytes.hex(crypto.pbkdf2_sha256(bytes.from_str("passwd"), bytes.from_str("salt"), 1, 64)) == "55ac046e56e3089fec1691c22544b605f94185216dde0465e68b9d57c20dacbc49ca9cccf179b645991664b39d77ef317c71b845b1e30bd509112041d3a19783"
+    assert bytes.hex(crypto.pbkdf2_sha256(bytes.from_str("Password"), bytes.from_str("NaCl"), 80000, 64)) == "4ddcd8f60b98be21830cee5ef22701f9641a4418d04c0414aeff08876b34ab56a1d425a1225833549adb841b51c9b3176a272bdebba1d078478f62b397f33c8d"
+
+    # RFC 5869 HKDF-SHA256 test case 1.
+    ikm: list[byte] = bytes.from_hex("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b")
+    salt: list[byte] = bytes.from_hex("000102030405060708090a0b0c")
+    info: list[byte] = bytes.from_hex("f0f1f2f3f4f5f6f7f8f9")
+    assert bytes.hex(crypto.hkdf_sha256(ikm, salt, info, 42)) == "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865"
+
+    # RFC 5869 test case 3: empty salt and info.
+    empty: list[byte] = bytes.zeros(0)
+    assert bytes.hex(crypto.hkdf_sha256(ikm, empty, empty, 42)) == "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d9d201395faa4b61a96c8"
+
+    # Derived lengths are exact and different info yields different keys.
+    assert len(crypto.hkdf_sha256(ikm, empty, empty, 100)) == 100
+    assert not crypto.constant_time_equal(crypto.hkdf_sha256(ikm, empty, bytes.from_str("a"), 32), crypto.hkdf_sha256(ikm, empty, bytes.from_str("b"), 32))
+
+    # Invalid derivation parameters raise.
+    raised: bool = False
+    try:
+        crypto.pbkdf2_sha256(bytes.from_str("x"), bytes.from_str("y"), 0, 32)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    raised = False
+    try:
+        crypto.pbkdf2_sha256(bytes.from_str("x"), bytes.from_str("y"), 1, 0)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    raised = False
+    try:
+        crypto.hkdf_sha256(ikm, empty, empty, 0)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    # Password storage: correct password verifies, wrong one does not.
+    encoded: str = crypto.password_hash_with("correct horse battery staple", 10000)
+    assert crypto.password_verify("correct horse battery staple", encoded)
+    assert not crypto.password_verify("correct horse battery stapl", encoded)
+    assert not crypto.password_verify("", encoded)
+
+    # Salted: the same password hashes to a different encoding each time.
+    second: str = crypto.password_hash_with("correct horse battery staple", 10000)
+    assert encoded != second
+    assert crypto.password_verify("correct horse battery staple", second)
+
+    # Malformed encodings fail closed instead of raising.
+    assert not crypto.password_verify("x", "")
+    assert not crypto.password_verify("x", "sha256$1$AAAA$BBBB")
+    assert not crypto.password_verify("x", "pbkdf2-sha256$notanumber$AAAA$BBBB")
+    assert not crypto.password_verify("x", "pbkdf2-sha256$10000$AAAA")
+    assert not crypto.password_verify("x", "pbkdf2-sha256$10000$AAAA$BBBB")
+
+    # Importing these helpers does not turn `crypto` into a plain-text store.
+    print("crypto_kdf ok")
+    return 0

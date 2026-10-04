@@ -1,0 +1,58 @@
+import crypto
+
+
+def main() -> i32:
+    # Length is honoured, including zero.
+    assert len(crypto.random_bytes(32)) == 32
+    assert len(crypto.random_bytes(1)) == 1
+    assert len(crypto.random_bytes(0)) == 0
+
+    # Independent calls differ.
+    left: list[byte] = crypto.random_bytes(32)
+    right: list[byte] = crypto.random_bytes(32)
+    assert not crypto.constant_time_equal(left, right)
+
+    # 64-bit draws should not collide (2^-64 per pair).
+    assert crypto.random_u64() != crypto.random_u64()
+
+    # Tokens are hex of the requested byte length.
+    token: str = crypto.random_token(16)
+    assert len(token) == 32
+    assert token != crypto.random_token(16)
+
+    # Key helpers produce correctly sized keys.
+    assert len(crypto.generate_key(16)) == 16
+    assert len(crypto.generate_aes256_key()) == 32
+    assert len(crypto.generate_chacha20_key()) == 32
+
+    # Out-of-range requests raise instead of returning a sentinel.
+    raised: bool = False
+    try:
+        crypto.random_bytes(-1)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    raised = False
+    try:
+        crypto.random_token(0)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    raised = False
+    try:
+        crypto.generate_key(0)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    raised = False
+    try:
+        crypto.generate_key(4096)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    print("crypto_random ok")
+    return 0

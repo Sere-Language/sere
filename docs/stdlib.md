@@ -80,6 +80,57 @@ server.close()
 payload: list[byte] = bytes.from_str("hello")
 ```
 
+### `hash`
+
+`hash` provides 64-bit non-cryptographic digests for hash tables, sharding, and
+change detection. Every digest is a pure function of its input, so it is stable
+across runs, machines, and both backends: a digest can be persisted or compared
+between processes. Nothing here is cryptographic — FNV-1a and SplitMix64 are
+public, invertible algorithms with published collisions, so they must not stand
+in for a password hash, a signature, or any digest an attacker can steer.
+
+| Call | Digest |
+| --- | --- |
+| `fnv1a(text)`, `hash_str(text)` | FNV-1a 64 over the text's raw bytes |
+| `hash_bytes(data)`, `hash_i8_bytes(data)` | FNV-1a 64 over a byte list |
+| `hash_int(value)`, `hash_i32(value)`, `hash_u64(value)` | SplitMix64 over the integer's bits |
+| `hash_bool(value)` | SplitMix64, domain separated from the integers 0 and 1 |
+| `hash_float(value)`, `hash_float32(value)` | SplitMix64 over the IEEE-754 bits |
+| `file(path)` | FNV-1a 64 streamed over a file in bounded memory; raises `FileHashError` |
+| `combine(left, right)`, `combine_all(values)` | order-sensitive folding of digests |
+| `xor(left, right)` | order-insensitive folding, for set-like digests |
+| `finalize(state)` | SplitMix64 avalanche, applied before a modulo |
+| `bucket(digest, count)` | avalanched index in `[0, count)` |
+| `hex_digest(value)`, `to_hex(value)` | the digest as 16 lowercase hex digits |
+
+`Hasher` folds many values into one digest: `write` (raw text), `write_bytes`,
+`write_i8_bytes`, `write_int`, `write_int32`, `write_bool`, `write_float`,
+`write_float32`, `write_string`, `write_field`, then `finish()` (the raw stream
+digest, equal to `fnv1a` for a text-only stream) or `digest()` (avalanched).
+Typed writes fold a type tag and the value's own digest, so no two types share a
+stream, and `write_string`/`write_field` fold a length before the bytes, so a
+field can never run into the one after it. `copy()` snapshots a shared prefix.
+
+Two properties are worth knowing: `hash_int(0)` and `finalize(0)` are 0, and
+`-0.0` hashes exactly like `0.0` (they compare equal) while every NaN hashes
+alike. NaNs are therefore unusable as hash-table keys.
+
+```sere
+import hash
+
+key: str = "user:42"
+shard: i64 = hash.bucket(hash.fnv1a(key), 16)
+
+hasher: hash.Hasher = hash.Hasher()
+hasher.write_field("id", 42)
+hasher.write_string(user)
+hasher.write_float(score)
+record: i64 = hasher.digest()
+
+if hash.file_matches("data.bin", saved_digest):
+    print("unchanged")
+```
+
 ## Native stdlib surface
 
 If a module needs new C:

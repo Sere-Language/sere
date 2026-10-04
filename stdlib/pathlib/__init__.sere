@@ -1,0 +1,9 @@
+# Object-oriented filesystem paths, modelled on Python's `pathlib`.
+#
+# `PurePath` / `PurePosixPath` / `PureWindowsPath` manipulate path syntax with
+# no filesystem access. `Path` / `PosixPath` / `WindowsPath` add filesystem
+# operations for the current platform.
+from pathlib.errors import OSError, FileNotFoundError, FileExistsError, NotADirectoryError, IsADirectoryError, UnsupportedOperation
+from pathlib.pure import PurePath, PurePosixPath, PureWindowsPath
+
+__exports__ = [PurePath, PurePosixPath, PureWindowsPath, OSError, FileNotFoundError, FileExistsError, NotADirectoryError, IsADirectoryError, UnsupportedOperation]

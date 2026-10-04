@@ -1134,6 +1134,30 @@ const char* sere_error_message(int64_t* out_len) {
   return pendingError == NULL ? "" : pendingError->message;
 }
 
+/// The exception a handler is running for: the pending error, or the innermost
+/// handled frame when a handler is already active. `except ... as e` binds from
+/// the frame, so the exception accessors read through the same rule and agree
+/// with the bound name.
+static SereError* currentError(void) {
+  if (pendingError != NULL)
+    return pendingError;
+  return handledErrors == NULL ? NULL : handledErrors->error;
+}
+
+int32_t sere_error_active(void) { return currentError() == NULL ? 0 : 1; }
+
+const char* sere_error_active_type(void) {
+  SereError* error = currentError();
+  return error == NULL || error->type == NULL ? "" : error->type;
+}
+
+const char* sere_error_active_message(int64_t* out_len) {
+  SereError* error = currentError();
+  if (out_len != NULL)
+    *out_len = error == NULL ? 0 : error->message_len;
+  return error == NULL || error->message == NULL ? "" : error->message;
+}
+
 void sere_error_enter(void) {
   SereErrorFrame* frame = (SereErrorFrame*)malloc(sizeof(SereErrorFrame));
   if (frame == NULL)

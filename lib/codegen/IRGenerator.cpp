@@ -6399,6 +6399,14 @@ bool IRGenerator::emitCMainWrapper(llvm::Function* userMain) {
   if (moduleInitFn_ != nullptr) {
     builder.CreateCall(moduleInitFn_);
   }
+  // A process started by `multiprocessing` reaches `main` again. The module
+  // initializers have already run (that is what registers the spawnable
+  // targets), so the bootstrap can now run the requested target and exit
+  // without ever entering user `main`. In an ordinary process this is a no-op.
+  builder.CreateCall(runtimeDecl("sere_mp_bootstrap",
+                                 llvm::Type::getVoidTy(*context_),
+                                 {i32, llvm::PointerType::getUnqual(*context_)}),
+                     {cMain->getArg(0), cMain->getArg(1)});
   const auto mainDef = functionDefs_.find("sere_main");
   const FunctionDef* asyncDef = mainDef == functionDefs_.end() ? nullptr : mainDef->second;
   const bool asyncMain = asyncDef != nullptr && asyncDef->isAsync();
@@ -6422,6 +6430,8 @@ bool IRGenerator::emitCMainWrapper(llvm::Function* userMain) {
       result = result->getType()->isIntegerTy() ? builder.CreateIntCast(result, i32, true)
                                                 : builder.getInt32(0);
     }
+    // Reap children and stop daemons before the process image goes away.
+    builder.CreateCall(runtimeDecl("sere_mp_shutdown", builder.getVoidTy(), {}));
     builder.CreateRet(result == nullptr || result->getType()->isVoidTy() ? builder.getInt32(0)
                                                                          : result);
     return true;
@@ -6473,6 +6483,8 @@ bool IRGenerator::emitCMainWrapper(llvm::Function* userMain) {
   }
   builder.CreateCall(coroDestroy, {hdl});
   builder.CreateCall(runtimeDecl("sere_error_unhandled", builder.getVoidTy(), {}));
+  // Reap children and stop daemons before the process image goes away.
+  builder.CreateCall(runtimeDecl("sere_mp_shutdown", builder.getVoidTy(), {}));
   builder.CreateRet(code);
   return true;
 }

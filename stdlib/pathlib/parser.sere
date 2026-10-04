@@ -1,0 +1,340 @@
+# Internal path parser for `pathlib`. Mirrors CPython's `posixpath` / `ntpath`
+# behaviour closely enough that PurePath semantics line up with Python's.
+#
+# This is the ONLY place that knows about Windows-vs-POSIX differences. Every
+# other module works with the drive/root/tail model produced here.
+
+FLAVOUR_POSIX: i32 = 0
+FLAVOUR_WINDOWS: i32 = 1
+
+
+def strip_leading(text: str, ch: str) -> str:
+    """Return text without leading occurrences of a one-character string."""
+    index: i64 = 0
+    while index < len(text) and text[index] == ch:
+        index += 1
+    return text[index:]
+
+
+def _split_components(rest: str, sep: str) -> list[str]:
+    """Split a root-relative remainder into non-empty, non-'.' components."""
+    parts: list[str] = []
+    if len(rest) == 0:
+        return parts
+    pieces: list[str] = rest.split(sep)
+    for i in range(len(pieces)):
+        piece: str = pieces[i]
+        if len(piece) == 0:
+            continue
+        if piece == ".":
+            continue
+        parts.append(piece)
+    return parts
+
+
+def _find(text: str, needle: str, start: i64) -> i64:
+    """Return the offset of needle at or after start, or -1."""
+    if start < 0:
+        start = 0
+    if start > len(text):
+        return -1
+    found: i64 = text[start:].find(needle)
+    if found < 0:
+        return -1
+    return found + start
+
+
+def _win_splitdrive(part: str) -> list[str]:
+    """Return [drive, tail] following ntpath.splitdrive, including `\\\\?\\` forms."""
+    norm: str = part.replace("/", "\\")
+    if len(norm) >= 2:
+        if norm[0:2] == "\\\\" and norm[2:3] != "\\":
+            if norm[0:8] == "\\\\?\\UNC\\":
+                remainder: str = norm[8:]
+                first: i64 = _find(remainder, "\\", 0)
+                if first < 0:
+                    return [part, ""]
+                second: i64 = _find(remainder, "\\", first + 1)
+                if second < 0:
+                    return [part, ""]
+                split_at: i64 = 8 + second
+                return [part[0:split_at], part[split_at:]]
+            # Plain UNC: \\server\share
+            index: i64 = _find(norm, "\\", 2)
+            if index < 0:
+                return ["", part]
+            index2: i64 = _find(norm, "\\", index + 1)
+            if index2 == index + 1:
+                return ["", part]
+            if index2 < 0:
+                index2 = len(norm)
+            return [part[0:index2], part[index2:]]
+        if norm[1:2] == "\\":
+            if len(norm) >= 6 and norm[0:4] == "\\\\?\\" and norm[5:6] == ":":
+                return [part[0:6], part[6:]]
+            return [part[0:2], part[2:]]
+    return ["", part]
+
+
+class Parser:
+    """Splits, joins, and normalizes one platform's path syntax."""
+
+    flavour: i32
+    sep: str
+    altsep: str
+    has_drive: bool
+
+    def __init__(self, flavour: i32) -> void:
+        """Create a parser for FLAVOUR_POSIX or FLAVOUR_WINDOWS."""
+        self.flavour = flavour
+        if flavour == FLAVOUR_WINDOWS:
+            self.sep = "\\"
+            self.altsep = "/"
+            self.has_drive = True
+        else:
+            self.sep = "/"
+            self.altsep = ""
+            self.has_drive = False
+
+    def is_windows(self) -> bool:
+        """Return whether this is the Windows parser."""
+        return self.flavour == FLAVOUR_WINDOWS
+
+    def splitroot(self, part: str) -> list[str]:
+        """Split into [drive, root, tail]; CPython's splitroot contract."""
+        if not self.has_drive:
+            if len(part) == 0:
+                return ["", "", ""]
+            if part[0:1] != "/":
+                return ["", "", part]
+            stripped: str = strip_leading(part, "/")
+            if len(part) - len(stripped) == 2:
+                return ["", "//", stripped]
+            return ["", "/", stripped]
+        drive_and_tail: list[str] = _win_splitdrive(part)
+        drive: str = drive_and_tail[0].replace("/", "\\")
+        tail: str = drive_and_tail[1]
+        if len(tail) > 0 and (tail[0:1] == "\\" or tail[0:1] == "/"):
+            return [drive, "\\", tail[1:]]
+        return [drive, "", tail]
+
+    def format(self, drive: str, root: str, tail: list[str]) -> str:
+        """Rebuild the canonical string for a parsed drive/root/tail."""
+        if len(drive) > 0 or len(root) > 0:
+            return drive + root + self.sep.join(tail)
+        if len(tail) == 0:
+            return "."
+        return self.sep.join(tail)
+
+    def components(self, rest: str) -> list[str]:
+        """Split a root-relative remainder into path components."""
+        return _split_components(rest, self.sep)
+
+    def join_many(self, paths: list[str]) -> str:
+        """Join several raw strings following posixpath/ntpath.join."""
+        if not self.has_drive:
+            result: str = ""
+            for i in range(len(paths)):
+                piece: str = paths[i]
+                if i == 0:
+                    result = piece
+                    continue
+                if piece.startswith("/"):
+                    result = piece
+                elif len(result) == 0 or result[len(result) - 1:] == "/":
+                    result = result + piece
+                else:
+                    result = result + "/" + piece
+            return result
+        result_drive: str = ""
+        result_path: str = ""
+        for i in range(len(paths)):
+            piece: str = paths[i]
+            if i == 0:
+                split: list[str] = _win_splitdrive(piece)
+                result_drive = split[0]
+                result_path = split[1]
+                continue
+            piece_split: list[str] = _win_splitdrive(piece)
+            piece_drive: str = piece_split[0]
+            piece_path: str = piece_split[1]
+            if len(piece_path) > 0 and (piece_path[0:1] == "\\" or piece_path[0:1] == "/"):
+                if len(piece_drive) > 0 or len(result_drive) == 0:
+                    result_drive = piece_drive
+                result_path = piece_path
+                continue
+            if len(piece_drive) > 0 and piece_drive != result_drive:
+                if piece_drive.lower() != result_drive.lower():
+                    result_drive = piece_drive
+                    result_path = piece_path
+                    continue
+                result_drive = piece_drive
+            if len(result_path) > 0 and result_path[len(result_path) - 1:] != "\\" and result_path[len(result_path) - 1:] != "/":
+                result_path = result_path + "\\"
+            result_path = result_path + piece_path
+        if len(result_path) > 0 and result_path[0:1] != "\\" and result_path[0:1] != "/" and len(result_drive) > 0 and result_drive[len(result_drive) - 1:] != ":":
+            return result_drive + "\\" + result_path
+        return result_drive + result_path
+
+    def normcase(self, value: str) -> str:
+        """Normalize case for comparisons (Windows) or return unchanged (POSIX)."""
+        if self.has_drive:
+            return value.lower()
+        return value
+
+    def is_absolute(self, drive: str, root: str) -> bool:
+        """Return whether a parsed path is absolute."""
+        if len(root) == 0:
+            return False
+        if self.has_drive:
+            return len(drive) > 0
+        return True
+
+    def is_reserved(self, name: str) -> bool:
+        """Return whether a single component is a reserved Windows device name."""
+        if not self.has_drive:
+            return False
+        stem: str = name
+        dot: i64 = stem.find(".")
+        if dot >= 0:
+            stem = stem[0:dot]
+        upper: str = stem.upper()
+        if upper == "CON" or upper == "PRN" or upper == "AUX" or upper == "NUL":
+            return True
+        if len(upper) == 4:
+            head: str = upper[0:3]
+            if (head == "COM" or head == "LPT") and upper[3:4] >= "1" and upper[3:4] <= "9":
+                return True
+        return False
+
+    def splitext(self, name: str) -> list[str]:
+        """Split a final component into [stem, extension] like os.path.splitext."""
+        if len(name) == 0:
+            return ["", ""]
+        if self.has_drive:
+            return _win_splitext(name)
+        return _posix_splitext(name)
+
+
+def _posix_splitext(name: str) -> list[str]:
+    sep_index: i64 = name.rfind("/")
+    dot_index: i64 = name.rfind(".")
+    if dot_index > sep_index:
+        filename_index: i64 = sep_index + 1
+        while filename_index < dot_index:
+            if name[filename_index:filename_index + 1] != ".":
+                return [name[0:dot_index], name[dot_index:]]
+            filename_index += 1
+    return [name, ""]
+
+
+def _win_splitext(name: str) -> list[str]:
+    sep_index: i64 = name.rfind("\\")
+    alt_index: i64 = name.rfind("/")
+    if alt_index > sep_index:
+        sep_index = alt_index
+    dot_index: i64 = name.rfind(".")
+    if dot_index > sep_index:
+        filename_index: i64 = sep_index + 1
+        while filename_index < dot_index:
+            if name[filename_index:filename_index + 1] != ".":
+                return [name[0:dot_index], name[dot_index:]]
+            filename_index += 1
+    return [name, ""]
+
+
+# ---------------------------------------------------------------------------
+# Glob segment matching (used by match / full_match / glob)
+# ---------------------------------------------------------------------------
+
+def is_case_sensitive(flavour: i32) -> bool:
+    """POSIX matching is case-sensitive; Windows matching is not."""
+    return flavour != FLAVOUR_WINDOWS
+
+
+def _char_class_match(ch: str, pattern: str, start: i64) -> list[i32]:
+    """Match a '[...]' class starting after '['; return [matched, next_index]."""
+    index: i64 = start
+    negate: bool = False
+    if index < len(pattern) and (pattern[index] == "!" or pattern[index] == "^"):
+        negate = True
+        index += 1
+    matched: bool = False
+    first: bool = True
+    while index < len(pattern) and (pattern[index] != "]" or first):
+        first = False
+        low: str = pattern[index]
+        if low == "\\" and index + 1 < len(pattern):
+            index += 1
+            low = pattern[index]
+        if index + 2 < len(pattern) and pattern[index + 1] == "-" and pattern[index + 2] != "]":
+            high: str = pattern[index + 2]
+            if low <= ch and ch <= high:
+                matched = True
+            index += 3
+        else:
+            if low == ch:
+                matched = True
+            index += 1
+    if index < len(pattern) and pattern[index] == "]":
+        index += 1
+    if negate:
+        if matched:
+            return [0, index]
+        return [1, index]
+    if matched:
+        return [1, index]
+    return [0, index]
+
+
+def segment_match(name: str, pattern: str, case_sensitive: bool) -> bool:
+    """Match one path component against a glob pattern (no separators inside)."""
+    candidate: str = name
+    pat: str = pattern
+    if not case_sensitive:
+        candidate = candidate.lower()
+        pat = pat.lower()
+    return _segment_match_at(candidate, pat, 0, 0)
+
+
+def _segment_match_at(name: str, pattern: str, name_index: i64, pat_index: i64) -> bool:
+    ni: i64 = name_index
+    pi: i64 = pat_index
+    while pi < len(pattern):
+        ch: str = pattern[pi]
+        if ch == "*":
+            # Collapse consecutive stars.
+            while pi < len(pattern) and pattern[pi] == "*":
+                pi += 1
+            if pi >= len(pattern):
+                return True
+            j: i64 = ni
+            while j <= len(name):
+                if _segment_match_at(name, pattern, j, pi):
+                    return True
+                j += 1
+            return False
+        if ch == "?":
+            if ni >= len(name):
+                return False
+            ni += 1
+            pi += 1
+            continue
+        if ch == "[":
+            if ni >= len(name):
+                return False
+            result: list[i32] = _char_class_match(name[ni], pattern, pi + 1)
+            if result[0] == 1:
+                ni += 1
+                pi = result[1]
+                continue
+            return False
+        if ch == "\\" and pi + 1 < len(pattern):
+            pi += 1
+            ch = pattern[pi]
+        if ni < len(name) and name[ni] == ch:
+            ni += 1
+            pi += 1
+            continue
+        return False
+    return ni == len(name)

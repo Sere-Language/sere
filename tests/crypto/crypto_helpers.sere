@@ -1,0 +1,76 @@
+import crypto
+import bytes
+
+
+def main() -> i32:
+    empty: list[byte] = bytes.zeros(0)
+
+    # Constant-time equality: identical, different, differing length, empty.
+    one: list[byte] = bytes.from_str("abcdef")
+    two: list[byte] = bytes.from_str("abcdef")
+    other: list[byte] = bytes.from_str("abcdeg")
+    shorter: list[byte] = bytes.from_str("abcde")
+    assert crypto.constant_time_equal(one, two)
+    assert not crypto.constant_time_equal(one, other)
+    assert not crypto.constant_time_equal(one, shorter)
+    assert crypto.constant_time_equal(empty, empty)
+    assert not crypto.constant_time_equal(empty, bytes.from_str("x"))
+
+    # zero() overwrites the buffer in place.
+    secret: list[byte] = bytes.from_str("super secret key material")
+    crypto.zero(secret)
+    assert bytes.eq(secret, bytes.zeros(len(secret)))
+    crypto.zero(empty)
+
+    # Wrong key/nonce sizes are rejected before any native call.
+    key: list[byte] = bytes.zeros(32)
+    nonce: list[byte] = bytes.zeros(12)
+    message: list[byte] = bytes.from_str("data")
+
+    raised: bool = False
+    try:
+        crypto.aes_gcm_encrypt(bytes.zeros(16), nonce, message, empty)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    raised = False
+    try:
+        crypto.chacha20_poly1305_encrypt(bytes.zeros(31), nonce, message, empty)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    raised = False
+    try:
+        crypto.chacha20_poly1305_encrypt(key, bytes.zeros(8), message, empty)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    # A truncated ciphertext cannot hold a tag.
+    raised = False
+    try:
+        crypto.aes_gcm_decrypt(key, nonce, bytes.zeros(4), empty)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    # seal() enforces the key size.
+    raised = False
+    try:
+        crypto.seal(bytes.zeros(8), message)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    # A truncated sealed message is rejected rather than padded.
+    raised = False
+    try:
+        crypto.open(key, bytes.zeros(8))
+    except Exception as error:
+        raised = True
+    assert raised
+
+    print("crypto_helpers ok")
+    return 0

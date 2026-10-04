@@ -1,0 +1,459 @@
+# Pure (I/O-free) path objects. Mirrors CPython's `PurePath`, `PurePosixPath`,
+# and `PureWindowsPath`: the same drive/root/tail model, the same properties,
+# and the same pure transformations. No filesystem access happens here.
+#
+# Python exposes these as read-only properties; Sere has no `@property`, so the
+# immutable-looking attributes (`name`, `suffix`, `parts`, ...) are plain fields
+# computed once when the path is parsed. Treat them as read-only.
+
+import os
+import bytes
+from pathlib.parser import Parser, FLAVOUR_POSIX, FLAVOUR_WINDOWS, segment_match
+from pathlib.parser import strip_leading, is_case_sensitive
+from pathlib.errors import UnsupportedOperation
+
+_SEP_ALT: str = "/"
+
+
+# ---------------------------------------------------------------------------
+# Component helpers (mirror CPython's suffix/stem logic)
+# ---------------------------------------------------------------------------
+
+def _suffix_of(name: str) -> str:
+    """Return the final suffix including its dot, or ''."""
+    stripped: str = strip_leading(name, ".")
+    index: i64 = stripped.rfind(".")
+    if index != -1:
+        return stripped[index:]
+    return ""
+
+
+def _suffixes_of(name: str) -> list[str]:
+    """Return every suffix of a final component, including leading dots."""
+    stripped: str = strip_leading(name, ".")
+    pieces: list[str] = stripped.split(".")
+    result: list[str] = []
+    for i in range(1, len(pieces)):
+        result.append("." + pieces[i])
+    return result
+
+
+def _stem_of(name: str) -> str:
+    """Return the final component without its last suffix."""
+    index: i64 = name.rfind(".")
+    if index != -1:
+        stem: str = name[0:index]
+        if len(strip_leading(stem, ".")) > 0:
+            return stem
+    return name
+
+
+def _take(items: list[str], count: i64) -> list[str]:
+    """Return the first count elements of items as a new list."""
+    result: list[str] = []
+    for i in range(count):
+        result.append(items[i])
+    return result
+
+
+# ---------------------------------------------------------------------------
+# PurePath
+# ---------------------------------------------------------------------------
+
+class PurePath:
+    """A platform-independent, filesystem-free path.
+
+    `PurePath(...)` uses the parser for the current platform; use
+    `PurePosixPath` or `PureWindowsPath` to force a specific syntax anywhere.
+    """
+
+    drive: str
+    root: str
+    anchor: str
+    name: str
+    suffix: str
+    suffixes: list[str]
+    stem: str
+    parts: list[str]
+    parent: PurePath
+    parents: list[PurePath]
+
+    _drv: str
+    _root: str
+    _tail: list[str]
+    _str: str
+    _flavour: i32
+
+    def __init__(self, *segments: list[str]) -> void:
+        """Join the given path segments, following Python's joining rules."""
+        if os.is_windows():
+            _init(self, FLAVOUR_WINDOWS, segments)
+        else:
+            _init(self, FLAVOUR_POSIX, segments)
+
+    # -- representation -----------------------------------------------------
+
+    def __str__(self) -> str:
+        """Return the path as text."""
+        return self._str
+
+    def __repr__(self) -> str:
+        """Return a debug representation like `PurePosixPath('/a/b')`."""
+        return _class_name(self._flavour) + "('" + self._str + "')"
+
+    # -- comparison ---------------------------------------------------------
+
+    def __eq__(self, other: PurePath) -> bool:
+        """Return whether two paths are equal under their flavour's case rules."""
+        if self._flavour != other._flavour:
+            return False
+        parser: Parser = Parser(self._flavour)
+        return parser.normcase(self._str) == parser.normcase(other._str)
+
+    def __ne__(self, other: PurePath) -> bool:
+        """Return whether two paths differ."""
+        return not self.__eq__(other)
+
+    def __lt__(self, other: PurePath) -> bool:
+        """Order paths of the same flavour, case-normalized."""
+        if self._flavour != other._flavour:
+            raise TypeError("cannot compare paths of different flavours")
+        parser: Parser = Parser(self._flavour)
+        return parser.normcase(self._str) < parser.normcase(other._str)
+
+    def __le__(self, other: PurePath) -> bool:
+        """Return whether this path orders at or before other."""
+        return self < other or self == other
+
+    def __gt__(self, other: PurePath) -> bool:
+        """Return whether this path orders after other."""
+        if self._flavour != other._flavour:
+            raise TypeError("cannot compare paths of different flavours")
+        parser: Parser = Parser(self._flavour)
+        return parser.normcase(self._str) > parser.normcase(other._str)
+
+    def __ge__(self, other: PurePath) -> bool:
+        """Return whether this path orders at or after other."""
+        return self > other or self == other
+
+    # -- joining ------------------------------------------------------------
+
+    def __truediv__(self, segment: str) -> PurePath:
+        """Join a segment onto this path (`path / 'child'`)."""
+        raw: list[str] = [self._str, segment]
+        return _make(self._flavour, raw)
+
+    def joinpath(self, *segments: list[str]) -> PurePath:
+        """Join one or more segments onto this path."""
+        raw: list[str] = [self._str]
+        for i in range(len(segments)):
+            raw.append(segments[i])
+        return _make(self._flavour, raw)
+
+    def with_segments(self, *segments: list[str]) -> PurePath:
+        """Build a new path of the same flavour from raw segments."""
+        return _make(self._flavour, segments)
+
+    # -- transformations ----------------------------------------------------
+
+    def with_name(self, name: str) -> PurePath:
+        """Return a new path with the final component replaced."""
+        if len(name) == 0:
+            raise ValueError("invalid name ''")
+        if name == "." or name == "..":
+            raise ValueError("invalid name " + name)
+        if name.find("/") >= 0:
+            raise ValueError("invalid name " + name)
+        if self._flavour == FLAVOUR_WINDOWS and name.find("\\") >= 0:
+            raise ValueError("invalid name " + name)
+        if len(self.name) == 0:
+            raise ValueError(str(self) + " has an empty name")
+        tail: list[str] = []
+        for i in range(len(self._tail) - 1):
+            tail.append(self._tail[i])
+        tail.append(name)
+        return _from_parts(self._flavour, self._drv, self._root, tail)
+
+    def with_stem(self, stem: str) -> PurePath:
+        """Return a new path with the final component's stem replaced."""
+        suffix: str = self.suffix
+        if len(suffix) == 0:
+            return self.with_name(stem)
+        if len(stem) == 0:
+            raise ValueError(str(self) + " has a non-empty suffix")
+        return self.with_name(stem + suffix)
+
+    def with_suffix(self, suffix: str) -> PurePath:
+        """Return a new path with the final component's suffix replaced."""
+        stem: str = self.stem
+        if len(stem) == 0:
+            raise ValueError(str(self) + " has an empty name")
+        if len(suffix) > 0 and suffix[0:1] != ".":
+            raise ValueError("invalid suffix " + suffix)
+        if suffix.find("/") >= 0:
+            raise ValueError("invalid suffix " + suffix)
+        return self.with_name(stem + suffix)
+
+    # -- text forms ---------------------------------------------------------
+
+    def as_posix(self) -> str:
+        """Return the path with forward slashes (a no-op on POSIX)."""
+        if self._flavour == FLAVOUR_WINDOWS:
+            return self._str.replace("\\", "/")
+        return self._str
+
+    def as_uri(self) -> str:
+        """Return the path as a `file:` URI; raise for relative paths."""
+        parser: Parser = Parser(self._flavour)
+        if not parser.is_absolute(self._drv, self._root):
+            raise ValueError("relative path can't be expressed as a file URI")
+        if self._flavour == FLAVOUR_POSIX:
+            return "file://" + quote_path(self._str)
+        posix: str = self.as_posix()
+        if self._drv.startswith("\\\\"):
+            stripped: str = strip_leading(posix, "/")
+            return "file://" + quote_path(stripped)
+        return "file:///" + quote_path(posix)
+
+    # -- queries ------------------------------------------------------------
+
+    def is_absolute(self) -> bool:
+        """Return whether the path is absolute (root, and a drive on Windows)."""
+        parser: Parser = Parser(self._flavour)
+        return parser.is_absolute(self._drv, self._root)
+
+    def is_reserved(self) -> bool:
+        """Return whether the final component is a reserved Windows device name."""
+        parser: Parser = Parser(self._flavour)
+        if len(self._tail) == 0:
+            return False
+        return parser.is_reserved(self._tail[len(self._tail) - 1])
+
+    def is_relative_to(self, other: str) -> bool:
+        """Return whether this path lies under other."""
+        try:
+            self.relative_to(other)
+            return True
+        except ValueError as error:
+            return False
+
+    def relative_to(self, other: str) -> PurePath:
+        """Return this path relative to other; raise when it is not below it."""
+        return self.relative_to_walk_up(other, False)
+
+    def relative_to_walk_up(self, other: str, walk_up: bool) -> PurePath:
+        """Return this path relative to other, optionally inserting '..'."""
+        base: PurePath = _make(self._flavour, [other])
+        if base._flavour != self._flavour:
+            raise ValueError("paths have different flavours")
+        if base._drv != self._drv or base._root != self._root:
+            raise ValueError(str(self) + " is not in the subpath of " + str(base))
+        common: i64 = 0
+        limit: i64 = len(self._tail)
+        if len(base._tail) < limit:
+            limit = len(base._tail)
+        while common < limit and self._tail[common] == base._tail[common]:
+            common += 1
+        if not walk_up and common != len(base._tail):
+            raise ValueError(str(self) + " is not in the subpath of " + str(base))
+        result: list[str] = []
+        if walk_up:
+            ups: i64 = len(base._tail) - common
+            for i in range(ups):
+                result.append("..")
+        for i in range(common, len(self._tail)):
+            result.append(self._tail[i])
+        return _from_parts(self._flavour, "", "", result)
+
+    # -- matching -----------------------------------------------------------
+
+    def match(self, pattern: str) -> bool:
+        """Match against a glob pattern from the right, using flavour case rules."""
+        return self.match_with(pattern, is_case_sensitive(self._flavour))
+
+    def match_with(self, pattern: str, case_sensitive: bool) -> bool:
+        """Like `match` with an explicit case-sensitivity choice."""
+        pattern_path: PurePath = _make(self._flavour, [pattern])
+        name_parts: list[str] = self._tail
+        use_anchor: bool = len(pattern_path.drive) > 0 or len(pattern_path.root) > 0
+        pat_parts: list[str] = pattern_path._tail
+        if use_anchor:
+            name_parts = _anchor_and_tail(self)
+            pat_parts = _anchor_and_tail(pattern_path)
+        if len(pat_parts) == 0:
+            return len(name_parts) == 0
+        start: i64 = 0
+        while start <= len(name_parts):
+            if _parts_match(name_parts, start, pat_parts, 0, case_sensitive):
+                return True
+            start += 1
+        return False
+
+    def full_match(self, pattern: str) -> bool:
+        """Match the whole path against a glob pattern, using flavour case rules."""
+        return self.full_match_with(pattern, is_case_sensitive(self._flavour))
+
+    def full_match_with(self, pattern: str, case_sensitive: bool) -> bool:
+        """Like `full_match` with an explicit case-sensitivity choice."""
+        pattern_path: PurePath = _make(self._flavour, [pattern])
+        name_parts: list[str] = _anchor_and_tail(self)
+        pat_parts: list[str] = _anchor_and_tail(pattern_path)
+        return _parts_match(name_parts, 0, pat_parts, 0, case_sensitive)
+
+
+# ---------------------------------------------------------------------------
+# Concrete pure flavours
+# ---------------------------------------------------------------------------
+
+class PurePosixPath(PurePath):
+    """A pure path that always uses POSIX syntax, on any platform."""
+
+    def __init__(self, *segments: list[str]) -> void:
+        """Parse segments with the POSIX parser."""
+        _init(self, FLAVOUR_POSIX, segments)
+
+
+class PureWindowsPath(PurePath):
+    """A pure path that always uses Windows syntax, on any platform."""
+
+    def __init__(self, *segments: list[str]) -> void:
+        """Parse segments with the Windows parser."""
+        _init(self, FLAVOUR_WINDOWS, segments)
+
+
+# ---------------------------------------------------------------------------
+# Internal construction helpers
+# ---------------------------------------------------------------------------
+
+def _class_name(flavour: i32) -> str:
+    """Return the public class name for a flavour."""
+    if flavour == FLAVOUR_WINDOWS:
+        return "PureWindowsPath"
+    return "PurePosixPath"
+
+
+def _init(target: PurePath, flavour: i32, raw: list[str]) -> void:
+    """Parse raw segments and populate every field of target."""
+    parser: Parser = Parser(flavour)
+    path: str = parser.join_many(raw)
+    split: list[str] = parser.splitroot(path)
+    drive: str = split[0]
+    root: str = split[1]
+    tail: list[str] = parser.components(split[2])
+    text: str = parser.format(drive, root, tail)
+    target._drv = drive
+    target._root = root
+    target._tail = tail
+    target._str = text
+    target._flavour = flavour
+    target.drive = drive
+    target.root = root
+    target.anchor = drive + root
+    if len(tail) > 0:
+        target.name = tail[len(tail) - 1]
+    else:
+        target.name = ""
+    target.suffix = _suffix_of(target.name)
+    target.suffixes = _suffixes_of(target.name)
+    target.stem = _stem_of(target.name)
+    target.parts = _anchor_and_tail(target)
+    if len(tail) == 0:
+        target.parent = target
+    else:
+        target.parent = _from_parts(flavour, drive, root, _take(tail, len(tail) - 1))
+    ancestors: list[PurePath] = []
+    for k in range(len(tail) - 1, -1, -1):
+        ancestors.append(_from_parts(flavour, drive, root, _take(tail, k)))
+    target.parents = ancestors
+
+
+def _anchor_and_tail(path: PurePath) -> list[str]:
+    """Return parts including the anchor component, when there is one."""
+    result: list[str] = []
+    if len(path.drive) > 0 or len(path.root) > 0:
+        result.append(path.drive + path.root)
+    for i in range(len(path._tail)):
+        result.append(path._tail[i])
+    return result
+
+
+def _make(flavour: i32, raw: list[str]) -> PurePath:
+    """Construct the pure path of the given flavour from raw segments."""
+    if flavour == FLAVOUR_WINDOWS:
+        windows: PureWindowsPath = PureWindowsPath()
+        _init(windows, FLAVOUR_WINDOWS, raw)
+        return windows
+    posix: PurePosixPath = PurePosixPath()
+    _init(posix, FLAVOUR_POSIX, raw)
+    return posix
+
+
+def _from_parts(flavour: i32, drive: str, root: str, tail: list[str]) -> PurePath:
+    """Build a path from an already-parsed drive/root/tail triple."""
+    parser: Parser = Parser(flavour)
+    return _make(flavour, [parser.format(drive, root, tail)])
+
+
+# ---------------------------------------------------------------------------
+# Glob matching over components
+# ---------------------------------------------------------------------------
+
+def _parts_match(
+    name_parts: list[str], name_start: i64, pattern_parts: list[str], pattern_start: i64,
+    case_sensitive: bool
+) -> bool:
+    """Match a run of path components against a pattern, honoring '**'."""
+    ni: i64 = name_start
+    pi: i64 = pattern_start
+    while pi < len(pattern_parts):
+        segment: str = pattern_parts[pi]
+        if segment == "**":
+            pi += 1
+            if pi >= len(pattern_parts):
+                return True
+            j: i64 = ni
+            while j <= len(name_parts):
+                if _parts_match(name_parts, j, pattern_parts, pi, case_sensitive):
+                    return True
+                j += 1
+            return False
+        if ni >= len(name_parts):
+            return False
+        if not segment_match(name_parts[ni], segment, case_sensitive):
+            return False
+        ni += 1
+        pi += 1
+    return ni == len(name_parts)
+
+
+# ---------------------------------------------------------------------------
+# file: URI quoting
+# ---------------------------------------------------------------------------
+
+_HEX: str = "0123456789ABCDEF"
+
+
+def _unreserved(code: i32) -> bool:
+    """Return whether a byte is allowed verbatim in a URI path segment."""
+    if code >= 65 and code <= 90:
+        return True
+    if code >= 97 and code <= 122:
+        return True
+    if code >= 48 and code <= 57:
+        return True
+    return code == 45 or code == 46 or code == 95 or code == 126 or code == 58
+
+
+def quote_path(text: str) -> str:
+    """Percent-encode a path for use in a file URI, keeping '/' and ':'."""
+    result: str = ""
+    for i in range(len(text)):
+        ch: str = text[i]
+        code: i32 = bytes.from_str(ch)[0] as i32
+        if ch == "/" or _unreserved(code):
+            result = result + ch
+        else:
+            high: i64 = (code // 16) as i64
+            low: i64 = (code % 16) as i64
+            result = result + "%" + _HEX[high:high + 1] + _HEX[low:low + 1]
+    return result

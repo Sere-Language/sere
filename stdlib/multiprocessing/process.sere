@@ -1,0 +1,328 @@
+"""`multiprocessing.Process` and the process registry.
+
+Sere programs are compiled to a native executable, so there is no module to
+re-import in a child. `spawn` therefore re-runs *this same executable* with a
+bootstrap argument; the runtime detects that, resolves the target by the name
+it was registered under, and runs it instead of user `main`. The practical
+effect matches Python's spawn start method: only registered top-level targets
+run in the child, and the child never re-executes the guarded `__main__` block.
+
+Because a child cannot see the parent's memory, a target must be a free
+function whose name was registered with `multiprocessing.expose` before the
+program started running, and its arguments must be values the codec can carry.
+Both restrictions are checked and reported rather than silently degraded.
+"""
+
+import string
+import time
+
+import multiprocessing.reduction as reduction
+from multiprocessing.exceptions import ProcessError, PicklingError
+
+# ---------------------------------------------------------------------------
+# Native entry points
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_mp_spawn"
+def _spawn(payload: list[byte], daemon: i32) -> Ptr[i8]
+"""Start a copy of this executable in child mode."""
+
+extern "C" "sere_mp_wait"
+def _wait(handle: Ptr[i8], timeout_ms: i64) -> i32
+"""Wait for a child; returns 0 on exit and 1 on timeout."""
+
+extern "C" "sere_mp_is_alive"
+def _is_alive(handle: Ptr[i8]) -> i32
+"""Return 1 while the child is running."""
+
+extern "C" "sere_mp_exit_code"
+def _exit_code(handle: Ptr[i8]) -> i32
+"""Return the child's exit status."""
+
+extern "C" "sere_mp_pid"
+def _pid(handle: Ptr[i8]) -> i64
+"""Return the child's process id."""
+
+extern "C" "sere_mp_self_pid"
+def self_pid() -> i64
+"""Return this process's id."""
+
+extern "C" "sere_mp_terminate"
+def _terminate(handle: Ptr[i8]) -> void
+"""Ask the child to stop."""
+
+extern "C" "sere_mp_kill"
+def _kill(handle: Ptr[i8]) -> void
+"""Force the child to stop."""
+
+extern "C" "sere_mp_close"
+def _close(handle: Ptr[i8]) -> void
+"""Release the parent's handle to a child."""
+
+extern "C" "sere_mp_sentinel_value"
+def _sentinel_value(handle: Ptr[i8]) -> i64
+"""A waitable value that becomes ready when the child exits."""
+
+extern "C" "sere_mp_cpu_count"
+def cpu_count() -> i32
+"""Return the number of usable CPUs."""
+
+extern "C" "sere_mp_authkey"
+def _authkey() -> str
+"""Return a fresh cryptographically random authentication key."""
+
+# ---------------------------------------------------------------------------
+# Module state
+# ---------------------------------------------------------------------------
+
+# Every process keeps its own registry: a child must not see its parent's
+# children, and `active_children()` has to report only live processes.
+static _children: list[Any] = []
+static _next_index: i64 = 0
+static _current: Any = None
+static _current_ready: bool = False
+static _authkey_cache: str = ""
+
+
+def _next_name() -> str:
+    """Return the next Python-style default process name."""
+    _next_index = _next_index + 1
+    return "Process-" + str(_next_index)
+
+
+def authkey() -> str:
+    """Return the authentication key shared by this process's family.
+
+    Generated once per process from the platform's cryptographic random source,
+    so it is not predictable from a process id or the clock.
+    """
+    if len(_authkey_cache) == 0:
+        _authkey_cache = _authkey()
+    return _authkey_cache
+
+
+# ---------------------------------------------------------------------------
+# Process
+# ---------------------------------------------------------------------------
+
+
+class Process:
+    """A child process, modelled on `multiprocessing.Process`.
+
+    ``Process(target=worker, args=[...])`` starts a real child process running
+    the registered function ``worker``. Targets receive the argument list as
+    ``list[Any]``; cast each element to the type you sent::
+
+        def worker(args: list[Any]) -> void:
+            print(args[0] as str)
+
+        static _worker = multiprocessing.expose("worker", worker)
+
+    Subclassing works for the parent-side API, but overriding `run()` cannot
+    change what a child executes: the child has no way to reconstruct an
+    arbitrary subclass instance. Use a registered `target` instead.
+    """
+
+    _target: Any
+    _args: list[Any]
+    _name: str
+    _daemon: bool
+    _handle: Ptr[i8]
+    _pid: i64
+    _started: bool
+    _closed: bool
+
+    def __init__(self,
+                 group: Any = None,
+                 target: Any = None,
+                 name: str = "",
+                 args: Any = None,
+                 kwargs: Any = None,
+                 daemon: Any = None) -> void:
+        """Create a process object; nothing starts until `start()` is called."""
+        if not isinstance(group, None):
+            raise ProcessError("group must be None")
+        if not isinstance(kwargs, None):
+            raise ProcessError("keyword arguments for the target are not supported")
+        self._target = target
+        self._args = reduction.to_any_list(args)
+        self._name = name
+        if len(self._name) == 0:
+            self._name = _next_name()
+        if isinstance(daemon, None):
+            self._daemon = False
+        else:
+            self._daemon = daemon as bool
+        self._handle = None
+        self._pid = -1
+        self._started = False
+        self._closed = False
+
+    # -- properties ------------------------------------------------------
+
+    @public name.get:
+        """The process's name."""
+        return self._name
+
+    @public name.set(value: str) -> void:
+        """Rename the process."""
+        self._name = value
+
+    @public daemon.get:
+        """Whether this process is a daemon: it is stopped when the parent exits."""
+        return self._daemon
+
+    @public daemon.set(value: bool) -> void:
+        """Change the daemon flag; only meaningful before `start()`."""
+        if self._started:
+            raise ProcessError("cannot change the daemon flag after start()")
+        self._daemon = value
+
+    @public pid.get:
+        """The child's process id, or -1 before it starts."""
+        return self._pid
+
+    @public ident.get:
+        """The child's process id (Python's `ident` alias for `pid`)."""
+        return self._pid
+
+    @public authkey.get:
+        """This process family's authentication key."""
+        return authkey()
+
+    @public exitcode.get:
+        """The child's exit status, or `None` while it is still running."""
+        if self._handle is None:
+            return None
+        if _is_alive(self._handle) == 1:
+            return None
+        return _exit_code(self._handle)
+
+    def sentinel(self) -> i64:
+        """Return a waitable value that becomes ready when the child exits."""
+        if self._handle is None:
+            raise ValueError("process object has not been started")
+        return _sentinel_value(self._handle)
+
+    # -- lifecycle -------------------------------------------------------
+
+    def start(self) -> void:
+        """Start the child process. A process object can be started only once."""
+        if self._closed:
+            raise ValueError("process object is closed")
+        if self._started:
+            raise ProcessError("cannot start a process twice")
+        name: str = reduction.target_name(self._target)
+        if len(name) == 0:
+            raise PicklingError("the target is not registered; declare it with " +
+                                "multiprocessing.expose('name', fn) at the top level")
+        payload: list[byte] = reduction.pack_call(name, self._args)
+        handle: Ptr[i8] = _spawn(payload, self._daemon as i32)
+        if handle is None:
+            raise ProcessError("failed to start the process")
+        self._handle = handle
+        self._pid = _pid(handle)
+        self._started = True
+        _children.append(self)
+
+    def run(self) -> void:
+        """Run the target in this process (what a child effectively does)."""
+        if isinstance(self._target, None):
+            raise ProcessError("no target was given")
+        reduction.call_target(self._target, reduction.reduce_all(self._args))
+
+    def join(self, timeout: f64 = -1.0) -> void:
+        """Wait for the child to finish, or for `timeout` seconds to pass."""
+        if not self._started:
+            raise ValueError("cannot join a process before it is started")
+        if self._closed:
+            raise ValueError("process object is closed")
+        if self._handle is None:
+            return
+        wait_ms: i64 = -1
+        if timeout >= 0.0:
+            wait_ms = (timeout * 1000.0) as i64
+        _wait(self._handle, wait_ms)
+
+    def is_alive(self) -> bool:
+        """Return whether the child is still running."""
+        if not self._started:
+            raise ValueError("process object has not been started")
+        if self._closed:
+            return False
+        if self._handle is None:
+            return True
+        return _is_alive(self._handle) == 1
+
+    def terminate(self) -> void:
+        """Request the child's immediate termination."""
+        if not self._started:
+            raise ValueError("process object has not been started")
+        if self._handle is None:
+            return
+        _terminate(self._handle)
+
+    def kill(self) -> void:
+        """Stop the child with the strongest mechanism the OS offers."""
+        if not self._started:
+            raise ValueError("process object has not been started")
+        if self._handle is None:
+            return
+        _kill(self._handle)
+
+    def close(self) -> None:
+        """Release the parent's handle to the child."""
+        if self._closed:
+            return
+        if self._handle is not None:
+            _close(self._handle)
+            self._handle = None
+        self._closed = True
+
+    def __repr__(self) -> str:
+        """Return a Python-style representation."""
+        return "<Process " + self._name + " pid=" + str(self._pid) + ">"
+
+
+# ---------------------------------------------------------------------------
+# The current process
+# ---------------------------------------------------------------------------
+
+
+def current_process() -> Process:
+    """Return the Process object for the calling process."""
+    if not _current_ready:
+        main: Process = Process(target=None, name="MainProcess")
+        main._pid = self_pid()
+        main._started = True
+        main._daemon = False
+        _current = main
+        _current_ready = True
+    return _current as Process
+
+
+def parent_process() -> Any:
+    """Return the parent process, or `None` for a top-level process.
+
+    Children are launched by re-running the executable, so a child does not
+    know its parent's name; this reports whether there is a parent at all.
+    """
+    return None
+
+
+def active_children() -> list[Process]:
+    """Return the live children started by this process, reaping the rest."""
+    live: list[Process] = []
+    kept: list[Any] = []
+    for entry in _children:
+        child: Process = entry as Process
+        if child.is_alive():
+            kept.append(child)
+            live.append(child)
+    _children = kept
+    return live
+
+
+def active_children_count() -> i64:
+    """Return how many children are currently alive."""
+    return len(active_children()) as i64

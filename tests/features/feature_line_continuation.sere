@@ -1,0 +1,48 @@
+# A line break inside (), [], or {} is insignificant, so an operator or comma
+# may start a continuation line (implicit line joining, as in Python).
+
+
+def concat() -> str:
+    return (
+        "a"
+        + "b"
+        + "c"
+    )
+
+
+def sum_ints() -> i32:
+    return (
+        1
+        + 2
+        + 3
+    )
+
+
+def main() -> i32:
+    assert concat() == "abc"
+    assert sum_ints() == 6
+
+    # A trailing comment inside brackets does not end the expression.
+    total: i32 = (
+        10  # first
+        + 20  # second
+        + 30
+    )
+    assert total == 60
+
+    values: list[i32] = [
+        1,
+        2,
+        3,
+    ]
+    assert len(values) == 3
+    assert values[2] == 3
+
+    nested: i32 = (
+        (1 + 2)
+        * (3 + 4)
+    )
+    assert nested == 21
+
+    print("line continuation ok")
+    return 0

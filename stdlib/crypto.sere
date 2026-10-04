@@ -26,6 +26,10 @@
 #   * `random` is a deterministic XorShift PRNG. It is fine for sampling and
 #     games and must never be used for keys, tokens, salts, or nonces.
 #
+# Scope: randomness, hashing, HMAC, key derivation, password storage, and
+# authenticated encryption. Public-key signatures and key agreement are not
+# exposed; see the note at the end of this file for why.
+#
 # Typical high-level use:
 #     import crypto
 #     key = crypto.generate_key(32)
@@ -146,30 +150,6 @@ extern "C" "sere_crypto_secure_equal"
 def _secure_equal(left: list[byte], right: list[byte]) -> bool
 """Compare two byte lists in time independent of their contents."""
 
-extern "C" "sere_crypto_x25519_new"
-def _x25519_new() -> i64
-"""Generate an X25519 key pair and return its handle."""
-
-extern "C" "sere_crypto_x25519_from_private"
-def _x25519_from_private(private_key: list[byte]) -> i64
-"""Import a raw 32-byte X25519 private key and return its handle."""
-
-extern "C" "sere_crypto_x25519_public"
-def _x25519_public(handle: i64) -> list[byte]
-"""Return the raw 32-byte public key for a handle."""
-
-extern "C" "sere_crypto_x25519_private"
-def _x25519_private(handle: i64) -> list[byte]
-"""Return the raw 32-byte private key for a handle."""
-
-extern "C" "sere_crypto_x25519_agree"
-def _x25519_agree(handle: i64, peer_public_key: list[byte]) -> list[byte]
-"""Return the raw 32-byte X25519 shared secret."""
-
-extern "C" "sere_crypto_x25519_free"
-def _x25519_free(handle: i64) -> void
-"""Release an X25519 key pair."""
-
 # ---------------------------------------------------------------------------
 # Secure randomness
 # ---------------------------------------------------------------------------
@@ -277,18 +257,19 @@ def sha3_512_hex(data: list[byte]) -> str:
     return bytes.hex(sha3_512(data))
 
 class _Hasher:
-    """Shared incremental hasher implementation."""
+    """Shared incremental hasher methods.
+
+    Concrete subclasses initialize `_handle` and `_done` in their own
+    constructor rather than chaining to a base constructor: a base `__init__`
+    reached through `super()` is not linked by the Serem backend, and keeping
+    the hierarchy flat is simpler anyway.
+    """
 
     _handle: i64
     _done: bool
 
-    def __init__(self, algorithm: i32) -> void:
-        handle: i64 = _hash_new(algorithm)
-        self._handle = handle
-        self._done = False
-
-    def update(self, data: list[byte]) -> _Hasher:
-        """Absorb data into the running digest and return self.
+    def update(self, data: list[byte]) -> void:
+        """Absorb data into the running digest.
 
         Raises CryptoError if the hasher was already finalized with finish() or
         released with close().
@@ -296,13 +277,12 @@ class _Hasher:
         if self._done:
             raise CryptoError("cannot update a finalized hasher")
         _hash_update(self._handle, data)
-        return self
 
     def finish(self) -> list[byte]:
         """Finalize and return the digest, releasing the hasher.
 
-        The hasher cannot be used again; call update() before finish(). Calling
-        finish() (or close()) a second time raises CryptoError.
+        Call update() before finish(); calling finish() (or close()) a second
+        time raises CryptoError.
         """
         if self._done:
             raise CryptoError("hasher is already finalized")
@@ -325,27 +305,32 @@ class _Hasher:
 class Sha256(_Hasher):
     """Incremental SHA-256 hasher."""
     def __init__(self) -> void:
-        super().__init__(_SHA256)
+        self._handle = _hash_new(_SHA256)
+        self._done = False
 
 class Sha384(_Hasher):
     """Incremental SHA-384 hasher."""
     def __init__(self) -> void:
-        super().__init__(_SHA384)
+        self._handle = _hash_new(_SHA384)
+        self._done = False
 
 class Sha512(_Hasher):
     """Incremental SHA-512 hasher."""
     def __init__(self) -> void:
-        super().__init__(_SHA512)
+        self._handle = _hash_new(_SHA512)
+        self._done = False
 
 class Sha3_256(_Hasher):
     """Incremental SHA3-256 hasher."""
     def __init__(self) -> void:
-        super().__init__(_SHA3_256)
+        self._handle = _hash_new(_SHA3_256)
+        self._done = False
 
 class Sha3_512(_Hasher):
     """Incremental SHA3-512 hasher."""
     def __init__(self) -> void:
-        super().__init__(_SHA3_512)
+        self._handle = _hash_new(_SHA3_512)
+        self._done = False
 
 # ---------------------------------------------------------------------------
 # Message authentication (HMAC)
@@ -379,22 +364,16 @@ def hmac_sha512_hex(key: list[byte], data: list[byte]) -> str:
     return bytes.hex(hmac_sha512(key, data))
 
 class _Mac:
-    """Shared incremental HMAC implementation."""
+    """Shared incremental HMAC methods (see `_Hasher` on the flat hierarchy)."""
 
     _handle: i64
     _done: bool
 
-    def __init__(self, algorithm: i32, key: list[byte]) -> void:
-        handle: i64 = _hmac_new(algorithm, key)
-        self._handle = handle
-        self._done = False
-
-    def update(self, data: list[byte]) -> _Mac:
-        """Absorb data into the running MAC and return self."""
+    def update(self, data: list[byte]) -> void:
+        """Absorb data into the running MAC."""
         if self._done:
             raise CryptoError("cannot update a finalized MAC")
         _hash_update(self._handle, data)
-        return self
 
     def finish(self) -> list[byte]:
         """Finalize and return the MAC, releasing the context."""
@@ -419,12 +398,14 @@ class _Mac:
 class HmacSha256(_Mac):
     """Incremental HMAC-SHA-256."""
     def __init__(self, key: list[byte]) -> void:
-        super().__init__(_HMAC_SHA256, key)
+        self._handle = _hmac_new(_HMAC_SHA256, key)
+        self._done = False
 
 class HmacSha512(_Mac):
     """Incremental HMAC-SHA-512."""
     def __init__(self, key: list[byte]) -> void:
-        super().__init__(_HMAC_SHA512, key)
+        self._handle = _hmac_new(_HMAC_SHA512, key)
+        self._done = False
 
 # ---------------------------------------------------------------------------
 # Key derivation
@@ -707,74 +688,14 @@ def zero(data: list[byte]) -> void:
     _zero(data)
 
 # ---------------------------------------------------------------------------
-# X25519 key agreement
+# Public-key cryptography is intentionally omitted
 #
-# X25519 is a Diffie-Hellman function over Curve25519. It is not a signature
-# scheme: it proves nothing about who sent a message. Combine it with an
-# authenticated channel or a signature when that matters.
+# There is no `sign()` / `verify()` or key-agreement function here. Those
+# operations must sit on a vetted implementation, and the only backend this
+# runtime can reach portably is the operating system provider, whose Curve25519
+# support is not reliably usable on every supported build. Rather than point a
+# signature or key-exchange API at a provider that may fail, the module leaves
+# this out: reach for a dedicated, well-reviewed library if you need Ed25519 or
+# X25519. Anchoring that library's long-term keys with `hkdf_sha256` from a
+# shared secret is still the right way to derive per-message keys.
 # ---------------------------------------------------------------------------
-
-class X25519KeyPair:
-    """An X25519 key pair for Diffie-Hellman key agreement."""
-
-    _handle: i64
-    _closed: bool
-
-    def __init__(self, handle: i64) -> void:
-        self._handle = handle
-        self._closed = False
-
-    def public_key(self) -> list[byte]:
-        """Return the 32-byte public key to share with the peer."""
-        if self._closed:
-            raise CryptoError("key pair is closed")
-        out: list[byte] = _x25519_public(self._handle)
-        return out
-
-    def private_key(self) -> list[byte]:
-        """Return the 32-byte private key, for persistence.
-
-        Handle the result as a secret: never log it, and wipe it with
-        `crypto.zero` when finished.
-        """
-        if self._closed:
-            raise CryptoError("key pair is closed")
-        out: list[byte] = _x25519_private(self._handle)
-        return out
-
-    def agree(self, peer_public_key: list[byte]) -> list[byte]:
-        """Return the 32-byte shared secret with a peer's public key.
-
-        Both sides compute the same secret. Feed it through `hkdf_sha256`
-        before using it as an encryption key. Raises CryptoError for a
-        malformed peer key or a closed pair.
-        """
-        if self._closed:
-            raise CryptoError("key pair is closed")
-        if len(peer_public_key) != 32:
-            raise CryptoError("X25519 public key must be 32 bytes")
-        out: list[byte] = _x25519_agree(self._handle, peer_public_key)
-        return out
-
-    def close(self) -> void:
-        """Release the key material. Safe to call more than once."""
-        if not self._closed:
-            self._closed = True
-            _x25519_free(self._handle)
-            self._handle = 0
-
-def x25519_generate() -> X25519KeyPair:
-    """Return a new, random X25519 key pair."""
-    handle: i64 = _x25519_new()
-    return X25519KeyPair(handle)
-
-def x25519_from_private(private_key: list[byte]) -> X25519KeyPair:
-    """Rebuild an X25519 key pair from a 32-byte private key.
-
-    Use it to load a previously stored key. Raises CryptoError if the key is
-    not 32 bytes or is rejected by the backend.
-    """
-    if len(private_key) != 32:
-        raise CryptoError("X25519 private key must be 32 bytes")
-    handle: i64 = _x25519_from_private(private_key)
-    return X25519KeyPair(handle)

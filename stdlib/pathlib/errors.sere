@@ -1,0 +1,30 @@
+# Exception types raised by `pathlib`, mirroring the Python names callers catch.
+
+class OSError(Exception):
+    """Base class for pathlib's filesystem errors."""
+    pass
+
+
+class FileNotFoundError(OSError):
+    """Raised when a path unexpectedly does not exist."""
+    pass
+
+
+class FileExistsError(OSError):
+    """Raised when creating a path that already exists."""
+    pass
+
+
+class NotADirectoryError(OSError):
+    """Raised when a directory was expected but a non-directory was found."""
+    pass
+
+
+class IsADirectoryError(OSError):
+    """Raised when a file was expected but a directory was found."""
+    pass
+
+
+class UnsupportedOperation(NotImplementedError):
+    """Raised when an operation is not supported on the current platform."""
+    pass

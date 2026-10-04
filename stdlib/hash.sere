@@ -120,8 +120,18 @@ def hash_i32(value: i32) -> i64:
     return hash_int(value as i64)
 
 extern "C" "sere_hash_bool"
-def hash_bool(value: bool) -> i64
-"""Return the digest of a boolean, kept distinct from the integers 0 and 1."""
+def _hash_bool_bits(value: i32) -> i64
+"""Return the digest of a boolean given as 0 or 1."""
+
+def hash_bool(value: bool) -> i64:
+    """Return the digest of a boolean, kept distinct from the integers 0 and 1.
+
+    The native entry point takes an i32 because a Sere bool crosses the FFI
+    boundary as a one-bit value, which a C int32_t parameter does not accept.
+    """
+    if value:
+        return _hash_bool_bits(1)
+    return _hash_bool_bits(0)
 
 extern "C" "sere_hash_f64"
 def hash_float(value: f64) -> i64

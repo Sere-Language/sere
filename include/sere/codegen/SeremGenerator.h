@@ -188,6 +188,10 @@ private:
   std::unordered_map<std::string, const Type*> staticTypes_;
   /// Module-level variables, keyed by their owning module and source name.
   std::unordered_map<std::string, std::unordered_map<std::string, ModuleGlobal>> moduleGlobals_;
+  /// Every module-level variable, keyed by source name alone. A default argument
+  /// is lowered where its call is written, so a default naming a value of the
+  /// callee's module has to resolve without that module's context.
+  std::unordered_map<std::string, ModuleGlobal> globalsByName_;
   /// Imported module aliases and imported variables visible from each module.
   std::unordered_map<std::string, std::unordered_map<std::string, std::string>> moduleAliases_;
   std::unordered_map<std::string, std::unordered_map<std::string, ModuleGlobal>>

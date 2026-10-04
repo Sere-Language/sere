@@ -1,0 +1,45 @@
+# Hashing and sharding helpers from hash.sere.
+#
+#   sere examples/hash_digest.sere
+#
+# Every digest is a pure function of its input, so the values below are the same
+# on every run and on either backend. Never use them as a cryptographic digest.
+
+import hash
+
+
+def main() -> i32:
+    # Text and bytes
+    print("fnv1a abc  ", hash.fnv1a("abc"))
+    print("hex        ", hash.hex_digest(hash.fnv1a("abc")))
+    print("bytes      ", hash.hash_bytes([97, 98, 99]))
+
+    # Numbers, booleans, and floats
+    print("int        ", hash.hash_int(42))
+    print("bool       ", hash.hash_bool(True))
+    print("float      ", hash.hash_float(1.5))
+    print("neg zero   ", hash.hash_float(-0.0) == hash.hash_float(0.0))
+
+    # Sharding a key into one of sixteen workers
+    key: str = "user:42"
+    print("shard      ", hash.bucket(hash.fnv1a(key), 16))
+
+    # Hashing a record field by field
+    hasher: hash.Hasher = hash.Hasher()
+    hasher.write_field("id", 42)
+    hasher.write_string("ada")
+    hasher.write_float(9.5)
+    record: i64 = hasher.digest()
+    print("record     ", hash.hex_digest(record))
+
+    # The same fields in another order are a different record
+    other: hash.Hasher = hash.Hasher()
+    other.write_string("ada")
+    other.write_field("id", 42)
+    other.write_float(9.5)
+    print("order      ", other.digest() != record)
+
+    # Combining several digests into one
+    digests: list[i64] = [hash.fnv1a("a"), hash.fnv1a("b"), hash.fnv1a("c")]
+    print("combined   ", hash.combine_all(digests))
+    return 0

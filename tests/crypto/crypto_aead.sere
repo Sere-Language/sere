@@ -1,0 +1,149 @@
+import crypto
+import bytes
+
+
+def flip(data: list[byte], index: i64) -> void:
+    """Invert one bit of a byte list, simulating corruption."""
+    value: byte = bytes.get(data, index)
+    bytes.set(data, index, ((value as i32) ^ 1) as byte)
+
+
+def main() -> i32:
+    zero_key: list[byte] = bytes.zeros(32)
+    zero_nonce: list[byte] = bytes.zeros(12)
+    empty: list[byte] = bytes.zeros(0)
+
+    # NIST AES-256-GCM known-answer vectors (all-zero key and IV).
+    assert bytes.hex(crypto.aes_gcm_encrypt(zero_key, zero_nonce, empty, empty)) == "530f8afbc74536b9a963b4f1c4cb738b"
+    block: list[byte] = bytes.zeros(16)
+    assert bytes.hex(crypto.aes_gcm_encrypt(zero_key, zero_nonce, block, empty)) == "cea7403d4d606b6e074ec5d3baf39d18d0d1c8a799996bf0265b98b5d48ab919"
+
+    key: list[byte] = crypto.generate_key(32)
+    nonce: list[byte] = crypto.random_bytes(12)
+    message: list[byte] = bytes.from_str("secret payload")
+
+    # Round-trip: empty plaintext.
+    assert len(crypto.aes_gcm_decrypt(key, nonce, crypto.aes_gcm_encrypt(key, nonce, empty, empty), empty)) == 0
+
+    # Round-trip: 256 bytes of binary, including the value zero.
+    binary: list[byte] = bytes.zeros(256)
+    index: i64 = 0
+    while index < 256:
+        bytes.set(binary, index, index as byte)
+        index += 1
+    binary_sealed: list[byte] = crypto.aes_gcm_encrypt(key, nonce, binary, empty)
+    assert bytes.eq(crypto.aes_gcm_decrypt(key, nonce, binary_sealed, empty), binary)
+
+    # Round-trip with additional authenticated data.
+    aad: list[byte] = bytes.from_str("context")
+    sealed: list[byte] = crypto.aes_gcm_encrypt(key, nonce, message, aad)
+    assert bytes.eq(crypto.aes_gcm_decrypt(key, nonce, sealed, aad), message)
+
+    # A different key, additional data, or nonce must fail authentication.
+    raised: bool = False
+    try:
+        crypto.aes_gcm_decrypt(crypto.generate_key(32), nonce, sealed, aad)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    raised = False
+    try:
+        crypto.aes_gcm_decrypt(key, nonce, sealed, bytes.from_str("other"))
+    except Exception as error:
+        raised = True
+    assert raised
+
+    raised = False
+    try:
+        crypto.aes_gcm_decrypt(key, crypto.random_bytes(12), sealed, aad)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    # Modified ciphertext or tag must fail authentication.
+    tampered: list[byte] = bytes.copy(sealed)
+    flip(tampered, 0)
+    raised = False
+    try:
+        crypto.aes_gcm_decrypt(key, nonce, tampered, aad)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    tag_tampered: list[byte] = bytes.copy(sealed)
+    flip(tag_tampered, len(tag_tampered) - 1)
+    raised = False
+    try:
+        crypto.aes_gcm_decrypt(key, nonce, tag_tampered, aad)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    # RFC 8439 section 2.8.2 ChaCha20-Poly1305 known-answer vector.
+    chacha_key: list[byte] = bytes.from_hex("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f")
+    chacha_nonce: list[byte] = bytes.from_hex("070000004041424344454647")
+    chacha_aad: list[byte] = bytes.from_hex("50515253c0c1c2c3c4c5c6c7")
+    chacha_message: list[byte] = bytes.from_str("Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.")
+    expected: str = "d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d63dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b3692ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc3ff4def08e4b7a9de576d26586cec64b6116" + "1ae10b594f09e26a7e902ecbd0600691"
+    chacha_sealed: list[byte] = crypto.chacha20_poly1305_encrypt(chacha_key, chacha_nonce, chacha_message, chacha_aad)
+    assert bytes.hex(chacha_sealed) == expected
+    assert bytes.eq(crypto.chacha20_poly1305_decrypt(chacha_key, chacha_nonce, chacha_sealed, chacha_aad), chacha_message)
+
+    # ChaCha20-Poly1305 authentication failure.
+    chacha_tampered: list[byte] = bytes.copy(chacha_sealed)
+    flip(chacha_tampered, 0)
+    raised = False
+    try:
+        crypto.chacha20_poly1305_decrypt(chacha_key, chacha_nonce, chacha_tampered, chacha_aad)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    # High-level seal/open: fresh nonce each time, and an authenticated header.
+    first: list[byte] = crypto.seal(key, message)
+    second: list[byte] = crypto.seal(key, message)
+    assert not bytes.eq(first, second)
+    assert bytes.eq(crypto.open(key, first), message)
+    assert bytes.eq(crypto.open(key, second), message)
+    assert len(crypto.open(key, crypto.seal(key, empty))) == 0
+
+    sealed_aad: list[byte] = crypto.seal_with_aad(key, message, aad)
+    assert bytes.eq(crypto.open_with_aad(key, sealed_aad, aad), message)
+
+    raised = False
+    try:
+        crypto.open_with_aad(key, sealed_aad, bytes.from_str("other"))
+    except Exception as error:
+        raised = True
+    assert raised
+
+    raised = False
+    try:
+        crypto.open(crypto.generate_key(32), first)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    # An unknown version tag is rejected before decryption.
+    bad_version: list[byte] = bytes.copy(first)
+    bytes.set(bad_version, 0, 2 as byte)
+    raised = False
+    try:
+        crypto.open(key, bad_version)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    # A tampered sealed body is rejected.
+    bad_body: list[byte] = bytes.copy(first)
+    flip(bad_body, len(bad_body) - 1)
+    raised = False
+    try:
+        crypto.open(key, bad_body)
+    except Exception as error:
+        raised = True
+    assert raised
+
+    print("crypto_aead ok")
+    return 0

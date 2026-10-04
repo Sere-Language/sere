@@ -23,7 +23,16 @@ add_library(sere_runtime
   sere_proc.c
   sere_icon.c
   sere_crypto.c
+  multiprocessing/mp_common.c
 )
+
+# The OS-specific half of the multiprocessing layer stays in its own file so
+# `#ifdef _WIN32` never leaks into unrelated runtime code.
+if(WIN32)
+  target_sources(sere_runtime PRIVATE multiprocessing/mp_windows.c)
+else()
+  target_sources(sere_runtime PRIVATE multiprocessing/mp_posix.c)
+endif()
 
 # Metadata `sys` reports about the build and the compilation target. The target
 # triple comes from the toolchain when one is configured, so a cross-compiled

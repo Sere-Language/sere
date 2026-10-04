@@ -38,7 +38,6 @@
 #endif
 #include <windows.h>
 #include <bcrypt.h>
-#include <wchar.h>
 #endif
 
 // Algorithm identifiers shared with `stdlib/crypto.sere`.
@@ -61,17 +60,6 @@ static SereList* cryptoBytes(int64_t length) {
     length = 0;
   }
   return (SereList*)sere_array_new(1, length);
-}
-
-static SereList* cryptoBytesCopy(const uint8_t* source, int64_t length) {
-  if (length < 0) {
-    length = 0;
-  }
-  SereList* out = cryptoBytes(length);
-  if (out != NULL && out->data != NULL && length > 0 && source != NULL) {
-    memcpy(out->data, source, (size_t)length);
-  }
-  return out;
 }
 
 /// Returns the raw bytes of a Sere `list[byte]`, or NULL when the value is not a
@@ -723,8 +711,11 @@ static SereList* cryptoAead(LPCWSTR algorithmName,
   }
 
   uint8_t* tagBuffer = encrypting ? NULL : (uint8_t*)(inputBytes + cipherLength);
-  SereList* out = cryptoBytes(encrypting ? inputLength + tagLength : cipherLength);
-  if (out == NULL || out->data == NULL) {
+  const int64_t resultLength = encrypting ? inputLength + tagLength : cipherLength;
+  SereList* out = cryptoBytes(resultLength);
+  // A zero-length result legitimately carries a NULL data pointer, so only a
+  // non-empty result with no storage counts as an allocation failure.
+  if (out == NULL || (resultLength > 0 && out->data == NULL)) {
     cryptoRaise("out of memory");
     BCryptDestroyKey(keyHandle);
     secureZero(object, objectLength);
@@ -841,219 +832,6 @@ int32_t sere_crypto_secure_equal(void* left, void* right) {
     diff |= (uint8_t)(leftBytes[index] ^ rightBytes[index]);
   }
   return diff == 0 ? 1 : 0;
-}
-
-// ---------------------------------------------------------------------------
-// X25519 key agreement
-// ---------------------------------------------------------------------------
-
-typedef struct {
-  BCRYPT_ALG_HANDLE algorithm;
-  BCRYPT_KEY_HANDLE key;
-} SereCryptoX25519;
-
-static int32_t x25519Open(BCRYPT_ALG_HANDLE* out) {
-  NTSTATUS status = BCryptOpenAlgorithmProvider(out, BCRYPT_ECDH_ALGORITHM, NULL, 0);
-  if (status == 0) {
-    status = BCryptSetProperty(*out,
-                               BCRYPT_ECC_PARAMETERS,
-                               (PUCHAR)BCRYPT_ECC_CURVE_25519,
-                               (ULONG)((wcslen(BCRYPT_ECC_CURVE_25519) + 1) * sizeof(WCHAR)),
-                               0);
-  }
-  return status;
-}
-
-static void x25519Destroy(SereCryptoX25519* context) {
-  if (context == NULL) {
-    return;
-  }
-  if (context->key != NULL) {
-    BCryptDestroyKey(context->key);
-  }
-  if (context->algorithm != NULL) {
-    BCryptCloseAlgorithmProvider(context->algorithm, 0);
-  }
-  free(context);
-}
-
-static int32_t x25519PublicBytes(BCRYPT_KEY_HANDLE key, uint8_t out[32]) {
-  uint8_t blob[64];
-  ULONG written = 0;
-  NTSTATUS status = BCryptExportKey(key, NULL, BCRYPT_ECCPUBLIC_BLOB, blob, sizeof(blob),
-                                    &written, 0);
-  if (status != 0) {
-    return status;
-  }
-  if (written < 8 + 32) {
-    return (NTSTATUS)0xC000000DL;  // STATUS_INVALID_PARAMETER
-  }
-  memcpy(out, blob + 8, 32);
-  return 0;
-}
-
-int64_t sere_crypto_x25519_new(void) {
-  BCRYPT_ALG_HANDLE algorithm = NULL;
-  NTSTATUS status = x25519Open(&algorithm);
-  BCRYPT_KEY_HANDLE key = NULL;
-  if (status == 0) {
-    status = BCryptGenerateKeyPair(algorithm, &key, 255, 0);
-  }
-  if (status == 0) {
-    status = BCryptFinalizeKeyPair(key, 0);
-  }
-  if (status != 0) {
-    if (key != NULL) {
-      BCryptDestroyKey(key);
-    }
-    if (algorithm != NULL) {
-      BCryptCloseAlgorithmProvider(algorithm, 0);
-    }
-    cryptoRaiseStatus("X25519 key generation", status);
-    return 0;
-  }
-  SereCryptoX25519* context = (SereCryptoX25519*)calloc(1, sizeof(SereCryptoX25519));
-  if (context == NULL) {
-    BCryptDestroyKey(key);
-    BCryptCloseAlgorithmProvider(algorithm, 0);
-    cryptoRaise("out of memory");
-    return 0;
-  }
-  context->algorithm = algorithm;
-  context->key = key;
-  return (int64_t)(intptr_t)context;
-}
-
-int64_t sere_crypto_x25519_from_private(void* private_value) {
-  int64_t length = 0;
-  const uint8_t* privateBytes = cryptoData(private_value, &length);
-  if (privateBytes == NULL || length != 32) {
-    cryptoRaiseLength("X25519 private key", 32, length);
-    return 0;
-  }
-  BCRYPT_ALG_HANDLE algorithm = NULL;
-  NTSTATUS status = x25519Open(&algorithm);
-  BCRYPT_KEY_HANDLE key = NULL;
-  if (status == 0) {
-    uint8_t blob[40];
-    const uint32_t magic = BCRYPT_ECDH_PRIVATE_GENERIC_MAGIC;
-    const uint32_t cbKey = 32;
-    memcpy(blob, &magic, 4);
-    memcpy(blob + 4, &cbKey, 4);
-    memcpy(blob + 8, privateBytes, 32);
-    status = BCryptImportKeyPair(algorithm, NULL, BCRYPT_ECCPRIVATE_BLOB, &key, blob, 40, 0);
-    secureZero(blob, sizeof(blob));
-  }
-  if (status != 0) {
-    if (key != NULL) {
-      BCryptDestroyKey(key);
-    }
-    if (algorithm != NULL) {
-      BCryptCloseAlgorithmProvider(algorithm, 0);
-    }
-    cryptoRaiseStatus("X25519 private key import", status);
-    return 0;
-  }
-  SereCryptoX25519* context = (SereCryptoX25519*)calloc(1, sizeof(SereCryptoX25519));
-  if (context == NULL) {
-    BCryptDestroyKey(key);
-    BCryptCloseAlgorithmProvider(algorithm, 0);
-    cryptoRaise("out of memory");
-    return 0;
-  }
-  context->algorithm = algorithm;
-  context->key = key;
-  return (int64_t)(intptr_t)context;
-}
-
-void* sere_crypto_x25519_public(int64_t handle) {
-  SereCryptoX25519* context = (SereCryptoX25519*)(intptr_t)handle;
-  if (context == NULL || context->key == NULL) {
-    cryptoRaise("X25519 context is not open");
-    return cryptoBytes(0);
-  }
-  uint8_t out[32];
-  const NTSTATUS status = x25519PublicBytes(context->key, out);
-  if (status != 0) {
-    cryptoRaiseStatus("X25519 public key export", status);
-    return cryptoBytes(0);
-  }
-  return cryptoBytesCopy(out, 32);
-}
-
-void* sere_crypto_x25519_private(int64_t handle) {
-  SereCryptoX25519* context = (SereCryptoX25519*)(intptr_t)handle;
-  if (context == NULL || context->key == NULL) {
-    cryptoRaise("X25519 context is not open");
-    return cryptoBytes(0);
-  }
-  uint8_t blob[96];
-  ULONG written = 0;
-  NTSTATUS status = BCryptExportKey(context->key, NULL, BCRYPT_ECCPRIVATE_BLOB, blob,
-                                    sizeof(blob), &written, 0);
-  if (status != 0 || written < 8 + 32) {
-    secureZero(blob, sizeof(blob));
-    cryptoRaiseStatus("X25519 private key export", status != 0 ? status : (NTSTATUS)0xC000000DL);
-    return cryptoBytes(0);
-  }
-  SereList* out = cryptoBytesCopy(blob + 8, 32);
-  secureZero(blob, sizeof(blob));
-  return out;
-}
-
-void* sere_crypto_x25519_agree(int64_t handle, void* peer_public) {
-  SereCryptoX25519* context = (SereCryptoX25519*)(intptr_t)handle;
-  if (context == NULL || context->key == NULL) {
-    cryptoRaise("X25519 context is not open");
-    return cryptoBytes(0);
-  }
-  int64_t peerLength = 0;
-  const uint8_t* peer = cryptoData(peer_public, &peerLength);
-  if (peer == NULL || peerLength != 32) {
-    cryptoRaiseLength("X25519 public key", 32, peerLength);
-    return cryptoBytes(0);
-  }
-  uint8_t blob[40];
-  const uint32_t magic = BCRYPT_ECDH_PUBLIC_GENERIC_MAGIC;
-  const uint32_t cbKey = 32;
-  memcpy(blob, &magic, 4);
-  memcpy(blob + 4, &cbKey, 4);
-  memcpy(blob + 8, peer, 32);
-  BCRYPT_KEY_HANDLE peerKey = NULL;
-  NTSTATUS status =
-      BCryptImportKeyPair(context->algorithm, NULL, BCRYPT_ECCPUBLIC_BLOB, &peerKey, blob, 40, 0);
-  BCRYPT_SECRET_HANDLE secret = NULL;
-  if (status == 0) {
-    status = BCryptSecretAgreement(context->key, peerKey, &secret, 0);
-  }
-  uint8_t raw[32];
-  ULONG produced = 0;
-  if (status == 0) {
-    status = BCryptDeriveKey(secret, BCRYPT_KDF_RAW_SECRET, NULL, raw, sizeof(raw), &produced, 0);
-  }
-  if (secret != NULL) {
-    BCryptDestroySecret(secret);
-  }
-  if (peerKey != NULL) {
-    BCryptDestroyKey(peerKey);
-  }
-  if (status != 0) {
-    secureZero(raw, sizeof(raw));
-    cryptoRaiseStatus("X25519 key agreement", status);
-    return cryptoBytes(0);
-  }
-  // CNG hands back the u-coordinate most-significant byte first; RFC 7748
-  // encodes it little-endian, so reverse to match every other X25519 library.
-  uint8_t out[32];
-  for (int index = 0; index < 32; ++index) {
-    out[index] = raw[31 - index];
-  }
-  secureZero(raw, sizeof(raw));
-  return cryptoBytesCopy(out, 32);
-}
-
-void sere_crypto_x25519_free(int64_t handle) {
-  x25519Destroy((SereCryptoX25519*)(intptr_t)handle);
 }
 
 #else  // !_WIN32
@@ -1182,31 +960,5 @@ int32_t sere_crypto_secure_equal(void* left, void* right) {
   }
   return diff == 0 ? 1 : 0;
 }
-int64_t sere_crypto_x25519_new(void) {
-  cryptoUnsupported("crypto.x25519_new");
-  return 0;
-}
-int64_t sere_crypto_x25519_from_private(void* private_value) {
-  (void)private_value;
-  cryptoUnsupported("crypto.x25519_from_private");
-  return 0;
-}
-void* sere_crypto_x25519_public(int64_t handle) {
-  (void)handle;
-  cryptoUnsupported("crypto.x25519_public");
-  return cryptoBytes(0);
-}
-void* sere_crypto_x25519_private(int64_t handle) {
-  (void)handle;
-  cryptoUnsupported("crypto.x25519_private");
-  return cryptoBytes(0);
-}
-void* sere_crypto_x25519_agree(int64_t handle, void* peer_public) {
-  (void)handle;
-  (void)peer_public;
-  cryptoUnsupported("crypto.x25519_agree");
-  return cryptoBytes(0);
-}
-void sere_crypto_x25519_free(int64_t handle) { (void)handle; }
 
 #endif  // _WIN32

@@ -414,6 +414,7 @@ SeremGenerator::emit(const Module& module,
   moduleGlobals_.clear();
   moduleAliases_.clear();
   importedModuleGlobals_.clear();
+  globalsByName_.clear();
   for (std::size_t index = 0; index < modules.size(); ++index) {
     const Module& current = *modules[index];
     const std::string& key = moduleKeys[index];
@@ -422,9 +423,10 @@ SeremGenerator::emit(const Module& module,
       if (statement == nullptr || statement->kind() != NodeKind::VarDecl)
         continue;
       const auto& declaration = static_cast<const VarDecl&>(*statement);
-      moduleGlobals_[key].insert_or_assign(
-          declaration.name(),
-          ModuleGlobal{"module." + key + "." + declaration.name(), declaration.resolvedType()});
+      const ModuleGlobal global{"module." + key + "." + declaration.name(),
+                                declaration.resolvedType()};
+      moduleGlobals_[key].insert_or_assign(declaration.name(), global);
+      globalsByName_.insert_or_assign(declaration.name(), global);
     }
   }
   for (std::size_t index = 0; index < modules.size(); ++index) {
@@ -749,7 +751,11 @@ const SeremGenerator::ModuleGlobal* SeremGenerator::moduleGlobal(std::string_vie
     if (found != imported->second.end())
       return &found->second;
   }
-  return nullptr;
+  // A default argument is evaluated where the call is written, which may be a
+  // different module from the one that declared the value, so fall back to the
+  // name index the LLVM backend also uses.
+  const auto anywhere = globalsByName_.find(std::string(name));
+  return anywhere == globalsByName_.end() ? nullptr : &anywhere->second;
 }
 
 const SeremGenerator::ModuleGlobal*
@@ -1938,13 +1944,19 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
       }
       if (!handler.name.empty()) {
         const Type* caught = handler.type == nullptr ? nullptr : handler.type->resolvedType();
+        std::unordered_map<std::string, std::string> bindAttributes{
+            {"field",
+             std::to_string(
+                 caught == nullptr ? -1 : fieldSlot(caught, caught->fieldIndex("message")))} };
+        if (caught != nullptr) {
+          bindAttributes.insert_or_assign("type", caught->name());
+          if (recordHasTypeId(caught))
+            bindAttributes.insert_or_assign(
+                "type.id",
+                std::to_string(static_cast<std::int32_t>(serem::recordTypeId(caught->name()))));
+        }
         const serem::ValuePtr object = builder_->operation(
-            "error.bind",
-            lowerType(caught),
-            {},
-            {{"field",
-              std::to_string(
-                  caught == nullptr ? -1 : fieldSlot(caught, caught->fieldIndex("message")))}});
+            "error.bind", lowerType(caught), {}, std::move(bindAttributes));
         auto slot = builder_->alloca(object->type());
         builder_->store(object, slot);
         locals_[handler.name] = slot;
@@ -3226,14 +3238,29 @@ void SeremGenerator::appendDefaults(const std::string& symbol,
   if (found == definitions_.end())
     return;
   const FunctionDef& function = *found->second;
+  if (function.resolvedType() == nullptr || arguments.size() >= function.params().size())
+    return;
+  // A default value is written where its function was declared, so it has to be
+  // lowered in that module's scope. Lowering it in the caller's module instead
+  // would leave a default that names a module-level value of an imported module
+  // (HashHasher(seed = OFFSET_BASIS), say) with nothing to resolve to.
+  const std::string previousModule = currentModuleKey_;
+  if (!function.modulePrefix().empty())
+    currentModuleKey_ = function.modulePrefix();
   for (std::size_t index = arguments.size(); index < function.params().size(); ++index) {
     const auto& parameter = function.params()[index];
     if (parameter.defaultValue == nullptr)
       break;
-    arguments.push_back(coerce(emitExpression(*parameter.defaultValue),
-                               parameter.defaultValue->resolvedType(),
+    serem::ValuePtr value = emitExpression(*parameter.defaultValue);
+    if (value == nullptr) {
+      (void)unsupported(*parameter.defaultValue, "this default argument value");
+      currentModuleKey_ = previousModule;
+      return;
+    }
+    arguments.push_back(coerce(std::move(value), parameter.defaultValue->resolvedType(),
                                function.resolvedType()->paramTypes()[index]));
   }
+  currentModuleKey_ = previousModule;
 }
 
 serem::ValuePtr SeremGenerator::emitDecoratorClosure(const Expr& decorator,

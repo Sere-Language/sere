@@ -442,6 +442,10 @@ extern "C" "sere_runtime_flush"
 def _flush_streams() -> void
 """Flush the buffered standard output and error streams."""
 
+def flush() -> void:
+    """Flush the buffered standard output and error streams."""
+    _flush_streams()
+
 extern "C" "sere_os_fd_isatty"
 def _fd_isatty(fd: i64) -> i32
 """Test whether a descriptor is a terminal."""

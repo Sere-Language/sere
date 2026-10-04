@@ -1,0 +1,76 @@
+import crypto
+import bytes
+
+
+def main() -> i32:
+    empty: list[byte] = bytes.zeros(0)
+    abc: list[byte] = bytes.from_str("abc")
+
+    # FIPS 180-4 known-answer vectors for SHA-2.
+    assert crypto.sha256_hex(empty) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    assert crypto.sha256_hex(abc) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    assert len(crypto.sha256(abc)) == 32
+    assert crypto.sha384_hex(abc) == "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7"
+    assert crypto.sha512_hex(abc) == "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
+    assert len(crypto.sha512(abc)) == 64
+
+    long_message: list[byte] = bytes.from_str("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")
+    assert crypto.sha256_hex(long_message) == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+
+    # FIPS 202 known-answer vectors for SHA-3.
+    assert crypto.sha3_256_hex(abc) == "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532"
+    assert crypto.sha3_512_hex(abc) == "b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0"
+
+    # Binary input (all byte values) hashes without error and with the right width.
+    binary: list[byte] = bytes.zeros(256)
+    index: i64 = 0
+    while index < 256:
+        bytes.set(binary, index, index as byte)
+        index += 1
+    assert len(crypto.sha256(binary)) == 32
+
+    # Incremental hashing equals the one-shot result, across block boundaries.
+    stream: crypto.Sha256 = crypto.Sha256()
+    stream.update(bytes.from_str("a"))
+    stream.update(bytes.from_str("b"))
+    stream.update(bytes.from_str("c"))
+    assert bytes.hex(stream.finish()) == crypto.sha256_hex(abc)
+
+    # A finalized hasher rejects further updates and a second finish.
+    reused: bool = False
+    try:
+        stream.update(abc)
+    except Exception as error:
+        reused = True
+    assert reused
+
+    reused = False
+    try:
+        stream.finish()
+    except Exception as error:
+        reused = True
+    assert reused
+
+    # The SHA-512 incremental path is wired up too.
+    wide: crypto.Sha512 = crypto.Sha512()
+    wide.update(long_message)
+    assert bytes.hex(wide.finish()) == crypto.sha512_hex(long_message)
+
+    # RFC 4231 HMAC-SHA-2 known-answer vectors.
+    key1: list[byte] = bytes.from_hex("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b")
+    assert crypto.hmac_sha256_hex(key1, bytes.from_str("Hi There")) == "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+    assert crypto.hmac_sha512_hex(key1, bytes.from_str("Hi There")) == "87aa7cdea5ef619d4ff0b4241a1d6cb02379f4e2ce4ec2787ad0b30545e17cdedaa833b7d6b8a702038b274eaea3f4e4be9d914eeb61f1702e696c203a126854"
+
+    jefe: list[byte] = bytes.from_str("Jefe")
+    message: list[byte] = bytes.from_str("what do ya want for nothing?")
+    assert crypto.hmac_sha256_hex(jefe, message) == "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+    assert crypto.hmac_sha512_hex(jefe, message) == "164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea2505549758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737"
+
+    # Incremental HMAC matches the one-shot over the same split input.
+    mac: crypto.HmacSha256 = crypto.HmacSha256(jefe)
+    mac.update(bytes.from_str("what do ya want "))
+    mac.update(bytes.from_str("for nothing?"))
+    assert bytes.hex(mac.finish()) == crypto.hmac_sha256_hex(jefe, message)
+
+    print("crypto_hash ok")
+    return 0

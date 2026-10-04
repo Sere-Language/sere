@@ -1,0 +1,246 @@
+"""Serialization plumbing for `multiprocessing`: native bindings, the wire
+codec, target registration, and the reduction registry.
+
+This module imports nothing else from the package, which keeps the dependency
+graph acyclic: every other module may import `reduction`, and modules that own
+transferable objects add their own reduce/rebuild rules at import time.
+
+Cross-process values are encoded in C (`runtime/multiprocessing/mp_common.c`).
+The wire format records each value's Sere type name, so a value decoded in the
+child is a boxed `Any` whose `typeof` matches what the parent sent and `as`
+casts keep working.
+
+Scalars, `str`, `list[u8]`/`list[byte]`, `list[T]` of those, `dict[str, T]`,
+`None` and the package's own handle objects can travel. Classes, closures and
+record types cannot: they raise `PicklingError` instead of being copied by
+address, which would be meaningless in another address space.
+
+Objects the package owns (connections, locks, queues, shared memory) are not
+encoded as data. A registered *reducer* turns them into a small tagged list of
+names and handles, and a *rebuilder* recreates live objects in the child --
+the same contract as CPython's `__reduce__`.
+"""
+
+import string
+import bytes
+
+from multiprocessing.exceptions import PicklingError, UnpicklingError
+
+# ---------------------------------------------------------------------------
+# Native entry points
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_mp_register_target"
+def native_register_target(name: str, box: Ptr[i8]) -> void
+"""Bind a spawn target name to a function in this process."""
+
+extern "C" "sere_mp_target_name_box"
+def native_target_name(box: Ptr[i8]) -> str
+"""Return the registered name of a boxed function, or empty."""
+
+extern "C" "sere_mp_set_rebuilder"
+def native_set_rebuilder(box: Ptr[i8]) -> void
+"""Install the function children use to recreate reduced arguments."""
+
+extern "C" "sere_mp_pack_call"
+def native_pack_call(name: str, args: list[Any]) -> list[byte]
+"""Frame a target name and its argument list."""
+
+extern "C" "sere_mp_unpack_args"
+def native_unpack_args(data: list[byte]) -> list[Any]
+"""Read the argument list back out of a framed child payload."""
+
+extern "C" "sere_mp_pack_any"
+def native_pack_any(box: Ptr[i8]) -> list[byte]
+"""Encode one boxed value."""
+
+extern "C" "sere_mp_unpack_any_into"
+def native_unpack_any_into(data: list[byte], out_box: Ptr[i8]) -> void
+"""Decode a byte list produced by `dumps`."""
+
+extern "C" "sere_mp_call_target"
+def native_call_target(box: Ptr[i8], args: list[Any]) -> void
+"""Call a boxed target in this process."""
+
+extern "C" "sere_mp_lookup_target"
+def lookup_target(name: str) -> Ptr[i8]
+"""Return the code address registered for a name, or None."""
+
+extern "C" "sere_mp_to_any_list"
+def native_to_any_list(box: Ptr[i8]) -> list[Any]
+"""Normalize a boxed list (or None) into a fresh list[Any]."""
+
+# ---------------------------------------------------------------------------
+# Codec
+# ---------------------------------------------------------------------------
+
+
+def dumps(value: Any) -> list[byte]:
+    """Encode a value for transfer to another process."""
+    return native_pack_any(&value as Ptr[i8])
+
+
+def loads(data: list[byte]) -> Any:
+    """Decode a value produced by `dumps`."""
+    result: Any = None
+    native_unpack_any_into(data, &result as Ptr[i8])
+    return result
+
+
+def pack_call(name: str, args: Any) -> list[byte]:
+    """Frame a target name and its arguments.
+
+    `args` is boxed, so a plain literal such as ``["Sere", 42]`` works whether
+    it was inferred as a typed list or as ``list[Any]``. Everything is
+    normalized to ``list[Any]`` first, because that is the shape a child
+    target receives and element boxes must be laid out with the right stride.
+    """
+    return native_pack_call(name, reduce_all(to_any_list(args)))
+
+
+def to_any_list(value: Any) -> list[Any]:
+    """Normalize a supported list value (or `None`) to `list[Any]`.
+
+    Sere infers a homogeneous literal like ``["a", "b"]`` as ``list[str]``,
+    and typed lists have a different element stride than ``list[Any]``. The
+    re-boxing happens in C so the Sere side never needs a cast between `Any`
+    and a container type.
+    """
+    return native_to_any_list(&value as Ptr[i8])
+
+
+def unpack_args(data: list[byte]) -> list[Any]:
+    """Read the argument list back out of a framed child payload."""
+    return native_unpack_args(data)
+
+
+def call_target(target: Any, args: list[Any]) -> void:
+    """Call a registered target in this process (used by `Process.run`)."""
+    native_call_target(&target as Ptr[i8], args)
+
+
+# ---------------------------------------------------------------------------
+# Target registration
+# ---------------------------------------------------------------------------
+
+
+def expose(name: str, target: Any) -> bool:
+    """Register `target` under `name` so children can resolve it.
+
+    Registration must happen while the module is being initialized so that
+    every process -- including a spawned child -- performs it before running
+    anything. Use it as a top-level declaration::
+
+        static _worker = multiprocessing.expose("worker", worker)
+
+    Only free (top-level) functions can be targets. A lambda, a nested function
+    or a bound method captures state that does not exist in another process, so
+    `expose` rejects it.
+    """
+    native_register_target(name, &target as Ptr[i8])
+    found: str = native_target_name(&target as Ptr[i8])
+    if len(found) == 0:
+        raise PicklingError("'" + name + "' is not a spawnable top-level function")
+    return True
+
+
+def target_name(target: Any) -> str:
+    """Return the registered name of a boxed target, or empty when unregistered."""
+    return native_target_name(&target as Ptr[i8])
+
+
+# ---------------------------------------------------------------------------
+# Reduction registry
+# ---------------------------------------------------------------------------
+
+# Tags deliberately look like nothing a user would build by hand.
+const TAG_CONNECTION: str = "__sere_mp_connection__"
+const TAG_LOCK: str = "__sere_mp_lock__"
+const TAG_SEMAPHORE: str = "__sere_mp_semaphore__"
+const TAG_BOUNDED_SEMAPHORE: str = "__sere_mp_bounded_semaphore__"
+const TAG_EVENT: str = "__sere_mp_event__"
+const TAG_QUEUE: str = "__sere_mp_queue__"
+const TAG_SIMPLE_QUEUE: str = "__sere_mp_simple_queue__"
+const TAG_JOINABLE_QUEUE: str = "__sere_mp_joinable_queue__"
+const TAG_SHARED_MEMORY: str = "__sere_mp_shared_memory__"
+const TAG_VALUE: str = "__sere_mp_value__"
+const TAG_ARRAY: str = "__sere_mp_array__"
+
+# A reducer is a `Callable[[Any], Any]` that returns a transferable description
+# of an object it recognizes, or `None` to pass. Type modules add themselves
+# here during module initialization; imported modules initialize first, so the
+# tables already exist when a rule is registered.
+static _reduce_rules: list[Any] = []
+static _rebuild_rules: dict[str, Any] = {}
+static _hook_installed: bool = False
+
+
+def register_reducer(rule: Any) -> bool:
+    """Add a reduction rule; `rule` is a `Callable[[Any], Any]`."""
+    _reduce_rules.append(rule)
+    return True
+
+
+def register_rebuilder(tag: str, rule: Any) -> bool:
+    """Add a rebuild rule for `tag`; `rule` is a `Callable[[list[Any]], Any]`."""
+    _rebuild_rules[tag] = rule
+    return True
+
+
+def reduce(value: Any) -> Any:
+    """Return a transferable description of `value`, or `value` unchanged."""
+    for rule in _reduce_rules:
+        apply_rule: Callable[[Any], Any] = rule as Callable[[Any], Any]
+        described: Any = apply_rule(value)
+        # `isinstance(x, None)` is the supported None test for a boxed value;
+        # comparing a boxed `Any` with `is None` would compare whole structs.
+        if not isinstance(described, None):
+            return described
+    return value
+
+
+def reduce_all(values: list[Any]) -> list[Any]:
+    """Apply `reduce` to every element of an argument list."""
+    out: list[Any] = []
+    for value in values:
+        out.append(reduce(value))
+    return out
+
+
+def rebuild(value: Any) -> Any:
+    """Recreate whatever `reduce` described; other values pass through."""
+    if not isinstance(value, list[Any]):
+        return value
+    parts: list[Any] = value as list[Any]
+    if len(parts) == 0:
+        return value
+    if not isinstance(parts[0], str):
+        return value
+    tag: str = parts[0] as str
+    if not (tag in _rebuild_rules):
+        return value
+    apply_rule: Callable[[list[Any]], Any] = _rebuild_rules[tag] as Callable[[list[Any]], Any]
+    return apply_rule(parts)
+
+
+def rebuild_all(values: list[Any]) -> list[Any]:
+    """Apply `rebuild` to every element of an argument list."""
+    out: list[Any] = []
+    for value in values:
+        out.append(rebuild(value))
+    return out
+
+
+def rebuild_arguments(args: list[Any]) -> list[Any]:
+    """The runtime entry point: rebuild the arguments of a child call."""
+    return rebuild_all(args)
+
+
+def install_hook() -> bool:
+    """Register `rebuild_arguments` so spawned children can rebuild arguments."""
+    if _hook_installed:
+        return True
+    hook: Any = rebuild_arguments
+    native_set_rebuilder(&hook as Ptr[i8])
+    _hook_installed = True
+    return True

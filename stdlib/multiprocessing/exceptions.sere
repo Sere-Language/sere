@@ -1,0 +1,47 @@
+"""Exceptions raised by the `multiprocessing` package.
+
+Mirrors Python's `multiprocessing` exception names. `TimeoutError` here is the
+package's own class rather than the builtin, matching how Python's
+`multiprocessing.connection` exposes it, so `except multiprocessing.TimeoutError`
+works the same way.
+"""
+
+
+class ProcessError(Exception):
+    """Base class for process failures."""
+
+
+class BufferTooShort(ProcessError):
+    """A fixed-size receive buffer was smaller than the incoming message."""
+
+
+class AuthenticationError(ProcessError):
+    """A connection could not prove it shares the package's authkey."""
+
+
+class TimeoutError(ProcessError):
+    """A blocking operation exceeded its timeout."""
+
+
+class PicklingError(ProcessError):
+    """A value cannot be represented on the wire."""
+
+
+class UnpicklingError(ProcessError):
+    """An incoming byte stream is not a valid encoded value."""
+
+
+class QueueFull(ProcessError):
+    """A bounded queue refused a non-blocking put."""
+
+
+class QueueEmpty(ProcessError):
+    """A queue had nothing to return to a non-blocking get."""
+
+
+class BrokenPipeError(ProcessError):
+    """The other end of a connection went away."""
+
+
+type Full = QueueFull
+type Empty = QueueEmpty
