@@ -1,0 +1,42 @@
+import sys
+
+
+def main() -> i32:
+    # The standard streams wrap descriptors 0, 1, and 2.
+    assert sys.stdin.fileno() == sys.STDIN_FD
+    assert sys.stdout.fileno() == sys.STDOUT_FD
+    assert sys.stderr.fileno() == sys.STDERR_FD
+    assert sys.stdout.name() == "stdout"
+    assert sys.stderr.name() == "stderr"
+    assert sys.stdin.name() == "stdin"
+
+    # Sere text crosses every stream as UTF-8.
+    assert sys.stdout.encoding() == "utf-8"
+    assert sys.stderr.encoding() == "utf-8"
+    assert not sys.stdout.is_closed()
+
+    # Writing through a stream reaches the same place `print` does.
+    sys.stdout.write("stdout text")
+    sys.stdout.write_line("")
+    sys.stderr.write_line("stderr text")
+    sys.write("write text")
+    sys.stdout.write_line("")
+    sys.write_line("write_line text")
+    sys.write_error("write_error text")
+    sys.stderr.write_line("")
+
+    # The terminal test is a property of the descriptor, so the object and the
+    # module helper have to agree. The harness redirects the streams, so no
+    # assertion here depends on a terminal being attached.
+    assert sys.stdout.isatty() == sys.stdout_isatty()
+    assert sys.stderr.isatty() == sys.stderr_isatty()
+    assert sys.stdin.isatty() == sys.stdin_isatty()
+
+    # Flushing is idempotent and safe to call repeatedly.
+    sys.stdout.flush()
+    sys.flush()
+    sys.flush()
+
+    # Reading a line from standard output is not a thing, so it reports empty.
+    assert sys.stdout.read_line() == ""
+    return 0

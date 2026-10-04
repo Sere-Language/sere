@@ -65,8 +65,8 @@ constexpr int kCompletionEnumMember = 20;
   if (type == nullptr) {
     return false;
   }
-  return type->isGenericCtor("Iterator") || type->isRecord() || type->isModule() ||
-         type->isList() || type->isDict() || type->isStrLayout();
+  return type->isGenericCtor("Iterator") || type->isGenericCtor("tuple") || type->isRecord() ||
+         type->isModule() || type->isList() || type->isDict() || type->isStrLayout();
 }
 
 /// Type whose members complete, or nullptr. Type objects stay as they are so
@@ -78,7 +78,7 @@ constexpr int kCompletionEnumMember = 20;
   type = type->canonical();
   const bool structural = type->isTypeObject() || type->isRecord() || type->isModule() ||
                           type->isList() || type->isDict() || type->isStrLayout() ||
-                          type->isGenericCtor("Iterator");
+                          type->isGenericCtor("Iterator") || type->isGenericCtor("tuple");
   if (!structural) {
     // Subclasses of a builtin carry their payload in a "$value" field; member
     // access falls through to the value type (mirrors TypeChecker::checkMember).
@@ -421,6 +421,28 @@ std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type) {
     item.sortText = "0" + item.label;
     addItem(std::move(item));
   };
+  auto addField = [&](std::string_view label, std::string_view detail) {
+    MemberCompletionItem item;
+    item.label = std::string(label);
+    item.detail = std::string(detail);
+    item.insertText = item.label;
+    item.kind = kCompletionField;
+    item.sortText = "0" + item.label;
+    addItem(std::move(item));
+  };
+  // A tuple's members are positional: `first` and `second` name the leading two
+  // and are values, not calls, so they complete without parentheses. The
+  // element type in each detail mirrors TypeChecker::checkMember.
+  if (type->isGenericCtor("tuple")) {
+    const std::vector<const Type*>& elements = type->args();
+    if (!elements.empty() && elements[0] != nullptr) {
+      addField("first", "first -> " + elements[0]->display());
+    }
+    if (elements.size() >= 2 && elements[1] != nullptr) {
+      addField("second", "second -> " + elements[1]->display());
+    }
+    return items;
+  }
   // Built-in members come from the compiler's table, so the completion list is
   // exactly what the checker resolves.
   if (!onTypeObject) {

@@ -58,6 +58,72 @@ void sere_dict_repr_data(void* dict,
 
 void sere_input(const char* prompt, int64_t prompt_len, const char** out_data, int64_t* out_len);
 void sere_print_str(const char* data, int64_t len);
+
+/* ---- runtime introspection (`sys`) ----
+ * The generated C entry point calls `sere_process_init_args` before the first
+ * module initializer so that `sys.argv` sees the real command line, and each
+ * backend names itself through `sere_process_set_backend`. */
+
+void sere_process_init_args(int32_t argc, char** argv);
+int32_t sere_process_args_captured(void);
+void sere_process_set_backend(const char* name, int64_t name_len);
+int32_t sere_process_argc(void);
+void* sere_process_argv(void);
+void sere_process_program_path(const char** out_data, int64_t* out_len);
+void sere_process_program_name(const char** out_data, int64_t* out_len);
+
+int64_t sere_runtime_now_ns(void);
+int64_t sere_runtime_start_ns(void);
+int64_t sere_runtime_uptime_ns(void);
+int32_t sere_runtime_version_major(void);
+int32_t sere_runtime_version_minor(void);
+int32_t sere_runtime_version_patch(void);
+void sere_runtime_version_string(const char** out_data, int64_t* out_len);
+void sere_runtime_version_pre_release(const char** out_data, int64_t* out_len);
+void sere_runtime_version_build(const char** out_data, int64_t* out_len);
+void sere_runtime_implementation_name(const char** out_data, int64_t* out_len);
+void sere_runtime_backend(const char** out_data, int64_t* out_len);
+void sere_runtime_gc_name(const char** out_data, int64_t* out_len);
+void sere_runtime_target_arch(const char** out_data, int64_t* out_len);
+void sere_runtime_target_os(const char** out_data, int64_t* out_len);
+void sere_runtime_target_abi(const char** out_data, int64_t* out_len);
+void sere_runtime_target_triple(const char** out_data, int64_t* out_len);
+void sere_runtime_platform_tag(const char** out_data, int64_t* out_len);
+int32_t sere_runtime_pointer_size(void);
+int32_t sere_runtime_pointer_bits(void);
+int64_t sere_runtime_max_size(void);
+int32_t sere_runtime_byteorder(void);
+void sere_runtime_build_mode(const char** out_data, int64_t* out_len);
+void sere_runtime_optimization(const char** out_data, int64_t* out_len);
+int32_t sere_runtime_is_debug(void);
+int32_t sere_runtime_assertions_enabled(void);
+double sere_runtime_float_max(void);
+double sere_runtime_float_min(void);
+double sere_runtime_float_epsilon(void);
+int32_t sere_runtime_float_radix(void);
+int32_t sere_runtime_float_mantissa_bits(void);
+int32_t sere_runtime_float_max_exp(void);
+int32_t sere_runtime_float_min_exp(void);
+void sere_runtime_default_encoding(const char** out_data, int64_t* out_len);
+void sere_runtime_filesystem_encoding(const char** out_data, int64_t* out_len);
+void sere_runtime_executable_suffix(const char** out_data, int64_t* out_len);
+void sere_runtime_shared_library_suffix(const char** out_data, int64_t* out_len);
+uint64_t sere_runtime_thread_id(void);
+uint64_t sere_runtime_main_thread_id(void);
+int32_t sere_runtime_is_main_thread(void);
+int32_t sere_runtime_has_threads(void);
+int32_t sere_runtime_has_async(void);
+int32_t sere_runtime_has_ffi(void);
+int32_t sere_runtime_has_debug_symbols(void);
+void sere_runtime_flush(void);
+int32_t sere_runtime_console_write(int32_t stream, const char* data, int64_t len);
+void sere_runtime_exit(int32_t code);
+void sere_runtime_abort(void);
+void sere_runtime_breakpoint(void);
+void sere_runtime_debug_write(const char* data, int64_t len);
+int32_t sere_runtime_has_exception(void);
+void sere_runtime_exception_type(const char** out_data, int64_t* out_len);
+void sere_runtime_exception_message(const char** out_data, int64_t* out_len);
 void sere_write(const char* data, int64_t len);
 void sere_write_nl(void);
 void sere_write_i32(int32_t value);
@@ -348,8 +414,7 @@ int64_t sere_time_now_ms(void);
 void sere_time_sleep_ms(int32_t ms);
 void sere_time_get_timestamp(const char** out_data, int64_t* out_len);
 
-void sere_string_upper(const char* data, int64_t len, const char** out_data, int64_t* out_len);
-void sere_string_lower(const char* data, int64_t len, const char** out_data, int64_t* out_len);
+void sere_string_upper(const char* data, int64_t len, const char** out_data, int64_t* out_len);void sere_string_lower(const char* data, int64_t len, const char** out_data, int64_t* out_len);
 void sere_string_strip(const char* data, int64_t len, const char** out_data, int64_t* out_len);
 int32_t
 sere_string_starts_with(const char* data, int64_t len, const char* prefix, int64_t prefix_len);

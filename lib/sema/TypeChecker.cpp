@@ -2200,7 +2200,11 @@ const Type* TypeChecker::checkMember(MemberExpr& expr) {
       return nullptr;
     }
     const Type* exported = exportField->type;
-    if (exported != nullptr && exported->isRecord() && !exported->isEnum()) {
+    // A module export that names a type is reached as that type; an export that
+    // holds a value keeps its value type, so `sys.stdout` is a stream and not
+    // the `Stream` class.
+    if (exported != nullptr && exported->isRecord() && !exported->isEnum() &&
+        exportField->isTypeExport) {
       exported = types_->typeObject(exported);
     }
     expr.setResolvedType(exported);

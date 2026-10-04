@@ -1,0 +1,31 @@
+import sys
+
+
+def main() -> i32:
+    # The acceptance example from the sys specification: every line comes from
+    # `sys` except the executable path, which is also a runtime identity here.
+    print("Sere:", sys.version)
+    print("Compiler:", sys.compiler().name, sys.compiler().version)
+    print("Backend:", sys.backend)
+    print("Platform:", sys.platform)
+    print("Architecture:", sys.architecture)
+    print("Target triple:", sys.target_triple)
+    print("ABI:", sys.target_abi)
+    print("Pointer size:", sys.pointer_bits, "bits")
+    print("Byte order:", sys.byteorder())
+    print("Build mode:", sys.build_mode_name, "/", sys.optimization_name)
+    print("Executable:", sys.executable())
+    print("Program:", sys.program_name())
+    print("Arguments:", sys.argc())
+    print("Uptime (ms):", sys.uptime_ms())
+
+    features: sys.RuntimeFeatures = sys.features()
+    print("Features: threads=", features.threads, "async=", features.async_runtime,
+          "ffi=", features.ffi, "symbols=", features.debug_symbols)
+
+    heap: sys.GCStats = sys.gc_stats()
+    print("GC:", heap.name, "collections=", heap.collections, "live=", heap.bytes_in_use)
+
+    for arg in sys.argv:
+        print("  arg:", arg)
+    return 0

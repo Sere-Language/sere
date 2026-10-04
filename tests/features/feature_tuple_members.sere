@@ -12,7 +12,8 @@ def nested() -> (i32, (i32, str)):
 
 def unpack() -> str:
     first, second = pair()
-    return second as str
+    assert second == 42
+    return first
 
 
 def main() -> i32:
@@ -57,7 +58,7 @@ def main() -> i32:
     assert total == 10
 
     # Unpacking still reads the same members.
-    assert unpack() == 42
+    assert unpack() == "answer"
 
     # A tuple built from values, not literals.
     left: i32 = 5

@@ -2712,6 +2712,31 @@ void SeremLLVMBackend::emitEntryPoint(const serem::IRFunction& userMain,
                              module_.get());
   llvm::BasicBlock* entryBlock = llvm::BasicBlock::Create(*context_, "entry", wrapper);
   builder_->builder.SetInsertPoint(entryBlock);
+  // `sys.argv`, the runtime uptime, and the thread identity all come from the
+  // process arguments, so they are captured before any module initializer runs.
+  llvm::Function* processInit = module_->getFunction("sere_process_init_args");
+  if (processInit == nullptr) {
+    processInit = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(*context_), {countType, pointerType}, false),
+        llvm::Function::ExternalLinkage,
+        "sere_process_init_args",
+        module_.get());
+  }
+  builder_->builder.CreateCall(processInit, {wrapper->getArg(0), wrapper->getArg(1)});
+  llvm::Function* setBackend = module_->getFunction("sere_process_set_backend");
+  if (setBackend == nullptr) {
+    setBackend = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(*context_),
+                                {pointerType, llvm::Type::getInt64Ty(*context_)},
+                                false),
+        llvm::Function::ExternalLinkage,
+        "sere_process_set_backend",
+        module_.get());
+  }
+  builder_->builder.CreateCall(
+      setBackend,
+      {builder_->builder.CreateGlobalString("serem", "sere.backend", 0, module_.get()),
+       builder_->builder.getInt64(5)});
   if (llvm::Function* moduleInit = module_->getFunction("sere.module.init"))
     builder_->builder.CreateCall(moduleInit, {});
   std::vector<llvm::Value*> arguments;

@@ -11,7 +11,7 @@ def main() -> i32:
     n: i32 = random.between(0, 10)
     digest: i64 = hash.fnv1a("sere")
     mixed: i64 = hash.combine(digest, 1)
-    host: str = sys.platform()
+    host: str = sys.platform_name()
     cpus: i32 = sys.cpu_count()
     encoded: str = encoding.b64encode("hi")
     decoded: str = encoding.b64decode(encoded)
@@ -21,5 +21,5 @@ def main() -> i32:
     swapped: str = string.replace("ab12", "ab", "xy")
     home: bool = env.is_set("PATH")
     print(n, mixed, host, cpus, encoded, decoded, flagged, found, swapped, home)
-    print(sys.version(), sys.arch(), len(parts), bit.get(flagged, 3))
+    print(sys.version, sys.arch(), len(parts), bit.get(flagged, 3))
     return 0

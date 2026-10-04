@@ -168,6 +168,9 @@ void sere_io_read_line(const char** out_data, int64_t* out_len) {
 
 void sere_io_eprint(const char* data, int64_t len) {
   if (data != NULL && len > 0) {
+    if (sere_runtime_console_write(2, data, len)) {
+      return;
+    }
     fwrite(data, 1, (size_t)len, stderr);
   }
 }

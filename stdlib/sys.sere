@@ -1,20 +1,274 @@
-# Host and process info. Import with: import sys
-# Compile-time flags (preprocessor):
-#   if __windows__: ...
-#   if cfg!(linux): ...
-# Runtime: sys.platform(), sys.family, sys.is_windows()
+# Runtime and process introspection. Import with: import sys
+#
+# `sys` describes the running Sere program and its runtime. Operating-system
+# services, files, and process control live in `os`; the raw Win32 layer lives in
+# `windows`. The split is deliberate:
+#
+#   sys      this program, this runtime, this build, these arguments
+#   os       the operating system it runs on
+#   windows  the Win32 API underneath both
+#
+# Values that describe the build and target (`version`, `platform`,
+# `architecture`, `target_triple`, `pointer_size`, `byteorder`, `build_mode`,
+# `optimization`) are fixed when the program is compiled, so a cross-compiled
+# binary reports the target it was built for rather than the machine that built
+# it. Values that describe the process (`argv`, `executable`, `start_time_ns`)
+# are captured at start-up.
+#
+# Compile-time flags: `if __windows__: ...` and `if cfg!(linux): ...`.
+# Module globals: __name__, __file__, __package__, __doc__, __debug__,
+# __sere_version__, __platform__, __arch__.
+#
+# `panic(message)` is already a language builtin, so this module does not wrap
+# it, and neither `abort` nor `panic` flushes buffered output.
 
-extern "C" "sere_sys_platform"
-def platform() -> str
-"""Return the host platform name."""
+# ---------------------------------------------------------------------------
+# Types: enums
+# ---------------------------------------------------------------------------
 
-extern "C" "sere_sys_arch"
-def arch() -> str
-"""Return the host architecture name."""
+enum Family:
+    """Operating-system families."""
+    Windows
+    Linux
+    Macos
+    Unknown
 
-extern "C" "sere_sys_version"
-def version() -> str
-"""Return the host system version."""
+
+enum Arch:
+    """Processor architectures a program can be built for."""
+    X86
+    X86_64
+    Arm
+    Arm64
+    Unknown
+
+
+enum ByteOrder:
+    """Byte order of the target."""
+    Little
+    Big
+
+
+enum BuildMode:
+    """How the runtime was compiled."""
+    Debug
+    Release
+    RelWithDebInfo
+    MinSizeRel
+    Unknown
+
+
+enum OptimizationLevel:
+    """Optimization level the runtime was compiled with."""
+    O0
+    O1
+    O2
+    O3
+    Os
+    Oz
+    Unknown
+
+
+enum Backend:
+    """Code generator that produced this program."""
+    Native
+    Serem
+    Unknown
+
+
+enum ABI:
+    """Application binary interface of the target."""
+    MSVC
+    GNU
+    Musl
+    Darwin
+    Unknown
+
+
+# The spec names these two types `Platform` and `Architecture`; both are aliases
+# of the enums above so a program can use either spelling.
+type Platform = Family
+type Architecture = Arch
+
+# ---------------------------------------------------------------------------
+# Types: structures
+# ---------------------------------------------------------------------------
+
+struct VersionInfo:
+    """Version of the Sere language and runtime.
+
+    `pre_release` is the tag before the numeric release (`"pre"` for a preview
+    build, empty for a final one). `build` is the packaging tag, empty unless
+    the release build set one, which keeps ordinary builds reproducible.
+    """
+    major: i32
+    minor: i32
+    patch: i32
+    pre_release: str
+    build: str
+    text: str
+
+
+struct CompilerInfo:
+    """The compiler and runtime that produced this program."""
+    name: str
+    version: str
+    backend: str
+    gc: str
+
+
+struct ImplementationInfo:
+    """The runtime implementation, mirroring the language's own identity."""
+    name: str
+    version: VersionInfo
+    backend: str
+    gc: str
+
+
+struct RuntimeFeatures:
+    """Capabilities this runtime and target provide."""
+    threads: bool
+    async_runtime: bool
+    ffi: bool
+    debug_symbols: bool
+
+
+struct RuntimeFlags:
+    """Immutable execution settings fixed when the runtime was built."""
+    debug: bool
+    assertions: bool
+    optimized: bool
+    gc_enabled: bool
+
+
+struct TargetInfo:
+    """The platform, architecture, and ABI the program was built for."""
+    platform: str
+    platform_family: Family
+    architecture: str
+    architecture_kind: Arch
+    triple: str
+    os: str
+    abi: str
+    pointer_size: i32
+    pointer_bits: i32
+    byte_order: ByteOrder
+
+
+struct FloatInfo:
+    """The double-precision model, read from the C runtime's <float.h>."""
+    max: f64
+    min: f64
+    epsilon: f64
+    radix: i32
+    mantissa_bits: i32
+    max_exp: i32
+    min_exp: i32
+
+
+struct ExceptionInfo:
+    """The exception currently being handled, if any.
+
+    `active` is False outside a `catch` block, in which case `type` and
+    `message` are empty. `type` is the Sere class name without its module
+    qualifier, such as `ValueError`.
+    """
+    active: bool
+    type: str
+    message: str
+
+
+struct GCStats:
+    """Counters from the active collector.
+
+    `bytes_in_use` is the live heap, `bytes_allocated` the cumulative total, and
+    `collections` how many times the collector has run. Values come from the
+    collector's own bookkeeping, so they cost nothing to read.
+    """
+    name: str
+    collections: u64
+    bytes_in_use: u64
+    bytes_allocated: u64
+    live_blocks: u64
+
+
+struct MemoryStats:
+    """Runtime heap totals, which are not the process's resident set size."""
+    allocated: u64
+    live: u64
+    blocks: u64
+
+
+struct RuntimeStats:
+    """Snapshot of the runtime's time and memory use."""
+    uptime_ns: u64
+    gc: GCStats
+    memory: MemoryStats
+
+
+struct RuntimeInfo:
+    """Single snapshot of everything `sys` reports about the build and target.
+
+    Each field also has its own accessor, so this is the convenient form for
+    diagnostics and bug reports rather than the only way in.
+    """
+    version: VersionInfo
+    compiler: CompilerInfo
+    target: TargetInfo
+    build_mode: BuildMode
+    build_mode_name: str
+    optimization: OptimizationLevel
+    optimization_name: str
+    debug: bool
+    assertions: bool
+    features: RuntimeFeatures
+    gc: str
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+const STDIN_FD: i64 = 0
+const STDOUT_FD: i64 = 1
+const STDERR_FD: i64 = 2
+
+const FAMILY_WINDOWS: i32 = 0
+const FAMILY_LINUX: i32 = 1
+const FAMILY_MACOS: i32 = 2
+const FAMILY_UNKNOWN: i32 = 3
+
+const ARCH_X86: i32 = 0
+const ARCH_X86_64: i32 = 1
+const ARCH_ARM: i32 = 2
+const ARCH_ARM64: i32 = 3
+const ARCH_UNKNOWN: i32 = 4
+
+const BYTE_ORDER_LITTLE: i32 = 0
+const BYTE_ORDER_BIG: i32 = 1
+
+# ---------------------------------------------------------------------------
+# Native bindings: process arguments and identity
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_process_argc"
+def _argc() -> i32
+"""Return the number of process arguments."""
+
+extern "C" "sere_process_argv"
+def _argv() -> list[str]
+"""Return the process arguments as a fresh list."""
+
+extern "C" "sere_process_program_path"
+def program_path() -> str
+"""Return `argv[0]` exactly as the platform passed it."""
+
+extern "C" "sere_process_program_name"
+def program_name() -> str
+"""Return the final component of `argv[0]`."""
+
+extern "C" "sere_os_executable_path"
+def executable() -> str
+"""Return the absolute path of the executable hosting this program."""
 
 extern "C" "sere_sys_pid"
 def pid() -> i32
@@ -22,52 +276,752 @@ def pid() -> i32
 
 extern "C" "sere_sys_cpu_count"
 def cpu_count() -> i32
-"""Return the number of host CPUs."""
+"""Return the number of logical CPUs."""
 
-enum Family:
-    """Supported operating-system families."""
-    Windows
-    Linux
-    Macos
-    Unknown
+# ---------------------------------------------------------------------------
+# Native bindings: version, implementation, target
+# ---------------------------------------------------------------------------
 
-enum Arch:
-    """Supported processor architectures."""
-    X86_64
-    Arm64
-    Unknown
+extern "C" "sere_runtime_version_major"
+def _version_major() -> i32
+"""Return the runtime major version."""
+
+extern "C" "sere_runtime_version_minor"
+def _version_minor() -> i32
+"""Return the runtime minor version."""
+
+extern "C" "sere_runtime_version_patch"
+def _version_patch() -> i32
+"""Return the runtime patch version."""
+
+extern "C" "sere_runtime_version_string"
+def _version_text() -> str
+"""Return the runtime version as text."""
+
+extern "C" "sere_runtime_version_pre_release"
+def _version_pre_release() -> str
+"""Return the pre-release tag, or "" for a final release."""
+
+extern "C" "sere_runtime_version_build"
+def _version_build() -> str
+"""Return the packaging build tag, or "" when unset."""
+
+extern "C" "sere_runtime_implementation_name"
+def _implementation_name() -> str
+"""Return the runtime implementation's name."""
+
+extern "C" "sere_runtime_backend"
+def _backend_name() -> str
+"""Return the code generator that produced this program."""
+
+extern "C" "sere_runtime_gc_name"
+def gc_name() -> str
+"""Return the active collector's name."""
+
+extern "C" "sere_runtime_target_arch"
+def _target_arch() -> str
+"""Return the target architecture name."""
+
+extern "C" "sere_runtime_target_os"
+def _target_os() -> str
+"""Return the target operating-system name."""
+
+extern "C" "sere_runtime_target_abi"
+def _target_abi() -> str
+"""Return the target ABI name."""
+
+extern "C" "sere_runtime_target_triple"
+def _target_triple() -> str
+"""Return the target triple."""
+
+extern "C" "sere_runtime_platform_tag"
+def _platform_tag() -> str
+"""Return the stable platform tag the target uses."""
+
+extern "C" "sere_runtime_pointer_size"
+def _pointer_size() -> i32
+"""Return the target's pointer size in bytes."""
+
+extern "C" "sere_runtime_pointer_bits"
+def _pointer_bits() -> i32
+"""Return the target's pointer width in bits."""
+
+extern "C" "sere_runtime_max_size"
+def _max_size() -> i64
+"""Return the largest pointer-sized signed index."""
+
+extern "C" "sere_runtime_byteorder"
+def _byteorder_code() -> i32
+"""Return 0 for a little-endian target and 1 for a big-endian one."""
+
+# ---------------------------------------------------------------------------
+# Native bindings: build configuration
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_runtime_build_mode"
+def _build_mode() -> str
+"""Return the runtime's build configuration name."""
+
+extern "C" "sere_runtime_optimization"
+def _optimization() -> str
+"""Return the runtime's optimization level."""
+
+extern "C" "sere_runtime_is_debug"
+def _is_debug() -> i32
+"""Test whether the runtime was built without NDEBUG."""
+
+extern "C" "sere_runtime_assertions_enabled"
+def _assertions_enabled() -> i32
+"""Test whether assertions are compiled in."""
+
+# ---------------------------------------------------------------------------
+# Native bindings: runtime limits and streams
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_runtime_float_max"
+def _float_max() -> f64
+"""Return the largest finite double."""
+
+extern "C" "sere_runtime_float_min"
+def _float_min() -> f64
+"""Return the smallest positive normalized double."""
+
+extern "C" "sere_runtime_float_epsilon"
+def _float_epsilon() -> f64
+"""Return the smallest double that changes 1.0."""
+
+extern "C" "sere_runtime_float_radix"
+def _float_radix() -> i32
+"""Return the exponent radix of the double model."""
+
+extern "C" "sere_runtime_float_mantissa_bits"
+def _float_mantissa_bits() -> i32
+"""Return the number of mantissa digits in a double."""
+
+extern "C" "sere_runtime_float_max_exp"
+def _float_max_exp() -> i32
+"""Return the largest binary exponent."""
+
+extern "C" "sere_runtime_float_min_exp"
+def _float_min_exp() -> i32
+"""Return the smallest normalized binary exponent."""
+
+extern "C" "sere_runtime_default_encoding"
+def default_encoding() -> str
+"""Return the encoding Sere text uses, which is always UTF-8."""
+
+extern "C" "sere_runtime_filesystem_encoding"
+def filesystem_encoding() -> str
+"""Return the encoding paths are exchanged in, which is always UTF-8."""
+
+extern "C" "sere_runtime_executable_suffix"
+def executable_suffix() -> str
+"""Return the target's executable suffix, such as ".exe"."""
+
+extern "C" "sere_runtime_shared_library_suffix"
+def shared_library_suffix() -> str
+"""Return the target's shared-library suffix, such as ".dll"."""
+
+extern "C" "sere_write"
+def _write_out(text: str) -> void
+"""Write text to standard output."""
+
+extern "C" "sere_write_nl"
+def _write_nl() -> void
+"""Write a newline to standard output."""
+
+extern "C" "sere_io_eprint"
+def _write_err(text: str) -> void
+"""Write text to standard error."""
+
+extern "C" "sere_io_read_line"
+def _read_line_stdin() -> str
+"""Read one line from standard input, without its terminator."""
+
+extern "C" "sere_runtime_flush"
+def _flush_streams() -> void
+"""Flush the buffered standard output and error streams."""
+
+extern "C" "sere_os_fd_isatty"
+def _fd_isatty(fd: i64) -> i32
+"""Test whether a descriptor is a terminal."""
+
+# ---------------------------------------------------------------------------
+# Native bindings: runtime state, exceptions, diagnostics
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_runtime_start_ns"
+def _start_ns() -> i64
+"""Return the monotonic clock reading captured at start-up."""
+
+extern "C" "sere_runtime_uptime_ns"
+def uptime_ns() -> i64
+"""Return nanoseconds since the runtime started."""
+
+extern "C" "sere_runtime_thread_id"
+def thread_id() -> u64
+"""Return the calling thread's runtime identity."""
+
+extern "C" "sere_runtime_main_thread_id"
+def main_thread_id() -> u64
+"""Return the thread that entered `main`."""
+
+extern "C" "sere_runtime_is_main_thread"
+def _is_main_thread() -> i32
+"""Test whether the caller is the main thread."""
+
+extern "C" "sere_runtime_has_threads"
+def _has_threads() -> i32
+"""Test whether the runtime target provides threads."""
+
+extern "C" "sere_runtime_has_async"
+def _has_async() -> i32
+"""Test whether the runtime provides async tasks."""
+
+extern "C" "sere_runtime_has_ffi"
+def _has_ffi() -> i32
+"""Test whether the runtime can call native libraries."""
+
+extern "C" "sere_runtime_has_debug_symbols"
+def _has_debug_symbols() -> i32
+"""Test whether the runtime carries debug symbols."""
+
+extern "C" "sere_runtime_has_exception"
+def _has_exception() -> i32
+"""Test whether an exception is being handled."""
+
+extern "C" "sere_runtime_exception_type"
+def exception_type() -> str
+"""Return the handled exception's class name, or "" when there is none."""
+
+extern "C" "sere_runtime_exception_message"
+def exception_message() -> str
+"""Return the handled exception's message, or "" when there is none."""
+
+extern "C" "sere_runtime_exit"
+def _exit_now(code: i32) -> void
+"""Flush the standard streams and terminate the process."""
+
+extern "C" "sere_runtime_abort"
+def abort() -> void
+"""Terminate abnormally, without flushing buffered output."""
+
+extern "C" "sere_runtime_breakpoint"
+def breakpoint() -> void
+"""Trap into an attached debugger, or terminate when none is attached."""
+
+extern "C" "sere_runtime_debug_write"
+def debug_write(message: str) -> void
+"""Write to the debugger sink, falling back to standard error."""
+
+# ---------------------------------------------------------------------------
+# Native bindings: collector and host compatibility
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gc_collect"
+def gc_collect() -> void
+"""Run a collection now."""
+
+extern "C" "sere_gc_collections"
+def _gc_collections() -> i64
+"""Return how many collections have run."""
+
+extern "C" "sere_gc_bytes_in_use"
+def _gc_bytes_in_use() -> i64
+"""Return the live heap size in bytes."""
+
+extern "C" "sere_gc_bytes_allocated"
+def _gc_bytes_allocated() -> i64
+"""Return the cumulative bytes allocated."""
+
+extern "C" "sere_gc_live_blocks"
+def _gc_live_blocks() -> i64
+"""Return the number of live allocations."""
+
+extern "C" "sere_sys_platform"
+def _host_platform() -> str
+"""Return the host platform name."""
+
+extern "C" "sere_sys_arch"
+def arch() -> str
+"""Return the host architecture name."""
+
+extern "C" "sere_sys_version"
+def host_version() -> str
+"""Return the host operating-system version."""
+
+# ---------------------------------------------------------------------------
+# Program arguments
+# ---------------------------------------------------------------------------
+
+# The process arguments, captured before any module initializer ran.
+#
+# `argv[0]` is the program path exactly as the platform passed it: the
+# executable's path for a compiled program, which may be relative. Use
+# `sys.executable()` when an absolute path is needed. Arguments are UTF-8, and
+# Windows' UTF-16 command line is converted without loss.
+argv: list[str] = _argv()
+
+def argc() -> i32:
+    """Return the number of process arguments, matching `len(sys.argv)`."""
+    return _argc()
+
+# ---------------------------------------------------------------------------
+# Standard streams
+# ---------------------------------------------------------------------------
+
+class Stream:
+    """A standard stream: one of the three descriptors the process starts with.
+
+    These wrap the process's real standard streams, so writing through them
+    reaches the same place the runtime's `print` does. They are deliberately not
+    redirectable: `print` is a language intrinsic that writes straight to the
+    runtime, so rebinding `sys.stdout` would not redirect it.
+    """
+
+    _kind: i32
+    _fd: i64
+    _name: str
+
+    def __init__(self, name: str, kind: i32, fd: i64):
+        """Wrap one standard descriptor."""
+        self._name = name
+        self._kind = kind
+        self._fd = fd
+
+    def name(self) -> str:
+        """Return "stdin", "stdout", or "stderr"."""
+        return self._name
+
+    def fileno(self) -> i64:
+        """Return the descriptor number."""
+        return self._fd
+
+    def write(self, text: str) -> void:
+        """Write text without a trailing newline."""
+        if self._kind == 2:
+            _write_err(text)
+        else:
+            _write_out(text)
+
+    def write_line(self, text: str) -> void:
+        """Write text followed by a newline."""
+        self.write(text)
+        _write_nl()
+
+    def read_line(self) -> str:
+        """Read one line, without its terminator; "" at end of input."""
+        if self._kind != 0:
+            return ""
+        return _read_line_stdin()
+
+    def flush(self) -> void:
+        """Flush the buffered standard streams."""
+        _flush_streams()
+
+    def isatty(self) -> bool:
+        """Return whether the descriptor is a terminal."""
+        return _fd_isatty(self._fd) != 0
+
+    def encoding(self) -> str:
+        """Return the encoding text crosses the stream in, which is UTF-8."""
+        return "utf-8"
+
+    def is_closed(self) -> bool:
+        """Return whether the stream is closed; the standard streams are not."""
+        return False
+
+    def __repr__(self) -> str:
+        """Describe the stream."""
+        if self._kind == 0:
+            return "<stream stdin>"
+        if self._kind == 2:
+            return "<stream stderr>"
+        return "<stream stdout>"
+
+stdin: Stream = Stream("stdin", 0, STDIN_FD)
+stdout: Stream = Stream("stdout", 1, STDOUT_FD)
+stderr: Stream = Stream("stderr", 2, STDERR_FD)
+
+def stdout_isatty() -> bool:
+    """Return whether standard output is a terminal."""
+    return _fd_isatty(STDOUT_FD) != 0
+
+def stderr_isatty() -> bool:
+    """Return whether standard error is a terminal."""
+    return _fd_isatty(STDERR_FD) != 0
+
+def stdin_isatty() -> bool:
+    """Return whether standard input is a terminal."""
+    return _fd_isatty(STDIN_FD) != 0
+
+def write(text: str) -> void:
+    """Write text to standard output without a trailing newline."""
+    _write_out(text)
+
+def write_line(text: str) -> void:
+    """Write text to standard output followed by a newline."""
+    _write_out(text)
+    _write_nl()
+
+def write_error(text: str) -> void:
+    """Write text to standard error without a trailing newline."""
+    _write_err(text)
+
+# ---------------------------------------------------------------------------
+# Process lifetime
+# ---------------------------------------------------------------------------
+
+def exit(code: i32 = 0) -> void:
+    """Flush the standard streams and terminate with `code`.
+
+    Exit handlers registered with `at_exit` are not available yet: Sere cannot
+    pass a function value to native code, so there is no way to store a callback
+    the runtime could invoke at shutdown.
+    """
+    _exit_now(code)
+
+# ---------------------------------------------------------------------------
+# Build and version metadata
+# ---------------------------------------------------------------------------
+
+version: str = _version_text()
+
+version_info: VersionInfo = VersionInfo(
+    _version_major(),
+    _version_minor(),
+    _version_patch(),
+    _version_pre_release(),
+    _version_build(),
+    _version_text())
+
+compiler: CompilerInfo = CompilerInfo(
+    "Sere",
+    _version_text(),
+    _backend_name(),
+    gc_name())
+
+implementation: ImplementationInfo = ImplementationInfo(
+    _implementation_name(),
+    version_info,
+    _backend_name(),
+    gc_name())
+
+build_mode_name: str = _build_mode()
+optimization_name: str = _optimization()
+debug: bool = _is_debug() != 0
+assertions: bool = _assertions_enabled() != 0
+backend: str = _backend_name()
+
+def build_mode() -> BuildMode:
+    """Return the runtime's build configuration."""
+    name: str = _build_mode()
+    if name == "DEBUG":
+        return BuildMode.Debug
+    if name == "RELEASE":
+        return BuildMode.Release
+    if name == "RELWITHDEBINFO":
+        return BuildMode.RelWithDebInfo
+    if name == "MINSIZEREL":
+        return BuildMode.MinSizeRel
+    return BuildMode.Unknown
+
+def optimization() -> OptimizationLevel:
+    """Return the optimization level the runtime was compiled with."""
+    level: str = _optimization()
+    if level == "O0":
+        return OptimizationLevel.O0
+    if level == "O1":
+        return OptimizationLevel.O1
+    if level == "O2":
+        return OptimizationLevel.O2
+    if level == "O3":
+        return OptimizationLevel.O3
+    if level == "Os":
+        return OptimizationLevel.Os
+    if level == "Oz":
+        return OptimizationLevel.Oz
+    return OptimizationLevel.Unknown
+
+def backend_kind() -> Backend:
+    """Return which code generator produced this program."""
+    name: str = _backend_name()
+    if name == "llvm":
+        return Backend.Native
+    if name == "serem":
+        return Backend.Serem
+    return Backend.Unknown
+
+def features() -> RuntimeFeatures:
+    """Return the capabilities this runtime and target provide."""
+    return RuntimeFeatures(
+        _has_threads() != 0,
+        _has_async() != 0,
+        _has_ffi() != 0,
+        _has_debug_symbols() != 0)
+
+def has_threads() -> bool:
+    """Return whether the runtime target provides threads."""
+    return _has_threads() != 0
+
+def has_async() -> bool:
+    """Return whether the runtime provides async tasks."""
+    return _has_async() != 0
+
+def has_ffi() -> bool:
+    """Return whether the runtime can call into native libraries."""
+    return _has_ffi() != 0
+
+def has_feature(name: str) -> bool:
+    """Return whether a named runtime feature is available.
+
+    The recognised names are `threads`, `async`, `ffi`, and `debug_symbols`.
+    Unknown names report False rather than raising, so a program can probe a
+    feature that a later release may add.
+    """
+    if name == "threads":
+        return _has_threads() != 0
+    if name == "async":
+        return _has_async() != 0
+    if name == "ffi":
+        return _has_ffi() != 0
+    if name == "debug_symbols":
+        return _has_debug_symbols() != 0
+    return False
+
+def flags() -> RuntimeFlags:
+    """Return the runtime's immutable execution settings."""
+    return RuntimeFlags(debug, assertions, not debug, True)
+
+# ---------------------------------------------------------------------------
+# Platform and target
+# ---------------------------------------------------------------------------
+
+# Stable platform tag for program logic: "win32", "linux", or "darwin". The
+# descriptive name is available from `platform_name()`.
+platform: str = _platform_tag()
+architecture: str = _target_arch()
+target_triple: str = _target_triple()
+target_os: str = _target_os()
+target_abi: str = _target_abi()
+pointer_size: i32 = _pointer_size()
+pointer_bits: i32 = _pointer_bits()
+max_size: i64 = _max_size()
+
+def platform_name() -> str:
+    """Return the host platform's descriptive name: "windows", "linux", "macos"."""
+    return _host_platform()
+
+def platform_info() -> Platform:
+    """Return the target's operating-system family."""
+    name: str = _host_platform()
+    if name == "windows":
+        return Family.Windows
+    if name == "linux":
+        return Family.Linux
+    if name == "macos":
+        return Family.Macos
+    return Family.Unknown
+
+def architecture_info() -> Architecture:
+    """Return the target's processor architecture."""
+    name: str = _target_arch()
+    if name == "x86_64":
+        return Arch.X86_64
+    if name == "aarch64":
+        return Arch.Arm64
+    if name == "x86":
+        return Arch.X86
+    if name == "arm":
+        return Arch.Arm
+    return Arch.Unknown
+
+def abi_info() -> ABI:
+    """Return the target's application binary interface."""
+    name: str = _target_abi()
+    if name == "msvc":
+        return ABI.MSVC
+    if name == "gnu":
+        return ABI.GNU
+    if name == "musl":
+        return ABI.Musl
+    if name == "darwin":
+        return ABI.Darwin
+    return ABI.Unknown
+
+def byteorder() -> ByteOrder:
+    """Return the target's byte order."""
+    if _byteorder_code() == 0:
+        return ByteOrder.Little
+    return ByteOrder.Big
+
+def target_info() -> TargetInfo:
+    """Return the platform, architecture, and ABI the program was built for."""
+    # The native bindings are read directly: an unqualified name can be shadowed
+    # by another module that exports the same symbol into the same program.
+    return TargetInfo(
+        _platform_tag(),
+        platform_info(),
+        _target_arch(),
+        architecture_info(),
+        _target_triple(),
+        _target_os(),
+        _target_abi(),
+        _pointer_size(),
+        _pointer_bits(),
+        byteorder())
 
 def is_windows() -> bool:
-    """Return whether the host is Windows."""
-    return platform() == "windows"
-
-def is_macos() -> bool:
-    """Return whether the host is macOS."""
-    return platform() == "macos"
+    """Return whether the target is Windows."""
+    return _host_platform() == "windows"
 
 def is_linux() -> bool:
-    """Return whether the host is Linux."""
-    return platform() == "linux"
+    """Return whether the target is Linux."""
+    return _host_platform() == "linux"
+
+def is_macos() -> bool:
+    """Return whether the target is macOS."""
+    return _host_platform() == "macos"
 
 def is_unix() -> bool:
-    """Return whether the host is Unix-like."""
+    """Return whether the target is Unix-like."""
     return is_linux() or is_macos()
 
 def family() -> Family:
-    """Return the host operating-system family."""
-    if is_windows():
-        return Family.Windows
-    if is_macos():
-        return Family.Macos
-    if is_linux():
-        return Family.Linux
-    return Family.Unknown
+    """Return the target's operating-system family."""
+    return platform_info()
 
 def cpu() -> Arch:
-    """Return the host processor architecture."""
-    kind: str = arch()
-    if kind == "x86_64":
-        return Arch.X86_64
-    if kind == "arm64":
-        return Arch.Arm64
-    return Arch.Unknown
+    """Return the target's processor architecture."""
+    return architecture_info()
+
+# ---------------------------------------------------------------------------
+# Runtime limits
+# ---------------------------------------------------------------------------
+
+def float_info() -> FloatInfo:
+    """Return the double-precision model from the C runtime."""
+    return FloatInfo(
+        _float_max(),
+        _float_min(),
+        _float_epsilon(),
+        _float_radix(),
+        _float_mantissa_bits(),
+        _float_max_exp(),
+        _float_min_exp())
+
+# ---------------------------------------------------------------------------
+# Runtime state
+# ---------------------------------------------------------------------------
+
+start_time_ns: i64 = _start_ns()
+
+def uptime_ms() -> i64:
+    """Return milliseconds since the runtime started."""
+    return uptime_ns() / 1000000
+
+def uptime() -> f64:
+    """Return seconds since the runtime started."""
+    return (uptime_ns() as f64) / 1000000000.0
+
+def is_main_thread() -> bool:
+    """Return whether the caller is the thread that entered `main`."""
+    return _is_main_thread() != 0
+
+def stats() -> RuntimeStats:
+    """Return a snapshot of the runtime's time and memory use."""
+    return RuntimeStats(uptime_ns() as u64, gc_stats(), heap_stats())
+
+# ---------------------------------------------------------------------------
+# Collector and memory
+# ---------------------------------------------------------------------------
+
+def gc_stats() -> GCStats:
+    """Return the active collector's counters.
+
+    The values are the collector's own bookkeeping, so reading them does not
+    scan the heap.
+    """
+    return GCStats(
+        gc_name(),
+        _gc_collections() as u64,
+        _gc_bytes_in_use() as u64,
+        _gc_bytes_allocated() as u64,
+        _gc_live_blocks() as u64)
+
+def heap_stats() -> MemoryStats:
+    """Return runtime heap totals.
+
+    These are the collector's allocation counters, not the process's resident
+    set size; use `os.memory()` for the operating system's view. The name is
+    deliberately distinct so the two never look interchangeable.
+    """
+    return MemoryStats(
+        _gc_bytes_allocated() as u64,
+        _gc_bytes_in_use() as u64,
+        _gc_live_blocks() as u64)
+
+# ---------------------------------------------------------------------------
+# Exceptions and diagnostics
+# ---------------------------------------------------------------------------
+
+def has_exception() -> bool:
+    """Return whether an exception is currently being handled."""
+    return _has_exception() != 0
+
+def exception() -> ExceptionInfo:
+    """Return the exception being handled, or an inactive record."""
+    if _has_exception() == 0:
+        return ExceptionInfo(False, "", "")
+    return ExceptionInfo(True, exception_type(), exception_message())
+
+# ---------------------------------------------------------------------------
+# Diagnostics
+# ---------------------------------------------------------------------------
+
+def runtime_info() -> RuntimeInfo:
+    """Return everything `sys` knows about the build and target in one value."""
+    return RuntimeInfo(
+        version_info,
+        compiler,
+        target_info(),
+        build_mode(),
+        build_mode_name,
+        optimization(),
+        optimization_name,
+        debug,
+        assertions,
+        features(),
+        gc_name())
+
+def runtime_report() -> str:
+    """Return a human-readable summary for bug reports."""
+    target: TargetInfo = target_info()
+    info: RuntimeInfo = runtime_info()
+    text: str = "Sere " + version + " (" + variant_text() + ")"
+    text = text + newline_text() + "Compiler: " + compiler.name + " " + compiler.version
+    text = text + newline_text() + "Backend: " + backend
+    text = text + newline_text() + "Target: " + target.triple
+    text = text + newline_text() + "Platform: " + target.platform + " / " + target.architecture
+    text = text + newline_text() + "ABI: " + target.abi
+    text = text + newline_text() + "Pointer size: " + str(target.pointer_bits) + "-bit"
+    text = text + newline_text() + "Byte order: " + str(target.byte_order)
+    text = text + newline_text() + "Build: " + build_mode_name + "/" + optimization_name
+    text = text + newline_text() + "GC: " + gc_name()
+    text = text + newline_text() + "Executable: " + executable()
+    text = text + newline_text() + "Arguments: " + str(argc())
+    text = text + newline_text() + "Uptime (ms): " + str(uptime_ms())
+    return text
+
+def variant_text() -> str:
+    """Return the version's pre-release tag with its separator, or ""."""
+    tag: str = version_info.pre_release
+    if len(tag) == 0:
+        return "release"
+    return tag
+
+def newline_text() -> str:
+    """Return the platform's line ending, so reports read correctly in a terminal."""
+    if is_windows():
+        return "\r\n"
+    return "\n"

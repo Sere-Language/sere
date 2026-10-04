@@ -1,0 +1,97 @@
+import sys
+
+
+def main() -> i32:
+    # Version metadata is injected by the build, never parsed at runtime, so the
+    # text and the structured form always agree.
+    assert len(sys.version) > 0
+    assert sys.version == sys.version_info.text
+    assert sys.version_info.major >= 0
+    assert sys.version_info.minor >= 0
+    assert sys.version_info.patch >= 0
+    assert sys.version_info.major == 0 or sys.version_info.major > 0
+
+    assert sys.compiler.name == "Sere"
+    assert sys.compiler.version == sys.version
+    assert sys.backend == "llvm" or sys.backend == "serem"
+    assert sys.compiler.backend == sys.backend
+
+    assert sys.implementation.name == "sere"
+    assert sys.implementation.version.major == sys.version_info.major
+    assert sys.implementation.backend == sys.backend
+    assert sys.implementation.gc == sys.gc_name()
+
+    # Target metadata describes the compilation target, and the fields have to
+    # be consistent with each other.
+    assert len(sys.platform) > 0
+    assert len(sys.architecture) > 0
+    assert len(sys.target_triple) > 0
+    assert len(sys.target_os) > 0
+    assert len(sys.target_abi) > 0
+    assert sys.pointer_size == 4 or sys.pointer_size == 8
+    assert sys.pointer_bits == sys.pointer_size * 8
+    assert sys.max_size > 0
+    if sys.architecture == "x86_64":
+        assert sys.pointer_size == 8
+    if sys.architecture == "aarch64":
+        assert sys.pointer_size == 8
+    if sys.architecture == "x86":
+        assert sys.pointer_size == 4
+
+    assert sys.platform == "win32" or sys.platform == "linux" or sys.platform == "darwin"
+    if sys.platform == "win32":
+        assert sys.target_abi == "msvc"
+        assert sys.is_windows()
+        assert not sys.is_unix()
+    if sys.platform == "linux":
+        assert sys.is_linux()
+        assert sys.is_unix()
+    if sys.platform == "darwin":
+        assert sys.is_macos()
+        assert sys.is_unix()
+
+    # Build metadata comes from the configuration the runtime was compiled with.
+    assert len(sys.build_mode_name) > 0
+    assert len(sys.optimization_name) > 0
+    assert sys.debug == (sys.build_mode() == sys.BuildMode.Debug)
+    assert sys.assertions
+    assert sys.flags().debug == sys.debug
+    assert sys.flags().optimized == not sys.debug
+    assert sys.flags().gc_enabled
+
+    features: sys.RuntimeFeatures = sys.features()
+    assert features.threads == sys.has_threads()
+    assert features.async_runtime == sys.has_async()
+    assert features.ffi == sys.has_ffi()
+    assert sys.has_feature("threads") == sys.has_threads()
+    assert sys.has_feature("ffi") == sys.has_ffi()
+    assert not sys.has_feature("not_a_real_feature")
+
+    # The double model is read from the C runtime rather than assumed.
+    floats: sys.FloatInfo = sys.float_info()
+    assert floats.max > 1.0
+    assert floats.epsilon > 0.0
+    assert floats.epsilon < 1.0
+    assert floats.radix == 2
+    assert floats.mantissa_bits >= 24
+
+    assert sys.default_encoding() == "utf-8"
+    assert sys.filesystem_encoding() == "utf-8"
+    assert len(sys.shared_library_suffix()) > 0
+
+    # The snapshot agrees with the individual accessors.
+    info: sys.RuntimeInfo = sys.runtime_info()
+    assert info.version.text == sys.version
+    assert info.compiler.name == sys.compiler.name
+    assert info.target.pointer_size == sys.pointer_size
+    assert info.target.triple == sys.target_triple
+    assert info.target.byte_order == sys.byteorder()
+    assert info.build_mode == sys.build_mode()
+    assert info.optimization == sys.optimization()
+    assert info.debug == sys.debug
+    assert info.gc == sys.gc_name()
+
+    report: str = sys.runtime_report()
+    assert len(report) > 0
+    assert len(sys.target_info().platform) > 0
+    return 0

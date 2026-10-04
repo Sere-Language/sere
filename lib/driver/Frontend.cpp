@@ -189,6 +189,7 @@ void bindModuleExports(TypeChecker& checker,
                                                       : static_cast<EnumDef&>(*item).name();
       field.type = item->resolvedType();
       field.isPublic = !item->isPrivate();
+      field.isTypeExport = true;
       exports.push_back(field);
     } else if (item->kind() == NodeKind::TypeAlias) {
       auto& alias = static_cast<TypeAlias&>(*item);
@@ -196,6 +197,7 @@ void bindModuleExports(TypeChecker& checker,
       field.name = alias.name();
       field.type = alias.resolvedType();
       field.isPublic = !item->isPrivate();
+      field.isTypeExport = true;
       exports.push_back(field);
     } else if (item->kind() == NodeKind::MacroDef) {
       RecordField field;
@@ -294,7 +296,7 @@ void bindModuleExports(TypeChecker& checker,
   const Type* moduleType = types.defineModule(moduleName, std::move(exports));
   auto importField = [&](const RecordField& field, const std::string& bound) {
     Symbol symbol;
-    const Type* classType = exportedClassType(field.type);
+    const Type* classType = field.isTypeExport ? exportedClassType(field.type) : nullptr;
     symbol.type = classType != nullptr ? classType : field.type;
     symbol.kind =
         classType != nullptr                                                ? SymbolKind::Class

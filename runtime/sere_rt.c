@@ -27,6 +27,9 @@ void sere_mod_init(void) __attribute__((weak, alias("sere_mod_init_default")));
 
 void sere_write(const char* data, int64_t len) {
   if (data != NULL && len > 0) {
+    if (sere_runtime_console_write(1, data, len)) {
+      return;
+    }
     fwrite(data, 1, (size_t)len, stdout);
   }
 }
@@ -714,6 +717,12 @@ void* sere_list_item(void* list, int64_t index) {
 }
 
 void* sere_list_from_argv(int argc, char** argv) {
+  // Once the runtime has captured the command line its UTF-8 copy is
+  // authoritative, because the platform's argv has already lost every character
+  // outside the active code page.
+  if (sere_process_args_captured()) {
+    return sere_process_argv();
+  }
   SereList* list = (SereList*)calloc(1, sizeof(SereList));
   if (list == NULL) {
     return NULL;

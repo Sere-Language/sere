@@ -466,6 +466,23 @@ Untyped `lambda x: ...` parameters are `Any`. Lambdas do not capture enclosing
 locals; pass values as parameters, or use a nested `def`, which can capture.
 `with` calls `__enter__` and `__exit__` on one evaluated context object.
 
+A tuple type has two spellings: `tuple[str, i32]` and `(str, i32)`. A
+parenthesised type with a single member and no trailing comma is just a
+grouping, so `(i32)` is `i32` while `(i32,)` is a one-element tuple.
+
+```sere
+def pair() -> (str, i32):
+    return ("answer", 42)
+
+t: (str, i32) = pair()
+print(t[0], t.first)    # "answer"
+print(t[1], t.second)   # 42
+```
+
+Members are read by position (`t[0]`) or by name (`t.first`, `t.second`). The
+index has to be a literal, because a tuple's members are fixed at compile time;
+a variable index is rejected with `IndexError`.
+
 ---
 
 ## Functions

@@ -6386,6 +6386,15 @@ bool IRGenerator::emitCMainWrapper(llvm::Function* userMain) {
     llvm::IRBuilder<> initBuilder(initEntry);
     initBuilder.CreateRetVoid();
   }
+  // `sys.argv`, the runtime uptime, and the thread identity all come from the
+  // process arguments, so they are captured before any module initializer runs.
+  builder.CreateCall(runtimeDecl("sere_process_init_args", builder.getVoidTy(), {i32, ptr}),
+                     {cMain->getArg(0), cMain->getArg(1)});
+  builder.CreateCall(runtimeDecl("sere_process_set_backend",
+                                 builder.getVoidTy(),
+                                 {builder.getPtrTy(), builder.getInt64Ty()}),
+                     {builder.CreateGlobalString("llvm", "sere.backend", 0, module_),
+                      builder.getInt64(4)});
   builder.CreateCall(nativeInit);
   if (moduleInitFn_ != nullptr) {
     builder.CreateCall(moduleInitFn_);

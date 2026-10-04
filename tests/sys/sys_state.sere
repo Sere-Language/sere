@@ -1,0 +1,57 @@
+import gc
+import sys
+
+
+def main() -> i32:
+    # Uptime is read from a monotonic clock captured at start-up, so it never
+    # goes backwards and never depends on the wall clock.
+    assert sys.start_time_ns > 0
+    first: i64 = sys.uptime_ns()
+    assert first >= 0
+    second: i64 = sys.uptime_ns()
+    assert second >= first
+    assert sys.uptime_ms() >= 0
+    assert sys.uptime() >= 0.0
+
+    # Thread identity: this program is single-threaded, so the caller is the
+    # thread that entered main.
+    assert sys.thread_id() > 0
+    assert sys.main_thread_id() > 0
+    assert sys.is_main_thread()
+    assert sys.thread_id() == sys.main_thread_id()
+
+    # The collector's name and counters come from the active collector, which is
+    # the same one `gc` reports.
+    assert sys.gc_name() == gc.name()
+    before: sys.GCStats = sys.gc_stats()
+    assert before.collections == gc.collections() as u64
+    assert before.bytes_in_use == gc.bytes_in_use() as u64
+
+    # Installing the built-in collector makes the counters report real work.
+    assert gc.use("mark_sweep")
+    assert sys.gc_name() == "mark_sweep"
+
+    scratch: list[i32] = []
+    for index in range(64):
+        scratch.append(index)
+    assert len(scratch) == 64
+
+    sys.gc_collect()
+    after: sys.GCStats = sys.gc_stats()
+    assert after.collections > before.collections
+    assert after.name == "mark_sweep"
+    assert after.bytes_allocated >= after.bytes_in_use
+
+    # Live objects stay live across a collection.
+    assert len(scratch) == 64
+    assert scratch[63] == 63
+
+    heap: sys.MemoryStats = sys.heap_stats()
+    assert heap.allocated >= heap.live
+    assert heap.blocks == gc.live_blocks() as u64
+
+    snapshot: sys.RuntimeStats = sys.stats()
+    assert snapshot.uptime_ns >= first
+    assert snapshot.gc.collections == after.collections
+    assert snapshot.memory.allocated == heap.allocated
+    return 0

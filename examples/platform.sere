@@ -4,7 +4,7 @@ import sys
 import windows
 
 def main() -> i32:
-    print(__platform__, __arch__, sys.platform(), sys.arch())
+    print(__platform__, __arch__, sys.platform, sys.arch)
     print(sys.family().name, sys.cpu().name, sys.is_unix())
     if __windows__:
         print("compile-time: windows")

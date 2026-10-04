@@ -1,0 +1,36 @@
+import os
+import sys
+
+
+def main(argv: list[str]) -> i32:
+    # `sys.argv` holds the process arguments, and the entry point's own list is
+    # the same one.
+    assert len(sys.argv) >= 1
+    assert sys.argv.len() >= 1
+    assert sys.argc() as i64 == len(sys.argv)
+    assert len(argv) == len(sys.argv)
+    assert sys.argv[0] == argv[0]
+
+    # `argv[0]` is the program path as the platform passed it, and the derived
+    # names describe the same program.
+    assert len(sys.argv[0]) > 0
+    assert len(sys.program_path()) > 0
+    assert len(sys.program_name()) > 0
+    assert len(sys.executable()) > 0
+    assert sys.program_path() == sys.argv[0]
+    assert sys.program_name() != sys.program_path() or sys.program_path() == sys.program_name()
+
+    # The executable path is absolute, so it is safe to hand to the filesystem.
+    assert os.is_absolute(sys.executable())
+    assert os.exists(sys.executable())
+
+    # No argument is empty, because the runtime builds them from the command line.
+    for index in range(len(sys.argv)):
+        assert sys.argv[index] != ""
+
+    if len(sys.argv) > 1:
+        assert sys.argv[1] == "extra"
+
+    assert sys.pid() > 0
+    assert sys.cpu_count() > 0
+    return 0

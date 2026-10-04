@@ -10,6 +10,7 @@ add_library(sere_runtime
   sere_rt.c
   sere_mod.c
   sere_sys.c
+  sere_runtime.c
   sere_stdlib.c
   sere_re.c
   sere_gc.c
@@ -21,6 +22,15 @@ add_library(sere_runtime
   sere_socket.c
   sere_proc.c
   sere_icon.c
+)
+
+# Metadata `sys` reports about the build and the compilation target. The target
+# triple comes from the toolchain when one is configured, so a cross-compiled
+# runtime describes its own target instead of the machine that built it.
+target_compile_definitions(sere_runtime PRIVATE
+  SERE_RUNTIME_BUILD="$<UPPER_CASE:$<CONFIG>>"
+  SERE_RUNTIME_OPT="${SERE_RUNTIME_OPT_LEVEL}"
+  SERE_TARGET_TRIPLE="${CMAKE_C_COMPILER_TARGET}"
 )
 target_include_directories(sere_runtime PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}"

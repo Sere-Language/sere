@@ -8,7 +8,25 @@ project(sere
   LANGUAGES C CXX
 )
 
-set(SERE_VERSION_STRING "pre-${PROJECT_VERSION}")
+set(SERE_VERSION_PRE_RELEASE "pre")
+set(SERE_VERSION_BUILD "" CACHE STRING "Optional build tag reported by sys.version_info.build")
+set(SERE_VERSION_STRING "${SERE_VERSION_PRE_RELEASE}-${PROJECT_VERSION}")
+
+# Optimization level the runtime library is built with, reported by
+# `sys.optimization`. Release presets set CMAKE_C_FLAGS_RELEASE etc., so the
+# first configured flag of the active build type is the closest single answer.
+set(SERE_RUNTIME_OPT_LEVEL "unknown")
+foreach(_sere_opt_config Debug Release RelWithDebInfo MinSizeRel)
+  string(TOUPPER "${_sere_opt_config}" _sere_opt_upper)
+  if(CMAKE_BUILD_TYPE STREQUAL _sere_opt_config OR
+     (NOT CMAKE_BUILD_TYPE AND CMAKE_CONFIGURATION_TYPES))
+    string(REGEX MATCH "[/-]O[0-9sz]+" _sere_opt_match "${CMAKE_C_FLAGS_${_sere_opt_upper}}")
+    if(_sere_opt_match)
+      # Report the portable spelling (`O2`) rather than the driver's flag form.
+      string(REGEX REPLACE "^[/-]" "" SERE_RUNTIME_OPT_LEVEL "${_sere_opt_match}")
+    endif()
+  endif()
+endforeach()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

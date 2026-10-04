@@ -28,6 +28,11 @@ struct RecordField {
   bool isPublic = true;
   bool isStatic = false;
   bool stored = true;
+  /// Set on a module export that names a type (a class, enum, or `type` alias)
+  /// rather than holding a value. Only a type export becomes a type object when
+  /// it is reached through the module, so a module value of record type stays a
+  /// value.
+  bool isTypeExport = false;
   std::string llvmName{};
   std::string getterLlvm{};
   std::string setterLlvm{};

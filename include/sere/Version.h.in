@@ -3,4 +3,9 @@
 #define SERE_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
 #define SERE_VERSION_MINOR @PROJECT_VERSION_MINOR@
 #define SERE_VERSION_PATCH @PROJECT_VERSION_PATCH@
+/// Pre-release tag such as `pre`, or empty for a final release.
+#define SERE_VERSION_PRE_RELEASE "@SERE_VERSION_PRE_RELEASE@"
+/// Optional build tag set by the packaging step; empty for ordinary builds so
+/// the binaries stay reproducible.
+#define SERE_VERSION_BUILD "@SERE_VERSION_BUILD@"
 #define SERE_VERSION_STRING "@SERE_VERSION_STRING@"

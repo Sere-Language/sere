@@ -1,0 +1,51 @@
+import sys
+
+
+def raises_value() -> void:
+    raise ValueError("boom")
+
+
+def raises_custom() -> void:
+    raise RuntimeError("custom failure")
+
+
+def main() -> i32:
+    # Outside a handler there is no active exception, and the accessors report
+    # that rather than inventing one.
+    assert not sys.has_exception()
+    assert not sys.exception().active
+    assert sys.exception_type() == ""
+    assert sys.exception_message() == ""
+
+    try:
+        raises_value()
+    except ValueError as error:
+        assert error.message == "boom"
+        info: sys.ExceptionInfo = sys.exception()
+        assert info.active
+        assert info.type == "ValueError"
+        assert info.message == "boom"
+        assert sys.has_exception()
+        assert sys.exception_type() == "ValueError"
+        assert sys.exception_message() == "boom"
+
+    # The handler's exception is gone once the block ends.
+    assert not sys.has_exception()
+
+    try:
+        raises_custom()
+    except RuntimeError as error:
+        assert error.message == "custom failure"
+        nested: sys.ExceptionInfo = sys.exception()
+        assert nested.type == "RuntimeError"
+        assert nested.message == "custom failure"
+
+    assert not sys.exception().active
+
+    # A caught exception resumes cleanly, so a later raise reports its own type.
+    try:
+        raises_value()
+    except ValueError:
+        assert sys.exception_type() == "ValueError"
+    assert not sys.has_exception()
+    return 0
