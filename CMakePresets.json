@@ -71,6 +71,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_CXX_SCAN_FOR_MODULES": "OFF",
         "LLVM_DIR": "$env{SERE_LLVM_DIR}/lib/cmake/llvm",
         "CMAKE_C_COMPILER": "$env{SERE_LLVM_DIR}/bin/clang",
         "CMAKE_CXX_COMPILER": "$env{SERE_LLVM_DIR}/bin/clang++",

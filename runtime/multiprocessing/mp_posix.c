@@ -226,7 +226,12 @@ MpProcess* mpSpawn(const char* payload, int64_t len, int32_t daemon, char* err, 
 
   posix_spawn_file_actions_t actions;
   posix_spawn_file_actions_init(&actions);
+#if !defined(__GLIBC__)
+  // musl and the BSDs need the descriptor marked inheritable explicitly.
+  // glibc inherits it by default (FD_CLOEXEC was cleared above) and has no
+  // posix_spawn_file_actions_addinherit_np at all.
   posix_spawn_file_actions_addinherit_np(&actions, fds[0]);
+#endif
   char* argv[3];
   argv[0] = (char*)program;
   argv[1] = handleArg;

@@ -47,6 +47,9 @@ static void outOwned(char* data, int64_t len, const char** out_data, int64_t* ou
   }
 }
 
+// Only the WinHTTP client path uses these; the POSIX build must not carry them.
+#ifdef _WIN32
+
 static char* dupRange(const char* data, int64_t len) {
   if (data == NULL || len < 0) {
     len = 0;
@@ -61,9 +64,6 @@ static char* dupRange(const char* data, int64_t len) {
   copy[len] = '\0';
   return copy;
 }
-
-// Only the WinHTTP client path uses this; the POSIX build must not carry it.
-#ifdef _WIN32
 
 static void outCString(const char* text, const char** out_data, int64_t* out_len) {
   if (text == NULL) {

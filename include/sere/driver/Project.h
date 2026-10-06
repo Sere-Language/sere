@@ -69,6 +69,10 @@ void prepareImportedLibraryNative(const std::vector<std::filesystem::path>& impo
 
 [[nodiscard]] int buildProject(const CompilerOptions& options);
 [[nodiscard]] int packLibrary(const CompilerOptions& options);
+/// `sere slib-info <file.slib>`: report what a packed library contains.
+[[nodiscard]] int slibInfo(const CompilerOptions& options);
+/// `sere slib-verify <file.slib>`: check the archive and the files it names.
+[[nodiscard]] int slibVerify(const CompilerOptions& options);
 [[nodiscard]] int runProject(const CompilerOptions& options);
 [[nodiscard]] int cleanProject(const CompilerOptions& options);
 

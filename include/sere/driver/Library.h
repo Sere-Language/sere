@@ -32,6 +32,13 @@ struct PackedLibrary {
 
 [[nodiscard]] bool isNativeSourceFile(const std::filesystem::path& path);
 
+/// A native header (`*.h`, `*.hpp`, ...). Headers travel with native sources so
+/// a package built from source can include its own declarations.
+[[nodiscard]] bool isNativeHeaderFile(const std::filesystem::path& path);
+
+/// Lowercase hex SHA-256 of a byte range, used for `.slib` integrity checks.
+[[nodiscard]] std::string sha256Hex(std::string_view data);
+
 [[nodiscard]] bool isExtractedLibraryPath(const std::filesystem::path& path);
 
 /// Entry file for a folder library: `__init__.sere`, `name.sere`, then `lib.sere`.

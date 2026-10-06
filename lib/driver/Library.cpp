@@ -9,7 +9,10 @@
 
 #include <cctype>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
+#include <algorithm>
+#include <map>
 #include <string_view>
 #include <system_error>
 
@@ -18,7 +21,128 @@ namespace {
 
 constexpr std::string_view kMagicV1 = "SERELIB/1";
 constexpr std::string_view kMagicV2 = "SERELIB/2";
+/// Version 3 adds a SHA-256 line per member and writes members in path order, so
+/// two packs of the same content produce the same bytes.
+constexpr std::string_view kMagicV3 = "SERELIB/3";
 constexpr std::string_view kExtractStamp = ".extracted";
+
+// ---------------------------------------------------------------------------
+// SHA-256 (FIPS 180-4), used for `.slib` member integrity checks.
+// ---------------------------------------------------------------------------
+
+struct Sha256 {
+  std::uint32_t state[8] = {0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u, 0xa54ff53au,
+                            0x510e527fu, 0x9b05688cu, 0x1f83d9abu, 0x5be0cd19u};
+  std::uint64_t bitCount = 0;
+  std::uint8_t buffer[64] = {};
+  std::size_t buffered = 0;
+
+  void absorbBlock(const std::uint8_t* block) {
+    static constexpr std::uint32_t kRound[64] = {
+        0x428a2f98u, 0x71374491u, 0xb5c0fbcfu, 0xe9b5dba5u, 0x3956c25bu, 0x59f111f1u, 0x923f82a4u,
+        0xab1c5ed5u, 0xd807aa98u, 0x12835b01u, 0x243185beu, 0x550c7dc3u, 0x72be5d74u, 0x80deb1feu,
+        0x9bdc06a7u, 0xc19bf174u, 0xe49b69c1u, 0xefbe4786u, 0x0fc19dc6u, 0x240ca1ccu, 0x2de92c6fu,
+        0x4a7484aau, 0x5cb0a9dcu, 0x76f988dau, 0x983e5152u, 0xa831c66du, 0xb00327c8u, 0xbf597fc7u,
+        0xc6e00bf3u, 0xd5a79147u, 0x06ca6351u, 0x14292967u, 0x27b70a85u, 0x2e1b2138u, 0x4d2c6dfcu,
+        0x53380d13u, 0x650a7354u, 0x766a0abbu, 0x81c2c92eu, 0x92722c85u, 0xa2bfe8a1u, 0xa81a664bu,
+        0xc24b8b70u, 0xc76c51a3u, 0xd192e819u, 0xd6990624u, 0xf40e3585u, 0x106aa070u, 0x19a4c116u,
+        0x1e376c08u, 0x2748774cu, 0x34b0bcb5u, 0x391c0cb3u, 0x4ed8aa4au, 0x5b9cca4fu, 0x682e6ff3u,
+        0x748f82eeu, 0x78a5636fu, 0x84c87814u, 0x8cc70208u, 0x90befffau, 0xa4506cebu, 0xbef9a3f7u,
+        0xc67178f2u};
+    const auto rotate = [](std::uint32_t value, unsigned bits) {
+      return (value >> bits) | (value << (32u - bits));
+    };
+    std::uint32_t words[64] = {};
+    for (std::size_t index = 0; index < 16; ++index) {
+      words[index] = (static_cast<std::uint32_t>(block[index * 4]) << 24) |
+                     (static_cast<std::uint32_t>(block[index * 4 + 1]) << 16) |
+                     (static_cast<std::uint32_t>(block[index * 4 + 2]) << 8) |
+                     static_cast<std::uint32_t>(block[index * 4 + 3]);
+    }
+    for (std::size_t index = 16; index < 64; ++index) {
+      const std::uint32_t s0 = rotate(words[index - 15], 7) ^ rotate(words[index - 15], 18) ^
+                               (words[index - 15] >> 3);
+      const std::uint32_t s1 = rotate(words[index - 2], 17) ^ rotate(words[index - 2], 19) ^
+                               (words[index - 2] >> 10);
+      words[index] = words[index - 16] + s0 + words[index - 7] + s1;
+    }
+    std::uint32_t a = state[0];
+    std::uint32_t b = state[1];
+    std::uint32_t c = state[2];
+    std::uint32_t d = state[3];
+    std::uint32_t e = state[4];
+    std::uint32_t f = state[5];
+    std::uint32_t g = state[6];
+    std::uint32_t h = state[7];
+    for (std::size_t index = 0; index < 64; ++index) {
+      const std::uint32_t s1 = rotate(e, 6) ^ rotate(e, 11) ^ rotate(e, 25);
+      const std::uint32_t choose = (e & f) ^ (~e & g);
+      const std::uint32_t temp1 = h + s1 + choose + kRound[index] + words[index];
+      const std::uint32_t s0 = rotate(a, 2) ^ rotate(a, 13) ^ rotate(a, 22);
+      const std::uint32_t majority = (a & b) ^ (a & c) ^ (b & c);
+      const std::uint32_t temp2 = s0 + majority;
+      h = g;
+      g = f;
+      f = e;
+      e = d + temp1;
+      d = c;
+      c = b;
+      b = a;
+      a = temp1 + temp2;
+    }
+    state[0] += a;
+    state[1] += b;
+    state[2] += c;
+    state[3] += d;
+    state[4] += e;
+    state[5] += f;
+    state[6] += g;
+    state[7] += h;
+  }
+
+  void update(const char* data, std::size_t size) {
+    bitCount += static_cast<std::uint64_t>(size) * 8u;
+    for (std::size_t index = 0; index < size; ++index) {
+      buffer[buffered++] = static_cast<std::uint8_t>(data[index]);
+      if (buffered == 64) {
+        absorbBlock(buffer);
+        buffered = 0;
+      }
+    }
+  }
+
+  [[nodiscard]] std::string finish() {
+    const std::uint64_t bits = bitCount;
+    const std::uint8_t pad = 0x80;
+    update(reinterpret_cast<const char*>(&pad), 1);
+    const std::uint8_t zero = 0;
+    while (buffered != 56) {
+      update(reinterpret_cast<const char*>(&zero), 1);
+    }
+    std::uint8_t length[8] = {};
+    for (int index = 0; index < 8; ++index) {
+      length[7 - index] = static_cast<std::uint8_t>((bits >> (index * 8)) & 0xffu);
+    }
+    update(reinterpret_cast<const char*>(length), 8);
+    static const char kHex[] = "0123456789abcdef";
+    std::string text;
+    text.reserve(64);
+    for (int index = 0; index < 8; ++index) {
+      for (int shift = 28; shift >= 0; shift -= 4) {
+        text.push_back(kHex[(state[index] >> shift) & 0xfu]);
+      }
+    }
+    return text;
+  }
+};
+
+[[nodiscard]] std::string lowerHex(std::string_view text) {
+  std::string out(text);
+  for (char& ch : out) {
+    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  }
+  return out;
+}
 
 [[nodiscard]] bool namesEqual(const std::filesystem::path& left,
                               const std::filesystem::path& right) {
@@ -287,6 +411,17 @@ bool isNativeSourceFile(const std::filesystem::path& path) {
   return ext == ".c" || ext == ".cc" || ext == ".cpp" || ext == ".cxx";
 }
 
+bool isNativeHeaderFile(const std::filesystem::path& path) {
+  const std::string ext = path.extension().string();
+  return ext == ".h" || ext == ".hh" || ext == ".hpp" || ext == ".hxx" || ext == ".inc";
+}
+
+std::string sha256Hex(std::string_view data) {
+  Sha256 hash;
+  hash.update(data.data(), data.size());
+  return hash.finish();
+}
+
 bool isExtractedLibraryPath(const std::filesystem::path& path) {
   return pathHasPart(path, ".sere-lib");
 }
@@ -403,28 +538,43 @@ bool writePackedLibrary(const std::filesystem::path& slibPath,
     error = "cannot write '" + slibPath.string() + "'";
     return false;
   }
+  // Members are written in path order and each one records its hash, so packing
+  // the same content twice produces the same archive bytes.
+  std::vector<const LibraryMember*> members;
+  members.reserve(library.files.size());
+  for (const LibraryMember& file : library.files) {
+    members.push_back(&file);
+  }
+  std::sort(members.begin(), members.end(), [](const LibraryMember* left,
+                                               const LibraryMember* right) {
+    return left->relativePath < right->relativePath;
+  });
   const bool canCompress = zlibAvailable();
-  output << (canCompress ? kMagicV2 : kMagicV1) << '\n';
+  output << kMagicV3 << '\n';
   output << "name=" << library.name << '\n';
   output << "version=" << library.version << '\n';
   output << "entry=" << library.entry << '\n';
   if (canCompress) {
     output << "encoding=zlib\n";
   }
+  output << "hashes=sha256\n";
+  for (const LibraryMember* file : members) {
+    output << "HASH " << file->relativePath << ' ' << sha256Hex(file->bytes) << '\n';
+  }
   output << '\n';
-  for (const LibraryMember& file : library.files) {
+  for (const LibraryMember* file : members) {
     std::string packed;
-    const bool compressed = canCompress && zlibCompress(file.bytes, packed);
-    const std::string& payload = compressed ? packed : file.bytes;
+    const bool compressed = canCompress && zlibCompress(file->bytes, packed);
+    const std::string& payload = compressed ? packed : file->bytes;
     if (canCompress) {
-      output << "FILE " << file.relativePath << ' ' << file.bytes.size() << ' ' << payload.size()
-             << '\n';
+      output << "FILE " << file->relativePath << ' ' << file->bytes.size() << ' '
+             << payload.size() << '\n';
     } else {
-      output << "FILE " << file.relativePath << ' ' << file.bytes.size() << '\n';
+      output << "FILE " << file->relativePath << ' ' << file->bytes.size() << '\n';
     }
     output.write(payload.data(), static_cast<std::streamsize>(payload.size()));
     if (!output) {
-      error = "cannot write member '" + file.relativePath + "'";
+      error = "cannot write member '" + file->relativePath + "'";
       return false;
     }
   }
@@ -445,34 +595,68 @@ bool readPackedLibrary(const std::filesystem::path& slibPath,
     return false;
   }
   const std::string magic = trimCopy(line);
-  if (magic != kMagicV1 && magic != kMagicV2) {
+  if (magic != kMagicV1 && magic != kMagicV2 && magic != kMagicV3) {
+    if (magic.starts_with("SERELIB/")) {
+      error = "'" + slibPath.string() +
+              "' uses a newer .slib format than this compiler understands; update sere";
+      return false;
+    }
     error = "'" + slibPath.string() + "' is not a Sere library (.slib)";
     return false;
   }
   library = PackedLibrary{};
   std::string encoding = "raw";
+  bool hashesRecorded = false;
   while (std::getline(input, line)) {
     const std::string trimmed = trimCopy(line);
     if (trimmed.empty()) {
       break;
+    }
+    if (trimmed == "hashes=sha256") {
+      hashesRecorded = true;
+      continue;
     }
     if (!parseMetaLine(trimmed, library, encoding)) {
       error = "invalid library header in '" + slibPath.string() + "'";
       return false;
     }
   }
+  std::map<std::string, std::string> recorded;
+  bool firstMember = true;
+  std::string pending;
   const bool zlibMembers = encoding == "zlib";
   while (true) {
-    if (!std::getline(input, line)) {
+    if (firstMember) {
+      firstMember = false;
+    } else if (!std::getline(input, pending)) {
       break;
     }
-    if (trimCopy(line).empty()) {
+    if (trimCopy(pending).empty()) {
       continue;
+    }
+    std::string current = trimCopy(pending);
+    while (hashesRecorded && current.starts_with("HASH ")) {
+      const std::string_view rest = std::string_view(current).substr(5);
+      const std::size_t split = rest.find_last_of(" \t");
+      if (split == std::string_view::npos) {
+        error = "invalid HASH line in '" + slibPath.string() + "'";
+        return false;
+      }
+      recorded[trimCopy(rest.substr(0, split))] = lowerHex(trimCopy(rest.substr(split + 1)));
+      if (!std::getline(input, pending)) {
+        error = "library is missing its entry module";
+        return false;
+      }
+      current = trimCopy(pending);
+      if (current.empty()) {
+        error = "library is missing its entry module";
+        return false;
+      }
     }
     std::string relativePath;
     std::uint64_t rawSize = 0;
     std::uint64_t packedSize = 0;
-    if (!parseFileHeader(trimCopy(line), relativePath, rawSize, packedSize)) {
+    if (!parseFileHeader(current, relativePath, rawSize, packedSize)) {
       error = "invalid FILE header in '" + slibPath.string() + "'";
       return false;
     }
@@ -498,6 +682,18 @@ bool readPackedLibrary(const std::filesystem::path& slibPath,
       }
     } else {
       member.bytes = std::move(payload);
+    }
+    if (hashesRecorded) {
+      const auto found = recorded.find(member.relativePath);
+      if (found == recorded.end()) {
+        error = "library member '" + member.relativePath + "' has no recorded hash";
+        return false;
+      }
+      if (sha256Hex(member.bytes) != found->second) {
+        error = "library member '" + member.relativePath +
+                "' failed its integrity check (the archive is damaged or was rebuilt)";
+        return false;
+      }
     }
     library.files.push_back(std::move(member));
   }

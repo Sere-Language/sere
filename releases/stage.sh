@@ -105,7 +105,11 @@ copy_llvm_compiler_bundle() {
     shopt -s nullglob
     for so in "${src}/lib"/libLLVM*.so* "${src}/lib"/libclang*.so* \
               "${src}/lib"/libLTO.so* "${src}/lib"/LLVMgold.so; do
-      cp -a "${so}" "${dest}/lib/"
+      # LLVMgold.so has no glob characters, so nullglob leaves it in place even
+      # when the archive does not ship it; only copy what is actually there.
+      if [[ -e "${so}" ]]; then
+        cp -a "${so}" "${dest}/lib/"
+      fi
     done
     shopt -u nullglob
   fi

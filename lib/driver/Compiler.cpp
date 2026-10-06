@@ -851,6 +851,12 @@ int Compiler::run(const CompilerOptions& options) {
   if (options.projectCommand == ProjectCommand::Pack) {
     return packLibrary(options);
   }
+  if (options.projectCommand == ProjectCommand::SlibInfo) {
+    return slibInfo(options);
+  }
+  if (options.projectCommand == ProjectCommand::SlibVerify) {
+    return slibVerify(options);
+  }
   if (options.projectCommand == ProjectCommand::Run) {
     return runProject(options);
   }

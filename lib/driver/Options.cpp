@@ -19,6 +19,8 @@ void printUsage(std::string& error) {
       "  init-lib <name>     Create a drop-in library project (src, libs, dist)\n"
       "  build               Compile the project; also accepts the compiler options below\n"
       "  pack [file.sere]    Build a single-file .slib you can drop into libs/\n"
+      "  slib-info <f.slib>  Describe a packed library: modules, native content, entry\n"
+      "  slib-verify <f.slib> Check a packed library's hashes, paths, and members\n"
       "  run [args...]       Build and run; everything after `run` goes to the program\n"
       "  clean               Remove bin/ and dist/ artifacts\n"
       "  login [token]       Sign in to the Sere registry (no token: show status)\n"
@@ -126,6 +128,14 @@ void printUsage(std::string& error) {
   }
   if (argument == "pack" || argument == "build-lib" || argument == "build_lib") {
     command = ProjectCommand::Pack;
+    return true;
+  }
+  if (argument == "slib-info" || argument == "slib_info" || argument == "inspect-slib") {
+    command = ProjectCommand::SlibInfo;
+    return true;
+  }
+  if (argument == "slib-verify" || argument == "slib_verify" || argument == "verify-slib") {
+    command = ProjectCommand::SlibVerify;
     return true;
   }
   if (argument == "run") {
@@ -434,6 +444,11 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
         ++index;
         options.inputPath = argv[index];
       }
+      if ((command == ProjectCommand::SlibInfo || command == ProjectCommand::SlibVerify) &&
+          index + 1 < argc && argv[index + 1][0] != '-') {
+        ++index;
+        options.inputPath = argv[index];
+      }
       if (command == ProjectCommand::Login && index + 1 < argc && argv[index + 1][0] != '-') {
         ++index;
         options.authToken = argv[index];
@@ -451,6 +466,12 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
       continue;
     }
     if (options.projectCommand == ProjectCommand::Pack && options.inputPath.empty()) {
+      options.inputPath = std::string(argument);
+      continue;
+    }
+    if ((options.projectCommand == ProjectCommand::SlibInfo ||
+         options.projectCommand == ProjectCommand::SlibVerify) &&
+        options.inputPath.empty()) {
       options.inputPath = std::string(argument);
       continue;
     }

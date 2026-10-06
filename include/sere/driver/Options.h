@@ -28,6 +28,10 @@ enum class ProjectCommand {
   Logout,
   Publish,
   Add,
+  /// `sere slib-info <file.slib>`: describe a packed library.
+  SlibInfo,
+  /// `sere slib-verify <file.slib>`: check a packed library's integrity.
+  SlibVerify,
 };
 
 struct CompilerOptions {
