@@ -63,7 +63,6 @@ perf-test.c
 !/tests/README.md
 generic_constraints_fixtures/
 _scratch/
-cmake/
 .editorconfig
 agents/
 # Scratch IR / objects at the repo root

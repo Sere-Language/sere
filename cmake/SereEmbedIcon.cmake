@@ -1,0 +1,15 @@
+# Writes a C byte-array include from a binary icon so the runtime can load it.
+
+function(sere_embed_icon ico_path out_inc)
+  if(NOT EXISTS "${ico_path}")
+    message(FATAL_ERROR "missing Sere icon: ${ico_path}")
+  endif()
+  file(READ "${ico_path}" _hex HEX)
+  if(_hex STREQUAL "")
+    message(FATAL_ERROR "Sere icon is empty: ${ico_path}")
+  endif()
+  string(REGEX REPLACE "([0-9a-fA-F][0-9a-fA-F])" "0x\\1," _bytes "${_hex}")
+  get_filename_component(_dir "${out_inc}" DIRECTORY)
+  file(MAKE_DIRECTORY "${_dir}")
+  file(WRITE "${out_inc}" "${_bytes}\n")
+endfunction()
