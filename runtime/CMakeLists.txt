@@ -41,6 +41,11 @@ target_compile_definitions(sere_runtime PRIVATE
   SERE_RUNTIME_BUILD="$<UPPER_CASE:$<CONFIG>>"
   SERE_RUNTIME_OPT="${SERE_RUNTIME_OPT_LEVEL}"
   SERE_TARGET_TRIPLE="${CMAKE_C_COMPILER_TARGET}"
+  # `-std=c17` defines __STRICT_ANSI__, which makes glibc hide the POSIX
+  # declarations the runtime uses (clock_gettime, realpath, setenv, nanosleep,
+  # gethostname, ...). The feature-test macro re-enables them; it is inert on
+  # the other platforms this library targets.
+  _GNU_SOURCE
 )
 target_include_directories(sere_runtime PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}"

@@ -2776,11 +2776,11 @@ void sere_os_readlink(const char* path, int64_t path_len, const char** out_data,
 #endif
 }
 
-int32_t sere_os_hardlink(const char* existing, int64_t existing_len, const char* link,
+int32_t sere_os_hardlink(const char* existing, int64_t existing_len, const char* target,
                          int64_t link_len) {
 #ifdef _WIN32
   WCHAR* to = osWide(existing, existing_len);
-  WCHAR* from = osWide(link, link_len);
+  WCHAR* from = osWide(target, link_len);
   if (to == NULL || from == NULL) {
     free(to);
     free(from);
@@ -2792,7 +2792,7 @@ int32_t sere_os_hardlink(const char* existing, int64_t existing_len, const char*
   return ok ? 1 : 0;
 #else
   char* to = toCString(existing, existing_len);
-  char* from = toCString(link, link_len);
+  char* from = toCString(target, link_len);
   if (to == NULL || from == NULL) {
     free(to);
     free(from);

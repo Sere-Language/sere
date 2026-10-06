@@ -1949,7 +1949,8 @@ int32_t Sere_CallObjectEx(Sere_Object* callable,
     return Sere_StatusBadArgument;
   }
   if (callable->extra >= 0 && nargs != callable->extra) {
-    (void)Sere_CheckArity(callable->name, nargs, callable->extra, callable->extra);
+    (void)Sere_CheckArity(callable->name, nargs, (int32_t)callable->extra,
+                          (int32_t)callable->extra);
     return Sere_StatusTypeError;
   }
   return invoke(function, callable->name, args, nargs, result);

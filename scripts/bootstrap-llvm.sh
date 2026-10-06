@@ -95,7 +95,55 @@ export SERE_LLVM_DIR="${INSTALL_DIR}"
 echo
 echo "LLVM ${LLVM_VERSION} is ready:"
 echo "  SERE_LLVM_DIR=${SERE_LLVM_DIR}"
-echo "  clang=$("${SERE_LLVM_DIR}/bin/clang" --version | head -n 1)"
-echo "  ld.lld=$("${SERE_LLVM_DIR}/bin/ld.lld" --version | head -n 1)"
+
+# The archive links some of its tools against system libraries. Distribution
+# SONAMEs and package names change over time, so the only reliable test is to
+# run the tools and ask ldd only when one refuses to start.
+probe_tool() {
+  local path="$1" name out rc=0 libs=""
+  name="$(basename "${path}")"
+  out="$("${path}" --version 2>&1)" || rc=$?
+  if [[ ${rc} -eq 0 ]]; then
+    echo "  ${name}=${out%%$'\n'*}"
+    return 0
+  fi
+  echo "  ${name}:" >&2
+  if command -v ldd >/dev/null 2>&1; then
+    libs="$(ldd "${path}" 2>/dev/null | awk '/=> not found/ { print "    " $1 }')" || libs=""
+  fi
+  if [[ -n "${libs}" ]]; then
+    printf '%s\n' "${libs}" >&2
+  else
+    echo "    (cannot start: ${out%%$'\n'*})" >&2
+  fi
+  return 1
+}
+
+broken=0
+optional_broken=0
+for tool in clang clang++ llvm-ar llvm-ranlib; do
+  [[ -x "${SERE_LLVM_DIR}/bin/${tool}" ]] || continue
+  probe_tool "${SERE_LLVM_DIR}/bin/${tool}" || broken=1
+done
+# The linker is not fatal here: the release scripts substitute a linker that
+# runs on the host when the archive's ld.lld cannot (it links against
+# libxml2.so.2, which newer distributions no longer ship).
+for tool in ld.lld lld llvm-config llvm-nm llvm-objcopy llvm-strip; do
+  [[ -x "${SERE_LLVM_DIR}/bin/${tool}" ]] || continue
+  probe_tool "${SERE_LLVM_DIR}/bin/${tool}" || optional_broken=1
+done
+if [[ "${broken}" == "0" && "${optional_broken}" != "0" ]]; then
+  echo >&2
+  echo "warning: some bundled tools cannot run on this host (see above)." >&2
+  echo "warning: releases will use a linker that does run; other tools may be unusable." >&2
+fi
+
+if [[ "${broken}" != "0" ]]; then
+  echo >&2
+  echo "The LLVM toolchain cannot run on this host (unresolved libraries above)." >&2
+  echo "Install packages that provide those exact SONAMEs, or use a toolchain" >&2
+  echo "built for this distribution, then re-run this script." >&2
+  exit 1
+fi
 
 echo "Next: source scripts/env.sh (from the repository root)."

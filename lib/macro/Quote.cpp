@@ -789,17 +789,19 @@ std::vector<std::unique_ptr<Stmt>> substStmts(const std::vector<std::unique_ptr<
     if (cloned->kind() == NodeKind::WhileStmt) {
       auto& whileStmt = static_cast<WhileStmt&>(*cloned);
       std::unique_ptr<Expr> condition = substOne(whileStmt.condition(), env, callSite);
-      std::vector<std::unique_ptr<Stmt>> body = substStmts(whileStmt.body(), env, mark, callSite);
+      std::vector<std::unique_ptr<Stmt>> newBody =
+          substStmts(whileStmt.body(), env, mark, callSite);
       out.push_back(std::make_unique<WhileStmt>(
-          callSite, std::move(condition), std::move(body)));
+          callSite, std::move(condition), std::move(newBody)));
       continue;
     }
     if (cloned->kind() == NodeKind::ForStmt) {
       auto& forStmt = static_cast<ForStmt&>(*cloned);
       std::unique_ptr<Expr> iterable = substOne(forStmt.iterable(), env, callSite);
-      std::vector<std::unique_ptr<Stmt>> body = substStmts(forStmt.body(), env, mark, callSite);
+      std::vector<std::unique_ptr<Stmt>> newBody =
+          substStmts(forStmt.body(), env, mark, callSite);
       out.push_back(std::make_unique<ForStmt>(
-          callSite, forStmt.name(), std::move(iterable), std::move(body)));
+          callSite, forStmt.name(), std::move(iterable), std::move(newBody)));
       continue;
     }
     if (cloned->kind() == NodeKind::AssertStmt) {

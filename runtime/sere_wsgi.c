@@ -26,6 +26,14 @@ typedef int Socket;
 #define closeSocket close
 #endif
 
+// POSIX recv() takes a size_t length; Winsock takes an int. Going through this
+// macro keeps both the Linux and the Windows build free of narrowing warnings.
+#ifdef _WIN32
+#define SERE_IO_LENGTH(n) ((int)(n))
+#else
+#define SERE_IO_LENGTH(n) ((size_t)(n))
+#endif
+
 enum { HeaderLimit = 65536, LineLimit = 8192, HeaderCount = 100 };
 typedef struct { Socket socket; int timeout; int port; } WsgiServer;
 typedef struct {
@@ -110,7 +118,7 @@ void* sere_wsgi_listen(const char* host, int64_t size, int32_t port, int32_t bac
       int yes = 1;
       setsockopt(socketHandle, SOL_SOCKET, SO_REUSEADDR, (const char*)&yes, sizeof(yes));
     }
-    if (!bind(socketHandle, addr->ai_addr, (int)addr->ai_addrlen) &&
+    if (!bind(socketHandle, addr->ai_addr, (socklen_t)addr->ai_addrlen) &&
         !listen(socketHandle, backlog)) break;
     closeSocket(socketHandle);
     socketHandle = BAD_SOCKET;
@@ -265,7 +273,7 @@ void* sere_wsgi_accept(void* handle) {
   int used = 0, status = 431;
   while (used < HeaderLimit) {
     int space = HeaderLimit - used;
-    int got = recv(client, req->raw + used, space > 4096 ? 4096 : space, 0);
+    int got = (int)recv(client, req->raw + used, SERE_IO_LENGTH(space > 4096 ? 4096 : space), 0);
     if (got <= 0) { status = 400; break; }
     if (memchr(req->raw + used, 0, (size_t)got)) {
       // NUL in a body is legal; check only the header below after finding its end.
@@ -316,7 +324,7 @@ int32_t sere_wsgi_read(void* handle, char* data, int32_t size) {
     got = size < available ? size : available;
     memcpy(data, req->pending + req->pendingOffset, (size_t)got);
     req->pendingOffset += got;
-  } else got = recv(req->socket, data, size, 0);
+  } else got = (int)recv(req->socket, data, SERE_IO_LENGTH(size), 0);
   if (got <= 0) return -1;
   req->remaining -= got;
   return got;

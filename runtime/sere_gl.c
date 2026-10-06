@@ -36,6 +36,9 @@ static void outEmpty(const char** out_data, int64_t* out_len) {
   }
 }
 
+// Only the Win32 GL path uses these; the stub build above must not carry them.
+#ifdef SERE_HAS_GL
+
 static void outCString(const char* text, const char** out_data, int64_t* out_len) {
   if (text == NULL) {
     outEmpty(out_data, out_len);
@@ -66,6 +69,8 @@ static char* toCString(const char* data, int64_t len) {
 }
 
 static SereList* asList(void* list) { return (SereList*)list; }
+
+#endif /* SERE_HAS_GL */
 
 #ifndef SERE_HAS_GL
 

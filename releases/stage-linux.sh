@@ -67,6 +67,11 @@ if [[ "$(uname -m)" != x86_64 ]]; then
   exit 1
 fi
 
+# The checker that verifies the bundled LLVM toolchain can actually run; it is
+# shared with releases/linux-build.sh.
+# shellcheck source=releases/lib-llvm-check.sh
+. "${SELF}/lib-llvm-check.sh"
+
 # SERE_RELEASE_NAME, not NAME: shells and WSL commonly export NAME (the Windows
 # host name), which would otherwise be mistaken for a release version.
 NAME="${ARG_NAME:-${SERE_RELEASE_NAME:-}}"
@@ -101,7 +106,9 @@ echo "   preset:     ${PRESET}"
 
 # ---------------------------------------------------------------------------
 # Build dependencies. Only touched when something is actually missing, and only
-# through apt-get, so a prepared host is never modified.
+# through apt-get, so a prepared host is never modified. Whether the LLVM
+# toolchain can actually run is a separate, runtime-based check
+# (sere_check_llvm_runtime), so no shared-library names appear here.
 # ---------------------------------------------------------------------------
 if [[ "${SKIP_DEPS}" != "1" ]]; then
   missing=""
@@ -109,42 +116,19 @@ if [[ "${SKIP_DEPS}" != "1" ]]; then
     command -v "${tool}" >/dev/null 2>&1 || missing="${missing} ${tool}"
   done
 
-  # Shared libraries the bundled LLVM links against. Checked by soname and
-  # installed best-effort: a distribution that ships them under a different
-  # package name must not stop the release.
-  optional_missing=""
-  have_so() { ldconfig -p 2>/dev/null | grep -qF "$1"; }
-  have_so 'libxml2.so.2' || optional_missing="${optional_missing} libxml2"
-  have_so 'libzstd.so.1' || optional_missing="${optional_missing} libzstd1"
-  have_so 'libz.so.1' || optional_missing="${optional_missing} zlib1g"
-  have_so 'libtinfo.so.6' || optional_missing="${optional_missing} libtinfo6"
-
-  if [[ -n "${missing}" || -n "${optional_missing}" ]]; then
+  if [[ -n "${missing}" ]]; then
     if ! command -v apt-get >/dev/null 2>&1; then
-      if [[ -n "${missing}" ]]; then
-        echo "Missing build dependencies:${missing}." >&2
-        echo "Install them and retry (or pass --skip-deps to skip this check)." >&2
-        exit 1
-      fi
-      echo "note: no apt-get; assuming${optional_missing} are already present" >&2
-    else
-      export DEBIAN_FRONTEND=noninteractive
-      # A stale mirror must not stop an otherwise satisfiable build.
-      if ! run_root apt-get update -qq; then
-        echo "warning: apt-get update failed; continuing" >&2
-      fi
-      if [[ -n "${missing}" ]]; then
-        echo "== installing build dependencies:${missing} =="
-        run_root apt-get install -y -qq cmake ninja-build curl xz-utils zip file
-      fi
-      if [[ -n "${optional_missing}" ]]; then
-        echo "== installing LLVM runtime libraries:${optional_missing} =="
-        # Not fatal: they are only needed if the bundled clang links them.
-        if ! run_root apt-get install -y -qq ${optional_missing}; then
-          echo "warning: could not install${optional_missing}; continuing" >&2
-        fi
-      fi
+      echo "Missing build dependencies:${missing}." >&2
+      echo "Install them and retry (or pass --skip-deps to skip this check)." >&2
+      exit 1
     fi
+    export DEBIAN_FRONTEND=noninteractive
+    # A stale mirror must not stop an otherwise satisfiable build.
+    if ! run_root apt-get update -qq; then
+      echo "warning: apt-get update failed; continuing" >&2
+    fi
+    echo "== installing build dependencies:${missing} =="
+    run_root apt-get install -y -qq cmake ninja-build curl xz-utils zip file
   fi
 fi
 
@@ -172,6 +156,73 @@ export SERE_LLVM_DIR="${LLVM_DIR}"
 export PATH="${SERE_LLVM_DIR}/bin:${PATH}"
 echo "   llvm:       ${SERE_LLVM_DIR}"
 
+# Validate the toolchain by running it; never assume a particular SONAME.
+if ! sere_check_llvm_runtime "${SERE_LLVM_DIR}" "${LLVM_VERSION}"; then
+  echo "Fix the LLVM toolchain above, or point SERE_LLVM_DIR at a working LLVM ${LLVM_VERSION}." >&2
+  exit 1
+fi
+
+# The project is C++20, so clang++ needs the host C++ standard library.
+if ! sere_cxx_stdlib_ok "${SERE_LLVM_DIR}/bin/clang++"; then
+  if [[ "${SKIP_DEPS}" != "1" ]] && command -v apt-get >/dev/null 2>&1; then
+    echo "== installing a C++ standard library (required by clang++) =="
+    export DEBIAN_FRONTEND=noninteractive
+    if ! run_root apt-get install -y -qq g++; then
+      echo "warning: could not install g++" >&2
+    fi
+  fi
+  if ! sere_cxx_stdlib_ok "${SERE_LLVM_DIR}/bin/clang++"; then
+    [[ -z "${SERE_CXX_PROBE_OUTPUT}" ]] || printf '%s\n' "${SERE_CXX_PROBE_OUTPUT}" >&2
+    echo "clang++ cannot compile C++20. Install a C++ standard library" >&2
+    echo "(for example 'sudo apt-get install -y g++') and re-run." >&2
+    exit 1
+  fi
+fi
+
+# LLVMExports.cmake needs the development packages of the libraries the
+# archive was built against; install them when the throwaway probe fails.
+if ! sere_llvm_cmake_ok "${SERE_LLVM_DIR}" "${SERE_LLVM_DIR}/bin/clang++"; then
+  if [[ "${SKIP_DEPS}" != "1" ]] && command -v apt-get >/dev/null 2>&1; then
+    echo "== installing LLVM SDK development packages =="
+    export DEBIAN_FRONTEND=noninteractive
+    if ! run_root apt-get update -qq; then
+      echo "warning: apt-get update failed; continuing" >&2
+    fi
+    # One package at a time: a name this distribution does not have (libtinfo-dev
+    # has no candidate on Ubuntu 26.04) must not stop the others from installing.
+    for pkg in libzstd-dev zlib1g-dev libxml2-dev; do
+      if ! run_root apt-get install -y -qq "${pkg}"; then
+        echo "warning: could not install ${pkg}" >&2
+      fi
+    done
+  fi
+  if ! sere_llvm_cmake_ok "${SERE_LLVM_DIR}" "${SERE_LLVM_DIR}/bin/clang++"; then
+    printf '%s\n' "${SERE_LLVM_CMAKE_PROBE_OUTPUT}" | tail -n 25 >&2
+    echo "The LLVM CMake package cannot be configured. Install the development" >&2
+    echo "packages its imported targets need (zstd, zlib, libxml2) and re-run." >&2
+    exit 1
+  fi
+fi
+
+# The archive's ld.lld links against libxml2.so.2, which some distributions no
+# longer ship (Ubuntu 26.04 ships libxml2.so.16). Substitute a linker that runs
+# on this host instead of failing the release over one bundled tool.
+configure_args=()
+linker="$(sere_select_linker "${SERE_LLVM_DIR}")" || linker=""
+if [[ -z "${linker}" ]]; then
+  echo "No usable linker found (tried the bundled ld.lld, ld.lld, lld, ld, mold)." >&2
+  exit 1
+fi
+if [[ "${linker}" != "${SERE_LLVM_DIR}/bin/ld.lld" ]]; then
+  echo "   linker:     ${linker} (bundled ld.lld cannot run here)"
+  configure_args+=(
+    "-DCMAKE_LINKER=${linker}"
+    "-DCMAKE_EXE_LINKER_FLAGS_INIT=" "-DCMAKE_EXE_LINKER_FLAGS="
+    "-DCMAKE_SHARED_LINKER_FLAGS_INIT=" "-DCMAKE_SHARED_LINKER_FLAGS="
+    "-DCMAKE_MODULE_LINKER_FLAGS_INIT=" "-DCMAKE_MODULE_LINKER_FLAGS="
+  )
+fi
+
 # ---------------------------------------------------------------------------
 # Configure, build, and optionally test. The preset is Linux-only, so the
 # condition in CMakePresets.json also rejects a non-Linux host here.
@@ -179,7 +230,7 @@ echo "   llvm:       ${SERE_LLVM_DIR}"
 cd "${REPO}"
 if [[ "${SKIP_BUILD}" != "1" ]]; then
   echo "== configure (${PRESET}) =="
-  cmake --preset "${PRESET}"
+  cmake --preset "${PRESET}" ${configure_args[@]+"${configure_args[@]}"}
   echo "== build (${PRESET}) =="
   build_args=(--preset "${PRESET}")
   if [[ -n "${JOBS}" ]]; then

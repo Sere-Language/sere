@@ -62,6 +62,9 @@ static char* dupRange(const char* data, int64_t len) {
   return copy;
 }
 
+// Only the WinHTTP client path uses this; the POSIX build must not carry it.
+#ifdef _WIN32
+
 static void outCString(const char* text, const char** out_data, int64_t* out_len) {
   if (text == NULL) {
     outEmpty(out_data, out_len);
@@ -70,6 +73,7 @@ static void outCString(const char* text, const char** out_data, int64_t* out_len
   const int64_t len = (int64_t)strlen(text);
   outOwned(dupRange(text, len), len, out_data, out_len);
 }
+#endif
 
 static int hexDigit(char c) {
   if (c >= '0' && c <= '9') {

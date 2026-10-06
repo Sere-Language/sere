@@ -197,7 +197,7 @@ static void sweepCollect(void* ctx) {
     return;
   }
   for (GcBlock* block = g_blocks; block != NULL; block = block->next) {
-    block->flags &= ~kGcMarked;
+    block->flags &= ~(uint32_t)kGcMarked;
   }
   for (int64_t index = 0; index < g_root_len; ++index) {
     markPointer(g_roots[index]);
