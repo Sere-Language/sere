@@ -819,20 +819,25 @@ LanguageContext resolveLanguageContext(const std::filesystem::path& start) {
   if (root.has_value()) {
     context.project = manifestFromRoot(*root);
   }
+  // The stdlib shipped next to the compiler is the default and must win over an
+  // ambient SERE_STDLIB, so a development build always uses the stdlib it was
+  // built against instead of a possibly stale copy left elsewhere on the machine.
+  // A project venv activated through SERE_ACTIVE still takes precedence.
+  const std::filesystem::path defaultStdlib = findStdlibDirectory(compilerDirectory());
   if (context.project.has_value()) {
     const bool envMatchesProject = envActive && samePath(envRoot, context.project->root);
     if (envMatchesProject && stdlibUsable(envStdlib)) {
       context.stdlib = envStdlib;
     } else if (stdlibUsable(context.project->stdlib)) {
       context.stdlib = context.project->stdlib;
-    } else if (stdlibUsable(envStdlib)) {
-      context.stdlib = envStdlib;
+    } else if (stdlibUsable(defaultStdlib)) {
+      context.stdlib = defaultStdlib;
     }
-  } else if (stdlibUsable(envStdlib)) {
-    context.stdlib = envStdlib;
+  } else if (stdlibUsable(defaultStdlib)) {
+    context.stdlib = defaultStdlib;
   }
   if (context.stdlib.empty()) {
-    context.stdlib = findStdlibDirectory(compilerDirectory());
+    context.stdlib = defaultStdlib;
   }
   return context;
 }

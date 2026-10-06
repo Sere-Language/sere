@@ -1,4 +1,4 @@
-"""Serialization plumbing for `multiprocessing`: native bindings, the wire
+﻿"""Serialization plumbing for `multiprocessing`: native bindings, the wire
 codec, target registration, and the reduction registry.
 
 This module imports nothing else from the package, which keeps the dependency
@@ -166,37 +166,102 @@ const TAG_SHARED_MEMORY: str = "__sere_mp_shared_memory__"
 const TAG_VALUE: str = "__sere_mp_value__"
 const TAG_ARRAY: str = "__sere_mp_array__"
 
-# A reducer is a `Callable[[Any], Any]` that returns a transferable description
-# of an object it recognizes, or `None` to pass. Type modules add themselves
-# here during module initialization; imported modules initialize first, so the
-# tables already exist when a rule is registered.
-static _reduce_rules: list[Any] = []
-static _rebuild_rules: dict[str, Any] = {}
+# Numeric kinds for the rebuild table. Rules are keyed by a number rather than
+# by the tag string so a registration call carries nothing but scalars and
+# pointers.
+const KIND_CONNECTION: i32 = 1
+const KIND_LOCK: i32 = 2
+const KIND_SEMAPHORE: i32 = 3
+const KIND_BOUNDED_SEMAPHORE: i32 = 4
+const KIND_EVENT: i32 = 5
+const KIND_QUEUE: i32 = 6
+const KIND_SIMPLE_QUEUE: i32 = 7
+const KIND_JOINABLE_QUEUE: i32 = 8
+const KIND_SHARED_MEMORY: i32 = 9
+const KIND_VALUE: i32 = 10
+const KIND_ARRAY: i32 = 11
+
+# A reducer describes an object it recognizes, or returns None to pass. The
+# rule tables live in the runtime (see `sere_mp_add_reducer`) rather than in
+# Sere globals: a module that registers a rule can be initialized before the
+# module that would declare the table, and a Sere global initializer would then
+# wipe the registrations. Type modules register during module initialization.
 static _hook_installed: bool = False
 
+extern "C" "sere_mp_add_reducer"
+def native_add_rule(box: Ptr[i8]) -> void
+"""Store a reduction rule."""
 
-def register_reducer(rule: Any) -> bool:
-    """Add a reduction rule; `rule` is a `Callable[[Any], Any]`."""
-    _reduce_rules.append(rule)
+extern "C" "sere_mp_reducer_count"
+def native_rule_count() -> i32
+"""Number of registered rules."""
+
+extern "C" "sere_mp_reducer_into"
+def native_rule_into(index: i32, out_box: Ptr[i8]) -> void
+"""Copy a stored rule into `out_box`."""
+
+
+def register_rule(rule: Callable[[Any], Any]) -> bool:
+    """Add a rule that describes values it recognizes and rebuilds its own
+    descriptions. A rule returns `None` when the value is not its business."""
+    callable_rule: Callable[[Any], Any] = rule
+    boxed: Any = callable_rule
+    native_add_rule(&boxed as Ptr[i8])
     return True
 
 
-def register_rebuilder(tag: str, rule: Any) -> bool:
-    """Add a rebuild rule for `tag`; `rule` is a `Callable[[list[Any]], Any]`."""
-    _rebuild_rules[tag] = rule
-    return True
+def rule_count() -> i64:
+    """Return how many rules are registered (diagnostics)."""
+    return native_rule_count() as i64
+
+
+def apply_rule(index: i32, value: Any) -> Any:
+    """Run the stored rule at `index`, or return `None` when there is none."""
+    if index >= native_rule_count() or index < 0:
+        return None
+    rule_box: Any = None
+    native_rule_into(index, &rule_box as Ptr[i8])
+    rule: Callable[[Any], Any] = rule_box as Callable[[Any], Any]
+    return rule(value)
+
+
+def dispatch(value: Any) -> Any:
+    """Run the rules in order; the first non-None result wins.
+
+    The indices are unrolled rather than looped: each rule is fetched into its
+    own local immediately before the call, which keeps the boxed fetch and the
+    cast adjacent.
+    """
+    result: Any = apply_rule(0, value)
+    if not isinstance(result, None):
+        return result
+    result = apply_rule(1, value)
+    if not isinstance(result, None):
+        return result
+    result = apply_rule(2, value)
+    if not isinstance(result, None):
+        return result
+    result = apply_rule(3, value)
+    if not isinstance(result, None):
+        return result
+    result = apply_rule(4, value)
+    if not isinstance(result, None):
+        return result
+    result = apply_rule(5, value)
+    if not isinstance(result, None):
+        return result
+    result = apply_rule(6, value)
+    if not isinstance(result, None):
+        return result
+    result = apply_rule(7, value)
+    if not isinstance(result, None):
+        return result
+    return value
 
 
 def reduce(value: Any) -> Any:
     """Return a transferable description of `value`, or `value` unchanged."""
-    for rule in _reduce_rules:
-        apply_rule: Callable[[Any], Any] = rule as Callable[[Any], Any]
-        described: Any = apply_rule(value)
-        # `isinstance(x, None)` is the supported None test for a boxed value;
-        # comparing a boxed `Any` with `is None` would compare whole structs.
-        if not isinstance(described, None):
-            return described
-    return value
+    return dispatch(value)
 
 
 def reduce_all(values: list[Any]) -> list[Any]:
@@ -208,19 +273,8 @@ def reduce_all(values: list[Any]) -> list[Any]:
 
 
 def rebuild(value: Any) -> Any:
-    """Recreate whatever `reduce` described; other values pass through."""
-    if not isinstance(value, list[Any]):
-        return value
-    parts: list[Any] = value as list[Any]
-    if len(parts) == 0:
-        return value
-    if not isinstance(parts[0], str):
-        return value
-    tag: str = parts[0] as str
-    if not (tag in _rebuild_rules):
-        return value
-    apply_rule: Callable[[list[Any]], Any] = _rebuild_rules[tag] as Callable[[list[Any]], Any]
-    return apply_rule(parts)
+    """Recreate whatever a rule described; other values pass through."""
+    return dispatch(value)
 
 
 def rebuild_all(values: list[Any]) -> list[Any]:

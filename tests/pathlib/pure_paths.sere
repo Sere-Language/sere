@@ -1,0 +1,180 @@
+from pathlib.pure import PurePosixPath, PureWindowsPath
+
+
+def same(items: list[str], other: list[str]) -> bool:
+    if len(items) != len(other):
+        return False
+    for i in range(len(items)):
+        if items[i] != other[i]:
+            return False
+    return True
+
+
+def main() -> i32:
+    # ---- POSIX: parsing, parts, anchor, name, suffix, stem, parent ---------
+
+    assert str(PurePosixPath("")) == "."
+    assert str(PurePosixPath(".")) == "."
+    assert len(PurePosixPath(".").parts) == 0
+
+    root: PurePosixPath = PurePosixPath("/")
+    assert str(root) == "/"
+    assert root.root == "/"
+    assert root.anchor == "/"
+    assert root.is_absolute()
+    assert str(root.parent) == "/"
+    assert same(root.parts, ["/"])
+
+    slash2: PurePosixPath = PurePosixPath("//")
+    assert str(slash2) == "//"
+    assert slash2.root == "//"
+    assert str(PurePosixPath("///")) == "/"
+
+    foo: PurePosixPath = PurePosixPath("/foo")
+    assert foo.name == "foo" and foo.stem == "foo" and foo.suffix == ""
+    assert str(foo.parent) == "/"
+    assert same(foo.parts, ["/", "foo"])
+    assert foo.as_uri() == "file:///foo"
+
+    rel: PurePosixPath = PurePosixPath("foo/bar")
+    assert str(rel) == "foo/bar"
+    assert same(rel.parts, ["foo", "bar"])
+    assert rel.name == "bar"
+    assert str(rel.parent) == "foo"
+
+    # Empty and dot components are dropped while joining/parsing.
+    assert str(PurePosixPath("foo//bar")) == "foo/bar"
+    assert str(PurePosixPath("foo/./bar")) == "foo/bar"
+    assert str(PurePosixPath("a/")) == "a"
+    assert str(PurePosixPath("./x")) == "x"
+
+    # '..' is preserved: pure paths never touch the filesystem.
+    dotdot: PurePosixPath = PurePosixPath("foo/../bar")
+    assert str(dotdot) == "foo/../bar"
+    assert same(dotdot.parts, ["foo", "..", "bar"])
+    assert str(dotdot.parent) == "foo/.."
+
+    tar: PurePosixPath = PurePosixPath("file.tar.gz")
+    assert tar.name == "file.tar.gz"
+    assert tar.suffix == ".gz"
+    assert same(tar.suffixes, [".tar", ".gz"])
+    assert tar.stem == "file.tar"
+
+    hidden: PurePosixPath = PurePosixPath(".hidden")
+    assert hidden.suffix == "" and hidden.stem == ".hidden" and len(hidden.suffixes) == 0
+
+    abc: PurePosixPath = PurePosixPath("a.b.c")
+    assert abc.suffix == ".c"
+    assert same(abc.suffixes, [".b", ".c"])
+    assert abc.stem == "a.b"
+
+    assert PurePosixPath("..").suffix == ""
+    assert PurePosixPath("...").suffix == ""
+    assert PurePosixPath("...").stem == "..."
+    broken: PurePosixPath = PurePosixPath("x..")
+    assert broken.suffix == "."
+    assert same(broken.suffixes, [".", "."])
+    assert broken.stem == "x."
+
+    # parents
+    deep: PurePosixPath = PurePosixPath("/a/b/c")
+    assert len(deep.parents) == 3
+    assert str(deep.parents[0]) == "/a/b"
+    assert str(deep.parents[1]) == "/a"
+    assert str(deep.parents[2]) == "/"
+    assert not PurePosixPath("a").is_absolute()
+    assert PurePosixPath("/a").is_absolute()
+
+    # transformations
+    t: PurePosixPath = PurePosixPath("/a/b/c.txt")
+    assert str(t.with_name("d.md")) == "/a/b/d.md"
+    assert str(t.with_stem("x")) == "/a/b/x.txt"
+    assert str(t.with_suffix(".md")) == "/a/b/c.md"
+    assert str(PurePosixPath("a") / "b" / "/c") == "/c"
+    assert str(PurePosixPath("a").joinpath("b", "c")) == "a/b/c"
+
+    # relative_to / is_relative_to
+    assert str(PurePosixPath("/a/b/c").relative_to("/a")) == "b/c"
+    assert PurePosixPath("/a/b").is_relative_to("/a")
+    assert not PurePosixPath("/a/b").is_relative_to("/x")
+
+    # match / full_match
+    assert PurePosixPath("/a/b/c.txt").match("*.txt")
+    assert PurePosixPath("/a/b/c.txt").match("b/*.txt")
+    assert PurePosixPath("/a/b/c.txt").match("c.txt")
+    assert PurePosixPath("/a/b/c.txt").full_match("/a/b/*.txt")
+    assert not PurePosixPath("/a/b/c.txt").full_match("*.txt")
+
+    # equality is case-sensitive on POSIX
+    assert not (PurePosixPath("Foo") == PurePosixPath("foo"))
+    assert PurePosixPath("a/b") == PurePosixPath("a", "b")
+
+    # as_uri escaping
+    assert PurePosixPath("/home/user/file name.txt").as_uri() == "file:///home/user/file%20name.txt"
+
+    # ---- Windows: drives, roots, UNC, reserved names -----------------------
+
+    drive_only: PureWindowsPath = PureWindowsPath("C:")
+    assert str(drive_only) == "C:"
+    assert drive_only.drive == "C:"
+    assert drive_only.root == ""
+    assert drive_only.anchor == "C:"
+    assert not drive_only.is_absolute()
+    assert str(drive_only.parent) == "C:"
+
+    drive_rel: PureWindowsPath = PureWindowsPath("C:foo")
+    assert str(drive_rel) == "C:foo"
+    assert same(drive_rel.parts, ["C:", "foo"])
+    assert drive_rel.name == "foo"
+    assert not drive_rel.is_absolute()
+
+    abs_win: PureWindowsPath = PureWindowsPath("C:/foo")
+    assert str(abs_win) == "C:\\foo"
+    assert abs_win.drive == "C:"
+    assert abs_win.root == "\\"
+    assert abs_win.anchor == "C:\\"
+    assert abs_win.is_absolute()
+    assert abs_win.as_posix() == "C:/foo"
+    assert abs_win.as_uri() == "file:///C:/foo"
+    assert str(PureWindowsPath("C:\\foo")) == abs_win.__str__()
+
+    rooted: PureWindowsPath = PureWindowsPath("/foo")
+    assert str(rooted) == "\\foo"
+    assert rooted.drive == "" and rooted.root == "\\"
+    assert not rooted.is_absolute()
+
+    separators: PureWindowsPath = PureWindowsPath("foo/bar")
+    assert str(separators) == "foo\\bar"
+    assert same(separators.parts, ["foo", "bar"])
+
+    unc: PureWindowsPath = PureWindowsPath("//server/share/foo")
+    assert unc.drive == "\\\\server\\share"
+    assert unc.anchor == "\\\\server\\share\\"
+    assert unc.is_absolute()
+    assert unc.as_posix() == "//server/share/foo"
+    assert unc.as_uri() == "file://server/share/foo"
+
+    extended: PureWindowsPath = PureWindowsPath("//?/C:/foo")
+    assert extended.drive == "\\\\?\\C:"
+    assert extended.anchor == "\\\\?\\C:\\"
+    assert extended.as_posix() == "//?/C:/foo"
+
+    extended_unc: PureWindowsPath = PureWindowsPath("//?/UNC/server/share/x")
+    assert extended_unc.drive == "\\\\?\\UNC\\server\\share"
+
+    assert PureWindowsPath("con").is_reserved()
+    assert PureWindowsPath("CON.txt").is_reserved()
+    assert not PureWindowsPath("console").is_reserved()
+
+    # case-insensitive equality on Windows, and never equal across flavours
+    assert PureWindowsPath("Foo") == PureWindowsPath("foo")
+    assert not (PureWindowsPath("a") == PurePosixPath("a"))
+
+    win_tar: PureWindowsPath = PureWindowsPath("C:/Users/Jack/project.tar.gz")
+    assert win_tar.drive == "C:"
+    assert win_tar.stem == "project.tar"
+    assert same(win_tar.suffixes, [".tar", ".gz"])
+    assert str(win_tar.parent) == "C:\\Users\\Jack"
+
+    print("pure_paths ok")
+    return 0

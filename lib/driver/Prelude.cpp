@@ -70,13 +70,17 @@ namespace {
 } // namespace
 
 std::filesystem::path findStdlibDirectory(const std::filesystem::path& compilerDir) {
-  if (const char* fromEnv = std::getenv("SERE_STDLIB");
-      fromEnv != nullptr && fromEnv[0] != '\0' && stdlibHasPrelude(fromEnv)) {
-    return fromEnv;
-  }
+  // Prefer the stdlib shipped next to the compiler binary. A development build
+  // must use the stdlib it was built against even when SERE_STDLIB in the
+  // ambient environment points at a different (possibly stale) installation;
+  // the env var is only a fallback for layouts that have no sibling stdlib.
   const std::filesystem::path nextToCompiler = compilerDir / "stdlib";
   if (stdlibHasPrelude(nextToCompiler)) {
     return nextToCompiler;
+  }
+  if (const char* fromEnv = std::getenv("SERE_STDLIB");
+      fromEnv != nullptr && fromEnv[0] != '\0' && stdlibHasPrelude(fromEnv)) {
+    return fromEnv;
   }
   const std::filesystem::path venvStdlib = compilerDir.parent_path() / "stdlib";
   if (stdlibHasPrelude(venvStdlib)) {

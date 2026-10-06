@@ -1,0 +1,87 @@
+﻿# Multiprocessing regressions: spawn a real child, move values across the
+# boundary, and exercise the process-safe synchronization primitives.
+
+import multiprocessing as mp
+
+def worker(args: list[Any]) -> void:
+    print("child", args[0] as str, args[1] as i32)
+
+static _worker: bool = mp.expose("worker", worker)
+
+def main() -> i32:
+    assert mp.get_start_method() == "spawn"
+    assert mp.get_all_start_methods() == ["spawn"]
+    assert mp.cpu_count() > 0
+    mp.freeze_support()
+
+    p: mp.Process = mp.Process(target=worker, args=["Sere", 7])
+    assert p.name == "Process-1"
+    p.start()
+    assert p.pid > 0
+    assert p.ident == p.pid
+    assert p.is_alive()
+    assert len(mp.active_children()) == 1
+    p.join()
+    assert not p.is_alive()
+    code: i32 = p.exitcode as i32
+    assert code == 0
+    assert len(mp.active_children()) == 0
+    p.close()
+    assert len(p.authkey) == 64
+
+    # An unregistered target is rejected, not silently mis-sent.
+    bad: mp.Process = mp.Process(name="bad")
+    failed: bool = False
+    try:
+        bad.start()
+    except mp.PicklingError:
+        failed = True
+    assert failed
+
+    # Pipes carry values with their Sere types intact.
+    pair: tuple[mp.Connection, mp.Connection] = mp.Pipe()
+    a: mp.Connection = pair[0]
+    b: mp.Connection = pair[1]
+    a.send("hello")
+    text: str = b.recv() as str
+    assert text == "hello"
+    a.send([1, 2, 3])
+    values: list[i32] = b.recv() as list[i32]
+    assert values[2] == 3
+    a.send({"k": 5})
+    mapping: dict[str, i32] = b.recv() as dict[str, i32]
+    assert mapping["k"] == 5
+    assert not b.poll(0.0)
+    a.close()
+    b.close()
+
+    # Process-safe primitives.
+    lock: mp.Lock = mp.Lock()
+    assert lock.acquire()
+    assert lock.locked()
+    lock.release()
+
+    semaphore: mp.Semaphore = mp.Semaphore(2)
+    assert semaphore.acquire()
+    assert semaphore.acquire()
+    assert not semaphore.acquire(block=False)
+
+    bounded: mp.BoundedSemaphore = mp.BoundedSemaphore(1)
+    assert bounded.acquire()
+    bounded.release()
+    over: bool = False
+    try:
+        bounded.release()
+    except ValueError:
+        over = True
+
+    event: mp.Event = mp.Event()
+    assert not event.is_set()
+    event.set()
+    assert event.is_set()
+    assert event.wait(0.0)
+    event.clear()
+    assert not event.is_set()
+
+    print("multiprocessing ok", code)
+    return 0

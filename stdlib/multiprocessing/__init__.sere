@@ -1,0 +1,145 @@
+﻿"""Multiprocessing: a Sere port of Python's `multiprocessing` package.
+
+Import the package, not its internals. A target must be a free (top-level)
+function registered by name with `expose`. Its arguments are passed positionally
+(Python's ``target(*args)``), so ``def worker(name: str) -> void`` is called with
+``args=["x"]``; a target with a single ``list[Any]`` parameter instead receives
+the whole argument list and casts each element itself. Positional parameters may
+be integers, bool, str, list or dict. Values that cross a process boundary: None,
+bool, integers, f32/f64, str, list[T] of those, dict[str, T], and the package's
+own connections, locks, semaphores and events.
+
+See README.md next to this file for the compatibility matrix.
+"""
+
+import string
+
+from multiprocessing.exceptions import AuthenticationError
+from multiprocessing.exceptions import BrokenPipeError
+from multiprocessing.exceptions import BufferTooShort
+from multiprocessing.exceptions import EOFError
+from multiprocessing.exceptions import Empty
+from multiprocessing.exceptions import Full
+from multiprocessing.exceptions import PicklingError
+from multiprocessing.exceptions import ProcessError
+from multiprocessing.exceptions import QueueEmpty
+from multiprocessing.exceptions import QueueFull
+from multiprocessing.exceptions import TimeoutError
+from multiprocessing.exceptions import UnpicklingError
+from multiprocessing.reduction import dumps
+from multiprocessing.reduction import expose
+from multiprocessing.reduction import loads
+from multiprocessing.reduction import rebuild
+from multiprocessing.reduction import reduce
+from multiprocessing.reduction import rule_count
+from multiprocessing.reduction import target_name
+from multiprocessing.connection import Connection
+from multiprocessing.connection import Pipe
+from multiprocessing.connection import wait
+from multiprocessing.process import Process
+from multiprocessing.process import active_children
+from multiprocessing.process import cpu_count
+from multiprocessing.process import current_authkey
+from multiprocessing.process import current_process
+from multiprocessing.process import parent_process
+from multiprocessing.process import self_pid
+from multiprocessing.synchronize import BoundedSemaphore
+from multiprocessing.synchronize import Event
+from multiprocessing.synchronize import Lock
+from multiprocessing.synchronize import Semaphore
+from multiprocessing.reduction_rules import package_rule
+
+const SPAWN: str = "spawn"
+
+def get_start_method(allow_none: bool = False) -> str:
+    """Return the process start method. Only `spawn` is available on Sere.
+
+    `fork` and `forkserver` are absent on purpose: the runtime owns a garbage
+    collector, an async executor and a native allocator, and none of them can
+    be duplicated safely by `fork`.
+    """
+    return SPAWN
+
+def set_start_method(method: str = SPAWN, force: bool = True) -> void:
+    """Accept `spawn`; reject anything else."""
+    if not string.eq(method, SPAWN):
+        raise ValueError("only the spawn start method is supported")
+
+def get_all_start_methods() -> list[str]:
+    """Return the start methods this build supports."""
+    return [SPAWN]
+
+def freeze_support() -> void:
+    """Do nothing; Sere's bootstrap already skips user main in a child."""
+    return
+
+def get_context(method: str = SPAWN) -> Any:
+    """Return the context for `method`. Only `spawn` is accepted.
+
+    The context exposes the same factories as the package, so code written
+    against `ctx.Process(...)` or `ctx.Pipe()` behaves identically to the
+    module-level names.
+    """
+    set_start_method(method)
+    return Context(method)
+
+
+class Context:
+    """A process-start context whose factories all agree on one method.
+
+    Because Sere supports only `spawn`, every context behaves the same way; the
+    type exists so ported code that threads a context object keeps working.
+    """
+
+    method: str
+
+    def __init__(self, method: str = SPAWN) -> void:
+        """Create a context for a start method."""
+        set_start_method(method)
+        self.method = method
+
+    @public method.get:
+        return self.method
+
+    def Process(self,
+                group: Any = None,
+                target: Any = None,
+                name: str = "",
+                args: Any = None,
+                kwargs: Any = None,
+                daemon: Any = None) -> Process:
+        """Create a `Process` bound to this context."""
+        return Process(group, target, name, args, kwargs, daemon)
+
+    def Pipe(self, duplex: bool = True) -> tuple[Connection, Connection]:
+        """Create a pair of connected endpoints."""
+        return Pipe(duplex)
+
+    def Lock(self) -> Lock:
+        """Create a process-safe lock."""
+        return Lock()
+
+    def Semaphore(self, value: i64 = 1) -> Semaphore:
+        """Create a process-safe counting semaphore."""
+        return Semaphore(value)
+
+    def BoundedSemaphore(self, value: i64 = 1) -> BoundedSemaphore:
+        """Create a semaphore that refuses to be over-released."""
+        return BoundedSemaphore(value)
+
+    def Event(self) -> Event:
+        """Create a process-safe event."""
+        return Event()
+
+    def cpu_count(self) -> i32:
+        """Return the number of usable CPUs."""
+        return cpu_count()
+
+
+__exports__ = [Process, Connection, Lock, Semaphore, BoundedSemaphore, Event, Context,
+               ProcessError, TimeoutError, AuthenticationError, BufferTooShort, PicklingError,
+               UnpicklingError, QueueFull, QueueEmpty, EOFError, BrokenPipeError, Full, Empty,
+               Pipe, wait, active_children, cpu_count, current_process, parent_process,
+               current_authkey, self_pid, expose, target_name, dumps, loads, reduce, rebuild,
+               rule_count, get_start_method, set_start_method, get_all_start_methods,
+               get_context, freeze_support]

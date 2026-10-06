@@ -1,0 +1,268 @@
+﻿"""Process-safe synchronization primitives.
+
+Every object here is backed by a *named* OS primitive (a semaphore or an
+event), created by the process that first needs it and opened by name in every
+other process. Names are generated from the platform's cryptographic random
+source, so two unrelated programs cannot collide or guess each other's locks.
+
+Nothing here wraps a thread-only lock: a `Lock` acquired in one process really
+does block another process, because the wait is a kernel wait on a named
+semaphore. Objects travel to children through the reduction layer, which sends
+the name rather than a handle.
+
+Not yet provided: `RLock`, `Condition` and `Barrier`. Reporting them as
+available would be worse than omitting them, because their semantics (recursion
+ownership, waiter lists, barrier generations) cannot be emulated by a plain
+lock.
+"""
+
+import string
+
+import multiprocessing.reduction as reduction
+from multiprocessing.exceptions import TimeoutError
+
+# ---------------------------------------------------------------------------
+# Native entry points
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_mp_sem_create"
+def _sem_create(name: str, initial: i64, maximum: i64) -> Ptr[i8]
+"""Create a named semaphore."""
+
+extern "C" "sere_mp_sem_open"
+def _sem_open(name: str) -> Ptr[i8]
+"""Open an existing named semaphore."""
+
+extern "C" "sere_mp_sem_wait"
+def _sem_wait(handle: Ptr[i8], timeout_ms: i64) -> i32
+"""Wait for the semaphore; 0 acquired, 1 timed out."""
+
+extern "C" "sere_mp_sem_try_wait"
+def _sem_try_wait(handle: Ptr[i8]) -> i32
+"""Acquire without blocking; 0 acquired, 1 busy."""
+
+extern "C" "sere_mp_sem_post"
+def _sem_post(handle: Ptr[i8]) -> void
+"""Release the semaphore."""
+
+extern "C" "sere_mp_sem_close"
+def _sem_close(handle: Ptr[i8]) -> void
+"""Close this process's reference."""
+
+extern "C" "sere_mp_sem_unlink"
+def _sem_unlink(handle: Ptr[i8]) -> void
+"""Remove the name and close."""
+
+extern "C" "sere_mp_event_create"
+def _event_create(name: str, manual_reset: i32) -> Ptr[i8]
+"""Create a named event."""
+
+extern "C" "sere_mp_event_open"
+def _event_open(name: str) -> Ptr[i8]
+"""Open an existing named event."""
+
+extern "C" "sere_mp_event_wait"
+def _event_wait(handle: Ptr[i8], timeout_ms: i64) -> i32
+"""Wait for the event; 0 signalled, 1 timed out."""
+
+extern "C" "sere_mp_event_set"
+def _event_set(handle: Ptr[i8]) -> void
+"""Signal the event."""
+
+extern "C" "sere_mp_event_clear"
+def _event_clear(handle: Ptr[i8]) -> void
+"""Clear the event."""
+
+extern "C" "sere_mp_event_close"
+def _event_close(handle: Ptr[i8]) -> void
+"""Close this process's reference."""
+
+extern "C" "sere_mp_make_name"
+def _make_name(prefix: str) -> str
+"""Return an unguessable object name."""
+
+const WAIT_FOREVER: i64 = -1
+
+
+def _timeout_ms(timeout: f64) -> i64:
+    """Convert a Python-style timeout in seconds to milliseconds."""
+    if timeout < 0.0:
+        return WAIT_FOREVER
+    return (timeout * 1000.0) as i64
+
+
+# ---------------------------------------------------------------------------
+# Lock
+# ---------------------------------------------------------------------------
+
+
+class Lock:
+    """A non-recursive process-safe mutex.
+
+    ``with``-style use is not available in Sere, so pair `acquire` with
+    `release` (a `do` block or a `try`/`finally` both work).
+    """
+
+    name: str
+    _handle: Ptr[i8]
+    _held: bool
+
+    def __init__(self, name: str = "") -> void:
+        """Create a lock, or attach to the one called `name`."""
+        if len(name) == 0:
+            self.name = _make_name("lock")
+            self._handle = _sem_create(self.name, 1, 1)
+        else:
+            self.name = name
+            self._handle = _sem_open(name)
+        self._held = False
+
+    @public name.get:
+        return self.name
+
+    def acquire(self, block: bool = True, timeout: f64 = -1.0) -> bool:
+        """Acquire the lock; returns whether it was acquired."""
+        if not block:
+            acquired: bool = _sem_try_wait(self._handle) == 0
+            if acquired:
+                self._held = True
+            return acquired
+        result: i32 = _sem_wait(self._handle, _timeout_ms(timeout))
+        if result == 1:
+            raise TimeoutError("lock acquire timed out")
+        self._held = True
+        return True
+
+    def release(self) -> void:
+        """Release the lock."""
+        _sem_post(self._handle)
+        self._held = False
+
+    def locked(self) -> bool:
+        """Return whether this process currently holds the lock."""
+        return self._held
+
+    def close(self) -> void:
+        """Close this process's reference to the lock."""
+        if self._handle is not None:
+            _sem_close(self._handle)
+            self._handle = None
+
+
+# ---------------------------------------------------------------------------
+# Semaphore
+# ---------------------------------------------------------------------------
+
+
+class Semaphore:
+    """A counting semaphore shared across processes."""
+
+    name: str
+    value: i64
+    _handle: Ptr[i8]
+
+    def __init__(self, value: i64 = 1, name: str = "") -> void:
+        """Create a semaphore with `value` permits, or attach to `name`."""
+        self.value = value
+        if len(name) == 0:
+            self.name = _make_name("sem")
+            self._handle = _sem_create(self.name, value, 2147483647)
+        else:
+            self.name = name
+            self._handle = _sem_open(name)
+
+    @public name.get:
+        return self.name
+
+    def acquire(self, block: bool = True, timeout: f64 = -1.0) -> bool:
+        """Take one permit; returns whether it was taken."""
+        if not block:
+            return _sem_try_wait(self._handle) == 0
+        result: i32 = _sem_wait(self._handle, _timeout_ms(timeout))
+        if result == 1:
+            raise TimeoutError("semaphore acquire timed out")
+        return True
+
+    def release(self, count: i64 = 1) -> void:
+        """Return `count` permits."""
+        index: i64 = 0
+        while index < count:
+            _sem_post(self._handle)
+            index = index + 1
+
+    def close(self) -> void:
+        """Close this process's reference."""
+        if self._handle is not None:
+            _sem_close(self._handle)
+            self._handle = None
+
+
+class BoundedSemaphore(Semaphore):
+    """A semaphore that refuses to be released beyond its initial value.
+
+    The bound is enforced per process: a value released more often than
+    acquired *by one process* raises, matching Python for the common case. A
+    release split across processes is not detected, because the OS primitive
+    does not expose its count.
+    """
+
+    def __init__(self, value: i64 = 1, name: str = "") -> void:
+        """Create a bounded semaphore, or attach to `name`."""
+        super().__init__(value, name)
+
+    def release(self, count: i64 = 1) -> void:
+        """Return `count` permits, refusing to exceed the initial value."""
+        if count > self.value:
+            raise ValueError("Semaphore released too many times")
+        super().release(count)
+
+
+# ---------------------------------------------------------------------------
+# Event
+# ---------------------------------------------------------------------------
+
+
+class Event:
+    """A process-safe event flag: `set`, `clear`, `is_set`, `wait`."""
+
+    name: str
+    _handle: Ptr[i8]
+
+    def __init__(self, name: str = "") -> void:
+        """Create an event, or attach to the one called `name`."""
+        if len(name) == 0:
+            self.name = _make_name("event")
+            self._handle = _event_create(self.name, 1)
+        else:
+            self.name = name
+            self._handle = _event_open(name)
+
+    @public name.get:
+        return self.name
+
+    def is_set(self) -> bool:
+        """Return whether the event is currently signalled."""
+        return _event_wait(self._handle, 0) == 0
+
+    def set(self) -> void:
+        """Signal the event, waking every waiter."""
+        _event_set(self._handle)
+
+    def clear(self) -> void:
+        """Return the event to the unset state."""
+        _event_clear(self._handle)
+
+    def wait(self, timeout: f64 = -1.0) -> bool:
+        """Block until the event is set; returns whether it was set."""
+        return _event_wait(self._handle, _timeout_ms(timeout)) == 0
+
+    def close(self) -> void:
+        """Close this process's reference."""
+        if self._handle is not None:
+            _event_close(self._handle)
+            self._handle = None
+
+
+# ---------------------------------------------------------------------------
+# Reduction
+# ---------------------------------------------------------------------------

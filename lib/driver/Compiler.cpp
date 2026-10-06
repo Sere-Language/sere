@@ -254,6 +254,36 @@ void copyBesideOutput(const std::filesystem::path& from, const std::filesystem::
                  << "' not found; reinstall the complete Sere package\n";
     return false;
   };
+  if (importsModule(importedModules, "ast")) {
+    // `import ast` parses Sere source at run time, so the program links the
+    // compiler's lexer, parser, and syntax AST through the bridge library. A
+    // static library does not carry its dependencies, so its own libraries are
+    // named after it in dependency order.
+    for (const char* name : {"sere_front", "sere_parse", "sere_ast", "sere_types", "sere_lex",
+                            "sere_source", "sere_diag"}) {
+      const std::optional<std::filesystem::path> library = findNativeLibrary(name);
+      if (!library.has_value()) {
+        llvm::errs() << "error: " << name << " library not found next to the compiler; rebuild sere\n";
+        return 1;
+      }
+      owned.push_back(library->string());
+    }
+#ifdef _WIN32
+    // The frontend is C++, so the program needs the C++ standard library too.
+    // The link is static (`-fms-runtime-lib=static`, matching sere_rt), so the
+    // static library is the right one; msvcprt is only an import library for a
+    // DLL runtime and would contradict the static CRT.
+    std::optional<std::filesystem::path> cppRuntime = findSystemLibrary("libcpmt.lib");
+    if (!cppRuntime.has_value()) {
+      cppRuntime = findSystemLibrary("msvcprt.lib");
+    }
+    if (!cppRuntime.has_value()) {
+      llvm::errs() << "error: libcpmt.lib not found; install the MSVC C++ build tools\n";
+      return 1;
+    }
+    owned.push_back(cppRuntime->string());
+#endif
+  }
   if (importsModule(importedModules, "qt6")) {
     const std::optional<std::filesystem::path> qt6 = findNativeLibrary("sere_qt6");
     if (!qt6.has_value()) {
@@ -638,6 +668,13 @@ int compileInput(const CompilerOptions& options) {
   }
   std::unique_ptr<llvm::Module> module;
   if (options.seremBackend) {
+    // The Serem backend is still filling in, so say so before anything else
+    // happens: a failure further down is a gap in the backend rather than a
+    // mistake in the program, and the message has to make that distinction
+    // clear while the user is still looking at the top of the output.
+    llvm::errs() << "warning: --backend=serem is experimental and not feature complete\n"
+                    "         some programs fail to compile or run on it; "
+                    "--backend=llvm is the supported backend\n";
     SeremGenerator seremGenerator(frontend.diagnostics(), *frontend.types());
     const std::vector<std::string> importedNames = frontend.importedModuleNames();
     std::unique_ptr<serem::IRModule> seremModule =

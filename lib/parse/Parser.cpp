@@ -330,7 +330,12 @@ std::unique_ptr<Expr> Parser::parseEqualsValue() {
 }
 
 std::string Parser::parseIdentifier(const char* errorMessage) {
-  if (!check(TokenKind::Identifier) && !check(TokenKind::KeywordType)) {
+  // `type` and `match` are keywords, but they are also valid member/method
+  // names (Python code such as `Path.match(...)` and `x.type`). Accept them
+  // wherever a name is expected; statement dispatch still recognises a leading
+  // `match` as a match statement before any name position is reached.
+  if (!check(TokenKind::Identifier) && !check(TokenKind::KeywordType) &&
+      !check(TokenKind::KeywordMatch)) {
     diagnostics_->error(peek().range(),
                         std::string(errorMessage) + ", found " + describeToken(peek()));
     return {};
@@ -1025,6 +1030,9 @@ std::unique_ptr<Expr> Parser::parsePostfix() {
       if (check(TokenKind::Identifier) || check(TokenKind::KeywordType)) {
         field = std::string(advance().spelling());
       } else if (check(TokenKind::KeywordNone)) {
+        field = std::string(advance().spelling());
+      } else if (check(TokenKind::KeywordMatch)) {
+        // `match` is a keyword but a valid member name, as in Path.match().
         field = std::string(advance().spelling());
       } else {
         diagnostics_->error(peek().range(), "expected field name");

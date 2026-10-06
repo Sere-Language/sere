@@ -1,4 +1,4 @@
-"""Exceptions raised by the `multiprocessing` package.
+﻿"""Exceptions raised by the `multiprocessing` package.
 
 Mirrors Python's `multiprocessing` exception names. `TimeoutError` here is the
 package's own class rather than the builtin, matching how Python's
@@ -29,6 +29,10 @@ class PicklingError(ProcessError):
 
 class UnpicklingError(ProcessError):
     """An incoming byte stream is not a valid encoded value."""
+
+
+class EOFError(ProcessError):
+    """The other end of a connection was closed."""
 
 
 class QueueFull(ProcessError):

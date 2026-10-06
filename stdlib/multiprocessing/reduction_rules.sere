@@ -1,0 +1,93 @@
+"""The package's reduction rule.
+
+One rule covers every transferable object the package owns. Keeping the
+dispatch in a single function means it does not matter how many modules
+declare rules or in which order their initializers run: there is exactly one
+rule, and it is registered by importing the package.
+
+Each object is described as a small tagged list of names and numbers -- never
+as a pointer -- and rebuilt by opening the named OS object or re-wrapping the
+inherited handle in the child.
+"""
+
+import string
+
+import multiprocessing.reduction as reduction
+from multiprocessing.connection import Connection, _from_handles
+from multiprocessing.synchronize import BoundedSemaphore, Event, Lock, Semaphore
+
+
+def package_rule(value: Any) -> Any:
+    """Describe a package object, or rebuild one from its description.
+
+    `held` is a copy because `isinstance` narrows the name it is given, and a
+    cast of a *narrowed* `Any` would read the box as the narrowed type rather
+    than unboxing it.
+    """
+    held: Any = value
+
+    # -- describe --------------------------------------------------------
+    if isinstance(value, Connection):
+        connection: Connection = held as Connection
+        out: list[Any] = []
+        out.append(reduction.TAG_CONNECTION)
+        out.append(connection.read_handle())
+        out.append(connection.write_handle())
+        return out
+    if isinstance(value, BoundedSemaphore):
+        semaphore: BoundedSemaphore = held as BoundedSemaphore
+        out: list[Any] = []
+        out.append(reduction.TAG_BOUNDED_SEMAPHORE)
+        out.append(semaphore.name)
+        out.append(semaphore.value)
+        return out
+    if isinstance(value, Semaphore):
+        semaphore: Semaphore = held as Semaphore
+        out: list[Any] = []
+        out.append(reduction.TAG_SEMAPHORE)
+        out.append(semaphore.name)
+        return out
+    if isinstance(value, Lock):
+        lock: Lock = held as Lock
+        out: list[Any] = []
+        out.append(reduction.TAG_LOCK)
+        out.append(lock.name)
+        return out
+    if isinstance(value, Event):
+        event: Event = held as Event
+        out: list[Any] = []
+        out.append(reduction.TAG_EVENT)
+        out.append(event.name)
+        return out
+
+    # -- rebuild ---------------------------------------------------------
+    probe: Any = value
+    if isinstance(probe, list[Any]):
+        parts: list[Any] = held as list[Any]
+        if len(parts) == 0:
+            return None
+        raw_tag: Any = parts[0]
+        tag_probe: Any = parts[0]
+        if not isinstance(tag_probe, str):
+            return None
+        tag: str = raw_tag as str
+        if string.eq(tag, reduction.TAG_CONNECTION):
+            return Connection(_from_handles(parts[1] as i64, parts[2] as i64, 1, 1))
+        if string.eq(tag, reduction.TAG_LOCK):
+            return Lock(parts[1] as str)
+        if string.eq(tag, reduction.TAG_SEMAPHORE):
+            return Semaphore(1, parts[1] as str)
+        if string.eq(tag, reduction.TAG_BOUNDED_SEMAPHORE):
+            return BoundedSemaphore(parts[2] as i64, parts[1] as str)
+        if string.eq(tag, reduction.TAG_EVENT):
+            return Event(parts[1] as str)
+    return None
+
+
+def install_rules() -> i64:
+    """Register the package rule; returns the rule count."""
+    reduction.register_rule(package_rule)
+    return reduction.rule_count()
+
+
+static rules_installed: i64 = install_rules()

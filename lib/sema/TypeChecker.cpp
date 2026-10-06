@@ -1166,6 +1166,10 @@ void TypeChecker::registerBuiltins() {
     symbol.kind = SymbolKind::Intrinsic;
     symbol.intrinsic = info.kind;
     symbol.paramNames = splitIntrinsicParams(info.params);
+    // Intrinsics behave like prelude helpers: a module may shadow one with its
+    // own declaration (a stdlib module may define `parse`, `str`, ...). Imported
+    // names still cannot replace them; see importSymbol().
+    symbol.fromPrelude = true;
     if (!declare(std::string(info.name), symbol, {}, false)) {
       return;
     }

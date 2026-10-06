@@ -45,7 +45,7 @@ void printUsage(std::string& error) {
       "  --emit-asm, -S      Write native assembly instead of linking an executable\n"
       "  --emit-serem        Write the target-independent Serem IR text\n"
       "  --emit-serem-bytecode  Write Serem bytecode text (same stable .serem format)\n"
-      "  --backend=serem     Select Serem as the output backend\n"
+      "  --backend=serem     Select Serem as the output backend (experimental)\n"
       "  --no-transformers   Skip the IR rewrite passes\n"
       "  --dump-tokens       Print lexer tokens\n"
       "  --dump-ast          Print the parsed AST as JSON and stop\n"

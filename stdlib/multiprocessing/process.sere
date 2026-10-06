@@ -1,4 +1,4 @@
-"""`multiprocessing.Process` and the process registry.
+﻿"""`multiprocessing.Process` and the process registry.
 
 Sere programs are compiled to a native executable, so there is no module to
 re-import in a child. `spawn` therefore re-runs *this same executable* with a
@@ -109,13 +109,19 @@ class Process:
     """A child process, modelled on `multiprocessing.Process`.
 
     ``Process(target=worker, args=[...])`` starts a real child process running
-    the registered function ``worker``. Targets receive the argument list as
-    ``list[Any]``, so cast each element to the type you sent::
+    the registered function ``worker``. Arguments are passed positionally, as in
+    Python::
 
-        def worker(args: list[Any]) -> void:
-            print(args[0] as str)
+        def worker(name: str, count: i32) -> void:
+            print(name, count)
 
         static _worker: bool = multiprocessing.expose("worker", worker)
+
+    A target that takes a single ``list[Any]`` parameter instead receives the
+    whole argument list and casts each element itself. Positional parameters may
+    be integers, ``bool``, ``str``, ``list`` or ``dict``; a target that returns a
+    value or takes a float or other aggregate parameter must use the
+    ``list[Any]`` form.
 
     Subclassing works for the parent-side API, but overriding `run()` cannot
     change what a child executes: a child cannot reconstruct an arbitrary
@@ -198,6 +204,12 @@ class Process:
             return None
         return _exit_code(self._handle)
 
+    # The pid/ident getters are read-only to callers, so the class updates the
+    # backing fields through these helpers.
+    def _set_identity(self, value: i64) -> void:
+        self.pid = value
+        self.ident = value
+
     def sentinel(self) -> i64:
         """Return a waitable value that becomes ready when the child exits."""
         if self._handle is None:
@@ -221,8 +233,7 @@ class Process:
         if handle is None:
             raise ProcessError("failed to start the process")
         self._handle = handle
-        self.pid = _pid(handle)
-        self.ident = self.pid
+        self._set_identity(_pid(handle))
         self._started = True
         _children.append(self)
 
@@ -294,10 +305,9 @@ def current_process() -> Process:
     """Return the Process object for the calling process."""
     if not _current_ready:
         main: Process = Process(target=None, name="MainProcess")
-        main.pid = self_pid()
-        main.ident = main.pid
-        main._started = True
         main.daemon = False
+        main._set_identity(self_pid())
+        main._started = True
         _current = main
         _current_ready = True
     return _current as Process

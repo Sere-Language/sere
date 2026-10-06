@@ -19,6 +19,9 @@ endif()
 if(NOT DEFINED SERE_SUFFIX)
   set(SERE_SUFFIX "")
 endif()
+if(NOT DEFINED SERE_FRONT)
+  set(SERE_FRONT "")
+endif()
 
 function(sere_try_copy from to)
   execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${from}" "${to}"
@@ -83,6 +86,15 @@ file(MAKE_DIRECTORY "${SERE_BUILD_BIN}/include/sere/api")
 file(MAKE_DIRECTORY "${SERE_PROJECT_BIN}/include/sere/api")
 
 sere_try_copy("${SERE_RUNTIME}" "${SERE_BUILD_BIN}")
+# The frontend libraries a program links when it imports `ast`. They are staged
+# individually because a static library does not carry its dependencies.
+foreach(_front_lib ${SERE_FRONT} ${SERE_PARSE} ${SERE_AST} ${SERE_TYPES} ${SERE_LEX}
+                    ${SERE_SOURCE} ${SERE_DIAG})
+  if(NOT _front_lib STREQUAL "")
+    sere_try_copy("${_front_lib}" "${SERE_BUILD_BIN}")
+    sere_try_copy("${_front_lib}" "${SERE_PROJECT_BIN}")
+  endif()
+endforeach()
 sere_try_copy_dir("${SERE_STDLIB}" "${SERE_BUILD_BIN}/stdlib")
 sere_install_exe("${SERE_EXE}" "${SERE_BUILD_BIN}/sere${SERE_SUFFIX}")
 sere_install_exe("${SERE_EXE}" "${SERE_PROJECT_BIN}/sere${SERE_SUFFIX}")

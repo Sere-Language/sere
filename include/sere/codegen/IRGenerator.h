@@ -240,6 +240,13 @@ private:
                   llvm::Value* value,
                   const Type* valueType);
   llvm::Value* packStr(llvm::IRBuilder<>& builder, llvm::Value* data, llvm::Value* len);
+  /// An alloca in the function's entry block. Takes the same shape as
+  /// `IRBuilder::CreateAlloca` so a temporary can be redirected with a one-word
+  /// change; see the definition for why the entry block matters.
+  llvm::AllocaInst* entryAlloca(llvm::IRBuilder<>& builder,
+                                llvm::Type* type,
+                                llvm::Value* arraySize = nullptr,
+                                llvm::StringRef name = "");
   llvm::Value* emitEnumTag(llvm::IRBuilder<>& builder, llvm::Value* value);
   llvm::Value* emitEnumUnit(llvm::IRBuilder<>& builder, const Type* type, unsigned tag);
   llvm::Value* emitEnumName(llvm::IRBuilder<>& builder, const Expr& expr);

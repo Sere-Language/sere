@@ -63,9 +63,9 @@ $env:PATH = "$(Join-Path $llvmDir 'bin');$env:PATH"
 # cached by CMake, which breaks as soon as another clang-cl appears on PATH.
 $env:CC = (Join-Path $llvmDir 'bin\clang-cl.exe')
 $env:CXX = $env:CC
-if (-not $env:SERE_STDLIB) {
-  $env:SERE_STDLIB = (Resolve-Path (Join-Path $PSScriptRoot "..\stdlib")).Path
-}
+# Always point at this checkout's stdlib: an inherited SERE_STDLIB may still
+# reference a stale installed copy, which would shadow the repo sources.
+$env:SERE_STDLIB = (Resolve-Path (Join-Path $PSScriptRoot "..\stdlib")).Path
 
 Write-Host "Sere environment ready."
 Write-Host "  SERE_LLVM_DIR=$env:SERE_LLVM_DIR"

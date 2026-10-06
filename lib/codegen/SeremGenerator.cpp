@@ -1025,7 +1025,14 @@ bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbo
     return true;
   }
   function_ = &module_->addFunction(std::move(irFunction));
-  currentModuleKey_ = function.modulePrefix().empty() ? rootModuleKey_ : function.modulePrefix();
+  // A function reaches here with an empty prefix when its module was imported
+  // transitively (only direct imports are bound with a `modulePrefix`), so keep
+  // the key the per-module emission loop installed for it instead of assuming
+  // the root module -- otherwise that module's own aliases and globals fail to
+  // resolve.
+  if (!function.modulePrefix().empty()) {
+    currentModuleKey_ = function.modulePrefix();
+  }
   currentOwnerClass_ = function.ownerClass();
   function_->setAsync(function.isAsync());
   function_->setGenerator(function.isGenerator());
@@ -3692,16 +3699,37 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
     }
   }
   if (expression.isConstructor()) {
+    const Type* record = types_->substitute(expression.resolvedType(), subst_);
+    // A constructor's arguments are checked against `__init__`'s signature: the
+    // receiver is parameter 0 and `construct` supplies it, so operand `i` maps to
+    // parameter `i + 1`. Coercing here boxes a `None`/`Any` default the way the
+    // parameter expects instead of leaving an unboxed null behind.
+    const std::string initSymbol = record != nullptr && !record->isEnum()
+                                       ? methodSymbol(record, "__init__")
+                                       : std::string{};
+    const auto initDefinition = definitions_.find(initSymbol);
+    const std::vector<const Type*>* initParams = nullptr;
+    if (!initSymbol.empty() && initDefinition != definitions_.end() &&
+        initDefinition->second != nullptr && initDefinition->second->resolvedType() != nullptr) {
+      initParams = &initDefinition->second->resolvedType()->paramTypes();
+    }
+    auto appendOperand = [&](const Expr& argument) {
+      serem::ValuePtr value = emitExpression(argument);
+      const std::size_t index = args.size();
+      if (initParams != nullptr && index + 1 < initParams->size()) {
+        value = coerce(std::move(value), argument.resolvedType(), (*initParams)[index + 1]);
+      }
+      args.push_back(std::move(value));
+    };
     for (const Expr* argument : expression.boundArguments()) {
       if (argument != nullptr)
-        args.push_back(emitExpression(*argument));
+        appendOperand(*argument);
     }
     if (args.empty()) {
       for (const std::unique_ptr<Expr>& argument : expression.arguments()) {
-        args.push_back(emitExpression(*argument));
+        appendOperand(*argument);
       }
     }
-    const Type* record = types_->substitute(expression.resolvedType(), subst_);
     if (record->isEnum() && expression.callee().kind() == NodeKind::MemberExpr) {
       const auto& member = static_cast<const MemberExpr&>(expression.callee());
       if (const auto* field = record->findField(member.field())) {

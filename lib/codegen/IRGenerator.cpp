@@ -220,6 +220,23 @@ void appendExceptionType(std::string& chain, const Type* type) {
   return "sere.dec.class." + classDef.name();
 }
 
+/// An alloca in the current function's entry block. An alloca emitted at the
+/// insertion point runs again on every loop iteration and moves the stack
+/// pointer down each time, so a loop over a few thousand items — walking a big
+/// syntax tree, for instance — exhausts the stack. The entry block runs once, so
+/// one slot per source construct is reused instead.
+///
+/// Free functions use this one; `IRGenerator::entryAlloca` is the member form of
+/// the same helper and delegates here.
+llvm::AllocaInst* allocaInEntry(llvm::IRBuilder<>& builder,
+                                llvm::Type* type,
+                                llvm::Value* arraySize,
+                                llvm::StringRef name) {
+  llvm::Function* function = builder.GetInsertBlock()->getParent();
+  llvm::IRBuilder<> entry(&function->getEntryBlock(), function->getEntryBlock().begin());
+  return entry.CreateAlloca(type, arraySize, name);
+}
+
 [[nodiscard]] llvm::Value*
 matchParamType(llvm::IRBuilder<>& builder, llvm::Value* value, llvm::Type* wanted) {
   if (value == nullptr || wanted == nullptr || value->getType() == wanted) {
@@ -231,11 +248,11 @@ matchParamType(llvm::IRBuilder<>& builder, llvm::Value* value, llvm::Type* wante
   if (wanted->isPointerTy() && !value->getType()->isPointerTy() && !value->getType()->isVoidTy()) {
     // The parameter is passed by reference, so hand over the storage instead of
     // reinterpreting the value's first word as a pointer.
-    llvm::Value* slot = builder.CreateAlloca(value->getType(), nullptr, "arg.ref");
+    llvm::Value* slot = allocaInEntry(builder, value->getType(), nullptr, "arg.ref");
     builder.CreateStore(value, slot);
     return slot;
   }
-  llvm::Value* tmp = builder.CreateAlloca(value->getType(), nullptr, "match.tmp");
+  llvm::Value* tmp = allocaInEntry(builder, value->getType(), nullptr, "match.tmp");
   builder.CreateStore(value, tmp);
   return builder.CreateLoad(wanted, tmp);
 }
@@ -601,7 +618,7 @@ llvm::Value* IRGenerator::declareGlobal(const std::string& name, const Type* typ
 
 llvm::Value*
 IRGenerator::emitTempSlot(llvm::IRBuilder<>& builder, llvm::Value* value, const Type* type) {
-  llvm::Value* slot = builder.CreateAlloca(lower(type), nullptr, "tmp.slot");
+  llvm::Value* slot = entryAlloca(builder, lower(type), nullptr, "tmp.slot");
   builder.CreateStore(value, slot);
   return slot;
 }
@@ -1020,12 +1037,12 @@ llvm::Value* bitsFromValue(llvm::IRBuilder<>& builder, llvm::Value* value, const
   // A string is a { ptr, i64 } pair, so it only fits in the payload by
   // reference, exactly like a record.
   if (from->isStrLayout()) {
-    llvm::AllocaInst* storage = builder.CreateAlloca(value->getType(), nullptr, "union.str");
+    llvm::AllocaInst* storage = allocaInEntry(builder, value->getType(), nullptr, "union.str");
     builder.CreateStore(value, storage);
     return builder.CreatePtrToInt(storage, builder.getInt64Ty());
   }
   if (from->isRecord()) {
-    llvm::AllocaInst* storage = builder.CreateAlloca(value->getType(), nullptr, "union.record");
+    llvm::AllocaInst* storage = allocaInEntry(builder, value->getType(), nullptr, "union.record");
     builder.CreateStore(value, storage);
     return builder.CreatePtrToInt(storage, builder.getInt64Ty());
   }
@@ -1164,7 +1181,7 @@ llvm::Value* IRGenerator::emitCoerce(llvm::IRBuilder<>& builder,
   }
   if (from->isRecord() && to->isRecord() && fromTy != toTy) {
     if (from->isSubtypeOf(to) || valueSize(from) == valueSize(to)) {
-      llvm::Value* tmp = builder.CreateAlloca(fromTy, nullptr, "coerce.tmp");
+      llvm::Value* tmp = entryAlloca(builder, fromTy, nullptr, "coerce.tmp");
       builder.CreateStore(value, tmp);
       return builder.CreateLoad(toTy, tmp);
     }
@@ -1207,7 +1224,7 @@ llvm::Value* IRGenerator::emitCallArgument(llvm::IRBuilder<>& builder,
   if (value == nullptr) {
     return nullptr;
   }
-  llvm::Value* slot = builder.CreateAlloca(lower(target), nullptr, "arg.copy");
+  llvm::Value* slot = entryAlloca(builder, lower(target), nullptr, "arg.copy");
   builder.CreateStore(emitCoerce(builder, value, argument.resolvedType(), target), slot);
   return slot;
 }
@@ -1565,7 +1582,7 @@ llvm::Value* IRGenerator::emitNarrowedAddress(llvm::IRBuilder<>& builder,
     // Narrowing `A | B | C` to `A | B` keeps every payload bit; only the tag has
     // to move to the member's position inside the narrower union.
     llvm::Function* function = builder.GetInsertBlock()->getParent();
-    llvm::Value* slot = builder.CreateAlloca(builder.getInt32Ty(), nullptr, "narrowed.tag");
+    llvm::Value* slot = entryAlloca(builder, builder.getInt32Ty(), nullptr, "narrowed.tag");
     llvm::BasicBlock* merge = llvm::BasicBlock::Create(*context_, "narrowed.end", function);
     llvm::BasicBlock* fallback = llvm::BasicBlock::Create(*context_, "narrowed.def", function);
     llvm::SwitchInst* sw = builder.CreateSwitch(builder.CreateExtractValue(packed, {0}), fallback);
@@ -1595,7 +1612,7 @@ llvm::Value* IRGenerator::emitNarrowedAddress(llvm::IRBuilder<>& builder,
   if (value == nullptr) {
     return nullptr;
   }
-  llvm::Value* result = builder.CreateAlloca(narrowedLlvm, nullptr, "narrowed.local");
+  llvm::Value* result = entryAlloca(builder, narrowedLlvm, nullptr, "narrowed.local");
   builder.CreateStore(value, result);
   return result;
 }
@@ -1629,8 +1646,8 @@ llvm::Value* IRGenerator::emitIndex(llvm::IRBuilder<>& builder, const IndexExpr&
                                       builder.getInt32Ty(),
                                       builder.getPtrTy(),
                                       builder.getPtrTy()});
-    llvm::Value* dataSlot = builder.CreateAlloca(builder.getPtrTy(), nullptr, "sl.data");
-    llvm::Value* lenSlot = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "sl.len");
+    llvm::Value* dataSlot = entryAlloca(builder, builder.getPtrTy(), nullptr, "sl.data");
+    llvm::Value* lenSlot = entryAlloca(builder, builder.getInt64Ty(), nullptr, "sl.len");
     llvm::Value* start =
         expr.hasStart() ? emitIndexI64(builder, *expr.start()) : builder.getInt64(0);
     llvm::Value* stop = expr.hasStop() ? emitIndexI64(builder, *expr.stop()) : builder.getInt64(0);
@@ -1670,7 +1687,7 @@ llvm::Value* IRGenerator::emitIndex(llvm::IRBuilder<>& builder, const IndexExpr&
         runtimeDecl("sere_dict_get",
                     builder.getInt32Ty(),
                     {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()});
-    llvm::Value* out = builder.CreateAlloca(lower(expr.resolvedType()), nullptr, "dict.out");
+    llvm::Value* out = entryAlloca(builder, lower(expr.resolvedType()), nullptr, "dict.out");
     builder.CreateCall(
         getFn,
         {emitBuiltinExpr(builder, expr.object()),
@@ -1687,8 +1704,8 @@ llvm::Value* IRGenerator::emitIndex(llvm::IRBuilder<>& builder, const IndexExpr&
                                       builder.getInt64Ty(),
                                       builder.getPtrTy(),
                                       builder.getPtrTy()});
-    llvm::Value* dataSlot = builder.CreateAlloca(builder.getPtrTy(), nullptr, "si.data");
-    llvm::Value* lenSlot = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "si.len");
+    llvm::Value* dataSlot = entryAlloca(builder, builder.getPtrTy(), nullptr, "si.data");
+    llvm::Value* lenSlot = entryAlloca(builder, builder.getInt64Ty(), nullptr, "si.len");
     builder.CreateCall(fn,
                        {builder.CreateExtractValue(str, {0}),
                         builder.CreateExtractValue(str, {1}),
@@ -1885,8 +1902,8 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
                                           {builder.getPtrTy()}), {object});
   }
   if (name == "list.decode") {
-    llvm::Value* data = builder.CreateAlloca(builder.getPtrTy());
-    llvm::Value* len = builder.CreateAlloca(builder.getInt64Ty());
+    llvm::Value* data = entryAlloca(builder, builder.getPtrTy());
+    llvm::Value* len = entryAlloca(builder, builder.getInt64Ty());
     builder.CreateCall(runtimeDecl("sere_bytes_to_str",
                                    builder.getVoidTy(),
                                    {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()}),
@@ -1925,8 +1942,8 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
     return emitTempSlot(builder, emitCoerce(builder, emitted, value.resolvedType(), dest), dest);
   };
   auto packOutStr = [&](llvm::Function* fn, std::vector<llvm::Value*> callArgs) -> llvm::Value* {
-    llvm::Value* dataSlot = builder.CreateAlloca(builder.getPtrTy(), nullptr, "bm.data");
-    llvm::Value* lenSlot = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "bm.len");
+    llvm::Value* dataSlot = entryAlloca(builder, builder.getPtrTy(), nullptr, "bm.data");
+    llvm::Value* lenSlot = entryAlloca(builder, builder.getInt64Ty(), nullptr, "bm.len");
     callArgs.push_back(dataSlot);
     callArgs.push_back(lenSlot);
     builder.CreateCall(fn, callArgs);
@@ -1952,7 +1969,7 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
       return nullptr;
     }
     if (name == "list.pop") {
-      llvm::Value* out = builder.CreateAlloca(lower(elem), nullptr, "list.pop");
+      llvm::Value* out = entryAlloca(builder, lower(elem), nullptr, "list.pop");
       if (expr.arguments().empty()) {
         llvm::Function* fn = runtimeDecl(
             "sere_list_pop", builder.getVoidTy(), {builder.getPtrTy(), builder.getPtrTy()});
@@ -2025,7 +2042,7 @@ llvm::Value* IRGenerator::emitBuiltinMethod(llvm::IRBuilder<>& builder, const Ca
     const Type* key = objectType->dictKeyType();
     const Type* value = objectType->dictValueType();
     if (name == "dict.get" || name == "dict.pop") {
-      llvm::Value* out = builder.CreateAlloca(lower(value), nullptr, "dict.out");
+      llvm::Value* out = entryAlloca(builder, lower(value), nullptr, "dict.out");
       const char* fnName = name == "dict.pop" ? "sere_dict_pop" : "sere_dict_get";
       llvm::Function* fn =
           runtimeDecl(fnName,
@@ -2500,7 +2517,7 @@ llvm::Value*
 IRGenerator::emitStrFromC(llvm::IRBuilder<>& builder, const char* fnName, llvm::Value* value) {
   llvm::Function* fn =
       runtimeDecl(fnName, builder.getPtrTy(), {value->getType(), builder.getPtrTy()});
-  llvm::Value* lenSlot = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "str.len");
+  llvm::Value* lenSlot = entryAlloca(builder, builder.getInt64Ty(), nullptr, "str.len");
   llvm::Value* data = builder.CreateCall(fn, {value, lenSlot});
   llvm::Value* len = builder.CreateLoad(builder.getInt64Ty(), lenSlot);
   llvm::Value* str = llvm::UndefValue::get(lower(types_->strType()));
@@ -2518,7 +2535,7 @@ IRGenerator::emitStrConcat(llvm::IRBuilder<>& builder, llvm::Value* left, llvm::
                                     builder.getPtrTy(),
                                     builder.getInt64Ty(),
                                     builder.getPtrTy()});
-  llvm::Value* lenSlot = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "cat.len");
+  llvm::Value* lenSlot = entryAlloca(builder, builder.getInt64Ty(), nullptr, "cat.len");
   llvm::Value* data = builder.CreateCall(fn,
                                          {builder.CreateExtractValue(left, {0}),
                                           builder.CreateExtractValue(left, {1}),
@@ -2544,8 +2561,8 @@ IRGenerator::emitStrRepeat(llvm::IRBuilder<>& builder, llvm::Value* str, llvm::V
                                     builder.getInt64Ty(),
                                     builder.getPtrTy(),
                                     builder.getPtrTy()});
-  llvm::Value* dataSlot = builder.CreateAlloca(builder.getPtrTy(), nullptr, "rep.data");
-  llvm::Value* lenSlot = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "rep.len");
+  llvm::Value* dataSlot = entryAlloca(builder, builder.getPtrTy(), nullptr, "rep.data");
+  llvm::Value* lenSlot = entryAlloca(builder, builder.getInt64Ty(), nullptr, "rep.len");
   builder.CreateCall(fn,
                      {builder.CreateExtractValue(str, {0}),
                       builder.CreateExtractValue(str, {1}),
@@ -2592,7 +2609,7 @@ llvm::Value* IRGenerator::emitRecordStr(llvm::IRBuilder<>& builder, const Expr& 
     if (value == nullptr) {
       return nullptr;
     }
-    thisPtr = builder.CreateAlloca(lower(record), nullptr, "str.tmp");
+    thisPtr = entryAlloca(builder, lower(record), nullptr, "str.tmp");
     builder.CreateStore(value, thisPtr);
   }
   const auto found = functions_.find(method.llvmName);
@@ -2612,7 +2629,7 @@ llvm::Value* IRGenerator::emitEnumSwitchStr(llvm::IRBuilder<>& builder,
   if (tag->getType() != builder.getInt32Ty()) {
     tag = builder.CreateIntCast(tag, builder.getInt32Ty(), false);
   }
-  llvm::Value* slot = builder.CreateAlloca(lower(types_->strType()), nullptr, "enum.str.slot");
+  llvm::Value* slot = entryAlloca(builder, lower(types_->strType()), nullptr, "enum.str.slot");
   llvm::Function* function = builder.GetInsertBlock()->getParent();
   llvm::BasicBlock* merge = llvm::BasicBlock::Create(*context_, "enum.str.end", function);
   llvm::BasicBlock* fallback = llvm::BasicBlock::Create(*context_, "enum.str.def", function);
@@ -2698,7 +2715,7 @@ llvm::Value* IRGenerator::emitUnionStr(llvm::IRBuilder<>& builder, const Expr& e
   }
   llvm::Value* tag = builder.CreateExtractValue(packed, {0});
   llvm::Value* bits = builder.CreateExtractValue(packed, {1});
-  llvm::Value* slot = builder.CreateAlloca(lower(types_->strType()), nullptr, "union.str");
+  llvm::Value* slot = entryAlloca(builder, lower(types_->strType()), nullptr, "union.str");
   llvm::Function* function = builder.GetInsertBlock()->getParent();
   llvm::BasicBlock* merge = llvm::BasicBlock::Create(*context_, "union.str.end", function);
   llvm::BasicBlock* fallback = llvm::BasicBlock::Create(*context_, "union.str.def", function);
@@ -2825,7 +2842,7 @@ IRGenerator::emitValueRepr(llvm::IRBuilder<>& builder, llvm::Value* value, const
         runtimeDecl("__sere_repr_any", lower(types_->strType()), {lower(type)}), {value});
   }
   if (type->isStrLayout()) {
-    llvm::Value* length = builder.CreateAlloca(builder.getInt64Ty());
+    llvm::Value* length = entryAlloca(builder, builder.getInt64Ty());
     llvm::Function* quote =
         runtimeDecl("sere_str_repr_data",
                     builder.getPtrTy(),
@@ -3064,7 +3081,7 @@ llvm::Value* IRGenerator::emitCastValue(llvm::IRBuilder<>& builder,
     if (found != functions_.end()) {
       llvm::Value* self = emitAddress(builder, value, false);
       if (self == nullptr) {
-        self = builder.CreateAlloca(source->getType());
+        self = entryAlloca(builder, source->getType());
         builder.CreateStore(source, self);
       }
       llvm::Value* result = builder.CreateCall(found->second, {self});
@@ -3176,8 +3193,8 @@ llvm::Value* IRGenerator::emitPrint(llvm::IRBuilder<>& builder, const CallExpr& 
     llvm::Function* itemFn = runtimeDecl(
         "sere_list_item", builder.getPtrTy(), {builder.getPtrTy(), builder.getInt64Ty()});
     llvm::Function* function = builder.GetInsertBlock()->getParent();
-    llvm::Value* index = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "print.i");
-    llvm::Value* item = builder.CreateAlloca(lower(bindType), nullptr, comp.name());
+    llvm::Value* index = entryAlloca(builder, builder.getInt64Ty(), nullptr, "print.i");
+    llvm::Value* item = entryAlloca(builder, lower(bindType), nullptr, comp.name());
     rememberLocal(comp.name(), item, bindType);
     builder.CreateStore(builder.getInt64(0), index);
     llvm::BasicBlock* header = llvm::BasicBlock::Create(*context_, "print.cond", function);
@@ -3300,7 +3317,7 @@ IRGenerator::emitFormatted(llvm::IRBuilder<>& builder, const Expr& value, const 
                                     builder.getInt64Ty(),
                                     builder.getPtrTy()});
   llvm::Value* specData = builder.CreateGlobalString(spec);
-  llvm::Value* outLen = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "fmt.len");
+  llvm::Value* outLen = entryAlloca(builder, builder.getInt64Ty(), nullptr, "fmt.len");
   llvm::Value* text = builder.CreateCall(fn,
                                          {builder.getInt32(kind),
                                           intValue,
@@ -3485,8 +3502,8 @@ llvm::Value* IRGenerator::emitCall(llvm::IRBuilder<>& builder, const CallExpr& e
   const bool externStrRet =
       isExtern && expr.resolvedType() != nullptr && expr.resolvedType()->isStrLayout();
   if (externStrRet) {
-    llvm::Value* dataSlot = builder.CreateAlloca(builder.getPtrTy(), nullptr, "ext.str.data");
-    llvm::Value* lenSlot = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "ext.str.len");
+    llvm::Value* dataSlot = entryAlloca(builder, builder.getPtrTy(), nullptr, "ext.str.data");
+    llvm::Value* lenSlot = entryAlloca(builder, builder.getInt64Ty(), nullptr, "ext.str.len");
     args.push_back(dataSlot);
     args.push_back(lenSlot);
     builder.CreateCall(callee, args);
@@ -3640,7 +3657,7 @@ llvm::Value* IRGenerator::emitInitConstruct(llvm::IRBuilder<>& builder, const Ca
   if (record == nullptr) {
     return nullptr;
   }
-  llvm::Value* slot = builder.CreateAlloca(lower(record), nullptr, "init.tmp");
+  llvm::Value* slot = entryAlloca(builder, lower(record), nullptr, "init.tmp");
   builder.CreateStore(emitDefault(record), slot);
   if (recordHasTypeId(record)) {
     builder.CreateStore(builder.getInt32(recordTypeId(record)),
@@ -3697,7 +3714,7 @@ llvm::Value* IRGenerator::emitMethodCall(llvm::IRBuilder<>& builder, const CallE
     if (value == nullptr || member.object().resolvedType() == nullptr) {
       return nullptr;
     }
-    thisPtr = builder.CreateAlloca(lower(member.object().resolvedType()), nullptr, "this.tmp");
+    thisPtr = entryAlloca(builder, lower(member.object().resolvedType()), nullptr, "this.tmp");
     builder.CreateStore(value, thisPtr);
   }
   std::string methodName = expr.loweredName();
@@ -3896,7 +3913,7 @@ llvm::Value* IRGenerator::emitUnionEquality(llvm::IRBuilder<>& builder,
   if (leftType->isUnion()) {
     auto* function = builder.GetInsertBlock()->getParent();
     auto* done = llvm::BasicBlock::Create(*context_, "union.eq.end", function);
-    auto* slot = builder.CreateAlloca(builder.getInt1Ty());
+    auto* slot = entryAlloca(builder, builder.getInt1Ty());
     builder.CreateStore(builder.getFalse(), slot);
     auto* tag = builder.CreateExtractValue(left, {0});
     for (std::size_t index = 0; index < leftType->args().size(); ++index) {
@@ -4356,7 +4373,7 @@ llvm::Value* IRGenerator::emitBinary(llvm::IRBuilder<>& builder, const BinaryExp
           runtimeDecl("sere_dict_get",
                       builder.getInt32Ty(),
                       {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()});
-      llvm::Value* out = builder.CreateAlloca(lower(rightType->dictValueType()), nullptr, "in.out");
+      llvm::Value* out = entryAlloca(builder, lower(rightType->dictValueType()), nullptr, "in.out");
       contained = builder.CreateICmpNE(
           builder.CreateCall(getFn, {right, emitTempSlot(builder, left, leftType), out}),
           builder.getInt32(0));
@@ -4451,7 +4468,7 @@ llvm::Value* IRGenerator::emitDunderBinary(llvm::IRBuilder<>& builder,
     if (value == nullptr) {
       return nullptr;
     }
-    self = builder.CreateAlloca(lower(record), nullptr, "dunder.self");
+    self = entryAlloca(builder, lower(record), nullptr, "dunder.self");
     builder.CreateStore(value, self);
   }
   // The other operand follows the same rule as the receiver: a class argument is
@@ -4816,7 +4833,7 @@ llvm::Value* IRGenerator::emitRange(llvm::IRBuilder<>& builder, const CallExpr& 
       runtimeDecl("sere_list_push", builder.getVoidTy(), {builder.getPtrTy(), builder.getPtrTy()});
   llvm::Value* list = builder.CreateCall(newFn, {builder.getInt64(valueSize(element))});
   llvm::Function* function = builder.GetInsertBlock()->getParent();
-  llvm::Value* index = builder.CreateAlloca(indexType, nullptr, "range.i");
+  llvm::Value* index = entryAlloca(builder, indexType, nullptr, "range.i");
   builder.CreateStore(start, index);
   llvm::BasicBlock* header = llvm::BasicBlock::Create(*context_, "range.cond", function);
   llvm::BasicBlock* body = llvm::BasicBlock::Create(*context_, "range.body", function);
@@ -4829,7 +4846,7 @@ llvm::Value* IRGenerator::emitRange(llvm::IRBuilder<>& builder, const CallExpr& 
   llvm::Value* back = builder.CreateICmpSGT(current, stop);
   builder.CreateCondBr(builder.CreateSelect(positive, fwd, back), body, exit);
   builder.SetInsertPoint(body);
-  llvm::Value* slot = builder.CreateAlloca(indexType, nullptr, "range.el");
+  llvm::Value* slot = entryAlloca(builder, indexType, nullptr, "range.el");
   builder.CreateStore(current, slot);
   builder.CreateCall(pushFn, {list, slot});
   builder.CreateStore(builder.CreateAdd(current, step), index);
@@ -4870,7 +4887,7 @@ IRGenerator::emitParse(llvm::IRBuilder<>& builder, const CallExpr& expr, bool op
     raw = emitDefault(types_->noneType());
     rawType = types_->noneType();
   } else if (parsedType->isNamed("bool")) {
-    llvm::Value* slot = builder.CreateAlloca(builder.getInt32Ty(), nullptr, "parse.bool");
+    llvm::Value* slot = entryAlloca(builder, builder.getInt32Ty(), nullptr, "parse.bool");
     llvm::Function* fn =
         runtimeDecl("sere_parse_bool",
                     builder.getInt32Ty(),
@@ -4882,7 +4899,7 @@ IRGenerator::emitParse(llvm::IRBuilder<>& builder, const CallExpr& expr, bool op
              (parsedType->isUnion() && !parsedType->args().empty() &&
               parsedType->args()[0] != nullptr && parsedType->args()[0]->isFloat())) {
     rawType = parsedType->isNamed("f32") ? types_->f32Type() : types_->f64Type();
-    llvm::Value* slot = builder.CreateAlloca(builder.getDoubleTy(), nullptr, "parse.f");
+    llvm::Value* slot = entryAlloca(builder, builder.getDoubleTy(), nullptr, "parse.f");
     llvm::Function* fn = runtimeDecl(
         "sere_parse_float",
         builder.getInt32Ty(),
@@ -4900,7 +4917,7 @@ IRGenerator::emitParse(llvm::IRBuilder<>& builder, const CallExpr& expr, bool op
     if (parsedType->isUnion() && parsedType->isInteger()) {
       rawType = types_->i64Type();
     }
-    llvm::Value* slot = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "parse.i");
+    llvm::Value* slot = entryAlloca(builder, builder.getInt64Ty(), nullptr, "parse.i");
     llvm::Function* fn = runtimeDecl("sere_parse_int",
                                      builder.getInt32Ty(),
                                      {builder.getPtrTy(),
@@ -4964,7 +4981,7 @@ bool IRGenerator::emitIteratorLoop(llvm::IRBuilder<>& builder,
       llvm::Intrinsic::getOrInsertDeclaration(module_, llvm::Intrinsic::coro_promise);
   llvm::Function* destroyFn =
       llvm::Intrinsic::getOrInsertDeclaration(module_, llvm::Intrinsic::coro_destroy);
-  llvm::Value* item = builder.CreateAlloca(lower(element), nullptr, name);
+  llvm::Value* item = entryAlloca(builder, lower(element), nullptr, name);
   rememberLocal(name, item, element);
   auto* header = llvm::BasicBlock::Create(*context_, "iter.cond", function);
   auto* check = llvm::BasicBlock::Create(*context_, "iter.check", function);
@@ -5045,7 +5062,7 @@ bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
     llvm::Value* stop = startsAtZero ? bound(0, 0) : bound(1, 0);
     llvm::Value* step =
         range.arguments().size() == 3 ? bound(2, 1) : llvm::ConstantInt::get(indexType, 1);
-    llvm::Value* index = builder.CreateAlloca(indexType, nullptr, statement.name());
+    llvm::Value* index = entryAlloca(builder, indexType, nullptr, statement.name());
     builder.CreateStore(start, index);
     rememberLocal(statement.name(), index, element);
     llvm::BasicBlock* header = llvm::BasicBlock::Create(*context_, "for.cond", function);
@@ -5080,8 +5097,8 @@ bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
   if (iterable.resolvedType() != nullptr && iterable.resolvedType()->isNamed("str")) {
     llvm::Value* str = emitExpr(builder, iterable);
     llvm::Value* length = builder.CreateExtractValue(str, {1});
-    llvm::Value* cursor = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "for.i");
-    llvm::Value* item = builder.CreateAlloca(lower(types_->strType()), nullptr, statement.name());
+    llvm::Value* cursor = entryAlloca(builder, builder.getInt64Ty(), nullptr, "for.i");
+    llvm::Value* item = entryAlloca(builder, lower(types_->strType()), nullptr, statement.name());
     builder.CreateStore(builder.getInt64(0), cursor);
     rememberLocal(statement.name(), item, types_->strType());
     llvm::BasicBlock* header = llvm::BasicBlock::Create(*context_, "for.cond", function);
@@ -5100,8 +5117,8 @@ bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
                                            builder.getInt64Ty(),
                                            builder.getPtrTy(),
                                            builder.getPtrTy()});
-    llvm::Value* dataSlot = builder.CreateAlloca(builder.getPtrTy(), nullptr, "ch.data");
-    llvm::Value* lenSlot = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "ch.len");
+    llvm::Value* dataSlot = entryAlloca(builder, builder.getPtrTy(), nullptr, "ch.data");
+    llvm::Value* lenSlot = entryAlloca(builder, builder.getInt64Ty(), nullptr, "ch.len");
     builder.CreateCall(indexFn,
                        {builder.CreateExtractValue(str, {0}), length, current, dataSlot, lenSlot});
     builder.CreateStore(packStr(builder,
@@ -5131,8 +5148,8 @@ bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
       runtimeDecl("sere_list_item", builder.getPtrTy(), {builder.getPtrTy(), builder.getInt64Ty()});
   const Type* element = iterable.resolvedType() == nullptr ? types_->i32Type()
                                                            : iterable.resolvedType()->elementType();
-  llvm::Value* index = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "for.i");
-  llvm::Value* item = builder.CreateAlloca(lower(element), nullptr, statement.name());
+  llvm::Value* index = entryAlloca(builder, builder.getInt64Ty(), nullptr, "for.i");
+  llvm::Value* item = entryAlloca(builder, lower(element), nullptr, statement.name());
   builder.CreateStore(builder.getInt64(0), index);
   rememberLocal(statement.name(), item, element);
   llvm::BasicBlock* header = llvm::BasicBlock::Create(*context_, "for.cond", function);
@@ -5178,7 +5195,7 @@ llvm::Value* IRGenerator::emitComprehension(llvm::IRBuilder<>& builder,
     auto* pushFn = runtimeDecl(
         "sere_list_push", builder.getVoidTy(), {builder.getPtrTy(), builder.getPtrTy()});
     llvm::Value* out = builder.CreateCall(newFn, {builder.getInt64(valueSize(valueType))});
-    llvm::Value* slot = builder.CreateAlloca(lower(valueType), nullptr, "comp.el");
+    llvm::Value* slot = entryAlloca(builder, lower(valueType), nullptr, "comp.el");
     if (!emitIteratorLoop(
             builder, iterator, resolveType(iteratorType->genericArg(0)), expr.name(), [&] {
               llvm::Value* value = emitExpr(builder, expr.element());
@@ -5206,8 +5223,8 @@ llvm::Value* IRGenerator::emitComprehension(llvm::IRBuilder<>& builder,
       runtimeDecl("sere_list_item", builder.getPtrTy(), {builder.getPtrTy(), builder.getInt64Ty()});
   llvm::Value* out = builder.CreateCall(newFn, {builder.getInt64(valueSize(valueType))});
   llvm::Function* function = builder.GetInsertBlock()->getParent();
-  llvm::Value* index = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "comp.i");
-  llvm::Value* item = builder.CreateAlloca(lower(bindType), nullptr, expr.name());
+  llvm::Value* index = entryAlloca(builder, builder.getInt64Ty(), nullptr, "comp.i");
+  llvm::Value* item = entryAlloca(builder, lower(bindType), nullptr, expr.name());
   rememberLocal(expr.name(), item, bindType);
   builder.CreateStore(builder.getInt64(0), index);
   llvm::BasicBlock* header = llvm::BasicBlock::Create(*context_, "comp.cond", function);
@@ -5222,7 +5239,7 @@ llvm::Value* IRGenerator::emitComprehension(llvm::IRBuilder<>& builder,
   llvm::Value* slot = builder.CreateCall(itemFn, {source, current});
   builder.CreateStore(builder.CreateLoad(lower(bindType), slot), item);
   llvm::Value* mapped = emitExpr(builder, expr.element());
-  llvm::Value* mappedSlot = builder.CreateAlloca(lower(valueType), nullptr, "comp.el");
+  llvm::Value* mappedSlot = entryAlloca(builder, lower(valueType), nullptr, "comp.el");
   builder.CreateStore(mapped, mappedSlot);
   builder.CreateCall(pushFn, {out, mappedSlot});
   builder.CreateStore(builder.CreateAdd(current, builder.getInt64(1)), index);
@@ -5487,7 +5504,7 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
       }
       return slot != nullptr;
     }
-    llvm::Value* slot = builder.CreateAlloca(lower(decl.resolvedType()), nullptr, decl.name());
+    llvm::Value* slot = entryAlloca(builder, lower(decl.resolvedType()), nullptr, decl.name());
     llvm::Value* init = decl.init() == nullptr ? emitDefault(decl.resolvedType())
                                                : emitCoerce(builder,
                                                              emitExpr(builder, *decl.init()),
@@ -5597,7 +5614,7 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
         if (llvmType == nullptr || llvmType->isVoidTy() || propertySelf == nullptr) {
           return false;
         }
-        address = builder.CreateAlloca(llvmType, nullptr, "prop.tmp");
+        address = entryAlloca(builder, llvmType, nullptr, "prop.tmp");
         if (assign.op() != AssignOp::Assign) {
           llvm::Value* current = emitExpr(builder, assign.target());
           if (current == nullptr) {
@@ -5817,7 +5834,7 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
     // pointer: readers load the pointer and then the fat pair through it.
     // Storing a load of the first word here would alias the function pointer
     // as an environment and crash on call.
-    llvm::Value* slot = builder.CreateAlloca(builder.getPtrTy(), nullptr, function.name());
+    llvm::Value* slot = entryAlloca(builder, builder.getPtrTy(), nullptr, function.name());
     builder.CreateStore(packed, slot);
     rememberLocal(function.name(), slot, function.resolvedType());
     return true;
@@ -6683,7 +6700,7 @@ bool IRGenerator::setupAsyncCoroutine(llvm::IRBuilder<>& builder,
   if (returnType != nullptr && !returnType->isVoidLike()) {
     asyncResultTy_ = lower(returnType);
     if (asyncResultTy_ != nullptr && !asyncResultTy_->isVoidTy()) {
-      asyncPromise_ = builder.CreateAlloca(asyncResultTy_, nullptr, "promise");
+      asyncPromise_ = entryAlloca(builder, asyncResultTy_, nullptr, "promise");
     }
   }
 
@@ -6829,7 +6846,7 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
         // By-reference capture: the environment holds a pointer to the object;
         // give the nested local a slot holding that pointer, matching the
         // layout of a method's `self` slot.
-        llvm::Value* slot = builder.CreateAlloca(
+        llvm::Value* slot = entryAlloca(builder,
             llvm::PointerType::getUnqual(*context_), nullptr, capture.name + ".slot");
         builder.CreateStore(builder.CreateLoad(builder.getPtrTy(), cell), slot);
         rememberLocal(capture.name, slot, capture.type);
@@ -6854,13 +6871,13 @@ bool IRGenerator::emitFunction(const FunctionDef& function, const std::string& o
       // `self` and every class parameter arrive as a pointer to the object, but
       // captured locals are read back through a load (see the FunctionDef case
       // in emitStatement), so keep a slot that holds the pointer itself.
-      llvm::Value* selfSlot = builder.CreateAlloca(arg.getType(), nullptr, param.name + ".slot");
+      llvm::Value* selfSlot = entryAlloca(builder, arg.getType(), nullptr, param.name + ".slot");
       builder.CreateStore(&arg, selfSlot);
       // While a class parameter is borrowed storage, it behaves like `self`:
       // reading it loads the pointer and field access follows it.
       rememberLocal(param.name, selfSlot, paramType);
     } else {
-      llvm::Value* slot = builder.CreateAlloca(arg.getType(), nullptr, param.name);
+      llvm::Value* slot = entryAlloca(builder, arg.getType(), nullptr, param.name);
       builder.CreateStore(&arg, slot);
       // Parameters borrow their pointer values; ownership remains with the
       // caller. Registering an owning parameter for drops double-frees it.
@@ -7069,6 +7086,13 @@ std::unique_ptr<llvm::Module> IRGenerator::emit(const Module& ast,
   return module;
 }
 
+llvm::AllocaInst* IRGenerator::entryAlloca(llvm::IRBuilder<>& builder,
+                                           llvm::Type* type,
+                                           llvm::Value* arraySize,
+                                           llvm::StringRef name) {
+  return allocaInEntry(builder, type, arraySize, name);
+}
+
 llvm::Value* IRGenerator::packStr(llvm::IRBuilder<>& builder, llvm::Value* data, llvm::Value* len) {
   llvm::Value* str = llvm::UndefValue::get(lower(types_->strType()));
   str = builder.CreateInsertValue(str, data, {0});
@@ -7227,7 +7251,7 @@ llvm::Value* IRGenerator::emitDunderCall(llvm::IRBuilder<>& builder,
     if (value == nullptr) {
       return nullptr;
     }
-    thisPtr = builder.CreateAlloca(lower(record), nullptr, "dunder.tmp");
+    thisPtr = entryAlloca(builder, lower(record), nullptr, "dunder.tmp");
     builder.CreateStore(value, thisPtr);
   }
   return emitDunderOnSelf(builder, record, thisPtr, name, extra);
@@ -7247,7 +7271,7 @@ IRGenerator::emitObjectPointer(llvm::IRBuilder<>& builder, const Expr& object, c
   if (value == nullptr) {
     return nullptr;
   }
-  thisPtr = builder.CreateAlloca(lower(record), nullptr, "prop.self");
+  thisPtr = entryAlloca(builder, lower(record), nullptr, "prop.self");
   builder.CreateStore(value, thisPtr);
   return thisPtr;
 }
@@ -7378,7 +7402,7 @@ bool IRGenerator::emitRaise(llvm::IRBuilder<>& builder, const RaiseStmt& stateme
                        {builder.CreateGlobalString(chain, "", 0, module_),
                         builder.CreateExtractValue(message, {0}),
                         builder.CreateExtractValue(message, {1})});
-    llvm::Value* slot = builder.CreateAlloca(lower(type));
+    llvm::Value* slot = entryAlloca(builder, lower(type));
     builder.CreateStore(object, slot);
     builder.CreateCall(
         runtimeDecl("sere_error_set_object",
@@ -7441,7 +7465,7 @@ bool IRGenerator::emitTry(llvm::IRBuilder<>& builder,
       llvm::Value* object = emitDefault(caught);
       if (recordHasTypeId(caught))
         object = builder.CreateInsertValue(object, builder.getInt32(recordTypeId(caught)), {0});
-      llvm::Value* length = builder.CreateAlloca(builder.getInt64Ty());
+      llvm::Value* length = entryAlloca(builder, builder.getInt64Ty());
       llvm::Value* data = builder.CreateCall(
           runtimeDecl("sere_error_message", builder.getPtrTy(), {builder.getPtrTy()}), {length});
       // Copy the message so an exception binding can outlive its handler.
@@ -7599,7 +7623,7 @@ bool IRGenerator::emitMatch(llvm::IRBuilder<>& builder,
               continue;
             }
             llvm::Value* slot =
-                builder.CreateAlloca(lower(field->payloadTypes[index]), nullptr, bind);
+                entryAlloca(builder, lower(field->payloadTypes[index]), nullptr, bind);
             llvm::Value* gep =
                 builder.CreateStructGEP(payloadTy, payload, static_cast<unsigned>(index));
             builder.CreateStore(builder.CreateLoad(lower(field->payloadTypes[index]), gep), slot);
@@ -7838,7 +7862,7 @@ llvm::Value* IRGenerator::emitConstructorThunk(const Type* record) {
   functions_[name] = fn;
   llvm::BasicBlock* entry = llvm::BasicBlock::Create(*context_, "entry", fn);
   llvm::IRBuilder<> builder(entry);
-  llvm::Value* slot = builder.CreateAlloca(lower(record), nullptr, "init.tmp");
+  llvm::Value* slot = entryAlloca(builder, lower(record), nullptr, "init.tmp");
   builder.CreateStore(emitDefault(record), slot);
   if (recordHasTypeId(record)) {
     builder.CreateStore(builder.getInt32(recordTypeId(record)),
@@ -8063,7 +8087,7 @@ bool IRGenerator::emitLambdaFunction(const LambdaExpr& expr) {
       break;
     }
     arg.setName(expr.params()[index].name);
-    llvm::Value* slot = builder.CreateAlloca(arg.getType(), nullptr, expr.params()[index].name);
+    llvm::Value* slot = entryAlloca(builder, arg.getType(), nullptr, expr.params()[index].name);
     builder.CreateStore(&arg, slot);
     const Type* paramType =
         index < fnType->paramTypes().size() ? fnType->paramTypes()[index] : nullptr;
@@ -8263,7 +8287,7 @@ bool IRGenerator::emitWith(llvm::IRBuilder<>& builder,
     if (value == nullptr) {
       return false;
     }
-    self = builder.CreateAlloca(lower(record), nullptr, "with.self");
+    self = entryAlloca(builder, lower(record), nullptr, "with.self");
     builder.CreateStore(value, self);
   }
   llvm::Value* entered = emitDunderOnSelf(builder, record, self, "__enter__", {});

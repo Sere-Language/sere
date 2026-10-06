@@ -67,6 +67,8 @@ void sere_print_str(const char* data, int64_t len);
 void sere_process_init_args(int32_t argc, char** argv);
 int32_t sere_process_args_captured(void);
 void sere_process_set_backend(const char* name, int64_t name_len);
+/// Borrowed backend name recorded by `sere_process_set_backend` (never NULL).
+const char* sere_process_backend(void);
 int32_t sere_process_argc(void);
 void* sere_process_argv(void);
 void sere_process_program_path(const char** out_data, int64_t* out_len);
@@ -290,8 +292,7 @@ void* sere_mp_lookup_target(const char* name, int64_t name_len);
 void sere_mp_target_name(void* fn, const char** out_data, int64_t* out_len);
 void sere_mp_target_name_box(const void* box, const char** out_data, int64_t* out_len);
 void sere_mp_set_rebuilder(const void* box);
-void sere_mp_call_target(const void* box, void* args_list);
-int32_t sere_mp_active_children(void);
+void sere_mp_call_target(const void* box, void* args_list);int32_t sere_mp_active_children(void);
 void* sere_mp_child_at(int32_t index);
 void sere_mp_forget_child(void* process);
 void sere_mp_bootstrap(int32_t argc, char** argv);
@@ -301,6 +302,15 @@ void sere_mp_shutdown(void);
 void* sere_mp_pack_call(const char* name, int64_t name_len, void* args_list);
 void* sere_mp_unpack_args(void* byte_list);
 void* sere_mp_to_any_list(const void* box);
+
+/* Reduction rules. The tables live in the runtime so that a module registering
+ * a rule does not depend on Sere module-initialization order. */
+void sere_mp_add_reducer(const void* box);
+void sere_mp_add_rebuilder(int32_t kind, const void* box);
+int32_t sere_mp_reducer_count(void);
+int32_t sere_mp_rebuilder_count(void);
+void sere_mp_reducer_into(int32_t index, void* out_box);
+int32_t sere_mp_rebuilder_into(int32_t kind, void* out_box);
 void* sere_mp_pack_any(const void* box);
 void sere_mp_unpack_any_into(void* byte_list, void* out_box);
 

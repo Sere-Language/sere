@@ -1,0 +1,261 @@
+﻿"""`multiprocessing.connection`: pipes, connection objects and `wait`.
+
+A `Connection` wraps one bidirectional channel built from a pair of OS pipes.
+Messages are framed with a 4-byte length prefix, so one `send` always maps onto
+exactly one `recv` no matter how the operating system splits the byte stream.
+
+Descriptor transfer works the way Python's spawn start method does it on
+Windows: the pipe handles are created inheritable, and the numeric handle value
+is what travels to the child through the reduction layer. The child rebuilds a
+live `Connection` from those numbers; a raw address is never passed.
+"""
+
+import string
+
+import multiprocessing.reduction as reduction
+from multiprocessing.exceptions import BrokenPipeError, BufferTooShort, EOFError, TimeoutError
+from multiprocessing.process import Process
+
+# ---------------------------------------------------------------------------
+# Native entry points
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_mp_pipe_duplex"
+def _pipe_duplex(a: Ptr[Ptr[i8]], b: Ptr[Ptr[i8]]) -> i32
+"""Create a duplex pipe pair."""
+
+extern "C" "sere_mp_pipe_simplex"
+def _pipe_simplex(read_end: Ptr[Ptr[i8]], write_end: Ptr[Ptr[i8]]) -> i32
+"""Create a one-way pipe pair."""
+
+extern "C" "sere_mp_conn_from_handles"
+def _from_handles(read_handle: i64, write_handle: i64, owns_read: i32, owns_write: i32) -> Ptr[i8]
+"""Wrap handles inherited from another process."""
+
+extern "C" "sere_mp_conn_read_handle"
+def _read_handle(conn: Ptr[i8]) -> i64
+"""The handle used for reading."""
+
+extern "C" "sere_mp_conn_write_handle"
+def _write_handle(conn: Ptr[i8]) -> i64
+"""The handle used for writing."""
+
+extern "C" "sere_mp_conn_poll"
+def _poll(conn: Ptr[i8], timeout_ms: i64) -> i32
+"""Return 1 once the connection has something to read."""
+
+extern "C" "sere_mp_conn_close_read"
+def _close_read(conn: Ptr[i8]) -> void
+"""Close the reading side."""
+
+extern "C" "sere_mp_conn_close_write"
+def _close_write(conn: Ptr[i8]) -> void
+"""Close the writing side."""
+
+extern "C" "sere_mp_conn_close"
+def _close_conn(conn: Ptr[i8]) -> void
+"""Close and free the connection."""
+
+extern "C" "sere_mp_conn_send_frame"
+def _send_frame(conn: Ptr[i8], data: list[byte]) -> i32
+"""Write one length-prefixed message."""
+
+extern "C" "sere_mp_conn_recv_frame"
+def _recv_frame(conn: Ptr[i8], timeout_ms: i64, status: Ptr[i32]) -> list[byte]
+"""Read one length-prefixed message."""
+
+extern "C" "sere_mp_wait_many"
+def _wait_many(handles: list[i64], timeout_ms: i64) -> i32
+"""Wait for any of several waitable handles."""
+
+# ---------------------------------------------------------------------------
+# Connection
+# ---------------------------------------------------------------------------
+
+const STATUS_OK: i32 = 0
+const STATUS_TIMEOUT: i32 = 1
+const STATUS_ENDED: i32 = 2
+const STATUS_ERROR: i32 = 3
+
+
+class Connection:
+    """One end of a pipe, modelled on `multiprocessing.connection.Connection`.
+
+    ``send`` encodes any transferable value; ``recv`` decodes it. Both are a
+    single framed message, so partial reads can never be mistaken for a
+    complete value. Use `send_bytes`/`recv_bytes` to move raw byte lists.
+    """
+
+    _handle: Ptr[i8]
+    readable: bool
+    writable: bool
+    closed: bool
+
+    def __init__(self, handle: Ptr[i8]) -> void:
+        """Wrap a native connection handle (used internally)."""
+        self._handle = handle
+        self.readable = True
+        self.writable = True
+        self.closed = False
+
+    # -- properties ------------------------------------------------------
+
+    @public readable.get:
+        return self.readable
+
+    @public writable.get:
+        return self.writable
+
+    @public closed.get:
+        return self.closed
+
+    def fileno(self) -> i64:
+        """Return the numeric handle for this connection."""
+        return _read_handle(self._handle)
+
+    def read_handle(self) -> i64:
+        """The handle a child needs in order to receive on this connection."""
+        return _read_handle(self._handle)
+
+    def write_handle(self) -> i64:
+        """The handle a child needs in order to send on this connection."""
+        return _write_handle(self._handle)
+
+    # -- sending ---------------------------------------------------------
+
+    def send(self, value: Any) -> void:
+        """Send one transferable value."""
+        self._require_open()
+        payload: list[byte] = reduction.dumps(reduction.reduce(value))
+        if _send_frame(self._handle, payload) == 0:
+            raise BrokenPipeError("send failed: the other end is closed")
+
+    def send_bytes(self, data: list[byte]) -> void:
+        """Send raw bytes as one message."""
+        self._require_open()
+        if _send_frame(self._handle, data) == 0:
+            raise BrokenPipeError("send failed: the other end is closed")
+
+    # -- receiving -------------------------------------------------------
+
+    def recv(self) -> Any:
+        """Receive one value sent with `send`."""
+        self._require_open()
+        return reduction.rebuild(reduction.loads(self.recv_bytes()))
+
+    def recv_bytes(self, maxlength: i64 = -1) -> list[byte]:
+        """Receive one message as raw bytes."""
+        self._require_open()
+        status: i32 = STATUS_OK
+        frame: list[byte] = _recv_frame(self._handle, -1, &status)
+        if status == STATUS_ENDED:
+            raise EOFError("the connection was closed by the other end")
+        if status != STATUS_OK:
+            raise BrokenPipeError("receive failed")
+        if maxlength >= 0 and (len(frame) as i64) > maxlength:
+            raise BufferTooShort("message is larger than maxlength")
+        return frame
+
+    def recv_bytes_into(self, buffer: list[byte]) -> i64:
+        """Receive one message into `buffer` and return the number of bytes."""
+        frame: list[byte] = self.recv_bytes(len(buffer) as i64)
+        count: i64 = len(frame) as i64
+        index: i64 = 0
+        while index < count:
+            buffer[index] = frame[index]
+            index = index + 1
+        return count
+
+    # -- lifecycle -------------------------------------------------------
+
+    def poll(self, timeout: f64 = 0.0) -> bool:
+        """Return whether a message is ready to be received."""
+        wait_ms: i64 = 0
+        if timeout >= 0.0:
+            wait_ms = (timeout * 1000.0) as i64
+        return _poll(self._handle, wait_ms) == 1
+
+    def close(self) -> void:
+        """Close both directions of the connection."""
+        if self.closed:
+            return
+        _close_conn(self._handle)
+        self._handle = None
+        self.readable = False
+        self.writable = False
+        self.closed = True
+
+    def _require_open(self) -> void:
+        if self.closed:
+            raise ValueError("connection is closed")
+
+    # `readable`/`writable` are read-only getters, so a simplex pipe adjusts
+    # them through this helper from inside the class.
+    def _set_directions(self, can_read: bool, can_write: bool) -> void:
+        self.readable = can_read
+        self.writable = can_write
+
+
+# ---------------------------------------------------------------------------
+# Pipe
+# ---------------------------------------------------------------------------
+
+
+def Pipe(duplex: bool = True) -> tuple[Connection, Connection]:
+    """Return a connected pair of `Connection` objects.
+
+    With ``duplex=True`` both ends can send and receive. With ``duplex=False``
+    the first element only receives and the second only sends.
+    """
+    first: Ptr[i8] = None
+    second: Ptr[i8] = None
+    if duplex:
+        _pipe_duplex(&first, &second)
+        return (Connection(first), Connection(second))
+    _pipe_simplex(&first, &second)
+    reader: Connection = Connection(first)
+    writer: Connection = Connection(second)
+    reader._set_directions(True, False)
+    writer._set_directions(False, True)
+    return (reader, writer)
+
+
+# ---------------------------------------------------------------------------
+# wait
+# ---------------------------------------------------------------------------
+
+
+def _waitable(value: Any) -> i64:
+    """Return the waitable handle for a connection or a process."""
+    held: Any = value
+    if isinstance(value, Connection):
+        conn: Connection = held as Connection
+        return conn.fileno()
+    if isinstance(value, Process):
+        proc: Process = held as Process
+        return proc.sentinel()
+    raise TypeError("wait() accepts connections and processes")
+
+
+def wait(objects: list[Any], timeout: f64 = -1.0) -> list[Any]:
+    """Wait until one of `objects` is ready and return the ready ones.
+
+    Each element may be a `Connection` (readable) or a `Process` (exited). The
+    wait itself is a kernel wait on the underlying handles, not a poll loop.
+    """
+    handles: list[i64] = []
+    for item in objects:
+        handles.append(_waitable(item))
+    wait_ms: i64 = -1
+    if timeout >= 0.0:
+        wait_ms = (timeout * 1000.0) as i64
+    index: i32 = _wait_many(handles, wait_ms)
+    ready: list[Any] = []
+    if index >= 0:
+        ready.append(objects[index as i64])
+    return ready
+
+
+# ---------------------------------------------------------------------------
+# Reduction
+# ---------------------------------------------------------------------------

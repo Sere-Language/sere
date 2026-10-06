@@ -73,6 +73,16 @@ target_link_libraries(sere_codegen PUBLIC sere_ast sere_types)
 sere_configure_llvm_target(sere_codegen)
 sere_apply_warnings(sere_codegen)
 
+# Frontend bridge for compiled programs: `import ast` links this to parse Sere
+# source at run time. The bridge itself is small, so the compiler's own frontend
+# libraries are staged beside it and linked after it (see linkExecutable). It is
+# not part of the compiler binary, which gets the frontend through sere_driver.
+add_library(sere_front
+  api/AstBridge.cpp
+)
+target_link_libraries(sere_front PUBLIC sere_parse sere_ast sere_lex sere_source sere_diag)
+sere_apply_warnings(sere_front)
+
 add_library(sere_driver
   driver/Options.cpp
   driver/Compiler.cpp

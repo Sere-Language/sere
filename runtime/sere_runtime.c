@@ -169,6 +169,10 @@ void sere_process_set_backend(const char* name, int64_t name_len) {
   gBackend[length] = '\0';
 }
 
+/// The backend name recorded by `sere_process_set_backend`, borrowed for the
+/// life of the process (no copy). Codegen-specific runtime paths key off this.
+const char* sere_process_backend(void) { return gBackend; }
+
 int32_t sere_process_argc(void) { return gArgc; }
 
 /// Builds the argument list directly rather than deferring to

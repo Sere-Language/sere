@@ -1,0 +1,2612 @@
+# Sere syntax trees. Import with: import ast
+#
+# `ast` parses Sere source into an inspectable, mutable tree of nodes and turns a
+# tree back into source. It is built for tooling: linters, formatters,
+# refactoring tools, analyzers, documentation generators, and the language
+# server all need to see and rewrite the source structure without reimplementing
+# a parser.
+#
+# Parsing is the compiler's own frontend, reached through the `sere_front`
+# library, so the tree matches what the compiler sees. A program that imports
+# `ast` links that library automatically.
+#
+#   import ast
+#
+#   tree: ast.AST = ast.parse("x = 1\nprint(x)\n")
+#   print(ast.dump(tree, indent=4))
+#   print(ast.unparse(tree))
+#
+# Shape of a node
+# ---------------
+# Every node carries `kind` (the syntax it represents, such as "Call" or
+# "FunctionDef"), `category` ("stmt", "expr", "type", "op", "helper", or
+# "module"), its fields, and its source range. Fields are held in typed maps
+# rather than as object attributes: Sere rejects casts between class types and
+# lays out subclass fields differently on the two backends, so a polymorphic
+# tree cannot expose `node.id` directly. Read a field through the accessor that
+# matches it and the value comes back typed:
+#
+#   node.text("id")            # a name, attribute, or docstring
+#   node.child("value")        # a child node
+#   node.children("body")      # a list of child nodes
+#   node.number("value")       # an integer literal
+#   node.real("value")         # a float literal
+#   node.flag("is_async")      # a boolean flag
+#   node.texts("decorators")   # a list of strings
+#
+# `node.has(name)` reports whether the field is present, and the setter for each
+# accessor (`set_text`, `set_child`, `set_children`, ...) makes the tree mutable:
+#
+#   if node.has("value"):
+#       node.set_child("value", ast.Constant(value=0))
+#
+# Traversal
+# ---------
+# `walk` yields every node, `iter_child_nodes` the direct children, and
+# `iter_fields` the field values. Visitors subclass `NodeVisitor` and define
+# `visit_<Kind>` methods that call `generic_visit` to keep descending;
+# transformers subclass `NodeTransformer`, where a `visit_<Kind>` method returns
+# the node to keep, a replacement to substitute, or `None` to delete it.
+
+# ---------------------------------------------------------------------------
+# Native bindings (sere_front, see include/sere/api/sere_ast.h)
+# ---------------------------------------------------------------------------
+
+import fs
+import string
+
+extern "C" "sere_ast_parse"
+def _parse(source: str, filename: str, mode: i32) -> Ptr[i8]
+"""Parse source into a tree; returns a null pointer on a syntax error."""
+
+extern "C" "sere_ast_free"
+def _free(tree: Ptr[i8]) -> void
+"""Free a tree and all the handles it handed out."""
+
+extern "C" "sere_ast_last_error"
+def last_error() -> str
+"""Diagnostics of the most recent failed parse."""
+
+extern "C" "sere_ast_root"
+def _root(tree: Ptr[i8]) -> Ptr[i8]
+"""The root node of a tree."""
+
+extern "C" "sere_ast_source"
+def _source(tree: Ptr[i8]) -> str
+"""The source text a tree was parsed from."""
+
+extern "C" "sere_ast_filename"
+def _filename(tree: Ptr[i8]) -> str
+"""The filename a tree was parsed with."""
+
+extern "C" "sere_ast_kind"
+def _kind(node: Ptr[i8]) -> str
+"""The kind name of a node."""
+
+extern "C" "sere_ast_category"
+def _category(node: Ptr[i8]) -> i32
+"""The category code of a node."""
+
+extern "C" "sere_ast_field_count"
+def _field_count(node: Ptr[i8]) -> i64
+"""How many fields a node has."""
+
+extern "C" "sere_ast_field_name"
+def _field_name(node: Ptr[i8], index: i64) -> str
+"""The name of the field at an index."""
+
+extern "C" "sere_ast_field_kind"
+def _field_kind(node: Ptr[i8], index: i64) -> i32
+"""The value kind of the field at an index."""
+
+extern "C" "sere_ast_field_node"
+def _field_node(node: Ptr[i8], index: i64) -> Ptr[i8]
+"""The child node held by a field."""
+
+extern "C" "sere_ast_field_node_count"
+def _field_node_count(node: Ptr[i8], index: i64) -> i64
+"""How many children a node-list field holds."""
+
+extern "C" "sere_ast_field_node_at"
+def _field_node_at(node: Ptr[i8], index: i64, item: i64) -> Ptr[i8]
+"""One child of a node-list field."""
+
+extern "C" "sere_ast_field_text"
+def _field_text(node: Ptr[i8], index: i64) -> str
+"""The text held by a field."""
+
+extern "C" "sere_ast_field_text_count"
+def _field_text_count(node: Ptr[i8], index: i64) -> i64
+"""How many strings a text-list field holds."""
+
+extern "C" "sere_ast_field_text_at"
+def _field_text_at(node: Ptr[i8], index: i64, item: i64) -> str
+"""One string of a text-list field."""
+
+extern "C" "sere_ast_field_int"
+def _field_int(node: Ptr[i8], index: i64) -> i64
+"""The integer held by a field."""
+
+extern "C" "sere_ast_field_bool"
+def _field_bool(node: Ptr[i8], index: i64) -> i32
+"""The flag held by a field."""
+
+extern "C" "sere_ast_field_float"
+def _field_float(node: Ptr[i8], index: i64) -> f64
+"""The float held by a field."""
+
+extern "C" "sere_ast_range_start_line"
+def _start_line(node: Ptr[i8]) -> i64
+"""One-based line the node starts on."""
+
+extern "C" "sere_ast_range_start_column"
+def _start_column(node: Ptr[i8]) -> i64
+"""Zero-based column the node starts at."""
+
+extern "C" "sere_ast_range_end_line"
+def _end_line(node: Ptr[i8]) -> i64
+"""One-based line the node ends on."""
+
+extern "C" "sere_ast_range_end_column"
+def _end_column(node: Ptr[i8]) -> i64
+"""Zero-based column the node ends at."""
+
+extern "C" "sere_ast_kind_count"
+def _kind_count() -> i64
+"""How many node kinds the compiler's syntax tree knows."""
+
+extern "C" "sere_ast_kind_name_at"
+def _kind_name(index: i64) -> str
+"""The name of the kind at an index."""
+
+extern "C" "sere_ast_kind_category"
+def _kind_category(name: str) -> i32
+"""The category code of a kind, by name."""
+
+extern "C" "sere_ast_field_count_of_kind"
+def _kind_field_count(name: str) -> i64
+"""How many fields a kind declares, or -1 when the kind is unknown."""
+
+extern "C" "sere_ast_field_name_of_kind"
+def _kind_field_name(name: str, index: i64) -> str
+"""The name of one declared field of a kind."""
+
+# ---------------------------------------------------------------------------
+# Field value kinds and node categories (mirror sere_ast.h)
+# ---------------------------------------------------------------------------
+
+VALUE_NONE: i32 = 0
+VALUE_NODE: i32 = 1
+VALUE_NODES: i32 = 2
+VALUE_TEXT: i32 = 3
+VALUE_INT: i32 = 4
+VALUE_FLOAT: i32 = 5
+VALUE_BOOL: i32 = 6
+VALUE_TOKEN: i32 = 7
+VALUE_TEXTS: i32 = 8
+
+CATEGORY_MODULE: str = "module"
+CATEGORY_STMT: str = "stmt"
+CATEGORY_EXPR: str = "expr"
+CATEGORY_TYPE: str = "type"
+CATEGORY_OP: str = "op"
+CATEGORY_HELPER: str = "helper"
+
+SYNTAX_ERROR: i32 = 0
+EXPRESSION_MODE: i32 = 1
+
+# Kind of the sentinel a transformer handler returns to remove a node. It is not
+# a syntax kind, so it can never collide with one the parser produces.
+DROPPED_KIND: str = "Dropped"
+
+# ---------------------------------------------------------------------------
+# Nodes
+# ---------------------------------------------------------------------------
+
+class AST:
+    """One node of a Sere syntax tree.
+
+    Fields live in typed maps, so a reader asks for the shape it expects and a
+    writer replaces exactly that shape. `kind` names the syntax and `category`
+    says whether it is a statement, expression, type, operator, or helper.
+    """
+
+    kind: str
+    category: str
+    nodes: dict[str, AST]
+    lists: dict[str, list[AST]]
+    texts: dict[str, str]
+    text_lists: dict[str, list[str]]
+    numbers: dict[str, i64]
+    reals: dict[str, f64]
+    flags: dict[str, bool]
+    order: list[str]
+    lineno: i32
+    col_offset: i32
+    end_lineno: i32
+    end_col_offset: i32
+
+    def __init__(self, kind: str = "", category: str = CATEGORY_EXPR):
+        self.kind = kind
+        self.category = category
+        self.nodes = {}
+        self.lists = {}
+        self.texts = {}
+        self.text_lists = {}
+        self.numbers = {}
+        self.reals = {}
+        self.flags = {}
+        self.order = []
+        self.lineno = 0
+        self.col_offset = 0
+        self.end_lineno = 0
+        self.end_col_offset = 0
+
+    # -- presence -----------------------------------------------------------
+
+    def has(self, name: str) -> bool:
+        """Return whether a field is present."""
+        if name in self.nodes:
+            return True
+        if name in self.lists:
+            return True
+        if name in self.texts:
+            return True
+        if name in self.text_lists:
+            return True
+        if name in self.numbers:
+            return True
+        if name in self.reals:
+            return True
+        return name in self.flags
+
+    def is_kind(self, kind: str) -> bool:
+        """Return whether this node is of the given kind."""
+        return self.kind == kind
+
+    def field_names(self) -> list[str]:
+        """Return the names of the present fields, in source order."""
+        present: list[str] = []
+        for name in self.order:
+            if self.has(name):
+                present.append(name)
+        return present
+
+    # -- readers ------------------------------------------------------------
+
+    def child(self, name: str) -> AST:
+        """Return a child node, or a placeholder when the field is absent."""
+        if name in self.nodes:
+            return self.nodes[name]
+        return missing_node(self.kind, name)
+
+    def children(self, name: str) -> list[AST]:
+        """Return a child-node list, or an empty list when the field is absent."""
+        if name in self.lists:
+            return self.lists[name]
+        return []
+
+    def text(self, name: str) -> str:
+        """Return a text field, or "" when the field is absent."""
+        if name in self.texts:
+            return self.texts[name]
+        return ""
+
+    def texts(self, name: str) -> list[str]:
+        """Return a text list, or an empty list when the field is absent."""
+        if name in self.text_lists:
+            return self.text_lists[name]
+        return []
+
+    def number(self, name: str) -> i64:
+        """Return an integer field, or 0 when the field is absent."""
+        if name in self.numbers:
+            return self.numbers[name]
+        return 0
+
+    def real(self, name: str) -> f64:
+        """Return a float field, or 0.0 when the field is absent."""
+        if name in self.reals:
+            return self.reals[name]
+        return 0.0
+
+    def flag(self, name: str) -> bool:
+        """Return a boolean field, or false when the field is absent."""
+        if name in self.flags:
+            return self.flags[name]
+        return False
+
+    def value(self, name: str) -> str:
+        """Return any field as text: a number, flag, text, or child kind."""
+        if name in self.texts:
+            return self.texts[name]
+        if name in self.numbers:
+            return str(self.numbers[name])
+        if name in self.reals:
+            return str(self.reals[name])
+        if name in self.flags:
+            if self.flags[name]:
+                return "True"
+            return "False"
+        if name in self.nodes:
+            return self.nodes[name].kind
+        if name in self.lists:
+            return str(len(self.lists[name])) + " node(s)"
+        if name in self.text_lists:
+            return str(len(self.text_lists[name])) + " text(s)"
+        return ""
+
+    # -- writers ------------------------------------------------------------
+
+    def set_child(self, name: str, value: AST) -> void:
+        """Set a child-node field."""
+        self.remove(name)
+        self.nodes[name] = value
+        self.order.append(name)
+
+    def set_children(self, name: str, value: list[AST]) -> void:
+        """Set a child-node list field."""
+        self.remove(name)
+        self.lists[name] = value
+        self.order.append(name)
+
+    def set_text(self, name: str, value: str) -> void:
+        """Set a text field."""
+        self.remove(name)
+        self.texts[name] = value
+        self.order.append(name)
+
+    def set_texts(self, name: str, value: list[str]) -> void:
+        """Set a text-list field."""
+        self.remove(name)
+        self.text_lists[name] = value
+        self.order.append(name)
+
+    def set_number(self, name: str, value: i64) -> void:
+        """Set an integer field."""
+        self.remove(name)
+        self.numbers[name] = value
+        self.order.append(name)
+
+    def set_real(self, name: str, value: f64) -> void:
+        """Set a float field."""
+        self.remove(name)
+        self.reals[name] = value
+        self.order.append(name)
+
+    def set_flag(self, name: str, value: bool) -> void:
+        """Set a boolean field."""
+        self.remove(name)
+        self.flags[name] = value
+        self.order.append(name)
+
+    def remove(self, name: str) -> void:
+        """Drop a field if it is present.
+
+        The maps are rebuilt from the field order rather than deleted from: the
+        Serem backend supports indexing, assignment, and membership on a dict but
+        not its builtin methods, so the order list is the only key source every
+        backend has.
+        """
+        kept: list[str] = []
+        for existing in self.order:
+            if existing != name:
+                kept.append(existing)
+        if len(kept) == len(self.order):
+            return
+        self.order = kept
+        self.nodes = keep_nodes(self.nodes, kept)
+        self.lists = keep_lists(self.lists, kept)
+        self.texts = keep_texts(self.texts, kept)
+        self.text_lists = keep_text_lists(self.text_lists, kept)
+        self.numbers = keep_numbers(self.numbers, kept)
+        self.reals = keep_reals(self.reals, kept)
+        self.flags = keep_flags(self.flags, kept)
+
+    # -- ranges -------------------------------------------------------------
+
+    def set_location(self, line: i32, column: i32, end_line: i32, end_column: i32) -> void:
+        """Set the source range."""
+        self.lineno = line
+        self.col_offset = column
+        self.end_lineno = end_line
+        self.end_col_offset = end_column
+
+    def location_text(self) -> str:
+        """Return the source range as `line:column` text."""
+        return str(self.lineno) + ":" + str(self.col_offset)
+
+    # -- copying ------------------------------------------------------------
+
+    def copy(self) -> AST:
+        """Return a shallow copy: the same fields, shared children."""
+        clone: AST = AST(self.kind, self.category)
+        clone.nodes = keep_nodes(self.nodes, self.order)
+        clone.lists = keep_lists(self.lists, self.order)
+        clone.texts = keep_texts(self.texts, self.order)
+        clone.text_lists = keep_text_lists(self.text_lists, self.order)
+        clone.numbers = keep_numbers(self.numbers, self.order)
+        clone.reals = keep_reals(self.reals, self.order)
+        clone.flags = keep_flags(self.flags, self.order)
+        clone.order = self.order.copy()
+        clone.set_location(self.lineno, self.col_offset, self.end_lineno, self.end_col_offset)
+        return clone
+
+    def clone(self) -> AST:
+        """Return a deep copy, including every descendant."""
+        clone: AST = AST(self.kind, self.category)
+        for name in self.order:
+            if name in self.nodes:
+                clone.nodes[name] = self.nodes[name].clone()
+            if name in self.lists:
+                items: list[AST] = []
+                for item in self.lists[name]:
+                    items.append(item.clone())
+                clone.lists[name] = items
+            if name in self.texts:
+                clone.texts[name] = self.texts[name]
+            if name in self.text_lists:
+                texts: list[str] = []
+                for text in self.text_lists[name]:
+                    texts.append(text)
+                clone.text_lists[name] = texts
+            if name in self.numbers:
+                clone.numbers[name] = self.numbers[name]
+            if name in self.reals:
+                clone.reals[name] = self.reals[name]
+            if name in self.flags:
+                clone.flags[name] = self.flags[name]
+        clone.order = self.order.copy()
+        clone.set_location(self.lineno, self.col_offset, self.end_lineno, self.end_col_offset)
+        return clone
+
+    def __repr__(self) -> str:
+        """Return a one-line rendering of the node."""
+        return dump(self)
+
+# ---------------------------------------------------------------------------
+# Field and kind vocabulary
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Kind vocabulary
+#
+# The kind table is read from the bridge rather than written out here: the
+# compiler is the source of truth, so a kind the parser gains shows up in `ast`
+# as soon as the bridge lists it, and `kind_fields` can describe a node that a
+# tool built by hand.
+# ---------------------------------------------------------------------------
+
+
+def kind_names() -> list[str]:
+    """Return every node kind the compiler can produce, in bridge order."""
+    names: list[str] = []
+    total: i64 = _kind_count()
+    index: i64 = 0
+    while index < total:
+        names.append(_kind_name(index))
+        index = index + 1
+    return names
+
+
+def kind_fields(kind: str) -> list[str]:
+    """Return the fields a kind declares, in source order.
+
+    Empty when the bridge does not know the kind, which is how a tool checks a
+    name it read from somewhere else.
+    """
+    fields: list[str] = []
+    total: i64 = _kind_field_count(kind)
+    index: i64 = 0
+    while index < total:
+        fields.append(_kind_field_name(kind, index))
+        index = index + 1
+    return fields
+
+
+def is_known_kind(kind: str) -> bool:
+    """Return whether the compiler knows a kind by this name."""
+    if len(kind) == 0:
+        return False
+    return _kind_field_count(kind) >= 0
+
+
+def kind_category(kind: str) -> str:
+    """Return the category of a kind: module, stmt, expr, type, op, or helper."""
+    return category_name(_kind_category(kind))
+
+
+def make_node(kind: str) -> AST:
+    """Return a new node of a kind, with the kind's fields in declared order.
+
+    The field order is recorded even though no field has a value yet, so a node
+    built by hand unparses and dumps in the same order a parsed one does.
+    """
+    node: AST = AST(kind, kind_category(kind))
+    node.order = kind_fields(kind)
+    return node
+
+
+def contains_name(names: list[str], wanted: str) -> bool:
+    """Return whether a name appears in a list."""
+    for name in names:
+        if name == wanted:
+            return True
+    return False
+
+
+def missing_node(kind: str, field: str) -> AST:
+    """Return the placeholder a reader gets for an absent child field.
+
+    The placeholder is an empty node whose kind records what was asked for, so a
+    reader that forgets to check `has` sees an obvious `Missing` node instead of
+    a crash or a stale value.
+    """
+    absent: AST = AST("Missing", CATEGORY_HELPER)
+    absent.set_text("asked", kind + "." + field)
+    return absent
+
+
+def category_name(code: i32) -> str:
+    """Turn a bridge category code into its name."""
+    if code == 0:
+        return CATEGORY_MODULE
+    if code == 1:
+        return CATEGORY_STMT
+    if code == 2:
+        return CATEGORY_EXPR
+    if code == 3:
+        return CATEGORY_TYPE
+    return CATEGORY_HELPER
+
+
+def operator_kind(word: str) -> str:
+    """Map an operator word from the parser onto its operator node kind.
+
+    The parser keeps operators as enum members rather than nodes, so the bridge
+    reports a word like "add"; a public tree turns it back into the `Add` node
+    that visitors and unparsing expect. An empty result means the word is not an
+    operator (a literal's flavor, a parameter kind, and so on).
+    """
+    if word == "add":
+        return "Add"
+    if word == "sub":
+        return "Sub"
+    if word == "mul":
+        return "Mult"
+    if word == "div":
+        return "Div"
+    if word == "floordiv":
+        return "FloorDiv"
+    if word == "mod":
+        return "Mod"
+    if word == "pow":
+        return "Pow"
+    if word == "bitand":
+        return "BitAnd"
+    if word == "bitor":
+        return "BitOr"
+    if word == "bitxor":
+        return "BitXor"
+    if word == "shl":
+        return "LShift"
+    if word == "shr":
+        return "RShift"
+    if word == "and":
+        return "And"
+    if word == "or":
+        return "Or"
+    if word == "not":
+        return "Not"
+    if word == "invert":
+        return "Invert"
+    if word == "neg":
+        return "USub"
+    if word == "pos":
+        return "UAdd"
+    if word == "eq":
+        return "Eq"
+    if word == "ne":
+        return "NotEq"
+    if word == "lt":
+        return "Lt"
+    if word == "le":
+        return "LtE"
+    if word == "gt":
+        return "Gt"
+    if word == "ge":
+        return "GtE"
+    if word == "is":
+        return "Is"
+    if word == "isnot":
+        return "IsNot"
+    if word == "in":
+        return "In"
+    if word == "notin":
+        return "NotIn"
+    if word == "preinc":
+        return "PreInc"
+    if word == "predec":
+        return "PreDec"
+    if word == "postinc":
+        return "PostInc"
+    if word == "postdec":
+        return "PostDec"
+    if word == "deref":
+        return "Deref"
+    if word == "addrof":
+        return "AddrOf"
+    return ""
+
+
+def operator_word(kind: str) -> str:
+    """Map an operator node kind back onto its source spelling.
+
+    Unparsing uses this, so it returns the operator itself rather than the word
+    the parser stored: `Add` is "+", not "add".
+    """
+    if kind == "Add":
+        return "+"
+    if kind == "Sub":
+        return "-"
+    if kind == "Mult":
+        return "*"
+    if kind == "Div":
+        return "/"
+    if kind == "FloorDiv":
+        return "//"
+    if kind == "Mod":
+        return "%"
+    if kind == "Pow":
+        return "**"
+    if kind == "BitAnd":
+        return "&"
+    if kind == "BitOr":
+        return "|"
+    if kind == "BitXor":
+        return "^"
+    if kind == "LShift":
+        return "<<"
+    if kind == "RShift":
+        return ">>"
+    if kind == "And":
+        return "and"
+    if kind == "Or":
+        return "or"
+    if kind == "Invert":
+        return "~"
+    if kind == "Eq":
+        return "=="
+    if kind == "NotEq":
+        return "!="
+    if kind == "Lt":
+        return "<"
+    if kind == "LtE":
+        return "<="
+    if kind == "Gt":
+        return ">"
+    if kind == "GtE":
+        return ">="
+    if kind == "Is":
+        return "is"
+    if kind == "IsNot":
+        return "is not"
+    if kind == "In":
+        return "in"
+    if kind == "NotIn":
+        return "not in"
+    if kind == "USub":
+        return "-"
+    if kind == "UAdd":
+        return "+"
+    if kind == "Not":
+        return "not "
+    if kind == "PreInc":
+        return "++"
+    if kind == "PreDec":
+        return "--"
+    if kind == "Deref":
+        return "*"
+    if kind == "AddrOf":
+        return "&"
+    return ""
+
+
+def is_operator_kind(kind: str) -> bool:
+    """Return whether a kind is an operator node."""
+    return len(operator_word(kind)) > 0 or kind == "Not" or kind == "USub" or kind == "UAdd" or kind == "PreInc" or kind == "PreDec" or kind == "PostInc" or kind == "PostDec" or kind == "Deref" or kind == "AddrOf"
+
+
+def is_statement(node: AST) -> bool:
+    """Return whether a node is a statement."""
+    return node.category == CATEGORY_STMT
+
+
+def is_expression(node: AST) -> bool:
+    """Return whether a node is an expression."""
+    return node.category == CATEGORY_EXPR
+
+
+# ---------------------------------------------------------------------------
+# Converting a parsed tree into public nodes
+# ---------------------------------------------------------------------------
+
+
+def _read_field(node: AST, handle: Ptr[i8], name: str, index: i64) -> void:
+    """Copy one native field onto a public node."""
+    value_kind: i32 = _field_kind(handle, index)
+    if value_kind == VALUE_NODE:
+        child: Ptr[i8] = _field_node(handle, index)
+        if child is not None:
+            node.set_child(name, _from_native(child))
+        return
+    if value_kind == VALUE_NODES:
+        items: list[AST] = []
+        total: i64 = _field_node_count(handle, index)
+        item: i64 = 0
+        while item < total:
+            child: Ptr[i8] = _field_node_at(handle, index, item)
+            if child is not None:
+                items.append(_from_native(child))
+            item = item + 1
+        node.set_children(name, items)
+        return
+    if value_kind == VALUE_TEXT:
+        node.set_text(name, _field_text(handle, index))
+        return
+    if value_kind == VALUE_TOKEN:
+        word: str = _field_text(handle, index)
+        operator: str = operator_kind(word)
+        if len(operator) > 0:
+            node.set_child(name, AST(operator, CATEGORY_OP))
+        else:
+            node.set_text(name, word)
+        return
+    if value_kind == VALUE_INT:
+        node.set_number(name, _field_int(handle, index))
+        return
+    if value_kind == VALUE_FLOAT:
+        node.set_real(name, _field_float(handle, index))
+        return
+    if value_kind == VALUE_BOOL:
+        node.set_flag(name, _field_bool(handle, index) != 0)
+        return
+    if value_kind == VALUE_TEXTS:
+        texts: list[str] = []
+        total: i64 = _field_text_count(handle, index)
+        item: i64 = 0
+        while item < total:
+            texts.append(_field_text_at(handle, index, item))
+            item = item + 1
+        node.set_texts(name, texts)
+        return
+    return
+
+
+def _from_native(handle: Ptr[i8]) -> AST:
+    """Build a public node from one native handle."""
+    node: AST = AST(_kind(handle), category_name(_category(handle)))
+    node.set_location(_start_line(handle) as i32, _start_column(handle) as i32,
+                      _end_line(handle) as i32, _end_column(handle) as i32)
+    total: i64 = _field_count(handle)
+    index: i64 = 0
+    while index < total:
+        name: str = _field_name(handle, index)
+        if len(name) > 0:
+            _read_field(node, handle, name, index)
+        index = index + 1
+    return node
+
+
+# ---------------------------------------------------------------------------
+# Parsing
+# ---------------------------------------------------------------------------
+
+
+def parse(source: str, filename: str = "<unknown>", mode: str = "exec") -> AST:
+    """Parse Sere source into a syntax tree.
+
+    `mode` is "exec" for a module (a `Module` node) or "eval" for a lone
+    expression. Syntax errors raise `SyntaxError` carrying the compiler's
+    diagnostics, with `filename` in the message and the failing line and column
+    from the parser.
+    """
+    expression: i32 = SYNTAX_ERROR
+    if mode == "eval":
+        expression = EXPRESSION_MODE
+    elif mode != "exec":
+        raise ValueError("parse mode must be 'exec' or 'eval', found '" + mode + "'")
+    tree: Ptr[i8] = _parse(source, filename, expression)
+    if tree is None:
+        raise SyntaxError(last_error())
+    handle: Ptr[i8] = _root(tree)
+    if handle is None:
+        _free(tree)
+        raise SyntaxError(filename + ": the parse produced no tree")
+    node: AST = _from_native(handle)
+    _free(tree)
+    node.set_text("filename", filename)
+    return node
+
+
+def parse_expression(source: str, filename: str = "<unknown>") -> AST:
+    """Parse a single expression."""
+    return parse(source, filename, "eval")
+
+
+def parse_file(path: str) -> AST:
+    """Parse a file's Sere source into a syntax tree."""
+    text: str = fs.read_text(path)
+    return parse(text, path)
+
+
+def parse_source(source: str) -> AST:
+    """Parse source text into a module tree."""
+    return parse(source, "<string>", "exec")
+
+
+# ---------------------------------------------------------------------------
+# Field-map helpers
+#
+# Copying and removing a field rebuilds the map from the node's field order:
+# every backend supports `d[k]`, `d[k] = v`, `k in d`, and `len(d)`, but the
+# builtin method set differs, so nothing here relies on `keys`, `copy`, or
+# `remove`.
+# ---------------------------------------------------------------------------
+
+
+def keep_nodes(source: dict[str, AST], names: list[str]) -> dict[str, AST]:
+    """Copy the named entries of a child map."""
+    result: dict[str, AST] = {}
+    for name in names:
+        if name in source:
+            result[name] = source[name]
+    return result
+
+
+def keep_lists(source: dict[str, list[AST]], names: list[str]) -> dict[str, list[AST]]:
+    """Copy the named entries of a child-list map."""
+    result: dict[str, list[AST]] = {}
+    for name in names:
+        if name in source:
+            result[name] = source[name]
+    return result
+
+
+def keep_texts(source: dict[str, str], names: list[str]) -> dict[str, str]:
+    """Copy the named entries of a text map."""
+    result: dict[str, str] = {}
+    for name in names:
+        if name in source:
+            result[name] = source[name]
+    return result
+
+
+def keep_text_lists(source: dict[str, list[str]], names: list[str]) -> dict[str, list[str]]:
+    """Copy the named entries of a text-list map."""
+    result: dict[str, list[str]] = {}
+    for name in names:
+        if name in source:
+            result[name] = source[name]
+    return result
+
+
+def keep_numbers(source: dict[str, i64], names: list[str]) -> dict[str, i64]:
+    """Copy the named entries of an integer map."""
+    result: dict[str, i64] = {}
+    for name in names:
+        if name in source:
+            result[name] = source[name]
+    return result
+
+
+def keep_reals(source: dict[str, f64], names: list[str]) -> dict[str, f64]:
+    """Copy the named entries of a float map."""
+    result: dict[str, f64] = {}
+    for name in names:
+        if name in source:
+            result[name] = source[name]
+    return result
+
+
+def keep_flags(source: dict[str, bool], names: list[str]) -> dict[str, bool]:
+    """Copy the named entries of a flag map."""
+    result: dict[str, bool] = {}
+    for name in names:
+        if name in source:
+            result[name] = source[name]
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Traversal
+# ---------------------------------------------------------------------------
+
+
+def iter_child_nodes(node: AST) -> list[AST]:
+    """Return the direct child nodes of a node, in field order.
+
+    Node-list fields contribute their elements; a helper node such as a `Field`
+    or `MatchCase` contributes its own children the same way.
+    """
+    children: list[AST] = []
+    for name in node.field_names():
+        if name in node.nodes:
+            children.append(node.nodes[name])
+        if name in node.lists:
+            for child in node.lists[name]:
+                children.append(child)
+    return children
+
+
+def iter_fields(node: AST) -> list[str]:
+    """Return the field names of a node, in source order.
+
+    A field's value is reached through the accessor that matches its shape
+    (`text`, `child`, `children`, `number`, `real`, `flag`, `texts`), so the name
+    is the handle a generic tool needs.
+    """
+    return node.field_names()
+
+
+def child_fields(node: AST) -> list[str]:
+    """Return the names of the fields that hold child nodes."""
+    names: list[str] = []
+    for name in node.field_names():
+        if name in node.nodes:
+            names.append(name)
+        if name in node.lists:
+            names.append(name)
+    return names
+
+
+def walk(node: AST) -> list[AST]:
+    """Return every node of a tree, the node itself first.
+
+    Traversal is breadth first, as Python's `ast.walk` is, so a tool that only
+    needs to collect nodes does not depend on nesting order.
+    """
+    pending: list[AST] = [node]
+    found: list[AST] = []
+    index: i32 = 0
+    while index < len(pending):
+        current: AST = pending[index as i32]
+        found.append(current)
+        for child in iter_child_nodes(current):
+            pending.append(child)
+        index = index + 1
+    return found
+
+
+def find_all(node: AST, kind: str) -> list[AST]:
+    """Return every node of a tree whose kind matches."""
+    found: list[AST] = []
+    for current in walk(node):
+        if current.kind == kind:
+            found.append(current)
+    return found
+
+
+def find_first(node: AST, kind: str) -> AST:
+    """Return the first node whose kind matches, or a `Missing` placeholder."""
+    for current in walk(node):
+        if current.kind == kind:
+            return current
+    return missing_node(kind, "walk")
+
+
+def count_nodes(node: AST) -> i32:
+    """Return how many nodes a tree holds, counting the root."""
+    return len(walk(node)) as i32
+
+
+# ---------------------------------------------------------------------------
+# Dumping
+# ---------------------------------------------------------------------------
+
+
+def quote_text(text: str) -> str:
+    """Return text as a single-quoted literal, escaping what needs it.
+
+    Indexing is used rather than a `for` loop over the string because the Serem
+    backend lowers for-in over a string as an iterable without an element type.
+    """
+    parts: list[str] = []
+    parts.append("'")
+    index: i64 = 0
+    while index < len(text) as i64:
+        character: str = text[index]
+        if character == "\\":
+            parts.append("\\\\")
+        elif character == "'":
+            parts.append("\\'")
+        elif character == "\n":
+            parts.append("\\n")
+        elif character == "\r":
+            parts.append("\\r")
+        elif character == "\t":
+            parts.append("\\t")
+        else:
+            parts.append(character)
+        index = index + 1
+    parts.append("'")
+    return _join(parts, "")
+
+
+def _dump_separator(parts: list[str], first: bool, indent: i32, level: i32) -> void:
+    """Write what comes before the next field or element of a dump."""
+    if not first:
+        parts.append(",")
+    if indent > 0:
+        parts.append("\n")
+        parts.append(indent_text(indent * level))
+    elif not first:
+        parts.append(" ")
+    return
+
+
+def _dump_value(node: AST, name: str, parts: list[str], annotate_fields: bool,
+                include_attributes: bool, indent: i32, level: i32) -> void:
+    """Render one field value at `level` (its parent node sits at `level - 1`)."""
+    if name in node.nodes:
+        _dump_into(node.nodes[name], parts, annotate_fields, include_attributes, indent, level)
+        return
+    if name in node.lists:
+        items: list[AST] = node.lists[name]
+        parts.append("[")
+        index: i64 = 0
+        while index < len(items) as i64:
+            _dump_separator(parts, index == 0, indent, level + 1)
+            _dump_into(items[index], parts, annotate_fields, include_attributes, indent, level + 1)
+            index = index + 1
+        parts.append("]")
+        return
+    if name in node.texts:
+        parts.append(quote_text(node.texts[name]))
+        return
+    if name in node.text_lists:
+        texts: list[str] = node.text_lists[name]
+        parts.append("[")
+        index: i64 = 0
+        while index < len(texts) as i64:
+            _dump_separator(parts, index == 0, indent, level + 1)
+            parts.append(quote_text(texts[index]))
+            index = index + 1
+        parts.append("]")
+        return
+    if name in node.numbers:
+        parts.append(str(node.numbers[name]))
+        return
+    if name in node.reals:
+        parts.append(str(node.reals[name]))
+        return
+    if name in node.flags:
+        if node.flags[name]:
+            parts.append("True")
+        else:
+            parts.append("False")
+        return
+    parts.append("None")
+    return
+
+
+def _dump_into(node: AST, parts: list[str], annotate_fields: bool, include_attributes: bool,
+               indent: i32, level: i32) -> void:
+    """Render a node; its own fields sit one level deeper than the node."""
+    parts.append(node.kind)
+    rows: list[str] = node.field_names()
+    if include_attributes:
+        rows.append("lineno")
+        rows.append("col_offset")
+        rows.append("end_lineno")
+        rows.append("end_col_offset")
+    parts.append("(")
+    index: i64 = 0
+    while index < len(rows) as i64:
+        _dump_separator(parts, index == 0, indent, level + 1)
+        name: str = rows[index]
+        if annotate_fields:
+            parts.append(name + "=")
+        if name == "lineno":
+            parts.append(str(node.lineno))
+        elif name == "col_offset":
+            parts.append(str(node.col_offset))
+        elif name == "end_lineno":
+            parts.append(str(node.end_lineno))
+        elif name == "end_col_offset":
+            parts.append(str(node.end_col_offset))
+        else:
+            _dump_value(node, name, parts, annotate_fields, include_attributes, indent, level + 1)
+        index = index + 1
+    parts.append(")")
+    return
+
+
+def indent_text(count: i32) -> str:
+    """Return a run of the dump indentation."""
+    parts: list[str] = []
+    index: i32 = 0
+    while index < count:
+        parts.append(" ")
+        index = index + 1
+    return _join(parts, "")
+
+
+def dump(node: AST, annotate_fields: bool = True, include_attributes: bool = False,
+         indent: i32 = 0) -> str:
+    """Return a stable text rendering of a tree.
+
+    `annotate_fields` writes `name=value` pairs, `include_attributes` adds the
+    four location fields, and a positive `indent` puts each field on its own
+    line, indented by that many spaces per nesting level. The output is
+    deterministic, so tests can compare it.
+    """
+    parts: list[str] = []
+    _dump_into(node, parts, annotate_fields, include_attributes, indent, 0)
+    return _join(parts, "")
+
+
+# ---------------------------------------------------------------------------
+# Traversal and rewriting
+#
+# Sere cannot reach a method through a string, and the two backends disagree
+# about overriding (the direct backend dispatches on the object's real class, the
+# Serem backend on the type a variable was declared with), so a visitor does not
+# override `visit_<Kind>` methods. It registers a handler per kind instead.
+# Handlers are ordinary functions, which behave the same on both backends:
+#
+#   def rename(node: ast.AST) -> void:
+#       node.set_text("id", "renamed_" + node.text("id"))
+#
+#   visitor: ast.NodeVisitor = ast.NodeVisitor()
+#   visitor.on("Name", rename)
+#   visitor.visit(tree)
+#
+# A class may still collect related handlers, because a subclass calling
+# `self.on(...)` resolves to its own method on both backends:
+#
+#   class Renaming(ast.NodeTransformer):
+#       def __init__(self):
+#           super().__init__()
+#           self.on("Name", rename)
+# ---------------------------------------------------------------------------
+
+
+def dropped() -> AST:
+    """Return the sentinel a transformer handler returns to remove a node."""
+    return AST(DROPPED_KIND, CATEGORY_HELPER)
+
+
+def is_dropped(node: AST) -> bool:
+    """Return whether a node is the removal sentinel."""
+    return node.kind == DROPPED_KIND
+
+
+class NodeVisitor:
+    """Walks a tree, calling a registered handler for the kinds it cares about.
+
+    `visit` is depth first. A handler returns whether the walk should descend
+    into the node it was given, so a visitor can skip a whole subtree. A kind
+    without a handler is descended into.
+    """
+
+    handlers: dict[str, Callable[[AST], bool]]
+    visits: i32
+
+    def __init__(self):
+        self.handlers = {}
+        self.visits = 0
+
+    def on(self, kind: str, handler: Callable[[AST], bool]) -> NodeVisitor:
+        """Register the handler for a kind and return this visitor."""
+        self.handlers[kind] = handler
+        return self
+
+    def on_all(self, handler: Callable[[AST], bool]) -> NodeVisitor:
+        """Register the same handler for every kind the compiler knows."""
+        for kind in kind_names():
+            self.handlers[kind] = handler
+        return self
+
+    def handles(self, kind: str) -> bool:
+        """Return whether a handler is registered for a kind."""
+        return kind in self.handlers
+
+    def visit(self, node: AST) -> void:
+        """Visit a node and, unless its handler says otherwise, its children."""
+        if is_dropped(node):
+            return
+        self.visits = self.visits + 1
+        descend: bool = True
+        if node.kind in self.handlers:
+            handler: Callable[[AST], bool] = self.handlers[node.kind]
+            descend = handler(node)
+        if descend:
+            self.generic_visit(node)
+        return
+
+    def generic_visit(self, node: AST) -> void:
+        """Visit every child of a node."""
+        for child in iter_child_nodes(node):
+            self.visit(child)
+        return
+
+    def visit_each(self, tree: AST) -> void:
+        """Visit every node of a tree in breadth-first order.
+
+        Python's `ast.walk` is breadth first, so this is the entry point for a
+        visitor that wants to see every node without nesting order.
+        """
+        for current in walk(tree):
+            self.visit(current)
+        return
+
+
+class NodeTransformer:
+    """Rewrites a tree, calling a registered handler for the kinds it cares about.
+
+    A handler returns the node to keep (usually the node it was given, possibly
+    with fields changed), a replacement node, or `ast.dropped()` to remove the
+    node from a field that holds a list. The children of the returned node are
+    rewritten afterwards, so a handler only has to deal with its own kind.
+    """
+
+    handlers: dict[str, Callable[[AST], AST]]
+    changed: i32
+
+    def __init__(self):
+        self.handlers = {}
+        self.changed = 0
+
+    def on(self, kind: str, handler: Callable[[AST], AST]) -> NodeTransformer:
+        """Register the handler for a kind and return this transformer."""
+        self.handlers[kind] = handler
+        return self
+
+    def handles(self, kind: str) -> bool:
+        """Return whether a handler is registered for a kind."""
+        return kind in self.handlers
+
+    def transform(self, tree: AST) -> AST:
+        """Return the tree with every registered handler applied."""
+        result: AST = self.visit(tree)
+        if is_dropped(result):
+            return tree
+        return result
+
+    def visit(self, node: AST) -> AST:
+        """Apply a handler to a node, then rewrite the result's children."""
+        if is_dropped(node):
+            return node
+        current: AST = node
+        if node.kind in self.handlers:
+            handler: Callable[[AST], AST] = self.handlers[node.kind]
+            current = handler(node)
+            if is_dropped(current):
+                self.changed = self.changed + 1
+                return current
+            if current.kind != node.kind:
+                self.changed = self.changed + 1
+        return self.generic_visit(current)
+
+    def generic_visit(self, node: AST) -> AST:
+        """Rewrite every child field of a node and return the node."""
+        for name in node.order:
+            if name in node.nodes:
+                node.nodes[name] = self.visit(node.nodes[name])
+            if name in node.lists:
+                items: list[AST] = []
+                for child in node.lists[name]:
+                    replaced: AST = self.visit(child)
+                    if not is_dropped(replaced):
+                        items.append(replaced)
+                node.lists[name] = items
+        return node
+
+
+# ---------------------------------------------------------------------------
+# Locations
+# ---------------------------------------------------------------------------
+
+
+def copy_location(target: AST, source: AST) -> AST:
+    """Copy a source range from one node to another and return the target."""
+    target.set_location(source.lineno, source.col_offset, source.end_lineno,
+                        source.end_col_offset)
+    return target
+
+
+def has_location(node: AST) -> bool:
+    """Return whether a node carries a source range."""
+    return node.lineno > 0
+
+
+def _fix_locations(node: AST, line: i32, column: i32, end_line: i32, end_column: i32) -> void:
+    """Recursively give nodes without a range the range of their parent."""
+    if not has_location(node):
+        node.set_location(line, column, end_line, end_column)
+    for child in iter_child_nodes(node):
+        _fix_locations(child, node.lineno, node.col_offset, node.end_lineno, node.end_col_offset)
+    return
+
+
+def fix_missing_locations(tree: AST) -> AST:
+    """Fill in the ranges of nodes that have none, from the nearest ancestor.
+
+    A node built by hand has no range. Inheriting the enclosing range keeps
+    diagnostics and `get_source_segment` working on a mixed tree.
+    """
+    _fix_locations(tree, tree.lineno, tree.col_offset, tree.end_lineno, tree.end_col_offset)
+    return tree
+
+
+def increment_lineno(node: AST, amount: i32) -> void:
+    """Shift every line number in a subtree by an amount."""
+    for current in walk(node):
+        if current.lineno > 0:
+            current.lineno = current.lineno + amount
+        if current.end_lineno > 0:
+            current.end_lineno = current.end_lineno + amount
+    return
+
+
+def _clip_columns(line: str, start: i32, end: i32) -> str:
+    """Return the part of a line between two columns."""
+    length: i32 = len(line) as i32
+    if start < 0:
+        start = 0
+    if end > length:
+        end = length
+    if start >= length or end <= start:
+        return ""
+    parts: list[str] = []
+    index: i32 = start
+    while index < end:
+        parts.append(line[index])
+        index = index + 1
+    return _join(parts, "")
+
+
+def get_source_segment(source: str, node: AST) -> str:
+    """Return the source text a node covers, or "" when it has no range.
+
+    A range that runs past the end of the source is clipped rather than raising,
+    because a tool that edited a tree may hold ranges from before the edit.
+    """
+    if not has_location(node) or len(source) == 0:
+        return ""
+    lines: list[str] = string.split(source, "\n")
+    start: i32 = node.lineno - 1
+    end: i32 = node.end_lineno - 1
+    if start < 0 or start >= len(lines) as i32:
+        return ""
+    if end < start:
+        end = start
+    if end >= len(lines) as i32:
+        end = len(lines) as i32 - 1
+    if start == end:
+        return _clip_columns(lines[start], node.col_offset, node.end_col_offset)
+    parts: list[str] = []
+    parts.append(_clip_columns(lines[start], node.col_offset, len(lines[start]) as i32))
+    position: i32 = start + 1
+    while position < end:
+        parts.append(lines[position])
+        position = position + 1
+    parts.append(_clip_columns(lines[end], 0, node.end_col_offset))
+    return _join(parts, "\n")
+
+
+# ---------------------------------------------------------------------------
+# Inspection
+# ---------------------------------------------------------------------------
+
+
+def is_string_constant(node: AST) -> bool:
+    """Return whether a node is a string literal."""
+    if node.kind != "Constant":
+        return False
+    return node.text("flavor") == "str"
+
+
+def get_docstring(node: AST, clean: bool = True) -> str:
+    """Return the docstring of a module, function, class, or enum.
+
+    A docstring is the first statement of a body when it is a bare string
+    literal. `clean` strips the indentation Python's `ast.get_docstring` strips.
+    """
+    body: list[AST] = node.children("body")
+    if len(body) == 0:
+        return ""
+    first: AST = body[0]
+    if first.kind != "Expr":
+        return ""
+    value: AST = first.child("value")
+    if not is_string_constant(value):
+        return ""
+    text: str = value.text("value")
+    if not clean:
+        return text
+    return _dedent_docstring(text)
+
+
+def _dedent_docstring(text: str) -> str:
+    """Strip a common leading indent from a docstring, as Python does."""
+    lines: list[str] = string.split(text, "\n")
+    if len(lines) <= 1:
+        return _strip_ascii_space(text)
+    common: i32 = -1
+    index: i32 = 1
+    while index < len(lines) as i32:
+        line: str = lines[index]
+        if len(_strip_ascii_space(line)) > 0:
+            margin: i32 = _leading_spaces(line)
+            if common < 0 or margin < common:
+                common = margin
+        index = index + 1
+    if common < 0:
+        common = 0
+    parts: list[str] = []
+    parts.append(_strip_ascii_space(lines[0]))
+    index = 1
+    while index < len(lines) as i32:
+        body_line: str = lines[index]
+        if len(_strip_ascii_space(body_line)) == 0:
+            parts.append("")
+        else:
+            parts.append(_clip_columns(body_line, common, len(body_line) as i32))
+        index = index + 1
+    while len(parts) > 0 and len(parts[len(parts) - 1]) == 0:
+        parts = _drop_last(parts)
+    return _join(parts, "\n")
+
+
+def _join(parts: list[str], separator: str) -> str:
+    """Join strings with a separator.
+
+    `string.join` takes the separator first, so a helper keeps call sites
+    readable and works on both backends.
+    """
+    text: str = ""
+    index: i32 = 0
+    while index < len(parts) as i32:
+        if index > 0:
+            text = text + separator
+        text = text + parts[index]
+        index = index + 1
+    return text
+
+
+def _drop_last(items: list[str]) -> list[str]:
+    """Return a copy of a list without its last element."""
+    kept: list[str] = []
+    index: i32 = 0
+    while index < len(items) as i32 - 1:
+        kept.append(items[index])
+        index = index + 1
+    return kept
+
+
+def _leading_spaces(line: str) -> i32:
+    """Return how many leading spaces a line has."""
+    count: i32 = 0
+    while count < len(line) as i32 and line[count] == " ":
+        count = count + 1
+    return count
+
+
+def _strip_ascii_space(text: str) -> str:
+    """Return text without leading or trailing spaces, tabs, and newlines."""
+    start: i32 = 0
+    end: i32 = len(text) as i32
+    while start < end and _is_space_char(text[start]):
+        start = start + 1
+    while end > start and _is_space_char(text[end - 1]):
+        end = end - 1
+    return _clip_columns(text, start, end)
+
+
+def _is_space_char(character: str) -> bool:
+    """Return whether a one-character string is whitespace."""
+    if character == " " or character == "\t" or character == "\n" or character == "\r":
+        return True
+    return False
+
+
+def is_literal(node: AST) -> bool:
+    """Return whether a node is one of the literals `literal_eval` accepts.
+
+    The accepted subset is the one Python's `ast.literal_eval` documents: numbers
+    and strings, `True`/`False`/`None`, and lists, tuples, and dicts of literals,
+    plus unary minus and binary arithmetic over numbers. No name, call, or
+    attribute is ever evaluated.
+    """
+    if node.kind == "Constant":
+        return True
+    if node.kind == "List" or node.kind == "Tuple":
+        for element in node.children("elts"):
+            if not is_literal(element):
+                return False
+        return True
+    if node.kind == "Dict":
+        for key in node.children("keys"):
+            if not is_literal(key):
+                return False
+        for value in node.children("values"):
+            if not is_literal(value):
+                return False
+        return True
+    if node.kind == "UnaryOp":
+        return is_literal(node.child("operand"))
+    if node.kind == "BinOp":
+        if not is_literal(node.child("left")):
+            return False
+        return is_literal(node.child("right"))
+    return False
+
+
+def literal_int(node: AST) -> i64:
+    """Return the integer value of a literal, folding unary minus and arithmetic."""
+    if node.kind == "Constant":
+        if node.text("flavor") == "bool":
+            if node.flag("value"):
+                return 1
+            return 0
+        return node.number("value")
+    if node.kind == "UnaryOp":
+        value: i64 = literal_int(node.child("operand"))
+        if node.child("op").kind == "USub":
+            return 0 - value
+        return value
+    if node.kind == "BinOp":
+        left: i64 = literal_int(node.child("left"))
+        right: i64 = literal_int(node.child("right"))
+        return _fold_int(left, node.child("op").kind, right)
+    raise ValueError("not an integer literal: " + node.kind)
+
+
+def _fold_int(left: i64, op: str, right: i64) -> i64:
+    """Fold one arithmetic operator over two integers."""
+    if op == "Add":
+        return left + right
+    if op == "Sub":
+        return left - right
+    if op == "Mult":
+        return left * right
+    if op == "Pow":
+        result: i64 = 1
+        count: i64 = 0
+        while count < right:
+            result = result * left
+            count = count + 1
+        return result
+    raise ValueError("cannot fold operator '" + op + "' on integers")
+
+
+def literal_float(node: AST) -> f64:
+    """Return the float value of a literal, folding unary minus and arithmetic."""
+    if node.kind == "Constant":
+        if node.text("flavor") == "float":
+            return node.real("value")
+        return node.number("value") as f64
+    if node.kind == "UnaryOp":
+        value: f64 = literal_float(node.child("operand"))
+        if node.child("op").kind == "USub":
+            return 0.0 - value
+        return value
+    if node.kind == "BinOp":
+        left: f64 = literal_float(node.child("left"))
+        right: f64 = literal_float(node.child("right"))
+        op: str = node.child("op").kind
+        if op == "Add":
+            return left + right
+        if op == "Sub":
+            return left - right
+        if op == "Mult":
+            return left * right
+        if op == "Div":
+            return left / right
+    raise ValueError("not a float literal: " + node.kind)
+
+
+def literal_text(node: AST) -> str:
+    """Return the characters of a string literal."""
+    if node.kind != "Constant" or node.text("flavor") != "str":
+        raise ValueError("not a string literal: " + node.kind)
+    return node.text("value")
+
+
+def literal_bool(node: AST) -> bool:
+    """Return the value of a `True`/`False` literal."""
+    if node.kind != "Constant" or node.text("flavor") != "bool":
+        raise ValueError("not a boolean literal: " + node.kind)
+    return node.flag("value")
+
+
+def literal_value_text(node: AST) -> str:
+    """Return a literal as the text a program would print for it.
+
+    Sere has no dynamic value type, so instead of a Python `literal_eval` that
+    returns "some object", this returns the canonical text: `3`, `2.5`, `True`,
+    the characters of a string, and the bracketed form of a list, tuple, or dict
+    of literals.
+    """
+    if not is_literal(node):
+        raise ValueError("not a literal: " + node.kind)
+    if node.kind == "Constant":
+        flavor: str = node.text("flavor")
+        if flavor == "str":
+            return node.text("value")
+        if flavor == "bool":
+            if node.flag("value"):
+                return "True"
+            return "False"
+        if flavor == "float":
+            return str(literal_float(node))
+        return str(literal_int(node))
+    if node.kind == "UnaryOp":
+        if node.child("op").kind == "USub":
+            if node.child("operand").text("flavor") == "float":
+                return str(literal_float(node))
+            return str(literal_int(node))
+        return literal_value_text(node.child("operand"))
+    if node.kind == "BinOp":
+        left: AST = node.child("left")
+        op: str = node.child("op").kind
+        if op == "Add" and left.text("flavor") == "str":
+            return literal_text(left) + literal_text(node.child("right"))
+        if node.text("flavor") == "float" or _has_float(node):
+            return str(literal_float(node))
+        return str(literal_int(node))
+    if node.kind == "List" or node.kind == "Tuple":
+        parts: list[str] = []
+        for element in node.children("elts"):
+            parts.append(_literal_element(element))
+        return "[" + _join(parts, ", ") + "]"
+    if node.kind == "Dict":
+        keys: list[AST] = node.children("keys")
+        values: list[AST] = node.children("values")
+        parts: list[str] = []
+        index: i32 = 0
+        while index < len(keys) as i32:
+            parts.append(_literal_element(keys[index]) + ": " + _literal_element(values[index]))
+            index = index + 1
+        return "{" + _join(parts, ", ") + "}"
+    raise ValueError("not a literal: " + node.kind)
+
+
+def _literal_element(node: AST) -> str:
+    """Render one element of a literal list or dict as text."""
+    if node.kind == "Constant" and node.text("flavor") == "str":
+        return quote_text(node.text("value"))
+    return literal_value_text(node)
+
+
+def _has_float(node: AST) -> bool:
+    """Return whether a literal expression mentions a float anywhere."""
+    stack: list[AST] = [node]
+    index: i32 = 0
+    while index < len(stack) as i32:
+        current: AST = stack[index]
+        if current.kind == "Constant" and current.text("flavor") == "float":
+            return True
+        for child in iter_child_nodes(current):
+            stack.append(child)
+        index = index + 1
+    return False
+
+
+def compare(left: AST, right: AST) -> str:
+    """Compare two trees and describe the first difference, or return "".
+
+    The text names the path to the difference, which is what a test or a tool
+    reports: `Module.body[1].value: kind Constant != Name`.
+    """
+    return _compare_at(left, right, "tree")
+
+
+def _compare_at(left: AST, right: AST, path: str) -> str:
+    """Compare two nodes and their fields, reporting at a path."""
+    if left.kind != right.kind:
+        return path + ": kind " + left.kind + " != " + right.kind
+    for name in left.order:
+        if not right.has(name):
+            return path + "." + name + ": missing on the right"
+        if name in left.nodes and name in right.nodes:
+            deeper: str = _compare_at(left.nodes[name], right.nodes[name], path + "." + name)
+            if len(deeper) > 0:
+                return deeper
+        if name in left.lists and name in right.lists:
+            left_items: list[AST] = left.lists[name]
+            right_items: list[AST] = right.lists[name]
+            if len(left_items) != len(right_items):
+                return path + "." + name + ": " + str(len(left_items)) + " vs " + str(
+                    len(right_items)) + " children"
+            index: i32 = 0
+            while index < len(left_items) as i32:
+                deeper: str = _compare_at(left_items[index], right_items[index],
+                                          path + "." + name + "[" + str(index) + "]")
+                if len(deeper) > 0:
+                    return deeper
+                index = index + 1
+        if name in left.texts and name in right.texts:
+            if left.texts[name] != right.texts[name]:
+                return path + "." + name + ": '" + left.texts[name] + "' != '" + right.texts[
+                    name] + "'"
+        if name in left.text_lists and name in right.text_lists:
+            left_texts: list[str] = left.text_lists[name]
+            right_texts: list[str] = right.text_lists[name]
+            if len(left_texts) != len(right_texts):
+                return path + "." + name + ": " + str(len(left_texts)) + " vs " + str(
+                    len(right_texts)) + " texts"
+            index: i32 = 0
+            while index < len(left_texts) as i32:
+                if left_texts[index] != right_texts[index]:
+                    return path + "." + name + "[" + str(index) + "]: '" + left_texts[
+                        index] + "' != '" + right_texts[index] + "'"
+                index = index + 1
+        if name in left.numbers and name in right.numbers:
+            if left.numbers[name] != right.numbers[name]:
+                return path + "." + name + ": " + str(left.numbers[name]) + " != " + str(
+                    right.numbers[name])
+        if name in left.reals and name in right.reals:
+            if left.reals[name] != right.reals[name]:
+                return path + "." + name + ": " + str(left.reals[name]) + " != " + str(
+                    right.reals[name])
+        if name in left.flags and name in right.flags:
+            if left.flags[name] != right.flags[name]:
+                return path + "." + name + ": " + str(left.flags[name]) + " != " + str(
+                    right.flags[name])
+    for name in right.order:
+        if not left.has(name):
+            return path + "." + name + ": missing on the left"
+    return ""
+
+
+def validate(tree: AST) -> void:
+    """Check that every node is well formed, raising `ValueError` if not.
+
+    A node is well formed when its kind is one the compiler knows (or an operator
+    the module builds) and every field it holds is a shape that kind declares.
+    """
+    _validate_at(tree, "tree")
+
+
+def _validate_at(node: AST, path: str) -> void:
+    """Check one node and its children, reporting at a path."""
+    if is_dropped(node):
+        return
+    if len(node.kind) == 0:
+        raise ValueError(path + ": node has no kind")
+    if not is_known_kind(node.kind) and not is_operator_kind(node.kind):
+        raise ValueError(path + ": unknown kind '" + node.kind + "'")
+    declared: list[str] = kind_fields(node.kind)
+    for name in node.order:
+        if len(declared) > 0 and not contains_name(declared, name):
+            raise ValueError(path + ": kind " + node.kind + " has no field '" + name + "'")
+    for name in node.order:
+        if name in node.nodes:
+            _validate_at(node.nodes[name], path + "." + name)
+        if name in node.lists:
+            items: list[AST] = node.lists[name]
+            index: i32 = 0
+            while index < len(items) as i32:
+                _validate_at(items[index], path + "." + name + "[" + str(index) + "]")
+                index = index + 1
+    return
+
+
+# ---------------------------------------------------------------------------
+# Unparsing
+#
+# A statement renders with every line already indented for its depth, so a
+# nested block is just its statements at the next depth. Expression precedence
+# decides parentheses: a child is wrapped only when it binds looser than its
+# parent, which keeps `a * (b + c)` but not `(a * b) + c`.
+# ---------------------------------------------------------------------------
+
+INDENT_UNIT: str = "    "
+
+PREC_LOWEST: i32 = 0
+PREC_LAMBDA: i32 = 1
+PREC_TERNARY: i32 = 2
+PREC_OR: i32 = 3
+PREC_AND: i32 = 4
+PREC_NOT: i32 = 5
+PREC_COMPARE: i32 = 6
+PREC_BIT_OR: i32 = 7
+PREC_BIT_XOR: i32 = 8
+PREC_BIT_AND: i32 = 9
+PREC_SHIFT: i32 = 10
+PREC_ADD: i32 = 11
+PREC_MULTIPLY: i32 = 12
+PREC_UNARY: i32 = 13
+PREC_POWER: i32 = 14
+PREC_POSTFIX: i32 = 15
+PREC_ATOM: i32 = 16
+
+
+def unparse(tree: AST) -> str:
+    """Return source text for a tree.
+
+    The text is what `parse` reads back into an equivalent tree: a transformed
+    tree unparses to edited source, and `parse(unparse(tree))` has the same
+    structure as `tree`.
+    """
+    if tree.kind == "Module":
+        return _statement_list(tree.children("body"), 0)
+    return _statement(tree, 0) + "\n"
+
+
+def _indent_text(level: i32) -> str:
+    """Return the indentation of one depth level."""
+    return indent_text(level * len(INDENT_UNIT) as i32)
+
+
+def _statement_list(nodes: list[AST], level: i32) -> str:
+    """Render statements one per line, each indented for its depth."""
+    lines: list[str] = []
+    for node in nodes:
+        lines.append(_statement(node, level))
+    return _join(lines, "\n")
+
+
+def _block(nodes: list[AST], level: i32) -> str:
+    """Render the body of a compound statement: a newline and indented lines."""
+    if len(nodes) == 0:
+        return "\n" + _indent_text(level + 1) + "pass"
+    return "\n" + _statement_list(nodes, level + 1)
+
+
+def _docstring_line(node: AST, level: i32) -> str:
+    """Render a node's docstring as the first line of its body, or "".
+
+    The compiler keeps a function, class, or enum docstring in a field rather
+    than in the body, so `unparse` has to put it back where the source had it.
+    The text is written verbatim, because only the first line takes the
+    statement's indentation; the rest of the docstring keeps its own.
+    """
+    if not node.has("docstring"):
+        return ""
+    text: str = node.text("docstring")
+    if len(text) == 0:
+        return ""
+    return '\n' + _indent_text(level + 1) + '"""' + _escape_triple(text) + '"""'
+
+
+def _escape_triple(text: str) -> str:
+    """Escape the characters that would end a triple-quoted docstring."""
+    if len(text) == 0:
+        return text
+    escaped: str = string.replace(text, '\\', '\\\\')
+    escaped = string.replace(escaped, '"""', '\\"\\"\\"')
+    return escaped
+
+
+def _body_with_docstring(node: AST, level: i32) -> str:
+    """Render a body, with the node's docstring in front of it."""
+    doc: str = _docstring_line(node, level)
+    body: list[AST] = node.children("body")
+    if len(doc) == 0:
+        return _block(body, level)
+    if len(body) == 0:
+        return doc
+    return doc + "\n" + _statement_list(body, level + 1)
+
+
+def _statement(node: AST, level: i32) -> str:
+    """Render one statement with the indentation of its depth."""
+    pad: str = _indent_text(level)
+    kind: str = node.kind
+    if kind == "Expr":
+        return pad + _expr_at(node.child("value"), PREC_LOWEST)
+    if kind == "Assign":
+        return pad + _assign_text(node)
+    if kind == "AnnAssign":
+        return pad + _ann_assign_text(node)
+    if kind == "Return":
+        if node.has("value"):
+            return pad + "return " + _expr_at(node.child("value"), PREC_LOWEST)
+        return pad + "return"
+    if kind == "Pass":
+        return pad + "pass"
+    if kind == "Break":
+        return pad + "break"
+    if kind == "Continue":
+        return pad + "continue"
+    if kind == "Yield":
+        if node.has("value"):
+            return pad + "yield " + _expr_at(node.child("value"), PREC_LOWEST)
+        return pad + "yield"
+    if kind == "If":
+        return pad + _if_text(node, level)
+    if kind == "While":
+        return pad + "while " + _expr_at(node.child("test"), PREC_LOWEST) + ":" + _block(
+            node.children("body"), level)
+    if kind == "For":
+        return pad + "for " + node.text("target") + " in " + _expr_at(
+            node.child("iter"), PREC_LOWEST) + ":" + _block(node.children("body"), level)
+    if kind == "With":
+        text: str = pad + "with " + _expr_at(node.child("context"), PREC_LOWEST)
+        if len(node.text("target")) > 0:
+            text = text + " as " + node.text("target")
+        return text + ":" + _block(node.children("body"), level)
+    if kind == "Assert":
+        text: str = pad + "assert " + _expr_at(node.child("test"), PREC_LOWEST)
+        if node.has("msg"):
+            text = text + ", " + _expr_at(node.child("msg"), PREC_LOWEST)
+        return text
+    if kind == "Raise":
+        if node.has("exc"):
+            return pad + "raise " + _expr_at(node.child("exc"), PREC_LOWEST)
+        return pad + "raise"
+    if kind == "Try":
+        return pad + _try_text(node, level)
+    if kind == "Match":
+        return pad + _match_text(node, level)
+    if kind == "Delete":
+        return pad + "del " + _expr_at(node.child("target"), PREC_LOWEST)
+    if kind == "Defer":
+        return pad + "defer:" + _block(node.children("body"), level)
+    if kind == "Import":
+        return pad + _import_text(node)
+    if kind == "FunctionDef":
+        return _function_text(node, level)
+    if kind == "ClassDef":
+        return _class_text(node, level)
+    if kind == "EnumDef":
+        return _enum_text(node, level)
+    if kind == "TypeAlias":
+        text: str = pad + "type " + node.text("name")
+        type_params: list[str] = node.texts("type_params")
+        if len(type_params) > 0:
+            text = text + "[" + _join(type_params, ", ") + "]"
+        return text + " = " + _expr_at(node.child("value"), PREC_LOWEST)
+    if kind == "MacroDef":
+        return pad + _macro_text(node, level)
+    raise ValueError("unparse does not know statement kind '" + kind + "'")
+
+
+def _assign_text(node: AST) -> str:
+    """Render an assignment, including its compound operators."""
+    target: str = _expr_at(node.child("target"), PREC_LOWEST)
+    value: str = _expr_at(node.child("value"), PREC_LOWEST)
+    operator: str = ""
+    if node.has("op"):
+        op_kind: str = node.child("op").kind
+        if op_kind != "Assign":
+            operator = operator_word(op_kind)
+    if len(operator) == 0:
+        return target + " = " + value
+    return target + " " + operator + "= " + value
+
+
+def _ann_assign_text(node: AST) -> str:
+    """Render an annotated declaration."""
+    text: str = ""
+    if node.flag("is_const"):
+        text = text + "const "
+    if node.flag("is_static"):
+        text = text + "static "
+    target: str = node.text("target")
+    if len(target) == 0 and node.has("target"):
+        target = _expr_at(node.child("target"), PREC_LOWEST)
+    text = text + target + ": " + _expr_at(node.child("annotation"), PREC_LOWEST)
+    if node.has("value"):
+        text = text + " = " + _expr_at(node.child("value"), PREC_LOWEST)
+    return text
+
+
+def _if_text(node: AST, level: i32) -> str:
+    """Render an if/elif/else chain."""
+    branches: list[AST] = node.children("branches")
+    parts: list[str] = []
+    index: i32 = 0
+    while index < len(branches) as i32:
+        branch: AST = branches[index]
+        body: list[AST] = branch.children("body")
+        if branch.has("test"):
+            if index == 0:
+                parts.append("if " + _expr_at(branch.child("test"), PREC_LOWEST) + ":")
+            else:
+                parts.append(_indent_text(level) + "elif " + _expr_at(
+                    branch.child("test"), PREC_LOWEST) + ":")
+        else:
+            parts.append(_indent_text(level) + "else:")
+        parts.append(_statement_list(body, level + 1))
+        index = index + 1
+    return _join(parts, "\n")
+
+
+def _try_text(node: AST, level: i32) -> str:
+    """Render a try statement with its handlers and else/finally blocks."""
+    parts: list[str] = []
+    parts.append("try:")
+    parts.append(_statement_list(node.children("body"), level + 1))
+    handlers: list[AST] = node.children("handlers")
+    for handler in handlers:
+        head: str = _indent_text(level) + "except"
+        if handler.has("type"):
+            head = head + " " + _expr_at(handler.child("type"), PREC_LOWEST)
+        if len(handler.text("name")) > 0:
+            head = head + " as " + handler.text("name")
+        body: list[AST] = handler.children("body")
+        if len(body) == 0:
+            body = handler.children("body")
+        parts.append(head + ":")
+        parts.append(_statement_list(_handler_body(handler), level + 1))
+    orelse: list[AST] = node.children("orelse")
+    if len(orelse) > 0:
+        parts.append(_indent_text(level) + "else:")
+        parts.append(_statement_list(orelse, level + 1))
+    finalbody: list[AST] = node.children("finalbody")
+    if len(finalbody) > 0:
+        parts.append(_indent_text(level) + "finally:")
+        parts.append(_statement_list(finalbody, level + 1))
+    return _join(parts, "\n")
+
+
+def _handler_body(handler: AST) -> list[AST]:
+    """Return the statements of an except handler."""
+    return handler.children("body")
+
+
+def _match_text(node: AST, level: i32) -> str:
+    """Render a match statement with its case arms."""
+    parts: list[str] = []
+    parts.append("match " + _expr_at(node.child("subject"), PREC_LOWEST) + ":")
+    cases: list[AST] = node.children("cases")
+    for entry in cases:
+        head: str = _indent_text(level + 1) + "case " + _expr_at(
+            entry.child("pattern"), PREC_LOWEST)
+        if entry.has("guard"):
+            head = head + " if " + _expr_at(entry.child("guard"), PREC_LOWEST)
+        parts.append(head + ":")
+        parts.append(_statement_list(entry.children("body"), level + 2))
+    return _join(parts, "\n")
+
+
+def _import_text(node: AST) -> str:
+    """Render an import or from-import statement."""
+    modules: list[str] = node.texts("module")
+    module: str = ""
+    if len(modules) > 0:
+        module = modules[0]
+    if node.flag("is_from"):
+        text: str = "from " + module + " import "
+        if node.flag("star"):
+            return text + "*"
+        return text + _import_names(node)
+    alias: str = node.text("alias")
+    if len(modules) > 0:
+        text: str = "import " + _join(modules, ", ")
+        if len(alias) > 0 and alias != module:
+            text = text + " as " + alias
+        return text
+    return "import " + _import_names(node)
+
+
+def _import_names(node: AST) -> str:
+    """Render the names of a from-import, keeping their aliases."""
+    names: list[str] = node.texts("names")
+    aliases: list[str] = node.texts("name_aliases")
+    parts: list[str] = []
+    index: i32 = 0
+    while index < len(names) as i32:
+        name: str = names[index]
+        if index < len(aliases) as i32 and len(aliases[index]) > 0 and aliases[index] != name:
+            parts.append(name + " as " + aliases[index])
+        else:
+            parts.append(name)
+        index = index + 1
+    return _join(parts, ", ")
+
+
+def _function_text(node: AST, level: i32) -> str:
+    """Render a function definition, method, or extern declaration."""
+    body: list[AST] = node.children("body")
+    decorators: list[AST] = node.children("decorator_list")
+    lines: list[str] = []
+    pad: str = _indent_text(level)
+    for decorator in decorators:
+        lines.append(pad + "@" + _expr_at(decorator, PREC_LOWEST))
+    head: str = pad
+    if node.flag("is_extern"):
+        extern_name: str = node.text("extern_name")
+        if len(extern_name) > 0:
+            head = head + 'extern "C" "' + extern_name + '"\n' + pad
+    if node.flag("is_async"):
+        head = head + "async "
+    head = head + "def " + node.text("name") + "(" + _param_list(node.children("args")) + ")"
+    returns: AST = node.child("returns")
+    if len(returns.kind) > 0 and returns.kind != "Missing":
+        head = head + " -> " + _expr_at(returns, PREC_LOWEST)
+    if node.flag("is_extern"):
+        lines.append(head)
+        lines.append(_statement_list(body, 0))
+        return _join(lines, "\n")
+    lines.append(head + ":" + _body_with_docstring(node, level))
+    return _join(lines, "\n")
+
+
+def _param_list(params: list[AST]) -> str:
+    """Render a parameter list."""
+    parts: list[str] = []
+    for param in params:
+        parts.append(_param_text(param))
+    return _join(parts, ", ")
+
+
+def _param_text(param: AST) -> str:
+    """Render one parameter, including its marker, type, and default."""
+    if is_dropped(param):
+        return ""
+    if param.has("name") == False:
+        return ""
+    text: str = ""
+    kind: str = param.text("kind")
+    if kind == "vararg":
+        text = "*"
+    if kind == "kwarg":
+        text = "**"
+    if not (param.has("name")):
+        return text
+    text = text + param.text("name")
+    if param.has("annotation") and param.child("annotation").kind != "Missing":
+        text = text + ": " + _expr_at(param.child("annotation"), PREC_LOWEST)
+    if param.has("default"):
+        text = text + " = " + _expr_at(param.child("default"), PREC_LOWEST)
+    return text
+
+
+def _class_text(node: AST, level: i32) -> str:
+    """Render a class definition with its fields and methods."""
+    pad: str = _indent_text(level)
+    lines: list[str] = []
+    for decorator in node.children("decorator_list"):
+        lines.append(pad + "@" + _expr_at(decorator, PREC_LOWEST))
+    keyword: str = "class"
+    if node.flag("is_struct"):
+        keyword = "struct"
+    head: str = pad + keyword + " " + node.text("name")
+    type_params: list[str] = node.texts("type_params")
+    if len(type_params) > 0:
+        head = head + "[" + _join(type_params, ", ") + "]"
+    bases: list[str] = node.texts("bases")
+    if len(bases) > 0:
+        head = head + "(" + _join(bases, ", ") + ")"
+    lines.append(head + ":")
+    members: list[str] = []
+    doc: str = _docstring_line(node, level)
+    if len(doc) > 0:
+        members.append(_clip_columns(doc, 1, len(doc) as i32))
+    fields: list[AST] = node.children("fields")
+    for field in fields:
+        members.append(_field_line(field, level + 1))
+    for method in node.children("methods"):
+        members.append(_statement(method, level + 1))
+    if len(members) == 0:
+        members.append(_indent_text(level + 1) + "pass")
+    lines.append(_join(members, "\n"))
+    return _join(lines, "\n")
+
+
+def _field_line(field: AST, level: i32) -> str:
+    """Render one class field declaration."""
+    pad: str = _indent_text(level)
+    if is_dropped(field):
+        return pad + "pass"
+    text: str = pad
+    if not field.flag("is_public"):
+        text = text + "@private "
+    if field.flag("is_static"):
+        text = text + "static "
+    text = text + field.text("name")
+    if field.has("annotation") and field.child("annotation").kind != "Missing":
+        text = text + ": " + _expr_at(field.child("annotation"), PREC_LOWEST)
+    if field.has("value"):
+        text = text + " = " + _expr_at(field.child("value"), PREC_LOWEST)
+    if field.has("default"):
+        text = text + " = " + _expr_at(field.child("default"), PREC_LOWEST)
+    return text
+
+
+def _enum_text(node: AST, level: i32) -> str:
+    """Render an enum definition with its variants."""
+    pad: str = _indent_text(level)
+    lines: list[str] = []
+    for decorator in node.children("decorator_list"):
+        lines.append(pad + "@" + _expr_at(decorator, PREC_LOWEST))
+    head: str = pad + "enum " + node.text("name")
+    type_params: list[str] = node.texts("type_params")
+    if len(type_params) > 0:
+        head = head + "[" + _join(type_params, ", ") + "]"
+    lines.append(head + ":")
+    members: list[str] = []
+    doc: str = _docstring_line(node, level)
+    if len(doc) > 0:
+        members.append(_clip_columns(doc, 1, len(doc) as i32))
+    for variant in node.children("variants"):
+        members.append(_variant_line(variant, level + 1))
+    for method in node.children("methods"):
+        members.append(_statement(method, level + 1))
+    if len(members) == 0:
+        members.append(_indent_text(level + 1) + "pass")
+    lines.append(_join(members, "\n"))
+    return _join(lines, "\n")
+
+
+def _variant_line(variant: AST, level: i32) -> str:
+    """Render one enum variant, with its payload types and value."""
+    pad: str = _indent_text(level)
+    if is_dropped(variant):
+        return pad + "pass"
+    text: str = pad + variant.text("name")
+    payload: list[AST] = variant.children("payload")
+    if len(payload) > 0:
+        parts: list[str] = []
+        for entry in payload:
+            parts.append(_payload_text(entry))
+        text = text + "(" + _join(parts, ", ") + ")"
+    if variant.has("value"):
+        text = text + " = " + _expr_at(variant.child("value"), PREC_LOWEST)
+    return text
+
+
+def _payload_text(entry: AST) -> str:
+    """Render one payload field of an enum variant."""
+    if entry.kind == "PayloadField":
+        name: str = entry.text("name")
+        annotation: str = ""
+        if entry.has("annotation") and entry.child("annotation").kind != "Missing":
+            annotation = _expr_at(entry.child("annotation"), PREC_LOWEST)
+        if len(name) == 0:
+            return annotation
+        return name + ": " + annotation
+    return _expr_at(entry, PREC_LOWEST)
+
+
+def _macro_text(node: AST, level: i32) -> str:
+    """Render a macro definition."""
+    pad: str = _indent_text(level)
+    params: list[str] = node.texts("params")
+    head: str = pad + "macro " + node.text("name") + "(" + _join(params, ", ") + ")"
+    arms: list[AST] = node.children("arms")
+    quote: list[AST] = node.children("quote")
+    if len(arms) > 0:
+        head = head + ":"
+        parts: list[str] = [head]
+        for arm in arms:
+            parts.append(_indent_text(level + 1) + "|" + _statement_list(arm.children("body"),
+                                                                          level + 2))
+        return _join(parts, "\n")
+    if len(quote) > 0:
+        return head + ":" + _block(quote, level)
+    return head + ":"
+
+
+def _expr_at(node: AST, parent: i32) -> str:
+    """Render an expression, parenthesising it when it binds looser than its parent."""
+    if is_dropped(node):
+        return "None"
+    text: str = _expr_raw(node)
+    if _precedence(node) < parent:
+        return "(" + text + ")"
+    return text
+
+
+def _precedence(node: AST) -> i32:
+    """Return how tightly a node binds."""
+    kind: str = node.kind
+    if kind == "Lambda":
+        return PREC_LAMBDA
+    if kind == "IfExp":
+        return PREC_TERNARY
+    if kind == "BinOp":
+        return _binop_precedence(node.child("op").kind)
+    if kind == "UnaryOp":
+        return PREC_UNARY
+    if kind == "Await":
+        return PREC_UNARY
+    if kind == "NamedExpr":
+        return PREC_LOWEST
+    if kind == "Cast":
+        return PREC_COMPARE
+    if kind == "Call" or kind == "Attribute" or kind == "Subscript":
+        return PREC_POSTFIX
+    if kind == "Constant" or kind == "Name" or kind == "List" or kind == "Tuple":
+        return PREC_ATOM
+    if kind == "Dict" or kind == "JoinedStr" or kind == "Comprehension":
+        return PREC_ATOM
+    if kind == "Type" or kind == "Splice" or kind == "MacroInvoke" or kind == "Do":
+        return PREC_ATOM
+    return PREC_ATOM
+
+
+def _binop_precedence(op: str) -> i32:
+    """Return the precedence of a binary operator kind."""
+    if op == "Pow":
+        return PREC_POWER
+    if op == "Mult" or op == "Div" or op == "FloorDiv" or op == "Mod":
+        return PREC_MULTIPLY
+    if op == "Add" or op == "Sub":
+        return PREC_ADD
+    if op == "Shl" or op == "Shr":
+        return PREC_SHIFT
+    if op == "BitAnd":
+        return PREC_BIT_AND
+    if op == "BitXor":
+        return PREC_BIT_XOR
+    if op == "BitOr":
+        return PREC_BIT_OR
+    if op == "And":
+        return PREC_AND
+    if op == "Or":
+        return PREC_OR
+    return PREC_COMPARE
+
+
+def _expr_raw(node: AST) -> str:
+    """Render an expression without considering its precedence."""
+    kind: str = node.kind
+    if kind == "Constant":
+        return _constant_text(node)
+    if kind == "Name":
+        return node.text("id")
+    if kind == "Attribute":
+        return _expr_at(node.child("value"), PREC_POSTFIX) + "." + node.text("attr")
+    if kind == "Call":
+        return _call_text(node)
+    if kind == "BinOp":
+        return _expr_at(node.child("left"), _binop_precedence(node.child("op").kind)) + " " + operator_word(
+            node.child("op").kind) + " " + _expr_at(node.child("right"),
+                                                   _binop_precedence(node.child("op").kind) + 1)
+    if kind == "UnaryOp":
+        return _unary_text(node)
+    if kind == "Await":
+        return "await " + _expr_at(node.child("value"), PREC_UNARY)
+    if kind == "Cast":
+        return _expr_at(node.child("value"), PREC_COMPARE) + " as " + _expr_at(
+            node.child("target"), PREC_COMPARE)
+    if kind == "Subscript":
+        return _subscript_text(node)
+    if kind == "List":
+        return "[" + _expr_list(node.children("elts")) + "]"
+    if kind == "Tuple":
+        text: str = _expr_list(node.children("elts"))
+        if len(node.children("elts")) == 1:
+            return "(" + text + ",)"
+        return "(" + text + ")"
+    if kind == "Dict":
+        return _dict_text(node)
+    if kind == "IfExp":
+        return _expr_at(node.child("body"), PREC_TERNARY) + " if " + _expr_at(
+            node.child("test"), PREC_TERNARY) + " else " + _expr_at(node.child("orelse"),
+                                                                   PREC_TERNARY)
+    if kind == "NamedExpr":
+        return _expr_at(node.child("target"), PREC_COMPARE) + " := " + _expr_at(
+            node.child("value"), PREC_LOWEST)
+    if kind == "Lambda":
+        text: str = "lambda " + _param_list(node.children("args"))
+        if node.has("returns") and node.child("returns").kind != "Missing":
+            text = "lambda " + _param_list(node.children("args")) + " -> " + _expr_at(
+                node.child("returns"), PREC_LOWEST)
+        return text + ": " + _expr_at(node.child("body"), PREC_LOWEST)
+    if kind == "Comprehension":
+        return "[" + _expr_at(node.child("element"), PREC_LOWEST) + " for " + node.text(
+            "name") + " in " + _expr_at(node.child("iterable"), PREC_LOWEST) + "]"
+    if kind == "JoinedStr":
+        return _joined_text(node)
+    if kind == "Type":
+        return _type_text(node)
+    if kind == "Splice":
+        text: str = "$" + node.text("name")
+        if node.flag("is_repeat"):
+            text = text + "..."
+        return text
+    if kind == "MacroInvoke":
+        name: str = node.text("name")
+        delimiter: str = node.text("delimiter")
+        raw: str = node.text("raw")
+        if delimiter == "bang_paren":
+            return name + "!(" + raw + ")"
+        if delimiter == "bang_brace":
+            return name + "!{" + raw + "}"
+        if delimiter == "bang_bracket":
+            return name + "![" + raw + "]"
+        if delimiter == "bang":
+            return name + "!"
+        return name + raw
+    if kind == "Do":
+        return "do:" + _block(node.children("body"), 0)
+    if is_operator_kind(kind):
+        return operator_word(kind)
+    raise ValueError("unparse does not know expression kind '" + kind + "'")
+
+
+def _constant_text(node: AST) -> str:
+    """Render a literal."""
+    flavor: str = node.text("flavor")
+    if flavor == "str":
+        text: str = quote_text(node.text("value"))
+        if node.flag("is_byte"):
+            return "b" + text
+        if node.flag("is_regex"):
+            return "r" + text
+        return text
+    if flavor == "bool":
+        if node.flag("value"):
+            return "True"
+        return "False"
+    if flavor == "float":
+        text: str = _float_text(node.real("value"))
+        if node.flag("is_f32"):
+            return text + "f32"
+        return text
+    if flavor == "byte":
+        return str(node.number("value")) + "b"
+    if flavor == "none":
+        return "None"
+    if node.flag("is_byte"):
+        return str(node.number("value")) + "b"
+    return str(node.number("value"))
+
+
+def _float_text(value: f64) -> str:
+    """Render a float so it reads back as a float.
+
+    `str(1.0)` is `"1"`, which would re-parse as an integer, so a text without a
+    fractional part gets one.
+    """
+    text: str = str(value)
+    if _contains_char(text, ".") or _contains_char(text, "e") or _contains_char(text, "E"):
+        return text
+    return text + ".0"
+
+
+def _contains_char(text: str, wanted: str) -> bool:
+    """Return whether a string contains a character."""
+    index: i64 = 0
+    while index < len(text) as i64:
+        if text[index] == wanted:
+            return True
+        index = index + 1
+    return False
+
+
+def _unary_text(node: AST) -> str:
+    """Render a prefix or postfix operator."""
+    operand: AST = node.child("operand")
+    kind: str = node.child("op").kind
+    if kind == "PostInc":
+        return _expr_at(operand, PREC_POSTFIX) + "++"
+    if kind == "PostDec":
+        return _expr_at(operand, PREC_POSTFIX) + "--"
+    word: str = operator_word(kind)
+    if len(word) > 0:
+        if word == "not":
+            return "not " + _expr_at(operand, PREC_UNARY)
+        return word + _expr_at(operand, PREC_UNARY)
+    return operator_word(kind) + _expr_at(operand, PREC_UNARY)
+
+
+def _call_text(node: AST) -> str:
+    """Render a call with its positional, keyword, and type arguments."""
+    text: str = _expr_at(node.child("func"), PREC_POSTFIX)
+    type_args: list[AST] = node.children("type_args")
+    if len(type_args) > 0:
+        parts: list[str] = []
+        for argument in type_args:
+            parts.append(_expr_at(argument, PREC_LOWEST))
+        text = text + "[" + _join(parts, ", ") + "]"
+    parts: list[str] = []
+    for argument in node.children("args"):
+        parts.append(_expr_at(argument, PREC_LOWEST))
+    for keyword in node.children("keywords"):
+        parts.append(_keyword_text(keyword))
+    return text + "(" + _join(parts, ", ") + ")"
+
+
+def _keyword_text(keyword: AST) -> str:
+    """Render one keyword argument."""
+    if keyword.kind == "Keyword" or keyword.category == CATEGORY_HELPER:
+        name: str = keyword.text("name")
+        if len(name) == 0:
+            name = keyword.text("arg")
+        if len(name) > 0 and keyword.has("value"):
+            return name + "=" + _expr_at(keyword.child("value"), PREC_LOWEST)
+        if len(name) > 0:
+            return name
+        if keyword.has("value"):
+            return "**" + _expr_at(keyword.child("value"), PREC_LOWEST)
+    return _expr_at(keyword, PREC_LOWEST)
+
+
+def _subscript_text(node: AST) -> str:
+    """Render an index or a slice."""
+    value: str = _expr_at(node.child("value"), PREC_POSTFIX)
+    if not node.flag("is_slice"):
+        return value + "[" + _expr_at(node.child("index"), PREC_LOWEST) + "]"
+    lower: str = ""
+    if node.has("lower") and node.child("lower").kind != "Missing":
+        lower = _expr_at(node.child("lower"), PREC_LOWEST)
+    upper: str = ""
+    if node.has("upper") and node.child("upper").kind != "Missing":
+        upper = _expr_at(node.child("upper"), PREC_LOWEST)
+    return value + "[" + lower + ":" + upper + "]"
+
+
+def _dict_text(node: AST) -> str:
+    """Render a dictionary literal."""
+    keys: list[AST] = node.children("keys")
+    values: list[AST] = node.children("values")
+    parts: list[str] = []
+    index: i32 = 0
+    while index < len(keys) as i32:
+        value: str = ""
+        if index < len(values) as i32:
+            value = _expr_at(values[index], PREC_LOWEST)
+        parts.append(_expr_at(keys[index], PREC_LOWEST) + ": " + value)
+        index = index + 1
+    return "{" + _join(parts, ", ") + "}"
+
+
+def _expr_list(nodes: list[AST]) -> str:
+    """Render a comma-separated list of expressions."""
+    parts: list[str] = []
+    for node in nodes:
+        parts.append(_expr_at(node, PREC_LOWEST))
+    return _join(parts, ", ")
+
+
+def _joined_text(node: AST) -> str:
+    """Render an interpolated string."""
+    parts: list[str] = []
+    for part in node.children("parts"):
+        literal: str = part.text("literal")
+        if len(literal) > 0:
+            parts.append(_escape_interpolation(literal))
+        if part.has("value") and part.child("value").kind != "Missing":
+            spec: str = part.text("spec")
+            if len(spec) > 0:
+                parts.append("{" + _expr_at(part.child("value"), PREC_LOWEST) + ":" + spec + "}")
+            else:
+                parts.append("{" + _expr_at(part.child("value"), PREC_LOWEST) + "}")
+    return 'f"' + _join(parts, "") + '"'
+
+
+def _escape_interpolation(text: str) -> str:
+    """Escape the characters that would end an interpolated string."""
+    parts: list[str] = []
+    index: i64 = 0
+    while index < len(text) as i64:
+        character: str = text[index]
+        if character == '"':
+            parts.append('\\"')
+        elif character == "\\":
+            parts.append("\\\\")
+        elif character == "\n":
+            parts.append("\\n")
+        elif character == "{":
+            parts.append("{{")
+        elif character == "}":
+            parts.append("}}")
+        else:
+            parts.append(character)
+        index = index + 1
+    return _join(parts, "")
+
+
+def _type_text(node: AST) -> str:
+    """Render a type expression.
+
+    A signature type such as `Callable[[i32], bool]` records its parameter list
+    as a type whose name is the brackets themselves, so that case is rendered
+    back as the bracketed list rather than as a name with arguments.
+    """
+    name: str = node.text("name")
+    args: list[AST] = node.children("args")
+    if name == "[]":
+        return "[" + _expr_list(args) + "]"
+    if len(args) == 0:
+        return name
+    return name + "[" + _expr_list(args) + "]"
