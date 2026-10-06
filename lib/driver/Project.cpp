@@ -95,6 +95,37 @@ namespace {
 #endif
 }
 
+/// Splits a TOML-style list value into its items: `["a", "b"]` or `a, b`.
+[[nodiscard]] std::vector<std::string> parseTomlList(std::string_view value) {
+  std::vector<std::string> items;
+  std::string text(value);
+  if (text.size() >= 2 && text.front() == '[' && text.back() == ']') {
+    text = text.substr(1, text.size() - 2);
+  }
+  std::string current;
+  bool inQuotes = false;
+  for (const char ch : text) {
+    if (ch == '"' || ch == '\'') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (ch == ',' && !inQuotes) {
+      const std::string item = trimCopy(current);
+      if (!item.empty()) {
+        items.push_back(item);
+      }
+      current.clear();
+      continue;
+    }
+    current.push_back(ch);
+  }
+  const std::string last = trimCopy(current);
+  if (!last.empty()) {
+    items.push_back(last);
+  }
+  return items;
+}
+
 void applyTomlKey(ProjectManifest& manifest, std::string_view key, std::string_view value) {
   if (key == "name") {
     manifest.name = std::string(value);
@@ -146,6 +177,15 @@ void applyTomlKey(ProjectManifest& manifest, std::string_view key, std::string_v
   }
   if (key == "native") {
     manifest.native = (value == "true" || value == "1" || value == "yes");
+    return;
+  }
+  if (key == "system_libs" || key == "system-libs") {
+    manifest.systemLibs = parseTomlList(value);
+    return;
+  }
+  if (key == "executables" || key == "scripts") {
+    manifest.executables = parseTomlList(value);
+    return;
   }
 }
 
@@ -769,6 +809,9 @@ struct PackCheck {
   for (const std::filesystem::path& imported : check.imported) {
     collectModuleNative(library, root, imported);
   }
+  ProjectManifest standalone;
+  standalone.root = root;
+  writePackageMetadata(library, standalone);
   const std::filesystem::path output =
       options.outputPath.empty() ? std::filesystem::current_path() / (library.name + ".slib")
                                  : options.outputPath;
@@ -933,7 +976,9 @@ bool loadProjectManifest(const std::filesystem::path& root,
         (section == "[toolchain]" && key == "sere") ||
         (section == "[paths]" &&
          (key == "src" || key == "entry" || key == "libs" || key == "stdlib")) ||
-        (section == "[build]" && (key == "output" || key == "opt" || key == "native"));
+        (section == "[build]" &&
+         (key == "output" || key == "opt" || key == "native" || key == "system_libs" ||
+          key == "system-libs" || key == "executables" || key == "scripts"));
     if (known)
       applyTomlKey(manifest, key, value);
   }
@@ -1037,6 +1082,9 @@ int packLibrary(const CompilerOptions& options) {
   for (const std::filesystem::path& imported : check.imported) {
     collectModuleNative(library, manifest->root, imported);
   }
+  writePackageMetadata(library, *manifest);
+  collectPackedExecutables(library, manifest->root, *manifest);
+  collectPackedExecutables(library, manifest->root, *manifest);
   const std::filesystem::path output =
       options.outputPath.empty() ? manifest->output : options.outputPath;
   std::filesystem::create_directories(output.parent_path(), fsError);

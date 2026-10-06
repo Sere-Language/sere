@@ -67,6 +67,10 @@ void collectNativeRuntimeFiles(const std::filesystem::path& directory,
 void collectNativeHeaderFiles(const std::filesystem::path& directory,
                               std::vector<std::filesystem::path>& files);
 
+/// Collects compiled object files under a directory.
+void collectNativeObjectFiles(const std::filesystem::path& directory,
+                              std::vector<std::filesystem::path>& files);
+
 void appendExtractedLibraryLinks(const std::vector<std::filesystem::path>& importedPaths,
                                  std::vector<std::filesystem::path>& libraries);
 

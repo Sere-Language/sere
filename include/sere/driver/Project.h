@@ -32,6 +32,13 @@ struct ProjectManifest {
   std::filesystem::path output;
   OptLevel optLevel = OptLevel::O0;
   bool native = false;
+  /// System libraries the package's native code was built against
+  /// (`system_libs = ["opengl32", "gdi32"]`), resolved for the consumer.
+  std::vector<std::string> systemLibs;
+  /// Executables the library installs (`executables = ["mytool"]`). The build
+  /// must place them in `bin/` before packing; consumers get them in `bin/` too,
+  /// which is the directory a project's path script adds.
+  std::vector<std::string> executables;
 };
 
 /// Stdlib and import roots for a file, preferring an init'd project over a global env.

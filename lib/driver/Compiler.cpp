@@ -766,6 +766,36 @@ int compileInput(const CompilerOptions& options) {
   std::vector<std::filesystem::path> linkLibraries = options.linkLibraries;
   prepareImportedLibraryNative(frontend.importedModulePaths());
   appendExtractedLibraryLinks(frontend.importedModulePaths(), linkLibraries);
+  // A package records the system libraries its native code was built against, so
+  // a consumer never has to know that, say, an OpenGL binding needs opengl32.
+  for (const std::string& name : packageSystemLibraries(frontend.importedModulePaths())) {
+    const std::optional<std::filesystem::path> found = findSystemLibrary(name);
+    if (!found.has_value()) {
+      llvm::errs() << "error: a package needs the system library '" << name
+                   << "', which was not found on this machine\n";
+      return 1;
+    }
+    linkLibraries.push_back(*found);
+  }
+  // A library's executables land where a project's path script looks.
+  const std::vector<std::filesystem::path> packageBins =
+      packageExecutables(frontend.importedModulePaths());
+  if (!packageBins.empty()) {
+    const LanguageContext context = resolveLanguageContext(options.inputPath);
+    const std::filesystem::path dest = context.project.has_value()
+                                           ? context.project->root / "bin"
+                                           : outputPath.parent_path();
+    std::error_code binError;
+    std::filesystem::create_directories(dest, binError);
+    for (const std::filesystem::path& executable : packageBins) {
+      std::filesystem::copy_file(executable, dest / executable.filename(),
+                                 std::filesystem::copy_options::overwrite_existing, binError);
+      if (binError) {
+        llvm::errs() << "note: could not install '" << executable.filename().string() << "' into "
+                     << dest.string() << '\n';
+      }
+    }
+  }
   std::vector<std::filesystem::path> runtimeFiles;
   appendExtractedLibraryRuntimes(frontend.importedModulePaths(), runtimeFiles);
   for (const std::filesystem::path& runtime : runtimeFiles) {

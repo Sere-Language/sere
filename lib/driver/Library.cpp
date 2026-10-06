@@ -490,6 +490,11 @@ void collectNativeHeaderFiles(const std::filesystem::path& directory,
   collectByPredicate(directory, isNativeHeaderFile, files);
 }
 
+void collectNativeObjectFiles(const std::filesystem::path& directory,
+                              std::vector<std::filesystem::path>& files) {
+  collectByPredicate(directory, isNativeObjectFile, files);
+}
+
 void collectSiblingNative(const std::filesystem::path& importedPath,
                           bool (*accept)(const std::filesystem::path&),
                           std::vector<std::filesystem::path>& files) {
@@ -564,6 +569,42 @@ std::vector<std::string> packageSystemLibraries(const std::vector<std::filesyste
     }
   }
   return libraries;
+}
+
+std::vector<std::filesystem::path> packageExecutables(
+    const std::vector<std::filesystem::path>& importedPaths) {
+  std::vector<std::filesystem::path> executables;
+  for (const std::filesystem::path& imported : importedPaths) {
+    const std::filesystem::path root = libraryNativeRoot(imported);
+    const std::string text = readPackageMetadata(root, kPackageBinsFile);
+    if (text.empty()) {
+      continue;
+    }
+    std::string line;
+    std::istringstream lines(text);
+    while (std::getline(lines, line)) {
+      const std::string relative = trimCopy(line);
+      if (relative.empty() || !isSafeLibraryPath(relative)) {
+        continue;
+      }
+      std::error_code error;
+      const std::filesystem::path file = root / relative;
+      if (!std::filesystem::is_regular_file(file, error)) {
+        continue;
+      }
+      bool seen = false;
+      for (const std::filesystem::path& existing : executables) {
+        if (namesEqual(existing, file)) {
+          seen = true;
+          break;
+        }
+      }
+      if (!seen) {
+        executables.push_back(std::filesystem::weakly_canonical(file, error));
+      }
+    }
+  }
+  return executables;
 }
 
 void appendExtractedLibraryRuntimes(const std::vector<std::filesystem::path>& importedPaths,
