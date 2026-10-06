@@ -218,10 +218,6 @@ STAMP="$(date -u +"%Y-%m-%d %H:%M:%S UTC")"
 
 rm -f "${ZIP}" "${TGZ}"
 ( cd "${DEST}" && tar --numeric-owner --owner=0 --group=0 -czf "${TGZ}" . )
-if command -v zip >/dev/null 2>&1; then
-  ( cd "${DEST}" && zip -r -q "${ZIP}" . )
-  echo "zip     ${ZIP}"
-fi
 echo "tar.gz  ${TGZ}"
 echo "install with:  ${DEST}/install.sh"
 echo "in-place:      . ${DEST}/bin/sere-path.sh"
@@ -241,5 +237,27 @@ __SERE_PAYLOAD__
 HEADER
 cat "$TGZ" >> "$INSTALLER"
 chmod +x "$INSTALLER"
-( cd "$RELEASE" && sha256sum "$(basename "$TGZ")" "$(basename "$INSTALLER")" > SHA256SUMS-linux.txt )
+echo "installer ${INSTALLER}"
+
+# The ZIP is a convenience duplicate of the tarball, so it is built last and
+# only when the disk can afford another copy. Running out of space here must not
+# fail a release whose tar.gz and installer are already complete.
+if command -v zip >/dev/null 2>&1; then
+  need_kb=$(( $(stat -c%s "${TGZ}") / 1024 + 524288 ))
+  avail_kb="$(df -Pk "${RELEASE}" 2>/dev/null | awk 'NR==2 { print $4 }')" || avail_kb=""
+  if [[ -n "${avail_kb}" ]] && (( avail_kb < need_kb )); then
+    echo "skipping ${ZIP}: needs about $(( need_kb / 1024 )) MB free" >&2
+  elif ( cd "${DEST}" && zip -r -q "${ZIP}" . ); then
+    echo "zip     ${ZIP}"
+  else
+    rm -f "${ZIP}"
+    echo "warning: could not create ${ZIP}; tar.gz and installer are complete" >&2
+  fi
+fi
+
+sums=( "$(basename "${TGZ}")" "$(basename "${INSTALLER}")" )
+if [[ -f "${ZIP}" ]]; then
+  sums+=( "$(basename "${ZIP}")" )
+fi
+( cd "${RELEASE}" && sha256sum "${sums[@]}" > SHA256SUMS-linux.txt )
 echo "installer $INSTALLER"

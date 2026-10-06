@@ -28,6 +28,14 @@ struct PackedLibrary {
 
 [[nodiscard]] bool isNativeLinkFile(const std::filesystem::path& path);
 
+/// A bare object file (`.o` / `.obj`), which a package ships instead of source.
+[[nodiscard]] bool isNativeObjectFile(const std::filesystem::path& path);
+
+/// Metadata a packed library carries for its consumer: one system library name
+/// per line, the packages it depends on, and the executables it installs.
+inline constexpr std::string_view kNativeDepsFile = "sere-native-deps.txt";
+inline constexpr std::string_view kPackageBinsFile = "sere-package-bins.txt";
+
 [[nodiscard]] bool isNativeRuntimeFile(const std::filesystem::path& path);
 
 [[nodiscard]] bool isNativeSourceFile(const std::filesystem::path& path);
@@ -55,11 +63,25 @@ void collectNativeLinkFiles(const std::filesystem::path& directory,
 void collectNativeRuntimeFiles(const std::filesystem::path& directory,
                                std::vector<std::filesystem::path>& files);
 
+/// Collects native headers under a directory, for packages that ship sources.
+void collectNativeHeaderFiles(const std::filesystem::path& directory,
+                              std::vector<std::filesystem::path>& files);
+
 void appendExtractedLibraryLinks(const std::vector<std::filesystem::path>& importedPaths,
                                  std::vector<std::filesystem::path>& libraries);
 
 void appendExtractedLibraryRuntimes(const std::vector<std::filesystem::path>& importedPaths,
                                     std::vector<std::filesystem::path>& files);
+
+/// System libraries named by the packages that were imported, in order, without
+/// duplicates. The compiler resolves each one for the host before linking.
+[[nodiscard]] std::vector<std::string>
+packageSystemLibraries(const std::vector<std::filesystem::path>& importedPaths);
+
+/// Executables a package installs, as `source`/`destination` pairs inside the
+/// package that was extracted for each imported module.
+[[nodiscard]] std::vector<std::filesystem::path>
+packageExecutables(const std::vector<std::filesystem::path>& importedPaths);
 
 [[nodiscard]] bool writePackedLibrary(const std::filesystem::path& slibPath,
                                       const PackedLibrary& library,

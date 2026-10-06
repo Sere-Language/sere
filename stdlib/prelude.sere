@@ -88,6 +88,159 @@ def sign(value: i32) -> i32:
 
     return 0
 
+# ---------------------------------------------------------------------------
+# Sequence helpers
+#
+# Python-like list functions. They copy and index rather than consuming an
+# iterator, because a list element is a scalar or a string here: a list of
+# aggregates (tuples, records) is not something both backends can store yet, so
+# `zip` and friends that would return pairs are deliberately absent.
+# ---------------------------------------------------------------------------
+
+
+def sorted[T](items: list[T]) -> list[T]:
+    """Return a new list with the items in ascending order.
+
+    Insertion sort: stable, simple, and good enough for the list sizes a
+    compile-time or tooling helper sees. The input list is left alone.
+    """
+    result: list[T] = []
+    index: i64 = 0
+    while index < len(items):
+        result.append(items[index])
+        index = index + 1
+    position: i64 = 1
+    while position < len(result):
+        current: T = result[position]
+        hole: i64 = position
+        while hole > 0 and current < result[hole - 1]:
+            result[hole] = result[hole - 1]
+            hole = hole - 1
+        result[hole] = current
+        position = position + 1
+    return result
+
+
+def sorted_desc[T](items: list[T]) -> list[T]:
+    """Return a new list with the items in descending order."""
+    result: list[T] = []
+    index: i64 = 0
+    while index < len(items):
+        result.append(items[index])
+        index = index + 1
+    position: i64 = 1
+    while position < len(result):
+        current: T = result[position]
+        hole: i64 = position
+        while hole > 0 and current > result[hole - 1]:
+            result[hole] = result[hole - 1]
+            hole = hole - 1
+        result[hole] = current
+        position = position + 1
+    return result
+
+
+def reversed_list[T](items: list[T]) -> list[T]:
+    """Return a new list with the items in reverse order."""
+    result: list[T] = []
+    index: i64 = len(items) - 1
+    while index >= 0:
+        result.append(items[index])
+        index = index - 1
+    return result
+
+
+def sum_ints(items: list[i64]) -> i64:
+    """Return the sum of a list of integers; empty lists sum to 0."""
+    total: i64 = 0
+    index: i64 = 0
+    while index < len(items):
+        total = total + items[index]
+        index = index + 1
+    return total
+
+
+def sum_floats(items: list[f64]) -> f64:
+    """Return the sum of a list of floats; empty lists sum to 0."""
+    total: f64 = 0.0
+    index: i64 = 0
+    while index < len(items):
+        total = total + items[index]
+        index = index + 1
+    return total
+
+
+def min_list[T](items: list[T]) -> T:
+    """Return the smallest item. An empty list is a ValueError."""
+    if len(items) == 0:
+        raise ValueError("min_list() arg is an empty list")
+    smallest: T = items[0]
+    index: i64 = 1
+    while index < len(items):
+        if items[index] < smallest:
+            smallest = items[index]
+        index = index + 1
+    return smallest
+
+
+def max_list[T](items: list[T]) -> T:
+    """Return the largest item. An empty list is a ValueError."""
+    if len(items) == 0:
+        raise ValueError("max_list() arg is an empty list")
+    largest: T = items[0]
+    index: i64 = 1
+    while index < len(items):
+        if items[index] > largest:
+            largest = items[index]
+        index = index + 1
+    return largest
+
+
+def any_of(items: list[bool]) -> bool:
+    """Return whether any item is true."""
+    index: i64 = 0
+    while index < len(items):
+        if items[index]:
+            return True
+        index = index + 1
+    return False
+
+
+def all_of(items: list[bool]) -> bool:
+    """Return whether every item is true. An empty list is true."""
+    index: i64 = 0
+    while index < len(items):
+        if not items[index]:
+            return False
+        index = index + 1
+    return True
+
+
+def count_of[T](items: list[T], value: T) -> i64:
+    """Return how many items equal value."""
+    total: i64 = 0
+    index: i64 = 0
+    while index < len(items):
+        if items[index] == value:
+            total = total + 1
+        index = index + 1
+    return total
+
+
+def index_of[T](items: list[T], value: T) -> i64:
+    """Return the first index of value, or -1 when it is not there."""
+    index: i64 = 0
+    while index < len(items):
+        if items[index] == value:
+            return index
+        index = index + 1
+    return -1
+
+
+def contains_item[T](items: list[T], value: T) -> bool:
+    """Return whether value appears in the list."""
+    return index_of(items, value) >= 0
+
 class Exception:
     """Base class for Sere exceptions."""
     message: str

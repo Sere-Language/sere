@@ -398,7 +398,14 @@ bool isSereLibraryFile(const std::filesystem::path& path) {
 
 bool isNativeLinkFile(const std::filesystem::path& path) {
   const std::string ext = path.extension().string();
-  return ext == ".lib" || ext == ".a";
+  // An archive or a bare object: both are things a linker takes directly, which
+  // is what lets a package ship native code without shipping its text.
+  return ext == ".lib" || ext == ".a" || ext == ".obj" || ext == ".o";
+}
+
+bool isNativeObjectFile(const std::filesystem::path& path) {
+  const std::string ext = path.extension().string();
+  return ext == ".obj" || ext == ".o";
 }
 
 bool isNativeRuntimeFile(const std::filesystem::path& path) {
@@ -478,6 +485,11 @@ void collectNativeRuntimeFiles(const std::filesystem::path& directory,
   collectByPredicate(directory, isNativeRuntimeFile, files);
 }
 
+void collectNativeHeaderFiles(const std::filesystem::path& directory,
+                              std::vector<std::filesystem::path>& files) {
+  collectByPredicate(directory, isNativeHeaderFile, files);
+}
+
 void collectSiblingNative(const std::filesystem::path& importedPath,
                           bool (*accept)(const std::filesystem::path&),
                           std::vector<std::filesystem::path>& files) {
@@ -505,6 +517,53 @@ void appendExtractedLibraryLinks(const std::vector<std::filesystem::path>& impor
   for (const std::filesystem::path& imported : importedPaths) {
     collectSiblingNative(imported, isNativeLinkFile, libraries);
   }
+}
+
+std::string readPackageMetadata(const std::filesystem::path& root, std::string_view name) {
+  if (root.empty()) {
+    return {};
+  }
+  std::ifstream input(root / std::string(name), std::ios::binary);
+  if (!input) {
+    return {};
+  }
+  std::string text;
+  std::string line;
+  while (std::getline(input, line)) {
+    text += trimCopy(line);
+    text += '\n';
+  }
+  return text;
+}
+
+std::vector<std::string> packageSystemLibraries(const std::vector<std::filesystem::path>& importedPaths) {
+  std::vector<std::string> libraries;
+  for (const std::filesystem::path& imported : importedPaths) {
+    const std::filesystem::path root = libraryNativeRoot(imported);
+    const std::string text = readPackageMetadata(root, kNativeDepsFile);
+    if (text.empty()) {
+      continue;
+    }
+    std::string line;
+    std::istringstream lines(text);
+    while (std::getline(lines, line)) {
+      const std::string name = trimCopy(line);
+      if (name.empty()) {
+        continue;
+      }
+      bool seen = false;
+      for (const std::string& existing : libraries) {
+        if (existing == name) {
+          seen = true;
+          break;
+        }
+      }
+      if (!seen) {
+        libraries.push_back(name);
+      }
+    }
+  }
+  return libraries;
 }
 
 void appendExtractedLibraryRuntimes(const std::vector<std::filesystem::path>& importedPaths,
@@ -607,6 +666,7 @@ bool readPackedLibrary(const std::filesystem::path& slibPath,
   library = PackedLibrary{};
   std::string encoding = "raw";
   bool hashesRecorded = false;
+  std::map<std::string, std::string> recorded;
   while (std::getline(input, line)) {
     const std::string trimmed = trimCopy(line);
     if (trimmed.empty()) {
@@ -616,47 +676,35 @@ bool readPackedLibrary(const std::filesystem::path& slibPath,
       hashesRecorded = true;
       continue;
     }
-    if (!parseMetaLine(trimmed, library, encoding)) {
-      error = "invalid library header in '" + slibPath.string() + "'";
-      return false;
-    }
-  }
-  std::map<std::string, std::string> recorded;
-  bool firstMember = true;
-  std::string pending;
-  const bool zlibMembers = encoding == "zlib";
-  while (true) {
-    if (firstMember) {
-      firstMember = false;
-    } else if (!std::getline(input, pending)) {
-      break;
-    }
-    if (trimCopy(pending).empty()) {
-      continue;
-    }
-    std::string current = trimCopy(pending);
-    while (hashesRecorded && current.starts_with("HASH ")) {
-      const std::string_view rest = std::string_view(current).substr(5);
+    // Hashes live in the header block, one line per member, so a reader knows
+    // what to expect before it reads any payload.
+    if (trimmed.starts_with("HASH ")) {
+      const std::string_view rest = std::string_view(trimmed).substr(5);
       const std::size_t split = rest.find_last_of(" \t");
       if (split == std::string_view::npos) {
         error = "invalid HASH line in '" + slibPath.string() + "'";
         return false;
       }
       recorded[trimCopy(rest.substr(0, split))] = lowerHex(trimCopy(rest.substr(split + 1)));
-      if (!std::getline(input, pending)) {
-        error = "library is missing its entry module";
-        return false;
-      }
-      current = trimCopy(pending);
-      if (current.empty()) {
-        error = "library is missing its entry module";
-        return false;
-      }
+      continue;
+    }
+    if (!parseMetaLine(trimmed, library, encoding)) {
+      error = "invalid library header in '" + slibPath.string() + "'";
+      return false;
+    }
+  }
+  const bool zlibMembers = encoding == "zlib";
+  while (true) {
+    if (!std::getline(input, line)) {
+      break;
+    }
+    if (trimCopy(line).empty()) {
+      continue;
     }
     std::string relativePath;
     std::uint64_t rawSize = 0;
     std::uint64_t packedSize = 0;
-    if (!parseFileHeader(current, relativePath, rawSize, packedSize)) {
+    if (!parseFileHeader(trimCopy(line), relativePath, rawSize, packedSize)) {
       error = "invalid FILE header in '" + slibPath.string() + "'";
       return false;
     }

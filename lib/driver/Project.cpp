@@ -501,28 +501,14 @@ void collectPackedNative(PackedLibrary& library,
 void collectPackedNativeSources(PackedLibrary& library,
                                 const std::filesystem::path& root,
                                 const std::filesystem::path& directory) {
-  // Native source is the portable fallback: it is packed only when the package
-  // has no binary for the platform being packed, so a consumer never sees both
-  // an archive and the sources that produced it.
-  if (libraryHasNativeBinary(library)) {
-    return;
-  }
-  std::vector<std::filesystem::path> sources;
-  collectLooseNativeSources(directory, sources);
-  for (const std::filesystem::path& file : sources) {
+  // Compiled objects, not source text: a consumer that needs OpenGL should not
+  // have to reproduce the environment that built the package, so what travels is
+  // what a linker takes directly. The package also records the system libraries
+  // it was built against, so the consumer does not have to guess them either.
+  std::vector<std::filesystem::path> objects;
+  collectByObjectPredicate(directory, objects);
+  for (const std::filesystem::path& file : objects) {
     addPackedFile(library, root, file);
-  }
-  // Headers travel with the sources they belong to, so a package that ships
-  // native source can be compiled by its consumer without extra include paths.
-  std::vector<std::filesystem::path> headers;
-  collectByPredicate(directory, isNativeHeaderFile, headers);
-  for (const std::filesystem::path& file : headers) {
-    addPackedFile(library, root, file);
-  }
-  const std::filesystem::path cmake = directory / "CMakeLists.txt";
-  std::error_code error;
-  if (std::filesystem::is_regular_file(cmake, error)) {
-    addPackedFile(library, root, cmake);
   }
 }
 
@@ -535,6 +521,93 @@ void collectPackageNative(PackedLibrary& library,
   collectPackedNative(library, root, libs);
   collectPackedNative(library, root, libs / "native");
   collectPackedNativeSources(library, root, root / "native");
+  collectPackedNativeSources(library, root, libs / "native");
+}
+
+/// Adds a generated member: metadata the packer writes rather than copies.
+void addPackedText(PackedLibrary& library, const std::string& relativePath,
+                   const std::string& text) {
+  if (text.empty()) {
+    return;
+  }
+  for (LibraryMember& existing : library.files) {
+    if (existing.relativePath == relativePath) {
+      existing.bytes = text;
+      return;
+    }
+  }
+  LibraryMember member;
+  member.relativePath = relativePath;
+  member.bytes = text;
+  library.files.push_back(std::move(member));
+}
+
+/// Records what a consumer must link besides the package's own objects.
+void writePackageMetadata(PackedLibrary& library, const ProjectManifest& manifest) {
+  std::string deps;
+  for (const std::string& name : manifest.systemLibs) {
+    deps += name;
+    deps += '\n';
+  }
+  addPackedText(library, std::string(kNativeDepsFile), deps);
+}
+
+/// Copies the executables a library installs into the archive under `bin/`.
+///
+/// The build produces them first (`sere build` on the library, or a script that
+/// writes into `bin/`); a declared executable that is missing is reported rather
+/// than packed, because an archive that names a program it does not carry would
+/// fail later, at the consumer's first run.
+void collectPackedExecutables(PackedLibrary& library,
+                              const std::filesystem::path& root,
+                              const ProjectManifest& manifest) {
+  if (manifest.executables.empty()) {
+    return;
+  }
+  std::string index;
+  for (const std::string& name : manifest.executables) {
+    std::vector<std::filesystem::path> candidates;
+#ifdef _WIN32
+    candidates.push_back(root / "bin" / (name + ".exe"));
+#endif
+    candidates.push_back(root / "bin" / name);
+    candidates.push_back(root / "bin" / (name + std::filesystem::path(".exe").string()));
+    std::error_code error;
+    const std::filesystem::path* found = nullptr;
+    for (const std::filesystem::path& candidate : candidates) {
+      if (std::filesystem::is_regular_file(candidate, error)) {
+        found = &candidate;
+        break;
+      }
+    }
+    if (found == nullptr) {
+      llvm::errs() << "note: executable '" << name << "' was not found in "
+                   << (root / "bin").string() << "; build it before packing to ship it\n";
+      continue;
+    }
+    const std::filesystem::path relative = std::filesystem::path("bin") / found->filename();
+    addPackedFile(library, root, *found);
+    LibraryMember member;
+    member.relativePath = relative.generic_string();
+    member.bytes = readBytes(*found).value_or(std::string{});
+    if (member.bytes.empty()) {
+      llvm::errs() << "note: cannot read executable '" << found->string() << "'\n";
+      continue;
+    }
+    bool replaced = false;
+    for (LibraryMember& existing : library.files) {
+      if (existing.relativePath == member.relativePath) {
+        replaced = true;
+        break;
+      }
+    }
+    if (!replaced) {
+      library.files.push_back(std::move(member));
+    }
+    index += relative.generic_string();
+    index += '\n';
+  }
+  addPackedText(library, std::string(kPackageBinsFile), index);
 }
 
 /// Counts packed members by kind, for the summary `sere pack` prints.
@@ -699,9 +772,9 @@ struct PackCheck {
   const std::filesystem::path output =
       options.outputPath.empty() ? std::filesystem::current_path() / (library.name + ".slib")
                                  : options.outputPath;
-  std::string error;
-  if (!writePackedLibrary(output, library, error)) {
-    llvm::errs() << "error: " << error << '\n';
+  std::string packError;
+  if (!writePackedLibrary(output, library, packError)) {
+    llvm::errs() << "error: " << packError << '\n';
     return 1;
   }
   std::error_code sizeError;
@@ -945,10 +1018,7 @@ int packLibrary(const CompilerOptions& options) {
   if (manifest->native) {
     // The same layouts the standalone pack builds: `native/` beside the
     // manifest, `libs/native/`, and the library directory itself.
-    const int nativeCode = buildPackNative(manifest->root);
-    if (nativeCode != 0) {
-      llvm::errs() << "note: native library build failed; packing Sere sources only\n";
-    }
+    buildPackNative(manifest->root);
   }
   prepareProjectStdlib(*manifest);
   const std::filesystem::path stdlib =
@@ -970,7 +1040,6 @@ int packLibrary(const CompilerOptions& options) {
   const std::filesystem::path output =
       options.outputPath.empty() ? manifest->output : options.outputPath;
   std::filesystem::create_directories(output.parent_path(), fsError);
-  std::string error;
   if (!writePackedLibrary(output, library, error)) {
     llvm::errs() << "error: " << error << '\n';
     return 1;
@@ -998,26 +1067,26 @@ int slibInfo(const CompilerOptions& options) {
   std::cout << "Entry:       " << library.entry << '\n';
   std::cout << "Files:       " << library.files.size() << '\n';
   std::cout << "Format:      3 (sha256 per member, zlib members)\n";
-  std::cout << "\nSere modules:\\n";
+  std::cout << "\nSere modules:\n";
   for (const LibraryMember& file : library.files) {
     if (std::filesystem::path(file.relativePath).extension() == ".sere") {
-      std::cout << "  " << file.relativePath << '\\n';
+      std::cout << "  " << file.relativePath << '\n';
     }
   }
-  std::cout << "\nNative:\\n";
+  std::cout << "\nNative:\n";
   if (summary.nativeTotal() == 0) {
-    std::cout << "  (none)\\n";
+    std::cout << "  (none)\n";
   }
   for (const LibraryMember& file : library.files) {
     const std::filesystem::path path(file.relativePath);
     if (isNativeLinkFile(path)) {
-      std::cout << "  archive   " << file.relativePath << '\\n';
+      std::cout << "  archive   " << file.relativePath << '\n';
     } else if (isNativeRuntimeFile(path)) {
-      std::cout << "  runtime   " << file.relativePath << '\\n';
+      std::cout << "  runtime   " << file.relativePath << '\n';
     } else if (isNativeSourceFile(path)) {
-      std::cout << "  source    " << file.relativePath << '\\n';
+      std::cout << "  source    " << file.relativePath << '\n';
     } else if (isNativeHeaderFile(path)) {
-      std::cout << "  header    " << file.relativePath << '\\n';
+      std::cout << "  header    " << file.relativePath << '\n';
     }
   }
   return 0;
@@ -1056,12 +1125,12 @@ int slibVerify(const CompilerOptions& options) {
     return 1;
   }
   const PackSummary summary = summarizeLibrary(library);
-  std::cout << library.name << ' ' << library.version << " verified\\n";
-  std::cout << "  Sere modules:    " << summary.sereModules << '\\n';
-  std::cout << "  Native archives: " << summary.nativeLink << '\\n';
-  std::cout << "  Native runtimes: " << summary.nativeRuntime << '\\n';
-  std::cout << "  Native sources:  " << summary.nativeSources << '\\n';
-  std::cout << "  Native headers:  " << summary.nativeHeaders << '\\n';
+  std::cout << library.name << ' ' << library.version << " verified\n";
+  std::cout << "  Sere modules:    " << summary.sereModules << '\n';
+  std::cout << "  Native archives: " << summary.nativeLink << '\n';
+  std::cout << "  Native runtimes: " << summary.nativeRuntime << '\n';
+  std::cout << "  Native sources:  " << summary.nativeSources << '\n';
+  std::cout << "  Native headers:  " << summary.nativeHeaders << '\n';
   return 0;
 }
 
