@@ -924,27 +924,40 @@ if cfg!(linux):
 `cfg!(windows)` (and `linux`, `macos`, `unix`, `x86_64`, `arm64`, `debug`) is a
 prelude macro that expands to the matching dunder.
 
-The `ifdef` family writes the same test without the flag spelling, in the shape
-C's `#ifdef` has:
+The `ifdef` family is a preprocessor conditional: unlike C's `#ifdef`, which
+only asks whether a macro exists, the condition is an expression that is folded
+while checking, so the branch that does not apply is never typechecked and never
+reaches a backend.
 
 ```sere
-ifdef(windows):
+ifdef 1 == 1:
+    print("always")
+
+ifdef windows:
     windows.message_box("hi")
-elifdef(macos):
+elifdef macos:
     macos.notify("hi")
 elsedef:
     print("hi")
 
-ifndef(windows):
+ifdef __windows__ and not __debug__:
+    print("windows release")
+
+ifndef windows:
     print("not windows")
 ```
 
-`ifdef(name)` is `if __name__:`, `ifndef(name)` is `if not __name__:`, and
-`elifdef`, `elifndef`, and `elsedef` continue the chain. The directive is
-resolved while checking, so the branch that does not apply is never typechecked
-and never reaches a backend, exactly like an `if` over a flag. Unlike C there is
-no `#endif`: the indented suite closes the directive. Only the directive
-spelling is reserved; `ifdef` remains usable as an ordinary name elsewhere.
+`ifdef <expr>:` and `ifndef <expr>:` open the chain, `elifdef` / `elifndef`
+continue it, and `elsedef:` ends it. The condition folds over literals,
+comparisons, arithmetic, `and`, `or`, `not`, and the host flags, so `1 == 1`,
+`2 + 2 == 5`, and `__windows__ and __debug__` are all decided at compile time;
+a condition that is not constant stays an ordinary runtime `if`. A bare flag
+name may be written short or long: `ifdef(windows)` and `ifdef(__windows__)` are
+the same test.
+
+There is no `#endif`: the indented suite closes the directive, as it does for
+`if`. Only the directive spelling is reserved at statement position; `ifdef`
+remains an ordinary name everywhere else.
 
 ---
 

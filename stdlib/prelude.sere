@@ -23,7 +23,9 @@
 #   __platform__ ("windows"|"linux"|"macos"), __arch__ ("x86_64"|"arm64"|"unknown")
 #   if __windows__: ...
 #   if cfg!(linux): ...
-#   ifdef(windows): ... elifdef(macos): ... elsedef: ...  (also ifndef)
+#   ifdef <expr>: ... elifdef <expr>: ... elsedef: ...  (a preprocessor if;
+#     the condition folds, so the branch that does not apply is not checked)
+#     ifdef(windows) / ifdef windows mean __windows__
 # Names: x.__name__, x.__type__, x.__module__, x.__qualname__
 # Types: class (identity), struct (value copy), enum (discriminant; Color.Variant only)
 #   Any accepts every value. None is void as a type: i32 | None = None (or = void)

@@ -70,6 +70,7 @@ add_custom_target(sere_stage ALL
     -DSERE_LEX="$<TARGET_FILE:sere_lex>"
     -DSERE_SOURCE="$<TARGET_FILE:sere_source>"
     -DSERE_DIAG="$<TARGET_FILE:sere_diag>"
+    -DSERE_TARGET_OS="${CMAKE_SYSTEM_NAME}"
     -DSERE_STDLIB="${CMAKE_SOURCE_DIR}/stdlib"
     -DSERE_API_HEADER="${CMAKE_SOURCE_DIR}/include/sere/api/sere_mod.h"
     -DSERE_GC_HEADER="${CMAKE_SOURCE_DIR}/include/sere/api/sere_gc.h"

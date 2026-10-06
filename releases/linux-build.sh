@@ -5,7 +5,7 @@
 # because the distro needs a Linux compiler: the linux-clang-relwithdebinfo
 # preset is Linux-only and scripts/bootstrap-llvm.sh fetches a Linux toolchain.
 #
-#   NAME=0.2.1 REPO=/mnt/c/repo WORK=/opt/sere-release/0.2.1 \
+#   SERE_RELEASE_NAME=0.2.1 REPO=/mnt/c/repo WORK=/opt/sere-release/0.2.1 \
 #     ./releases/linux-build.sh
 #   ./releases/linux-build.sh --name 0.2.1 --repo /mnt/c/repo --test
 #
@@ -18,8 +18,8 @@
 #   --with-payload   also copy the extracted linux-x64 tree back into --repo
 #   --without-editor stage without an editor extension
 #
-# The same options are accepted as environment variables (NAME, REPO, WORK,
-# SKIP_BUILD=1, TEST=1, WITH_PAYLOAD=1, WITHOUT_EDITOR=1).
+# The same options are accepted as environment variables (SERE_RELEASE_NAME,
+# REPO, WORK, SKIP_BUILD=1, TEST=1, WITH_PAYLOAD=1, WITHOUT_EDITOR=1).
 set -euo pipefail
 
 SELF="$(cd "$(dirname "$0")" && pwd)"
@@ -46,7 +46,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 REPO="${ARG_REPO:-${REPO:-$(cd "${SELF}/.." && pwd)}}"
-NAME="${ARG_NAME:-${NAME:-}}"
+# SERE_RELEASE_NAME, not NAME: shells and WSL commonly export NAME (the Windows
+# host name), which would otherwise be mistaken for a release version.
+NAME="${ARG_NAME:-${SERE_RELEASE_NAME:-}}"
 LLVM_VERSION="22.1.8"
 
 if [[ "$(uname -s)" != Linux ]]; then
@@ -77,16 +79,35 @@ missing=""
 for tool in cmake ninja curl xz zip; do
   command -v "${tool}" >/dev/null 2>&1 || missing="${missing} ${tool}"
 done
-if [[ -n "${missing}" ]]; then
+# Optional LLVM runtime libraries, resolved by soname. Installing them is
+# best-effort so a package rename on a newer distribution cannot abort the run.
+optional_missing=""
+have_so() { ldconfig -p 2>/dev/null | grep -qF "$1"; }
+have_so 'libxml2.so.2' || optional_missing="${optional_missing} libxml2"
+have_so 'libzstd.so.1' || optional_missing="${optional_missing} libzstd1"
+have_so 'libz.so.1' || optional_missing="${optional_missing} zlib1g"
+have_so 'libtinfo.so.6' || optional_missing="${optional_missing} libtinfo6"
+if [[ -n "${missing}" || -n "${optional_missing}" ]]; then
   if ! command -v apt-get >/dev/null 2>&1; then
-    echo "Missing build dependencies:${missing}. Install them and retry." >&2
-    exit 1
+    if [[ -n "${missing}" ]]; then
+      echo "Missing build dependencies:${missing}. Install them and retry." >&2
+      exit 1
+    fi
+  else
+    if ! apt-get update -qq; then
+      echo "warning: apt-get update failed; continuing" >&2
+    fi
+    if [[ -n "${missing}" ]]; then
+      echo "== installing build dependencies:${missing} =="
+      apt-get install -y -qq cmake ninja-build curl xz-utils zip file >/dev/null
+    fi
+    if [[ -n "${optional_missing}" ]]; then
+      echo "== installing LLVM runtime libraries:${optional_missing} =="
+      if ! apt-get install -y -qq ${optional_missing} >/dev/null; then
+        echo "warning: could not install${optional_missing}; continuing" >&2
+      fi
+    fi
   fi
-  echo "== installing build dependencies:${missing} =="
-  apt-get update -qq
-  # libxml2/libzstd/libtinfo are runtime dependencies of the bundled LLVM.
-  apt-get install -y -qq cmake ninja-build curl xz-utils zip file \
-    libxml2 libzstd1 zlib1g libtinfo6 >/dev/null
 fi
 
 # ---------------------------------------------------------------------------

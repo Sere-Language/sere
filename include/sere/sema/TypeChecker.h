@@ -193,6 +193,11 @@ private:
   [[nodiscard]] bool callableSatisfies(const Type* from, const Type* to) const;
   bool checkWith(WithStmt& statement, const Type* expectedReturn);
   [[nodiscard]] std::optional<bool> constBool(const Expr& expr) const;
+  /// The value of an integer literal expression, folding unary sign and the
+  /// arithmetic a preprocessor condition may use.
+  [[nodiscard]] std::optional<std::int64_t> constInteger(const Expr& expr) const;
+  /// The text of a string literal expression.
+  [[nodiscard]] std::optional<std::string> constString(const Expr& expr) const;
   bool checkIf(IfStmt& statement, const Type* expectedReturn);
   bool checkWhile(WhileStmt& statement, const Type* expectedReturn);
   bool checkFor(ForStmt& statement, const Type* expectedReturn);

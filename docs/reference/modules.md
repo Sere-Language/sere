@@ -130,29 +130,34 @@ if cfg!(linux):
 
 ## Directives
 
-The `ifdef` family is the same compile-time test written in C's `#ifdef` shape:
+The `ifdef` family is a preprocessor conditional: the condition is an
+expression, folded while checking, so the branch that does not apply is never
+typechecked and never reaches a backend.
 
 ```sere
-ifdef(windows):
+ifdef 1 == 1:
+    print("always")
+
+ifdef windows:
     windows.message_box("hi")
-elifdef(macos):
+elifdef macos:
     macos.notify("hi")
 elsedef:
     print("hi")
 
-ifndef(windows):
+ifndef windows:
     print("not windows")
 ```
 
-`ifdef(name)` stands for `if __name__:`, `ifndef(name)` for `if not __name__:`,
-and `elifdef` / `elifndef` / `elsedef` continue the chain. The flag name may be
-written either way (`ifdef(windows)` or `ifdef(__windows__)`); an unknown flag is
-reported at the directive. Because the condition is a compile-time flag, the
-branch that does not apply is not typechecked and never reaches a backend.
+`ifdef <expr>:` and `ifndef <expr>:` open the chain, `elifdef` / `elifndef`
+continue it, and `elsedef:` ends it. The condition folds over literals,
+comparisons, arithmetic, `and`, `or`, `not`, and the host flags. A bare flag name
+may be written either way (`ifdef(windows)` or `ifdef(__windows__)`); an unknown
+name is reported as an unknown name. A condition that is not constant stays an
+ordinary runtime `if`.
 
 There is no `#endif`: the indented suite closes the directive, as it does for
-`if`. `ifdef` stays usable as an ordinary identifier outside statement
-position.
+`if`. `ifdef` stays usable as an ordinary identifier outside statement position.
 
 ## Imports of macros
 

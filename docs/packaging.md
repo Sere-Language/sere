@@ -22,6 +22,12 @@ into `releases/<version>/`; `releases/linux-build.sh` is the script it runs insi
 that environment. Use `-BuildDir`/`-LlvmRoot` to package a Linux build produced
 elsewhere instead of building here.
 
+On a Linux host, `releases/stage-linux.sh` is the bash equivalent of those
+commands: it installs missing build dependencies, bootstraps LLVM, configures and
+builds `linux-clang-relwithdebinfo` in place, then runs `releases/stage.sh` and
+leaves the archives in `releases/<version>/`. Accepts `--name`, `--preset`,
+`--jobs`, `--test`, `--skip-build`, and `--skip-deps`.
+
 Linux staging writes a portable tarball, optional ZIP, and offline `.run`
 installer in the same versioned release folder. LLVM tools are bundled, while
 host system libraries and glibc remain platform requirements. Install with

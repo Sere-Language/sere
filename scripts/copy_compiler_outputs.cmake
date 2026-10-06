@@ -22,6 +22,16 @@ endif()
 if(NOT DEFINED SERE_FRONT)
   set(SERE_FRONT "")
 endif()
+# Platform the compiler is being built for (CMAKE_SYSTEM_NAME). Defaults to the
+# host so ad-hoc invocations still prune correctly.
+if(NOT DEFINED SERE_TARGET_OS OR SERE_TARGET_OS STREQUAL "")
+  set(SERE_TARGET_OS "${CMAKE_HOST_SYSTEM_NAME}")
+endif()
+
+# Standard-library modules that only compile against Windows APIs. They are kept
+# out of stages built for other platforms so `import windows` cannot resolve on
+# Linux or macOS.
+set(SERE_WINDOWS_ONLY_STDLIB windows.sere)
 
 function(sere_try_copy from to)
   execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${from}" "${to}"
@@ -37,6 +47,20 @@ function(sere_try_copy_dir from to)
   if(NOT code EQUAL 0)
     message(WARNING "skipped copy_directory ${from} -> ${to}")
   endif()
+endfunction()
+
+# Removes Windows-only stdlib modules from a staged bin/ directory unless the
+# compiler is being built for Windows.
+function(sere_prune_stdlib dest_dir)
+  if(SERE_TARGET_OS STREQUAL "Windows")
+    return()
+  endif()
+  foreach(_module IN LISTS SERE_WINDOWS_ONLY_STDLIB)
+    set(_path "${dest_dir}/stdlib/${_module}")
+    if(EXISTS "${_path}")
+      file(REMOVE "${_path}")
+    endif()
+  endforeach()
 endfunction()
 
 # Replace dest even when a running process has it mapped (Windows allows rename).
@@ -100,6 +124,8 @@ sere_install_exe("${SERE_EXE}" "${SERE_BUILD_BIN}/sere${SERE_SUFFIX}")
 sere_install_exe("${SERE_EXE}" "${SERE_PROJECT_BIN}/sere${SERE_SUFFIX}")
 sere_try_copy("${SERE_RUNTIME}" "${SERE_PROJECT_BIN}")
 sere_try_copy_dir("${SERE_STDLIB}" "${SERE_PROJECT_BIN}/stdlib")
+sere_prune_stdlib("${SERE_BUILD_BIN}")
+sere_prune_stdlib("${SERE_PROJECT_BIN}")
 if(NOT SERE_QT6 STREQUAL "")
   sere_try_copy("${SERE_QT6}" "${SERE_BUILD_BIN}")
   sere_try_copy("${SERE_QT6}" "${SERE_PROJECT_BIN}")

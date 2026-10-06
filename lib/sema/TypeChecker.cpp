@@ -2962,6 +2962,112 @@ std::optional<bool> TypeChecker::constBool(const Expr& expr) const {
       }
     }
   }
+  if (expr.kind() == NodeKind::BinaryExpr) {
+    const auto& binary = static_cast<const BinaryExpr&>(expr);
+    const BinaryOp op = binary.op();
+    // `and` and `or` short-circuit, so one known side is enough to decide.
+    if (op == BinaryOp::And || op == BinaryOp::Or) {
+      const std::optional<bool> left = constBool(binary.left());
+      const std::optional<bool> right = constBool(binary.right());
+      if (op == BinaryOp::And) {
+        if ((left.has_value() && !*left) || (right.has_value() && !*right)) {
+          return false;
+        }
+        if (left.has_value() && right.has_value()) {
+          return true;
+        }
+        return std::nullopt;
+      }
+      if ((left.has_value() && *left) || (right.has_value() && *right)) {
+        return true;
+      }
+      if (left.has_value() && right.has_value()) {
+        return false;
+      }
+      return std::nullopt;
+    }
+    // Comparisons of literals, which is what an `ifdef` condition usually is.
+    const std::optional<std::int64_t> leftNumber = constInteger(binary.left());
+    const std::optional<std::int64_t> rightNumber = constInteger(binary.right());
+    if (leftNumber.has_value() && rightNumber.has_value()) {
+      switch (op) {
+      case BinaryOp::Eq:
+        return *leftNumber == *rightNumber;
+      case BinaryOp::Ne:
+        return *leftNumber != *rightNumber;
+      case BinaryOp::Lt:
+        return *leftNumber < *rightNumber;
+      case BinaryOp::Le:
+        return *leftNumber <= *rightNumber;
+      case BinaryOp::Gt:
+        return *leftNumber > *rightNumber;
+      case BinaryOp::Ge:
+        return *leftNumber >= *rightNumber;
+      default:
+        break;
+      }
+    }
+    const std::optional<std::string> leftText = constString(binary.left());
+    const std::optional<std::string> rightText = constString(binary.right());
+    if (leftText.has_value() && rightText.has_value()) {
+      if (op == BinaryOp::Eq) {
+        return *leftText == *rightText;
+      }
+      if (op == BinaryOp::Ne) {
+        return *leftText != *rightText;
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::int64_t> TypeChecker::constInteger(const Expr& expr) const {
+  if (expr.kind() == NodeKind::IntegerLiteral) {
+    return static_cast<const IntegerLiteral&>(expr).value();
+  }
+  if (expr.kind() == NodeKind::BooleanLiteral) {
+    return static_cast<const BooleanLiteral&>(expr).value() ? 1 : 0;
+  }
+  if (expr.kind() == NodeKind::UnaryExpr) {
+    const auto& unary = static_cast<const UnaryExpr&>(expr);
+    if (unary.op() != UnaryOp::Neg && unary.op() != UnaryOp::Pos) {
+      return std::nullopt;
+    }
+    const std::optional<std::int64_t> inner = constInteger(unary.operand());
+    if (!inner.has_value()) {
+      return std::nullopt;
+    }
+    return unary.op() == UnaryOp::Neg ? -*inner : *inner;
+  }
+  if (expr.kind() == NodeKind::BinaryExpr) {
+    const auto& binary = static_cast<const BinaryExpr&>(expr);
+    const std::optional<std::int64_t> left = constInteger(binary.left());
+    const std::optional<std::int64_t> right = constInteger(binary.right());
+    if (!left.has_value() || !right.has_value()) {
+      return std::nullopt;
+    }
+    switch (binary.op()) {
+    case BinaryOp::Add:
+      return *left + *right;
+    case BinaryOp::Sub:
+      return *left - *right;
+    case BinaryOp::Mul:
+      return *left * *right;
+    case BinaryOp::Div:
+      return *right == 0 ? std::nullopt : std::optional<std::int64_t>(*left / *right);
+    case BinaryOp::Mod:
+      return *right == 0 ? std::nullopt : std::optional<std::int64_t>(*left % *right);
+    default:
+      return std::nullopt;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string> TypeChecker::constString(const Expr& expr) const {
+  if (expr.kind() == NodeKind::StringLiteral) {
+    return static_cast<const StringLiteral&>(expr).value();
+  }
   return std::nullopt;
 }
 

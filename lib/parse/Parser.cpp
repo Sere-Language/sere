@@ -2715,8 +2715,11 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
   if ((check(TokenKind::KeywordReturn) || check(TokenKind::KeywordYield))) {
     return parseReturn();
   }
+  // `ifdef <expr>:` — a conditional that reads like a preprocessor `#if`. Only
+  // the directive spelling is captured; `ifdef` stays an ordinary name
+  // everywhere else (an assignment or a member access is not a directive).
   if ((isDirectiveName("ifdef") || isDirectiveName("ifndef")) &&
-      peekNth(1).kind() == TokenKind::LParen) {
+      peekNth(1).kind() != TokenKind::Equal && peekNth(1).kind() != TokenKind::Dot) {
     return parseIfdef();
   }
   if (check(TokenKind::KeywordIf)) {
