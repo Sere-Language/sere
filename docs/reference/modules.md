@@ -128,6 +128,32 @@ if cfg!(linux):
 `cfg!(...)` is a prelude macro accepting `windows`, `linux`, `macos`, `unix`,
 `x86_64`, `arm64`, and `debug`; it expands to the matching dunder.
 
+## Directives
+
+The `ifdef` family is the same compile-time test written in C's `#ifdef` shape:
+
+```sere
+ifdef(windows):
+    windows.message_box("hi")
+elifdef(macos):
+    macos.notify("hi")
+elsedef:
+    print("hi")
+
+ifndef(windows):
+    print("not windows")
+```
+
+`ifdef(name)` stands for `if __name__:`, `ifndef(name)` for `if not __name__:`,
+and `elifdef` / `elifndef` / `elsedef` continue the chain. The flag name may be
+written either way (`ifdef(windows)` or `ifdef(__windows__)`); an unknown flag is
+reported at the directive. Because the condition is a compile-time flag, the
+branch that does not apply is not typechecked and never reaches a backend.
+
+There is no `#endif`: the indented suite closes the directive, as it does for
+`if`. `ifdef` stays usable as an ordinary identifier outside statement
+position.
+
 ## Imports of macros
 
 Macros are imported like any other name — `from html_lang import html, Html` —

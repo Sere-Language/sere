@@ -90,6 +90,9 @@ worker.md
 !/releases/**/*.vsix
 releases/*
 !releases/stage.ps1
+!releases/stage.sh
+!releases/stage-linux.ps1
+!releases/linux-build.sh
 
 # OS
 Thumbs.db

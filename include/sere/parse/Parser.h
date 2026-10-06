@@ -92,6 +92,16 @@ private:
   std::vector<std::string> parseNameList();
   std::unique_ptr<ReturnStmt> parseReturn();
   std::unique_ptr<IfStmt> parseIf();
+  /// `ifdef <expr>:` with `elifdef` and `elsedef`, rewritten into an ordinary
+  /// `if <expr>:` so the checker sees one conditional and prunes the branch that
+  /// does not apply when the expression folds to a constant.
+  std::unique_ptr<IfStmt> parseIfdef();
+  [[nodiscard]] bool isDirectiveName(const char* name) const;
+  /// The condition of an `ifdef`, with bare flag names spelled the way the
+  /// prelude spells them.
+  std::unique_ptr<Expr> parseDirectiveCondition();
+  [[nodiscard]] std::string hostFlagDunder(std::string_view name) const;
+  void rewriteHostFlags(Expr& expr);
   std::unique_ptr<WhileStmt> parseWhile();
   std::unique_ptr<ForStmt> parseFor();
   std::unique_ptr<AssertStmt> parseAssert();

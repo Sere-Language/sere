@@ -924,6 +924,28 @@ if cfg!(linux):
 `cfg!(windows)` (and `linux`, `macos`, `unix`, `x86_64`, `arm64`, `debug`) is a
 prelude macro that expands to the matching dunder.
 
+The `ifdef` family writes the same test without the flag spelling, in the shape
+C's `#ifdef` has:
+
+```sere
+ifdef(windows):
+    windows.message_box("hi")
+elifdef(macos):
+    macos.notify("hi")
+elsedef:
+    print("hi")
+
+ifndef(windows):
+    print("not windows")
+```
+
+`ifdef(name)` is `if __name__:`, `ifndef(name)` is `if not __name__:`, and
+`elifdef`, `elifndef`, and `elsedef` continue the chain. The directive is
+resolved while checking, so the branch that does not apply is never typechecked
+and never reaches a backend, exactly like an `if` over a flag. Unlike C there is
+no `#endif`: the indented suite closes the directive. Only the directive
+spelling is reserved; `ifdef` remains usable as an ordinary name elsewhere.
+
 ---
 
 ## Memory and pointers

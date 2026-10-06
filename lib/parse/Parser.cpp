@@ -1642,6 +1642,92 @@ std::unique_ptr<IfStmt> Parser::parseIf() {
   return std::make_unique<IfStmt>(keyword.range(), std::move(branches));
 }
 
+bool Parser::isDirectiveName(const char* name) const {
+  return check(TokenKind::Identifier) && peek().spelling() == name;
+}
+
+std::string Parser::hostFlagDunder(std::string_view name) const {
+  if (name.size() > 4 && name.compare(0, 2, "__") == 0) {
+    return std::string(name); // already written the way the prelude spells it
+  }
+  for (const char* known :
+       {"windows", "linux", "macos", "unix", "x86_64", "arm64", "debug"}) {
+    if (name == known) {
+      return "__" + std::string(name) + "__";
+    }
+  }
+  return {};
+}
+
+void Parser::rewriteHostFlags(Expr& expr) {
+  // Only the shapes a flag can appear in are followed, which is every shape the
+  // short spelling is useful in: a bare name, a negation, and a combination.
+  if (expr.kind() == NodeKind::NameExpr) {
+    auto& name = static_cast<NameExpr&>(expr);
+    const std::string mapped = hostFlagDunder(name.name());
+    if (!mapped.empty()) {
+      name.setName(mapped);
+    }
+    return;
+  }
+  if (expr.kind() == NodeKind::UnaryExpr) {
+    rewriteHostFlags(static_cast<UnaryExpr&>(expr).operand());
+    return;
+  }
+  if (expr.kind() == NodeKind::BinaryExpr) {
+    auto& binary = static_cast<BinaryExpr&>(expr);
+    rewriteHostFlags(binary.left());
+    rewriteHostFlags(binary.right());
+  }
+}
+
+std::unique_ptr<Expr> Parser::parseDirectiveCondition() {
+  std::unique_ptr<Expr> condition = parseExpr();
+  if (condition == nullptr) {
+    return nullptr;
+  }
+  rewriteHostFlags(*condition);
+  return condition;
+}
+
+std::unique_ptr<IfStmt> Parser::parseIfdef() {
+  const Token& keyword = advance();
+  bool negated = keyword.spelling() == "ifndef";
+  std::vector<IfBranch> branches;
+  while (true) {
+    IfBranch branch;
+    branch.range.start = peek().range().start;
+    branch.condition = parseDirectiveCondition();
+    if (branch.condition == nullptr) {
+      return nullptr;
+    }
+    if (negated) {
+      const SourceRange range = branch.condition->range();
+      branch.condition =
+          std::make_unique<UnaryExpr>(range, UnaryOp::Not, std::move(branch.condition));
+    }
+    branch.body = parseSuite();
+    branch.range.end = previous().range().end;
+    branches.push_back(std::move(branch));
+    skipNewlines();
+    if (isDirectiveName("elifdef") || isDirectiveName("elifndef")) {
+      negated = advance().spelling() == "elifndef";
+      continue;
+    }
+    break;
+  }
+  skipNewlines();
+  if (isDirectiveName("elsedef")) {
+    advance();
+    IfBranch elseBranch;
+    elseBranch.range.start = peek().range().start;
+    elseBranch.body = parseSuite();
+    elseBranch.range.end = previous().range().end;
+    branches.push_back(std::move(elseBranch));
+  }
+  return std::make_unique<IfStmt>(keyword.range(), std::move(branches));
+}
+
 std::unique_ptr<WhileStmt> Parser::parseWhile() {
   const Token& keyword = advance();
   std::unique_ptr<Expr> condition = parseExpr();
@@ -2628,6 +2714,10 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
   }
   if ((check(TokenKind::KeywordReturn) || check(TokenKind::KeywordYield))) {
     return parseReturn();
+  }
+  if ((isDirectiveName("ifdef") || isDirectiveName("ifndef")) &&
+      peekNth(1).kind() == TokenKind::LParen) {
+    return parseIfdef();
   }
   if (check(TokenKind::KeywordIf)) {
     return parseIf();

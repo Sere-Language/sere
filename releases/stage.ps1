@@ -5,9 +5,13 @@ param(
   [string]$LlvmRoot = $env:SERE_LLVM_DIR,
   [string]$Iscc,
   [string]$InstallerOutput,
+  [string]$LinuxBuildDir,
+  [string]$LinuxLlvmRoot,
   [switch]$SkipBuild,
   [switch]$WithoutEditor,
-  [switch]$PortableOnly
+  [switch]$PortableOnly,
+  [switch]$WithoutLinux,
+  [switch]$LinuxOnly
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -16,6 +20,19 @@ if (-not $versionMatch.Success) { throw 'Cannot determine CMake project version'
 if (-not $Name) { $Name = $versionMatch.Groups[1].Value }
 $Name = $Name -replace '^pre-', ''
 if ($Name -notmatch '^\d+\.\d+\.\d+$') { throw 'Name must be x.x.x' }
+
+# The Linux distro needs a Linux build of the compiler (it bundles a Linux
+# clang/lld and elides windows.sere), so it is packaged from a tree produced on
+# a Linux host or in CI instead of being cross-compiled here.
+function Invoke-LinuxStage {
+  param([string]$ReleaseName)
+  $arguments = @{ Name = $ReleaseName }
+  if ($LinuxBuildDir) { $arguments.BuildDir = $LinuxBuildDir }
+  if ($LinuxLlvmRoot) { $arguments.LlvmRoot = $LinuxLlvmRoot }
+  if ($WithoutEditor) { $arguments.WithoutEditor = $true }
+  & "$PSScriptRoot\stage-linux.ps1" @arguments
+}
+
 # Hold an exclusive handle for the entire build, before touching generated files.
 $lockPath = Join-Path $PSScriptRoot '.stage.lock'
 try {
@@ -25,6 +42,17 @@ try {
   throw 'Another release build is running. Wait for it to finish before running stage.ps1 again.'
 }
 try {
+if ($LinuxOnly) {
+  # Skip the Windows payload entirely; only the Linux distro is rebuilt.
+  try {
+    Invoke-LinuxStage -ReleaseName $Name
+  } catch {
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    exit 2
+  }
+  Write-Host "Linux release ready: $repo\releases\$Name"
+  return
+}
 if (-not $BuildDir) { $BuildDir = Join-Path $repo 'build\windows-clang-cl-release' }
 $BuildDir = [IO.Path]::GetFullPath($BuildDir)
 if (-not $LlvmRoot) { $LlvmRoot = Join-Path $env:LOCALAPPDATA 'sere\toolchains\llvm-22.1.8' }
@@ -205,6 +233,16 @@ Get-ChildItem $releaseRoot -File | Where-Object { $_.Extension -in '.exe','.zip'
   '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
 } | Set-Content "$releaseRoot\SHA256SUMS.txt" -Encoding ascii
 Write-Host "Release ready: $releaseRoot"
+if (-not $WithoutLinux) {
+  try {
+    Invoke-LinuxStage -ReleaseName $Name
+    Write-Host "Linux release ready: $releaseRoot"
+  } catch {
+    # The Windows release is complete; report the failed Linux step without
+    # failing the whole run, which usually only lacks a Linux build tree.
+    Write-Warning "Windows release succeeded, but Linux staging was skipped: $($_.Exception.Message)"
+  }
+}
 
 } finally {
   $releaseLock.Dispose()
