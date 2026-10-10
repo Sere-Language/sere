@@ -83,6 +83,14 @@ add_library(sere_front
 target_link_libraries(sere_front PUBLIC sere_parse sere_ast sere_lex sere_source sere_diag)
 sere_apply_warnings(sere_front)
 
+# Docstring parsing and Markdown rendering for the language server. Kept free of
+# LLVM so the format can be unit tested on its own.
+add_library(sere_docformat
+  lsp/DocFormat.cpp
+)
+target_link_libraries(sere_docformat PUBLIC sere_headers)
+sere_apply_warnings(sere_docformat)
+
 add_library(sere_driver
   driver/Options.cpp
   driver/Compiler.cpp
@@ -98,11 +106,10 @@ add_library(sere_driver
   driver/Installer.cpp
   lsp/ImportCompletion.cpp
   lsp/MemberCompletion.cpp
-  lsp/DocFormat.cpp
   lsp/LanguageServer.cpp
   lsp/SemanticTokens.cpp
 )
-target_link_libraries(sere_driver PUBLIC sere_sema sere_codegen)
+target_link_libraries(sere_driver PUBLIC sere_sema sere_codegen sere_docformat)
 sere_configure_llvm_target(sere_driver)
 if(WIN32)
   # `sere publish` speaks HTTPS through WinHTTP.

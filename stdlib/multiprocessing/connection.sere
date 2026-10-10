@@ -186,12 +186,14 @@ class Connection:
         self.closed = True
 
     def _require_open(self) -> void:
+        """Raise ValueError when the connection has been closed."""
         if self.closed:
             raise ValueError("connection is closed")
 
     # `readable`/`writable` are read-only getters, so a simplex pipe adjusts
     # them through this helper from inside the class.
     def _set_directions(self, can_read: bool, can_write: bool) -> void:
+        """Update the readable and writable flags from inside the class."""
         self.readable = can_read
         self.writable = can_write
 

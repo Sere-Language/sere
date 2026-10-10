@@ -38,3 +38,8 @@ foreach(group IN LISTS SERE_STDLIB_TEST_GROUPS)
     endforeach()
   endforeach()
 endforeach()
+
+# Docstring parsing and Markdown rendering (no LLVM, no code generation).
+add_executable(sere_test_docformat DocFormatTest.cpp)
+target_link_libraries(sere_test_docformat PRIVATE sere_docformat)
+add_test(NAME sere.test.docformat COMMAND sere_test_docformat)

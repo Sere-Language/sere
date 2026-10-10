@@ -305,30 +305,35 @@ class _Hasher:
 class Sha256(_Hasher):
     """Incremental SHA-256 hasher."""
     def __init__(self) -> void:
+        """Create a fresh SHA-256 hasher."""
         self._handle = _hash_new(_SHA256)
         self._done = False
 
 class Sha384(_Hasher):
     """Incremental SHA-384 hasher."""
     def __init__(self) -> void:
+        """Create a fresh SHA-384 hasher."""
         self._handle = _hash_new(_SHA384)
         self._done = False
 
 class Sha512(_Hasher):
     """Incremental SHA-512 hasher."""
     def __init__(self) -> void:
+        """Create a fresh SHA-512 hasher."""
         self._handle = _hash_new(_SHA512)
         self._done = False
 
 class Sha3_256(_Hasher):
     """Incremental SHA3-256 hasher."""
     def __init__(self) -> void:
+        """Create a fresh SHA3-256 hasher."""
         self._handle = _hash_new(_SHA3_256)
         self._done = False
 
 class Sha3_512(_Hasher):
     """Incremental SHA3-512 hasher."""
     def __init__(self) -> void:
+        """Create a fresh SHA3-512 hasher."""
         self._handle = _hash_new(_SHA3_512)
         self._done = False
 
@@ -398,12 +403,14 @@ class _Mac:
 class HmacSha256(_Mac):
     """Incremental HMAC-SHA-256."""
     def __init__(self, key: list[byte]) -> void:
+        """Create a MAC keyed with `key`; then `update` and `finish`."""
         self._handle = _hmac_new(_HMAC_SHA256, key)
         self._done = False
 
 class HmacSha512(_Mac):
     """Incremental HMAC-SHA-512."""
     def __init__(self, key: list[byte]) -> void:
+        """Create a MAC keyed with `key`; then `update` and `finish`."""
         self._handle = _hmac_new(_HMAC_SHA512, key)
         self._done = False
 

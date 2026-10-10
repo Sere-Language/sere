@@ -63,4 +63,7 @@ fail while the LSP still has `bin/sere.exe` open; that is expected.
 User-facing syntax: [docs/language.md](docs/language.md) (keep the README
 language table in sync). Memory vocabulary also lives in `stdlib/memory.sere`.
 Internals: update the matching file under `docs/`. Installer / packaging:
-[docs/packaging.md](docs/packaging.md).
+[docs/packaging.md](docs/packaging.md). Project manifest and libraries:
+[docs/sere-toml.md](docs/sere-toml.md) / [docs/libraries.md](docs/libraries.md)
+(update them when you change `sere.toml` keys or the packer). New pages need a
+row in the [docs index](docs/README.md).

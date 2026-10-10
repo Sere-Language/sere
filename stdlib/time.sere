@@ -14,5 +14,5 @@ def get_timestamp() -> str
 """Return the current formatted timestamp."""
 
 def sleep(seconds: i32) -> void:
+    """Sleep for the given number of whole seconds."""
     sleep_ms(seconds * 1000)
-

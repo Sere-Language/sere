@@ -1124,6 +1124,7 @@ def console_event_count(handle: Handle) -> DWORD:
     return _console_event_count(handle)
 
 def _decode_event(fields: list[i32]) -> ConsoleInputEvent:
+    """Build a ConsoleInputEvent from a raw console event record."""
     return ConsoleInputEvent(
         fields[0] as ConsoleEventKind,
         fields[1] != 0,
@@ -1768,6 +1769,7 @@ def window_set_title(window: WindowHandle, title: str) -> bool:
     return _set_window_text(window, title) as bool
 
 def _decode_rect(fields: list[i32]) -> Rect:
+    """Build a Rect from four packed rectangle fields."""
     return Rect(fields[0], fields[1], fields[2], fields[3])
 
 def window_rect(window: WindowHandle) -> Rect:

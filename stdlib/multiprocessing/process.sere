@@ -207,6 +207,7 @@ class Process:
     # The pid/ident getters are read-only to callers, so the class updates the
     # backing fields through these helpers.
     def _set_identity(self, value: i64) -> void:
+        """Set pid and ident together; callers only read them."""
         self.pid = value
         self.ident = value
 

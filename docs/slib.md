@@ -1,10 +1,14 @@
 # Packed libraries (`.slib`)
 
 A `.slib` is a Sere library in one file: Sere modules, any native C/C++
-components they use, headers, and metadata. A consumer drops it into `libs/`
-and imports it — the compiler compiles or links the native part for the
-consumer's platform without extra flags, include paths, or copying DLLs by
-hand.
+components they use, headers, metadata, and any command-line tools the library
+installs. A consumer drops it into `libs/` and imports it — the compiler
+compiles or links the native part for the consumer's platform without extra
+flags, include paths, or copying DLLs by hand.
+
+This page covers the archive format and native linking. For the author's
+workflow — scaffold, public API, packing, `system_libs`, shipping tools, and
+publishing — see [libraries.md](libraries.md).
 
 ```text
 mylib/
@@ -210,3 +214,9 @@ confirms whether the archive itself is intact.
 * Packages are selected by the importing project; there is no per-package
   version conflict resolution yet.
 * macOS framework dependencies are not yet expressible in package metadata.
+
+## See also
+
+* [libraries.md](libraries.md) — making and packing a library, shipping tools (`executables`), `system_libs`
+* [sere-toml.md](sere-toml.md#build) — `native`, `system_libs`, and `executables`
+* [projects.md](projects.md) — applications and the everyday workflow

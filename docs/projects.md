@@ -30,7 +30,7 @@ manifest, then the `O0` default. A command-line switch always wins, so
 | `sere.toml` | Project identity, paths, and build settings |
 | `src/main.sere` | Default application entry |
 | `libs/` | Drop-in Sere libraries and native dependencies |
-| `bin/` | Application output and local compiler helpers |
+| `bin/` | Application output, shipped tools, and local compiler helpers |
 | `venv/` | Project environment and standard-library copy |
 | `dist/` | Packed library output |
 
@@ -59,11 +59,17 @@ stdlib = "venv/stdlib"
 [build]
 output = "bin/hello.exe"     # omit to select the platform default
 opt = "O0"                   # O0, O1, O2, O3, Os, Oz
-native = false              # build libs/native
+native = false               # build libs/native
+system_libs = []             # library: system libraries consumers must link
+executables = []             # library: tools to pack into the consumer's bin/
 
 [tool.example]
 name = "custom metadata"     # does not override project.name
 ```
+
+**[sere-toml.md](sere-toml.md) is the complete reference** — every key, its
+section, its default, the value syntax the reader accepts, and the keys it
+deliberately ignores.
 
 Paths resolve relative to `sere.toml`. Libraries use `kind = "lib"`,
 `entry = "src/lib.sere"`, and default to `dist/<name>.slib`.
@@ -104,6 +110,10 @@ An unpacked `libs/mathlib/lib.sere` or `libs/mathlib/mathlib.sere` also provides
 `import mathlib`. See [modules and imports](language.md#modules-and-imports) for
 exports and resolution, and [native interop](language.md#native-interop) for C
 bindings. Repack and rebuild consumers after changes to compiled library code.
+
+[libraries.md](libraries.md) covers the author's side: the scaffold, the public
+API, native code, shipping command-line tools with `executables`, and
+publishing. [slib.md](slib.md) explains what the archive contains.
 
 ## Inspecting and refreshing the environment
 

@@ -217,6 +217,7 @@ class Parser:
 
 
 def _posix_splitext(name: str) -> list[str]:
+    """Split a final component into [stem, extension] using '/'."""
     sep_index: i64 = name.rfind("/")
     dot_index: i64 = name.rfind(".")
     if dot_index > sep_index:
@@ -229,6 +230,7 @@ def _posix_splitext(name: str) -> list[str]:
 
 
 def _win_splitext(name: str) -> list[str]:
+    """Split a final component into [stem, extension] using Windows separators."""
     sep_index: i64 = name.rfind("\\")
     alt_index: i64 = name.rfind("/")
     if alt_index > sep_index:
@@ -298,6 +300,7 @@ def segment_match(name: str, pattern: str, case_sensitive: bool) -> bool:
 
 
 def _segment_match_at(name: str, pattern: str, name_index: i64, pat_index: i64) -> bool:
+    """Match a glob pattern against a name from the given starting indices."""
     ni: i64 = name_index
     pi: i64 = pat_index
     while pi < len(pattern):

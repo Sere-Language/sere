@@ -227,6 +227,11 @@ class AST:
     end_col_offset: i32
 
     def __init__(self, kind: str = "", category: str = CATEGORY_EXPR):
+        """Create a node of `kind` in `category`.
+
+        Every typed field map starts empty; fill them with the matching `set_*`
+        call. `category` decides the node kinds the `is_*` queries accept.
+        """
         self.kind = kind
         self.category = category
         self.nodes = {}
@@ -1194,6 +1199,7 @@ class NodeVisitor:
     visits: i32
 
     def __init__(self):
+        """Create a visitor with no handlers registered."""
         self.handlers = {}
         self.visits = 0
 
@@ -1255,6 +1261,7 @@ class NodeTransformer:
     changed: i32
 
     def __init__(self):
+        """Create a transformer with no handlers registered."""
         self.handlers = {}
         self.changed = 0
 

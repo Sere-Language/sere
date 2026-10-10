@@ -182,6 +182,10 @@ reachable local modules and compiled native objects. Import resolution
 accepts `.slib` and folder libraries (`name/lib.sere`, `name/name.sere`) in
 `ImportPath.cpp`.
 
+Library authoring is documented for users in [libraries.md](libraries.md) and
+[sere-toml.md](sere-toml.md); keep those in step when you change the manifest
+keys or the packer.
+
 ---
 
 ## 12. Add a test / example

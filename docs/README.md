@@ -22,6 +22,8 @@ The compiler is `sere` (`tools/sere`). The same binary also speaks LSP
 | --- | --- |
 | Create and run your first application | [getting-started.md](getting-started.md) |
 | Configure projects and distribute libraries | [projects.md](projects.md) |
+| Look up every `sere.toml` key, section, and default | **[sere-toml.md](sere-toml.md)** |
+| Make and ship a library: native code, custom tools, publishing | **[libraries.md](libraries.md)** |
 | Pack a library with native C/C++ and consume it | **[slib.md](slib.md)** |
 | Understand `Any` and collection inference | [gradual-typing.md](gradual-typing.md) |
 | Restrict a generic parameter to specific types | [Constrained generics](language.md#constrained-generic-parameters) |
