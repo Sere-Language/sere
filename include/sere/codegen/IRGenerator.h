@@ -87,6 +87,21 @@ private:
   void buildAsyncTail(llvm::IRBuilder<>& builder, llvm::Function* llvmFn);
   void declareInstantiations();
   bool emitInstantiations(const std::vector<const Module*>& modules);
+  /// True when an instantiation still carries the callee's own type parameters
+  /// as arguments: a placeholder recorded while checking a generic body (for
+  /// example `index_of[T]` seen from `contains_item[T]`), not a concrete
+  /// specialization. Those are resolved against the enclosing instantiation by
+  /// `concreteCalleeName` instead of being declared or emitted directly.
+  [[nodiscard]] static bool isUnresolvedInstantiation(const FunctionInstantiation& inst);
+  /// Creates the LLVM prototype for one concrete instantiation if it is missing.
+  llvm::Function* declareInstantiation(const FunctionInstantiation& inst);
+  /// Lowers the body of one concrete function instantiation.
+  bool emitInstantiationBody(const FunctionInstantiation& inst,
+                             const std::vector<const Module*>& modules);
+  /// Maps an instantiation recorded inside a generic body (`index_of_T`) onto the
+  /// concrete specialization for the current `subst_` (`index_of_i32`), declaring
+  /// its prototype so the emitted call can target it.
+  [[nodiscard]] std::string concreteCalleeName(const std::string& name);
   bool emitCMainWrapper(llvm::Function* userMain);
   bool emitStatement(llvm::IRBuilder<>& builder, const Stmt& statement, const Type* returnType);
   llvm::Value* emitExpr(llvm::IRBuilder<>& builder, const Expr& expr);

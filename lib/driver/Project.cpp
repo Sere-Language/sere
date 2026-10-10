@@ -546,7 +546,7 @@ void collectPackedNativeSources(PackedLibrary& library,
   // what a linker takes directly. The package also records the system libraries
   // it was built against, so the consumer does not have to guess them either.
   std::vector<std::filesystem::path> objects;
-  collectByObjectPredicate(directory, objects);
+  collectNativeObjectFiles(directory, objects);
   for (const std::filesystem::path& file : objects) {
     addPackedFile(library, root, file);
   }

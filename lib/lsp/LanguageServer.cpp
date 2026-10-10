@@ -302,15 +302,51 @@ void writeNullResult(const llvm::json::Value* id) {
   for (const RecordField& field : type.fields()) {
     text += "    " + field.name + ": " +
             (field.type == nullptr ? "?" : field.type->display());
-    if (!field.docstring.empty())
-      text += " — " + renderDocMarkdown(parseDocstring(field.docstring));
     text += "\n";
   }
   for (const RecordMethod& method : type.methods()) {
     text += "    def " + formatMethod(method);
-    if (!method.docstring.empty())
-      text += " — " + renderDocMarkdown(parseDocstring(method.docstring));
     text += "\n";
+  }
+  return text;
+}
+
+/// Markdown that documents a class, struct, or enum's members, the way `help()`
+/// lists them. It is appended *after* the fenced declaration, so member prose
+/// never lands inside the code block and leaves the Markdown valid.
+[[nodiscard]] std::string formatMemberDocs(const Type& type) {
+  std::string attributes;
+  for (const RecordField& field : type.fields()) {
+    if (field.docstring.empty()) {
+      continue;
+    }
+    attributes += "\n- `" + field.name + ": " +
+                  (field.type == nullptr ? "?" : field.type->display()) + "`";
+    const std::string summary = parseDocstring(field.docstring).summary;
+    if (!summary.empty()) {
+      attributes += " — " + summary;
+    }
+  }
+  std::string methods;
+  for (const RecordMethod& method : type.methods()) {
+    if (method.docstring.empty()) {
+      continue;
+    }
+    methods += "\n- `" + formatMethod(method) + "`";
+    const std::string summary = parseDocstring(method.docstring).summary;
+    if (!summary.empty()) {
+      methods += " — " + summary;
+    }
+  }
+  std::string text;
+  if (!attributes.empty()) {
+    text = "**Attributes**" + attributes;
+  }
+  if (!methods.empty()) {
+    if (!text.empty()) {
+      text += "\n\n";
+    }
+    text += "**Methods**" + methods;
   }
   return text;
 }
@@ -398,6 +434,9 @@ void writeNullResult(const llvm::json::Value* id) {
     }
   }
   if (node.kind() == NodeKind::EnumDef) {
+    if (node.resolvedType() != nullptr) {
+      return formatClass(*node.resolvedType());
+    }
     return "enum " + static_cast<const EnumDef&>(node).name();
   }
   if (node.kind() == NodeKind::FunctionDef) {
@@ -586,12 +625,11 @@ struct CallSite {
   return site;
 }
 
-[[nodiscard]] llvm::json::Object makeSignature(const std::string& name,
-                                               const std::vector<std::string>& params,
-                                               const std::vector<std::string>& types,
-                                               const std::string& returnType,
-                                               bool macro,
-                                               const std::string& docstring = {}) {
+[[nodiscard]] llvm::json::Object makeSignature(
+    const std::string& name, const std::vector<std::string>& params,
+    const std::vector<std::string>& types, const std::string& returnType, bool macro,
+    const std::string& docstring = {},
+    const std::vector<std::pair<std::string, std::string>>& paramDocs = {}) {
   std::string label = name;
   label += macro ? "!(" : "(";
   llvm::json::Array parameters;
@@ -605,8 +643,16 @@ struct CallSite {
       label += ": " + types[index];
     }
     const std::size_t end = label.size();
-    parameters.push_back(llvm::json::Object{
-        {"label", llvm::json::Array{static_cast<int64_t>(start), static_cast<int64_t>(end)}}});
+    llvm::json::Object parameter{
+        {"label", llvm::json::Array{static_cast<int64_t>(start), static_cast<int64_t>(end)}}};
+    // The documentation of the argument the caret is in, matched by name.
+    for (const auto& [documented, text] : paramDocs) {
+      if (documented == params[index] && !text.empty()) {
+        parameter["documentation"] = text;
+        break;
+      }
+    }
+    parameters.push_back(std::move(parameter));
   }
   label += ")";
   if (!returnType.empty()) {
@@ -848,10 +894,17 @@ functionSignature(const FunctionDef& function, const std::string& declaration) {
                                        ? static_cast<const ClassDef&>(node).docstring()
                                        : static_cast<const EnumDef&>(node).docstring();
     const DocComment doc = parseDocstring(docstring);
-    if (doc.empty()) {
+    // Member prose is rendered after the fenced declaration, never inside it, so
+    // the declaration stays valid Sere and the code block stays valid Markdown.
+    const std::string members =
+        node.resolvedType() == nullptr ? std::string{} : formatMemberDocs(*node.resolvedType());
+    if (doc.empty() && members.empty()) {
       return false;
     }
     out = renderDeclarationMarkdown(hoverText(node), doc);
+    if (!members.empty()) {
+      out += "\n\n" + members;
+    }
     return true;
   }
   if (node.kind() == NodeKind::CallExpr) {
@@ -2147,7 +2200,7 @@ void LanguageSession::handleSignatureHelp(const llvm::json::Value* id,
     if (frontend->checker() != nullptr && call->callee().kind() == NodeKind::NameExpr) {
       const auto& callee = static_cast<const NameExpr&>(call->callee());
       if (const SemanticSymbol* symbol = findNamedSymbol(frontend->checker(), callee.name())) {
-        docstring = renderDocMarkdown(parseDocstring(symbol->docstring));
+        docstring = symbol->docstring;
       }
     } else if (frontend->checker() != nullptr && call->callee().kind() == NodeKind::MemberExpr) {
       const auto& member = static_cast<const MemberExpr&>(call->callee());
@@ -2156,7 +2209,7 @@ void LanguageSession::handleSignatureHelp(const llvm::json::Value* id,
         objectType = objectType->canonical();
         const SemanticSymbol* symbol = findCallable(*frontend->checker(), member.field(), true,
                                                     objectType->name());
-        if (symbol != nullptr) docstring = renderDocMarkdown(parseDocstring(symbol->docstring));
+        if (symbol != nullptr) docstring = symbol->docstring;
       }
     }
   } else if (frontend->checker() != nullptr) {
@@ -2222,9 +2275,9 @@ void LanguageSession::handleSignatureHelp(const llvm::json::Value* id,
       if (match != nullptr) {
         macro = match->kind == "macro";
         collectCallableParams(*match, names, types, returnType);
-        // The documentation a hover shows for the same callable, so the
-        // signature popup carries the description and the arguments too.
-        docstring = renderDocMarkdown(parseDocstring(match->docstring));
+        // Rendered below, after the parameter list is final, so the signature
+        // popup carries the description and each argument's own text.
+        docstring = match->docstring;
       }
     }
     if (names.empty() && frontend->types() != nullptr) {
@@ -2261,11 +2314,14 @@ void LanguageSession::handleSignatureHelp(const llvm::json::Value* id,
   if (!names.empty() && active >= names.size()) {
     active = names.size() - 1;
   }
+  // The same documentation a hover shows, plus one entry per argument so the
+  // client can describe the parameter the caret sits in.
+  const DocComment doc = parseDocstring(docstring);
   writeResult(id,
               llvm::json::Object{
                   {"signatures",
                    llvm::json::Array{makeSignature(site.callee, names, types, returnType, macro,
-                                                   docstring)}},
+                                                   renderDocMarkdown(doc), doc.params)}},
                   {"activeSignature", 0},
                   {"activeParameter", static_cast<int64_t>(active)},
               });

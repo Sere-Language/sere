@@ -571,6 +571,10 @@ Where it appears:
 - **Hover** over a declaration, a call, a method, or a constructor shows the
   signature, the description, then the arguments, returns, raises, and examples.
   A call shows the same documentation as the declaration it resolves to.
+- **Hover** over a `class`, `struct`, or `enum` declaration lists its documented
+  members as `**Attributes**` and `**Methods**` below the declaration, the way
+  `help()` does. The member list sits outside the signature block, so the
+  declaration stays valid Sere and the documentation stays valid Markdown.
 - **Completion** shows the declared summary and sections next to the suggestion.
 - **Signature help** shows the same documentation under the parameter list.
 - The module's own leading docstring is `__doc__`.

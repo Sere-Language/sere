@@ -367,9 +367,23 @@ llvm::Type* IRGenerator::lower(const Type* type) {
   }
   type = resolveType(type);
   if (type->isTypeParam()) {
-    const auto found = subst_.find(type->name());
-    if (found != subst_.end()) {
-      return lower(found->second);
+    // Follow the substitution chain, but never revisit a type parameter: a
+    // generic body that calls another generic function records the callee's own
+    // parameter as the argument (`subst_["T"] == T`), and chasing that mapping
+    // recursively used to overflow the stack. A self-referential or cyclic
+    // mapping falls back to the default lowering instead.
+    std::unordered_set<std::string> visited;
+    const Type* current = type;
+    while (current != nullptr && current->isTypeParam() &&
+           visited.insert(current->name()).second) {
+      const auto found = subst_.find(current->name());
+      if (found == subst_.end()) {
+        break;
+      }
+      current = found->second;
+    }
+    if (current != nullptr && !current->isTypeParam()) {
+      return lower(current);
     }
     return llvm::Type::getInt32Ty(*context_);
   }
@@ -3385,6 +3399,10 @@ llvm::Value* IRGenerator::emitCall(llvm::IRBuilder<>& builder, const CallExpr& e
       calleeName = name->name();
     }
   }
+  // A generic call inside a generic body is recorded against the callee's own
+  // parameter (`index_of_T`); target the specialization for the type arguments
+  // in scope instead.
+  calleeName = concreteCalleeName(calleeName);
   llvm::Function* callee = nullptr;
   if (!calleeName.empty()) {
     const auto found = functions_.find(calleeName);
@@ -6506,25 +6524,87 @@ bool IRGenerator::emitCMainWrapper(llvm::Function* userMain) {
   return true;
 }
 
+bool IRGenerator::isUnresolvedInstantiation(const FunctionInstantiation& inst) {
+  for (const Type* arg : inst.args) {
+    if (arg != nullptr && (arg->isTypeParam() || arg->hasTypeParameters())) {
+      return true;
+    }
+  }
+  return false;
+}
+
+llvm::Function* IRGenerator::declareInstantiation(const FunctionInstantiation& inst) {
+  if (inst.specializedType == nullptr) {
+    return nullptr;
+  }
+  const auto existing = functions_.find(inst.llvmName);
+  if (existing != functions_.end()) {
+    return existing->second;
+  }
+  std::vector<llvm::Type*> params;
+  for (std::size_t index = 0; index < inst.specializedType->paramTypes().size(); ++index) {
+    const Type* param = inst.specializedType->paramTypes()[index];
+    if (inst.isMethod && index == 0) {
+      params.push_back(llvm::PointerType::getUnqual(*context_));
+    } else {
+      params.push_back(lower(param));
+    }
+  }
+  llvm::FunctionType* type =
+      llvm::FunctionType::get(lower(inst.specializedType->returnType()), params, false);
+  llvm::Function* fn =
+      llvm::Function::Create(type, llvm::Function::ExternalLinkage, inst.llvmName, module_);
+  functions_[inst.llvmName] = fn;
+  return fn;
+}
+
+std::string IRGenerator::concreteCalleeName(const std::string& name) {
+  if (name.empty() || subst_.empty()) {
+    return name;
+  }
+  const FunctionInstantiation* found = nullptr;
+  for (const FunctionInstantiation& inst : types_->functionInstantiations()) {
+    if (inst.llvmName == name) {
+      found = &inst;
+      break;
+    }
+  }
+  if (found == nullptr || !isUnresolvedInstantiation(*found)) {
+    return name;
+  }
+  // Copy before instantiating: registering the specialization can reallocate the
+  // instantiation vector this pointer refers into.
+  const FunctionInstantiation placeholder = *found;
+  std::vector<const Type*> args;
+  args.reserve(placeholder.args.size());
+  for (const Type* arg : placeholder.args) {
+    const Type* concrete = arg == nullptr ? nullptr : types_->substitute(arg, subst_);
+    if (concrete == nullptr || concrete->isTypeParam() || concrete->hasTypeParameters()) {
+      // Still generic in this context; keep the placeholder name for now.
+      return name;
+    }
+    args.push_back(concrete);
+  }
+  const FunctionInstantiation* concrete = types_->instantiateFunction(
+      placeholder.sourceName, placeholder.typeParams, placeholder.specializedType, args,
+      placeholder.isMethod);
+  if (concrete == nullptr || concrete->specializedType == nullptr) {
+    return name;
+  }
+  const FunctionInstantiation copy = *concrete;
+  declareInstantiation(copy);
+  return copy.llvmName;
+}
+
 void IRGenerator::declareInstantiations() {
   for (const FunctionInstantiation& inst : types_->functionInstantiations()) {
-    if (inst.specializedType == nullptr || functions_.contains(inst.llvmName)) {
+    // `index_of[T]` recorded inside `contains_item[T]` is a placeholder whose
+    // concrete specialization only exists once the enclosing generic is
+    // instantiated; see `concreteCalleeName`.
+    if (isUnresolvedInstantiation(inst)) {
       continue;
     }
-    std::vector<llvm::Type*> params;
-    for (std::size_t index = 0; index < inst.specializedType->paramTypes().size(); ++index) {
-      const Type* param = inst.specializedType->paramTypes()[index];
-      if (inst.isMethod && index == 0) {
-        params.push_back(llvm::PointerType::getUnqual(*context_));
-      } else {
-        params.push_back(lower(param));
-      }
-    }
-    llvm::FunctionType* type =
-        llvm::FunctionType::get(lower(inst.specializedType->returnType()), params, false);
-    llvm::Function* fn =
-        llvm::Function::Create(type, llvm::Function::ExternalLinkage, inst.llvmName, module_);
-    functions_[inst.llvmName] = fn;
+    declareInstantiation(inst);
   }
   for (const auto& entry : std::vector(types_->instantiations())) {
     const Type* instance = entry.second;
@@ -6553,67 +6633,70 @@ void IRGenerator::declareInstantiations() {
   }
 }
 
-bool IRGenerator::emitInstantiations(const std::vector<const Module*>& modules) {
-  for (const FunctionInstantiation& inst : types_->functionInstantiations()) {
-    subst_.clear();
-    for (std::size_t index = 0; index < inst.typeParams.size() && index < inst.args.size();
-         ++index) {
-      subst_[inst.typeParams[index]] = inst.args[index];
+bool IRGenerator::emitInstantiationBody(const FunctionInstantiation& inst,
+                                        const std::vector<const Module*>& modules) {
+  subst_.clear();
+  for (std::size_t index = 0; index < inst.typeParams.size() && index < inst.args.size();
+       ++index) {
+    subst_[inst.typeParams[index]] = inst.args[index];
+  }
+  const FunctionDef* source = nullptr;
+  for (const Module* module : modules) {
+    if (module == nullptr) {
+      continue;
     }
-    const FunctionDef* source = nullptr;
-    for (const Module* module : modules) {
-      if (module == nullptr) {
-        continue;
+    for (const std::unique_ptr<Stmt>& statement : module->statements()) {
+      if (statement->kind() == NodeKind::FunctionDef &&
+          static_cast<const FunctionDef&>(*statement).name() == inst.sourceName) {
+        source = static_cast<const FunctionDef*>(statement.get());
+        break;
       }
-      for (const std::unique_ptr<Stmt>& statement : module->statements()) {
-        if (statement->kind() == NodeKind::FunctionDef &&
-            static_cast<const FunctionDef&>(*statement).name() == inst.sourceName) {
-          source = static_cast<const FunctionDef*>(statement.get());
-          break;
-        }
-        const std::vector<std::unique_ptr<FunctionDef>>* methods = nullptr;
-        const Type* owner = nullptr;
-        if (statement->kind() == NodeKind::ClassDef) {
-          const auto& def = static_cast<const ClassDef&>(*statement);
-          methods = &def.methods();
-          owner = def.resolvedType();
-        } else if (statement->kind() == NodeKind::EnumDef) {
-          const auto& def = static_cast<const EnumDef&>(*statement);
-          methods = &def.methods();
-          owner = def.resolvedType();
-        }
-        if (methods != nullptr) {
-          const Type* receiver = inst.isMethod && !inst.specializedType->paramTypes().empty()
-                                     ? inst.specializedType->paramTypes()[0]
-                                     : nullptr;
-          for (const auto& method : *methods) {
-            std::string symbol = owner->name() + "_" + method->name();
-            if (receiver != nullptr) {
-              const int index = receiver->methodIndex(method->name());
-              if (index >= 0)
-                symbol = receiver->methods()[index].llvmName;
-            }
-            if (symbol == inst.sourceName && receiver != nullptr &&
-                receiver->name().substr(0, receiver->name().find('[')) == owner->name()) {
-              source = method.get();
-              for (std::size_t i = 0; i < owner->typeParams().size(); ++i)
-                subst_[owner->typeParams()[i]] = receiver->args()[i];
-              subst_[owner->name()] = receiver;
-              break;
-            }
+      const std::vector<std::unique_ptr<FunctionDef>>* methods = nullptr;
+      const Type* owner = nullptr;
+      if (statement->kind() == NodeKind::ClassDef) {
+        const auto& def = static_cast<const ClassDef&>(*statement);
+        methods = &def.methods();
+        owner = def.resolvedType();
+      } else if (statement->kind() == NodeKind::EnumDef) {
+        const auto& def = static_cast<const EnumDef&>(*statement);
+        methods = &def.methods();
+        owner = def.resolvedType();
+      }
+      if (methods != nullptr) {
+        const Type* receiver = inst.isMethod && !inst.specializedType->paramTypes().empty()
+                                   ? inst.specializedType->paramTypes()[0]
+                                   : nullptr;
+        for (const auto& method : *methods) {
+          std::string symbol = owner->name() + "_" + method->name();
+          if (receiver != nullptr) {
+            const int index = receiver->methodIndex(method->name());
+            if (index >= 0)
+              symbol = receiver->methods()[index].llvmName;
+          }
+          if (symbol == inst.sourceName && receiver != nullptr &&
+              receiver->name().substr(0, receiver->name().find('[')) == owner->name()) {
+            source = method.get();
+            for (std::size_t i = 0; i < owner->typeParams().size(); ++i)
+              subst_[owner->typeParams()[i]] = receiver->args()[i];
+            subst_[owner->name()] = receiver;
+            break;
           }
         }
       }
-      if (source != nullptr) {
-        break;
-      }
     }
-    if (source == nullptr || !emitFunction(*source, inst.llvmName)) {
-      subst_.clear();
-      return false;
+    if (source != nullptr) {
+      break;
     }
-    subst_.clear();
   }
+  if (source == nullptr || !emitFunction(*source, inst.llvmName)) {
+    subst_.clear();
+    return false;
+  }
+  subst_.clear();
+  return true;
+}
+
+bool IRGenerator::emitInstantiations(const std::vector<const Module*>& modules) {
   for (const auto& entry : std::vector(types_->instantiations())) {
     const Type* generic = entry.first;
     const Type* instance = entry.second;
@@ -6658,6 +6741,20 @@ bool IRGenerator::emitInstantiations(const std::vector<const Module*>& modules) 
       }
     }
     subst_.clear();
+  }
+  // Function instantiations come last because lowering a body can register more
+  // of them: a generic call inside a generic body (`contains_item[T]` calling
+  // `index_of`) is resolved to a concrete specialization the first time the
+  // enclosing body is emitted. Walk by index so the vector can grow, and copy
+  // each entry because registering a specialization may reallocate.
+  for (std::size_t index = 0; index < types_->functionInstantiations().size(); ++index) {
+    if (isUnresolvedInstantiation(types_->functionInstantiations()[index])) {
+      continue;
+    }
+    const FunctionInstantiation inst = types_->functionInstantiations()[index];
+    if (!emitInstantiationBody(inst, modules)) {
+      return false;
+    }
   }
   return true;
 }

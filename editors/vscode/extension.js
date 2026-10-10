@@ -698,6 +698,18 @@ function fromLspCodeActionKind(kind) {
   }
 }
 
+function lspMarkupText(value) {
+  // The language server sends documentation as MarkupContent ({kind, value}) or
+  // as a plain string, depending on the request.
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value && typeof value.value === "string") {
+    return value.value;
+  }
+  return "";
+}
+
 function toCompletion(item, document, position) {
   const completion = new vscode.CompletionItem(item.label, fromLspCompletionKind(item.kind));
   completion.detail = item.detail || "";
@@ -1257,20 +1269,24 @@ function activate(context) {
               const help = new vscode.SignatureHelp();
               help.signatures = result.signatures.map((signature) => {
                 const info = new vscode.SignatureInformation(signature.label || "");
-                if (signature.documentation) {
-                  info.documentation = new vscode.MarkdownString(String(signature.documentation));
+                const signatureDoc = lspMarkupText(signature.documentation);
+                if (signatureDoc) {
+                  const markdown = new vscode.MarkdownString(signatureDoc);
+                  markdown.supportHtml = false;
+                  info.documentation = markdown;
                 }
                 if (Array.isArray(signature.parameters)) {
                   info.parameters = signature.parameters.map((parameter) => {
+                    const documentation = lspMarkupText(parameter.documentation);
                     if (Array.isArray(parameter.label) && parameter.label.length === 2) {
                       return new vscode.ParameterInformation(
                         [Number(parameter.label[0]), Number(parameter.label[1])],
-                        parameter.documentation || "",
+                        documentation,
                       );
                     }
                     const label =
                       typeof parameter.label === "string" ? parameter.label : signature.label;
-                    return new vscode.ParameterInformation(label, parameter.documentation || "");
+                    return new vscode.ParameterInformation(label, documentation);
                   });
                 }
                 return info;
