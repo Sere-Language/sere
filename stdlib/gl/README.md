@@ -15,13 +15,14 @@ def main() -> i32:
         return 1
 
     window.make_current()
-    gl.viewport(0, 0, window.framebuffer_width(), window.framebuffer_height())
+    gl.default_depth_state()
 
     while window.is_open():
         window.poll()
         if window.should_close() or window.key_pressed(gl.KEY_ESCAPE):
             window.destroy()
 
+        gl.viewport(0, 0, window.framebuffer_width(), window.framebuffer_height())
         gl.clear_color(0.08, 0.09, 0.12, 1.0)
         gl.clear(gl.GL_COLOR_BUFFER_BIT)
 
