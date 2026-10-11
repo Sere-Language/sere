@@ -3,6 +3,8 @@
 
 #include "sere/driver/Library.h"
 
+#include "sere/driver/Project.h"
+
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Support/Compression.h>
 #include <llvm/Support/Error.h>
@@ -13,6 +15,7 @@
 #include <fstream>
 #include <algorithm>
 #include <map>
+#include <optional>
 #include <string_view>
 #include <system_error>
 
@@ -155,10 +158,18 @@ struct Sha256 {
 
 [[nodiscard]] bool skipCollectDir(const std::filesystem::path& path) {
   const std::string text = path.generic_string();
-  return text.find("/CMakeFiles/") != std::string::npos ||
-         text.find("\\CMakeFiles\\") != std::string::npos ||
-         text.find("/.sere-lib/") != std::string::npos ||
-         text.find("\\.sere-lib\\") != std::string::npos;
+  const bool skip = text.find("/CMakeFiles/") != std::string::npos ||
+                    text.find("\\CMakeFiles\\") != std::string::npos ||
+                    text.find("/.sere-lib/") != std::string::npos ||
+                    text.find("\\.sere-lib\\") != std::string::npos ||
+                    // The project's private environment holds the toolchain's own
+                    // runtime and stdlib; it is never package content, and scanning
+                    // it would put megabytes of compiler runtime into every archive.
+                    text.find("/venv/") != std::string::npos ||
+                    text.find("\\venv\\") != std::string::npos ||
+                    text.find("/.git/") != std::string::npos ||
+                    text.find("\\.git\\") != std::string::npos;
+  return skip;
 }
 
 [[nodiscard]] bool pathHasPart(const std::filesystem::path& path, std::string_view name) {
@@ -439,17 +450,32 @@ std::filesystem::path folderLibraryEntry(const std::filesystem::path& directory)
     return {};
   }
   const std::string name = directory.filename().string();
-  const std::filesystem::path init = directory / "__init__.sere";
-  const std::filesystem::path named = directory / (name + ".sere");
-  const std::filesystem::path lib = directory / "lib.sere";
-  if (std::filesystem::is_regular_file(init, error)) {
-    return std::filesystem::weakly_canonical(init, error);
+  // A whole library project can live in `libs/` unpacked, for projects too big or
+  // too native to want a single archive: honour its manifest first so
+  // `libs/<name>/` behaves like `libs/<name>.slib`.
+  if (std::filesystem::is_regular_file(directory / "sere.toml", error) && !error) {
+    ProjectManifest manifest;
+    std::string manifestError;
+    if (loadProjectManifest(directory, manifest, manifestError) &&
+        std::filesystem::is_regular_file(manifest.entry, error) && !error) {
+      return std::filesystem::weakly_canonical(manifest.entry, error);
+    }
   }
-  if (std::filesystem::is_regular_file(named, error)) {
-    return std::filesystem::weakly_canonical(named, error);
+  for (const char* candidate : {"__init__.sere", "lib.sere"}) {
+    if (std::filesystem::is_regular_file(directory / candidate, error) && !error) {
+      return std::filesystem::weakly_canonical(directory / candidate, error);
+    }
   }
-  if (std::filesystem::is_regular_file(lib, error)) {
-    return std::filesystem::weakly_canonical(lib, error);
+  if (std::filesystem::is_regular_file(directory / (name + ".sere"), error) && !error) {
+    return std::filesystem::weakly_canonical(directory / (name + ".sere"), error);
+  }
+  // The scaffolded layout: the entry lives in `src/`.
+  const std::vector<std::string> sourceCandidates = {"src/lib.sere", "src/" + name + ".sere",
+                                                     "src/__init__.sere", "src/main.sere"};
+  for (const std::string& candidate : sourceCandidates) {
+    if (std::filesystem::is_regular_file(directory / candidate, error) && !error) {
+      return std::filesystem::weakly_canonical(directory / candidate, error);
+    }
   }
   return {};
 }
@@ -462,6 +488,17 @@ std::filesystem::path libraryNativeRoot(const std::filesystem::path& importedPat
   const std::filesystem::path parent = importedPath.parent_path();
   if (parent.empty()) {
     return {};
+  }
+  std::error_code error;
+  // A library project keeps its native code, metadata, and shipped tools at its
+  // root, which is one level above `src/` when the entry lives there.
+  if (std::filesystem::is_regular_file(parent / "sere.toml", error) && !error) {
+    return parent;
+  }
+  const std::filesystem::path grandParent = parent.parent_path();
+  if (!grandParent.empty() && std::filesystem::is_regular_file(grandParent / "sere.toml", error) &&
+      !error) {
+    return grandParent;
   }
   const std::string stem = importedPath.stem().string();
   const std::string dirName = parent.filename().string();
@@ -541,21 +578,65 @@ std::string readPackageMetadata(const std::filesystem::path& root, std::string_v
   return text;
 }
 
+/// Manifest of an unpacked library project, when `root` is one.
+[[nodiscard]] std::optional<ProjectManifest> folderLibraryManifest(const std::filesystem::path& root) {
+  if (root.empty()) {
+    return std::nullopt;
+  }
+  std::error_code error;
+  if (!std::filesystem::is_regular_file(root / "sere.toml", error) || error) {
+    return std::nullopt;
+  }
+  ProjectManifest manifest;
+  std::string loadError;
+  if (!loadProjectManifest(root, manifest, loadError)) {
+    return std::nullopt;
+  }
+  return manifest;
+}
+
+/// `bin/<name>` (or `bin/<name>.exe`) of an unpacked library, when it exists.
+[[nodiscard]] std::filesystem::path
+libraryBinExecutable(const std::filesystem::path& root, const std::string& name) {
+  if (root.empty() || name.empty()) {
+    return {};
+  }
+  std::error_code error;
+#ifdef _WIN32
+  const std::filesystem::path windows = root / "bin" / (name + ".exe");
+  if (std::filesystem::is_regular_file(windows, error) && !error) {
+    return windows;
+  }
+#endif
+  const std::filesystem::path plain = root / "bin" / name;
+  if (std::filesystem::is_regular_file(plain, error) && !error) {
+    return plain;
+  }
+  return {};
+}
+
 std::vector<std::string> packageSystemLibraries(const std::vector<std::filesystem::path>& importedPaths) {
   std::vector<std::string> libraries;
   for (const std::filesystem::path& imported : importedPaths) {
     const std::filesystem::path root = libraryNativeRoot(imported);
+    std::vector<std::string> names;
     const std::string text = readPackageMetadata(root, kNativeDepsFile);
-    if (text.empty()) {
-      continue;
-    }
     std::string line;
     std::istringstream lines(text);
     while (std::getline(lines, line)) {
       const std::string name = trimCopy(line);
-      if (name.empty()) {
-        continue;
+      if (!name.empty()) {
+        names.push_back(name);
       }
+    }
+    if (names.empty()) {
+      // An unpacked library project keeps the same information in its manifest.
+      if (const std::optional<ProjectManifest> manifest = folderLibraryManifest(root);
+          manifest.has_value()) {
+        names = manifest->systemLibs;
+      }
+    }
+    for (const std::string& name : names) {
       bool seen = false;
       for (const std::string& existing : libraries) {
         if (existing == name) {
@@ -576,22 +657,33 @@ std::vector<std::filesystem::path> packageExecutables(
   std::vector<std::filesystem::path> executables;
   for (const std::filesystem::path& imported : importedPaths) {
     const std::filesystem::path root = libraryNativeRoot(imported);
+    std::vector<std::filesystem::path> files;
     const std::string text = readPackageMetadata(root, kPackageBinsFile);
-    if (text.empty()) {
-      continue;
+    if (!text.empty()) {
+      std::string line;
+      std::istringstream lines(text);
+      while (std::getline(lines, line)) {
+        const std::string relative = trimCopy(line);
+        if (relative.empty() || !isSafeLibraryPath(relative)) {
+          continue;
+        }
+        std::error_code error;
+        const std::filesystem::path file = root / relative;
+        if (std::filesystem::is_regular_file(file, error) && !error) {
+          files.push_back(file);
+        }
+      }
+    } else if (const std::optional<ProjectManifest> manifest = folderLibraryManifest(root);
+               manifest.has_value()) {
+      // An unpacked library project names its tools in `[build].executables`.
+      for (const std::string& name : manifest->executables) {
+        const std::filesystem::path file = libraryBinExecutable(root, name);
+        if (!file.empty()) {
+          files.push_back(file);
+        }
+      }
     }
-    std::string line;
-    std::istringstream lines(text);
-    while (std::getline(lines, line)) {
-      const std::string relative = trimCopy(line);
-      if (relative.empty() || !isSafeLibraryPath(relative)) {
-        continue;
-      }
-      std::error_code error;
-      const std::filesystem::path file = root / relative;
-      if (!std::filesystem::is_regular_file(file, error)) {
-        continue;
-      }
+    for (const std::filesystem::path& file : files) {
       bool seen = false;
       for (const std::filesystem::path& existing : executables) {
         if (namesEqual(existing, file)) {
@@ -600,6 +692,7 @@ std::vector<std::filesystem::path> packageExecutables(
         }
       }
       if (!seen) {
+        std::error_code error;
         executables.push_back(std::filesystem::weakly_canonical(file, error));
       }
     }

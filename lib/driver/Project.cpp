@@ -739,10 +739,14 @@ void collectModuleNative(PackedLibrary& library,
   collectPackedNativeSources(library, root, parent / "native");
 }
 
-void buildPackNative(const std::filesystem::path& root) {
+void buildPackNative(const std::filesystem::path& root, bool buildRoot) {
   static_cast<void>(buildNativeLibs(root / "native"));
   static_cast<void>(buildNativeLibs(root / "libs" / "native"));
-  if (!folderLibraryEntry(root).empty()) {
+  // A standalone pack (`sere pack file.sere`) keeps C/C++ beside the entry, so
+  // the module's own directory is built too. A library project keeps its native
+  // code in `libs/native/`, already handled above, so its root is left alone —
+  // building it as well would compile those sources twice.
+  if (buildRoot) {
     static_cast<void>(buildNativeLibs(root));
   }
 }
@@ -802,7 +806,7 @@ struct PackCheck {
   if (check.code != 0) {
     return 1;
   }
-  buildPackNative(root);
+  buildPackNative(root, /*buildRoot=*/true);
   collectReachableSere(library, root, stdlib, entry, check.imported);
   collectPackageNative(library, root, root / "libs");
   collectModuleNative(library, root, entry);
@@ -850,6 +854,13 @@ void prepareImportedLibraryNative(const std::vector<std::filesystem::path>& impo
     if (!root.empty()) {
       appendImportSearchDir(dirs, root);
       appendImportSearchDir(dirs, root / "native");
+      // An unpacked library project keeps its C/C++ in `libs/native/`, the same
+      // place `sere pack` looks. Extracted archives are left alone: what they
+      // shipped is already unpacked, and building on top of that could link the
+      // same objects twice.
+      if (!isExtractedLibraryPath(imported)) {
+        appendImportSearchDir(dirs, root / "libs" / "native");
+      }
     }
   }
   for (const std::filesystem::path& directory : dirs) {
@@ -1062,8 +1073,10 @@ int packLibrary(const CompilerOptions& options) {
   std::error_code fsError;
   if (manifest->native) {
     // The same layouts the standalone pack builds: `native/` beside the
-    // manifest, `libs/native/`, and the library directory itself.
-    buildPackNative(manifest->root);
+    // manifest, `libs/native/`, and — when the entry sits in the root — that
+    // directory too.
+    buildPackNative(manifest->root,
+                    manifest->entry.parent_path() == manifest->root);
   }
   prepareProjectStdlib(*manifest);
   const std::filesystem::path stdlib =

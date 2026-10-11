@@ -13,6 +13,8 @@
 
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <string_view>
@@ -600,30 +602,73 @@ bool Frontend::loadImports(const std::filesystem::path& origin,
   if (ast_ == nullptr) {
     return true;
   }
-  std::vector<const ImportStmt*> pending;
-  collectImportStmts(*ast_, pending);
+  // Imports resolve against the directory of the module that wrote them, not the
+  // entry file's directory. A package nested under `src/` or `libs/` can then
+  // reach its own siblings by a short name, and a library resolves the same way
+  // whether it is a folder in `libs/` or extracted from a `.slib`.
+  struct PendingImport {
+    const ImportStmt* statement = nullptr;
+    /// Directory of the module that contains the statement.
+    std::filesystem::path originDir;
+    /// File of that module, so it never imports itself.
+    std::filesystem::path file;
+    /// Its source, so a missing module is reported against the importing file.
+    const SourceManager* source = nullptr;
+  };
+
   std::error_code pathError;
   const std::filesystem::path originPath = std::filesystem::absolute(origin, pathError);
   const std::filesystem::path originDir = std::filesystem::is_regular_file(originPath, pathError)
                                               ? originPath.parent_path()
                                               : originPath;
   const LanguageContext context = resolveLanguageContext(originPath);
-  std::vector<std::filesystem::path> searchDirs = importSearchDirs(originDir, stdlibDir);
-  appendLanguageContextDirs(searchDirs, context);
-  std::vector<std::filesystem::path> visiting;
+  std::map<std::string, std::vector<std::filesystem::path>> searchDirCache;
+  const auto searchDirsFor = [&](const std::filesystem::path& directory) {
+    const std::string key = directory.generic_string();
+    const auto found = searchDirCache.find(key);
+    if (found != searchDirCache.end()) {
+      return found->second;
+    }
+    std::vector<std::filesystem::path> dirs = importSearchDirs(directory, stdlibDir);
+    appendLanguageContextDirs(dirs, context);
+    searchDirCache.emplace(key, dirs);
+    return dirs;
+  };
+
+  std::vector<PendingImport> pending;
+  {
+    std::vector<const ImportStmt*> roots;
+    collectImportStmts(*ast_, roots);
+    for (const ImportStmt* statement : roots) {
+      pending.push_back(PendingImport{statement, originDir, originPath, source_.get()});
+    }
+  }
   while (!pending.empty()) {
-    const ImportStmt* statement = pending.back();
+    const PendingImport entry = pending.back();
     pending.pop_back();
+    const ImportStmt* statement = entry.statement;
     const std::string key = joinPath(statement->modulePath());
     if (importIndex_.contains(key)) {
       continue;
     }
     std::string resolveError;
-    const std::filesystem::path file =
-        resolveImportFile(searchDirs, statement->modulePath(), originPath, &resolveError);
+    std::filesystem::path file;
+    {
+      // A missing module is the importing file's problem, so report it there.
+      std::unique_ptr<DiagnosticSourceScope> scope;
+      if (entry.source != nullptr) {
+        scope = std::make_unique<DiagnosticSourceScope>(diagnostics_, entry.source);
+      }
+      file = resolveImportFile(searchDirsFor(entry.originDir), statement->modulePath(),
+                               entry.file, &resolveError);
+    }
     if (file.empty()) {
       if (statement->isFrom() && !statement->star() && statement->modulePath().size() == 1) {
         continue;
+      }
+      std::unique_ptr<DiagnosticSourceScope> scope;
+      if (entry.source != nullptr) {
+        scope = std::make_unique<DiagnosticSourceScope>(diagnostics_, entry.source);
       }
       if (!resolveError.empty()) {
         diagnostics_.error(statement->range(), resolveError);
@@ -648,7 +693,11 @@ bool Frontend::loadImports(const std::filesystem::path& origin,
         continue;
       }
     }
-    collectImportStmts(*module, pending);
+    std::vector<const ImportStmt*> nested;
+    collectImportStmts(*module, nested);
+    for (const ImportStmt* inner : nested) {
+      pending.push_back(PendingImport{inner, file.parent_path(), file, source.get()});
+    }
     importIndex_[key] = imported_.size();
     importPaths_.push_back(file);
     importNames_.push_back(statement->modulePath().empty() ? file.stem().string()
