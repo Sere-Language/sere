@@ -1,0 +1,228 @@
+# Buffer objects and vertex array objects.
+#
+# A buffer holds raw bytes on the GPU: vertex positions, colours, element
+# indices, matrices, or whatever else a shader reads. A vertex array object
+# remembers which buffer feeds each attribute, which is what the modern draw
+# calls consume:
+#
+#     vao: gl.VertexArray = gl.VertexArray()
+#     vao.bind()
+#
+#     vbo: gl.Buffer = gl.Buffer(gl.GL_ARRAY_BUFFER)
+#     vbo.bind()
+#     vbo.data_f64(vertices, gl.GL_STATIC_DRAW)
+#     vao.float_attribute(0, 3, 3 * 8, 0)
+#
+#     ebo: gl.Buffer = gl.Buffer(gl.GL_ELEMENT_ARRAY_BUFFER)
+#     ebo.bind()
+#     ebo.data_i32(indices, gl.GL_STATIC_DRAW)
+#
+#     gl.draw_elements(gl.GL_TRIANGLES, len(indices), gl.GL_UNSIGNED_INT, 0)
+#
+# Data is copied at call time, so the Sere list may go out of scope afterwards.
+# Offsets and strides are in bytes, not in elements.
+
+from gl.constants import *
+
+# ---------------------------------------------------------------------------
+# Buffer objects
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gl_gen_buffer"
+def gen_buffer() -> u32
+"""Create one buffer object and return its name."""
+
+extern "C" "sere_gl_delete_buffer"
+def delete_buffer(buffer: u32) -> void
+"""Delete a buffer object."""
+
+extern "C" "sere_gl_bind_buffer"
+def bind_buffer(target: u32, buffer: u32) -> void
+"""Bind a buffer to GL_ARRAY_BUFFER, GL_ELEMENT_ARRAY_BUFFER, GL_UNIFORM_BUFFER, ..."""
+
+extern "C" "sere_gl_buffer_data_f64"
+def buffer_data_f64(target: u32, values: list[f64], usage: u32) -> void
+"""Upload doubles, which the driver stores as 32-bit floats; use for vertex data."""
+
+extern "C" "sere_gl_buffer_data_i32"
+def buffer_data_i32(target: u32, values: list[i32], usage: u32) -> void
+"""Upload 32-bit integers; use for element indices read with GL_UNSIGNED_INT."""
+
+extern "C" "sere_gl_buffer_data_bytes"
+def buffer_data_bytes(target: u32, values: list[byte], usage: u32) -> void
+"""Upload raw bytes, for packed vertex layouts or generic storage."""
+
+extern "C" "sere_gl_buffer_sub_f64"
+def buffer_sub_f64(target: u32, offset_bytes: i64, values: list[f64]) -> void
+"""Overwrite part of a buffer from a list of doubles, starting at a byte offset."""
+
+# ---------------------------------------------------------------------------
+# Vertex array objects and attributes
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gl_gen_vao"
+def gen_vao() -> u32
+"""Create one vertex array object and return its name."""
+
+extern "C" "sere_gl_delete_vao"
+def delete_vao(vao: u32) -> void
+"""Delete a vertex array object."""
+
+extern "C" "sere_gl_bind_vao"
+def bind_vao(vao: u32) -> void
+"""Bind a vertex array object; 0 unbinds and restores the default state."""
+
+extern "C" "sere_gl_enable_attrib"
+def enable_attrib(index: u32) -> void
+"""Enable a vertex attribute array for the bound vertex array object."""
+
+extern "C" "sere_gl_disable_attrib"
+def disable_attrib(index: u32) -> void
+"""Disable a vertex attribute array."""
+
+extern "C" "sere_gl_attrib_pointer"
+def attrib_pointer(index: u32, size: i32, value_type: u32, normalized: i32, stride: i32, offset: i64) -> void
+"""Describe where an attribute's numbers live inside the bound GL_ARRAY_BUFFER."""
+
+def float_attribute(index: u32, size: i32, stride: i32, offset: i64) -> void:
+    """Enable and describe a vertex attribute of 32-bit floats."""
+    enable_attrib(index)
+    attrib_pointer(index, size, GL_FLOAT, 0, stride, offset)
+    return
+
+
+def uint_attribute(index: u32, size: i32, stride: i32, offset: i64) -> void:
+    """Enable and describe a vertex attribute of unsigned 32-bit integers."""
+    enable_attrib(index)
+    attrib_pointer(index, size, GL_UNSIGNED_INT, 0, stride, offset)
+    return
+
+
+def ubyte_attribute(index: u32, size: i32, normalized: i32, stride: i32, offset: i64) -> void:
+    """Enable and describe a vertex attribute of 8-bit channels; pass 1 to normalise colours."""
+    enable_attrib(index)
+    attrib_pointer(index, size, GL_UNSIGNED_BYTE, normalized, stride, offset)
+    return
+
+
+# ---------------------------------------------------------------------------
+# Drawing
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gl_draw_arrays"
+def draw_arrays(mode: u32, first: i32, count: i32) -> void
+"""Draw `count` vertices starting at `first`, with no index buffer."""
+
+extern "C" "sere_gl_draw_elements"
+def draw_elements(mode: u32, count: i32, value_type: u32, offset: i64) -> void
+"""Draw `count` indices from the bound element buffer, starting at a byte offset."""
+
+def draw_arrays_all(mode: u32, count: i32) -> void:
+    """Draw every vertex from the start of the array."""
+    draw_arrays(mode, 0, count)
+    return
+
+
+# ---------------------------------------------------------------------------
+# Convenience
+# ---------------------------------------------------------------------------
+
+class Buffer:
+    """A buffer object bound to one target for its lifetime."""
+
+    id: u32
+    target: u32
+
+    def __init__(self, target: u32 = GL_ARRAY_BUFFER):
+        """Create a buffer and remember the target it will be bound to."""
+        self.target = target
+        self.id = gen_buffer()
+
+    def bind(self) -> void:
+        """Bind the buffer to its target and make it current."""
+        bind_buffer(self.target, self.id)
+        return
+
+    def unbind(self) -> void:
+        """Unbind the target, leaving no buffer current for it."""
+        bind_buffer(self.target, 0)
+        return
+
+    def data_f64(self, values: list[f64], usage: u32 = GL_STATIC_DRAW) -> void:
+        """Upload vertex numbers; the buffer must be bound first."""
+        buffer_data_f64(self.target, values, usage)
+        return
+
+    def data_i32(self, values: list[i32], usage: u32 = GL_STATIC_DRAW) -> void:
+        """Upload 32-bit integers; the buffer must be bound first."""
+        buffer_data_i32(self.target, values, usage)
+        return
+
+    def data_bytes(self, values: list[byte], usage: u32 = GL_STATIC_DRAW) -> void:
+        """Upload raw bytes; the buffer must be bound first."""
+        buffer_data_bytes(self.target, values, usage)
+        return
+
+    def update_f64(self, offset_bytes: i64, values: list[f64]) -> void:
+        """Overwrite part of the buffer; the buffer must be bound first."""
+        buffer_sub_f64(self.target, offset_bytes, values)
+        return
+
+    def destroy(self) -> void:
+        """Delete the buffer object and forget its name."""
+        delete_buffer(self.id)
+        self.id = 0
+        return
+
+
+class VertexArray:
+    """A vertex array object: the attribute layout of one mesh."""
+
+    id: u32
+
+    def __init__(self):
+        """Create and remember a vertex array object."""
+        self.id = gen_vao()
+
+    def bind(self) -> void:
+        """Make the vertex array and its attribute layout current."""
+        bind_vao(self.id)
+        return
+
+    def unbind(self) -> void:
+        """Return to the default vertex array state."""
+        bind_vao(0)
+        return
+
+    def enable(self, index: u32) -> void:
+        """Enable an attribute array."""
+        enable_attrib(index)
+        return
+
+    def disable(self, index: u32) -> void:
+        """Disable an attribute array."""
+        disable_attrib(index)
+        return
+
+    def pointer(self, index: u32, size: i32, value_type: u32, stride: i32, offset: i64) -> void:
+        """Describe an attribute in full; pass offset in bytes."""
+        attrib_pointer(index, size, value_type, 0, stride, offset)
+        return
+
+    def float_attribute(self, index: u32, size: i32, stride: i32, offset: i64) -> void:
+        """Enable and describe a 32-bit float attribute."""
+        enable_attrib(index)
+        attrib_pointer(index, size, GL_FLOAT, 0, stride, offset)
+        return
+
+    def uint_attribute(self, index: u32, size: i32, stride: i32, offset: i64) -> void:
+        """Enable and describe an unsigned 32-bit attribute."""
+        enable_attrib(index)
+        attrib_pointer(index, size, GL_UNSIGNED_INT, 0, stride, offset)
+        return
+
+    def destroy(self) -> void:
+        """Delete the vertex array object and forget its name."""
+        delete_vao(self.id)
+        self.id = 0
+        return

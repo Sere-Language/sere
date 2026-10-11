@@ -1,0 +1,232 @@
+# Pipeline state and framebuffer clearing.
+#
+# These wrap the `glEnable`-style switches that are not tied to an object: the
+# clear colour, the viewport, blending, depth and stencil testing, face culling,
+# polygon mode, pixel unpacking, and hints. Nothing here draws; see
+# `gl.immediate` for the fixed-function path and `gl.buffers` for the modern one.
+#
+# Flags are `i32` rather than `bool` because the driver treats them as integers,
+# and `1`/`0` is what the enums use anyway.
+
+from gl.constants import *
+
+# ---------------------------------------------------------------------------
+# Clearing
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gl_clear_color"
+def clear_color(red: f64, green: f64, blue: f64, alpha: f64) -> void
+"""Set the colour written by clear(GL_COLOR_BUFFER_BIT)."""
+
+extern "C" "sere_gl_clear"
+def clear(mask: u32) -> void
+"""Clear the selected buffers; mask is one or more GL_*_BUFFER_BIT values."""
+
+extern "C" "sere_gl_clear_depth"
+def clear_depth(depth: f64) -> void
+"""Set the value written by clear(GL_DEPTH_BUFFER_BIT), usually 1.0."""
+
+extern "C" "sere_gl_clear_stencil"
+def clear_stencil(value: i32) -> void
+"""Set the value written by clear(GL_STENCIL_BUFFER_BIT)."""
+
+# ---------------------------------------------------------------------------
+# Viewport and scissor
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gl_viewport"
+def viewport(x: i32, y: i32, width: i32, height: i32) -> void
+"""Map normalised device coordinates onto the window; y runs upward from the bottom."""
+
+extern "C" "sere_gl_scissor"
+def scissor(x: i32, y: i32, width: i32, height: i32) -> void
+"""Set the scissor rectangle used while GL_SCISSOR_TEST is enabled."""
+
+def viewport_whole(width: i32, height: i32) -> void:
+    """Set the viewport to cover a whole surface."""
+    viewport(0, 0, width, height)
+    return
+
+
+# ---------------------------------------------------------------------------
+# Capabilities
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gl_enable"
+def enable(capability: u32) -> void
+"""Turn a capability on: GL_BLEND, GL_DEPTH_TEST, GL_CULL_FACE, GL_TEXTURE_2D, ..."""
+
+extern "C" "sere_gl_disable"
+def disable(capability: u32) -> void
+"""Turn a capability off."""
+
+extern "C" "sere_gl_is_enabled"
+def is_enabled(capability: u32) -> bool
+"""Return whether a capability is currently enabled."""
+
+def set_enabled(capability: u32, on: bool) -> void:
+    """Enable or disable a capability from a boolean."""
+    if on:
+        enable(capability)
+    else:
+        disable(capability)
+    return
+
+
+# ---------------------------------------------------------------------------
+# Blending
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gl_blend_func"
+def blend_func(source: u32, destination: u32) -> void
+"""Set the source and destination blend factors."""
+
+extern "C" "sere_gl_blend_func_separate"
+def blend_func_separate(source_rgb: u32, destination_rgb: u32, source_alpha: u32, destination_alpha: u32) -> void
+"""Set blend factors for the colour and alpha channels independently."""
+
+extern "C" "sere_gl_blend_equation"
+def blend_equation(mode: u32) -> void
+"""Set the colour combination: GL_FUNC_ADD, GL_FUNC_SUBTRACT, GL_FUNC_REVERSE_SUBTRACT, ..."""
+
+extern "C" "sere_gl_blend_equation_separate"
+def blend_equation_separate(rgb: u32, alpha: u32) -> void
+"""Set the colour and alpha combination modes independently."""
+
+extern "C" "sere_gl_blend_color"
+def blend_color(red: f64, green: f64, blue: f64, alpha: f64) -> void
+"""Set the constant blend colour used by GL_CONSTANT_COLOR and friends."""
+
+def alpha_blend() -> void:
+    """Configure the common source-alpha, one-minus-source-alpha blend."""
+    enable(GL_BLEND)
+    blend_func(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+    return
+
+
+def additive_blend() -> void:
+    """Configure additive blending, for glows and particles."""
+    enable(GL_BLEND)
+    blend_func(GL_SRC_ALPHA, GL_ONE)
+    return
+
+
+# ---------------------------------------------------------------------------
+# Depth and stencil
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gl_depth_func"
+def depth_func(func: u32) -> void
+"""Set the depth comparison, normally GL_LESS."""
+
+extern "C" "sere_gl_depth_mask"
+def depth_mask(write: i32) -> void
+"""Allow or block depth writes; pass 1 to write depth, 0 to test without writing."""
+
+extern "C" "sere_gl_depth_range"
+def depth_range(near_z: f64, far_z: f64) -> void
+"""Map the depth buffer's 0.0 to 1.0 range onto near_z to far_z."""
+
+extern "C" "sere_gl_stencil_func"
+def stencil_func(func: u32, reference: i32, mask: u32) -> void
+"""Set how the stencil test compares a reference value against the buffer."""
+
+extern "C" "sere_gl_stencil_op"
+def stencil_op(fail: u32, depth_fail: u32, depth_pass: u32) -> void
+"""Set the stencil action taken when the test fails, when depth fails, and when both pass."""
+
+extern "C" "sere_gl_stencil_mask"
+def stencil_mask(mask: u32) -> void
+"""Set which stencil bits may be written."""
+
+# ---------------------------------------------------------------------------
+# Rasterisation
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gl_color_mask"
+def color_mask(red: i32, green: i32, blue: i32, alpha: i32) -> void
+"""Choose which colour channels may be written; pass 1 or 0 per channel."""
+
+extern "C" "sere_gl_cull_face"
+def cull_face(mode: u32) -> void
+"""Discard GL_FRONT, GL_BACK, or GL_FRONT_AND_BACK faces while GL_CULL_FACE is enabled."""
+
+extern "C" "sere_gl_front_face"
+def front_face(mode: u32) -> void
+"""Define which winding order counts as front-facing: GL_CCW or GL_CW."""
+
+extern "C" "sere_gl_polygon_mode"
+def polygon_mode(face: u32, mode: u32) -> void
+"""Draw faces as GL_FILL, GL_LINE, or GL_POINT."""
+
+extern "C" "sere_gl_polygon_offset"
+def polygon_offset(factor: f64, units: f64) -> void
+"""Push fragments toward or away from the viewer to avoid z-fighting."""
+
+extern "C" "sere_gl_line_width"
+def line_width(width: f64) -> void
+"""Set the width of rasterised lines, in pixels."""
+
+extern "C" "sere_gl_point_size"
+def point_size(size: f64) -> void
+"""Set the diameter of rasterised points, in pixels."""
+
+extern "C" "sere_gl_logic_op"
+def logic_op(op: u32) -> void
+"""Set the bitwise colour operation used while GL_COLOR_LOGIC_OP is enabled."""
+
+# ---------------------------------------------------------------------------
+# Pixel storage and hints
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gl_pixel_store"
+def pixel_store(pname: u32, value: i32) -> void
+"""Set an unpack/repack parameter: GL_UNPACK_ALIGNMENT, GL_PACK_ALIGNMENT, GL_UNPACK_ROW_LENGTH, ..."""
+
+extern "C" "sere_gl_hint"
+def hint(target: u32, mode: u32) -> void
+"""Suggest a quality/perf trade-off: GL_PERSPECTIVE_CORRECTION_HINT, GL_LINE_SMOOTH_HINT, ..."""
+
+# ---------------------------------------------------------------------------
+# Fragment output
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gl_draw_buffer"
+def draw_buffer(buffer: u32) -> void
+"""Select the colour attachment written by fragment output: GL_BACK, GL_FRONT, GL_COLOR_ATTACHMENT0, ..."""
+
+extern "C" "sere_gl_read_buffer"
+def read_buffer(buffer: u32) -> void
+"""Select the colour attachment read by read_pixels and the pixel-copy operations."""
+
+# ---------------------------------------------------------------------------
+# Sampling and synchronisation
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gl_sample_coverage"
+def sample_coverage(value: f64, invert: i32) -> void
+"""Set the fraction of samples the driver keeps, optionally inverting the coverage mask."""
+
+extern "C" "sere_gl_finish"
+def finish() -> void
+"""Wait until every issued command has completed."""
+
+extern "C" "sere_gl_flush"
+def flush() -> void
+"""Start executing queued commands without waiting for them to finish."""
+
+def default_depth_state() -> void:
+    """Enable depth testing with the usual less-than comparison."""
+    enable(GL_DEPTH_TEST)
+    depth_func(GL_LESS)
+    depth_mask(1)
+    return
+
+
+def wireframe(on: bool) -> void:
+    """Switch between filled and outlined triangle rendering."""
+    if on:
+        polygon_mode(GL_FRONT_AND_BACK, GL_LINE)
+    else:
+        polygon_mode(GL_FRONT_AND_BACK, GL_FILL)
+    return

@@ -92,7 +92,7 @@ absolute path is used as-is.
 | --- | --- | --- | --- |
 | `src` | string | `"src"` | Source directory, added to the import search path |
 | `entry` | string | `"src/main.sere"` | The file `sere build` compiles. `sere init-lib` writes `"src/lib.sere"` explicitly |
-| `libs` | string | `"libs"` | Drop-in libraries: `.slib` files, folder libraries, native deps |
+| `libs` | string | `"libs"` | Drop-in libraries: `.slib` files, folder libraries (a whole library project works), native deps |
 | `stdlib` | string | `"venv/stdlib"` | Project copy of the standard library; regenerated when missing |
 
 ### `[build]`

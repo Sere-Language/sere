@@ -1,0 +1,93 @@
+# Error handling.
+#
+# OpenGL reports failures by setting a flag rather than returning one. Every
+# state-changing call in this package funnels through the native wrapper, which
+# raises nothing on its own: call `take_error()` to read and clear one flag, or
+# `require(operation)` to turn a pending flag into a `RuntimeError`.
+#
+# Errors queue up, so drain with a loop when you want to see all of them:
+#
+#     while gl.take_error() != gl.GL_NO_ERROR:
+#         ...
+
+from gl.constants import *
+
+# ---------------------------------------------------------------------------
+# Native surface
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gl_get_error"
+def take_error() -> u32
+"""Return one pending GL_* error code and clear it; GL_NO_ERROR when none is queued."""
+
+# ---------------------------------------------------------------------------
+# Names and helpers
+# ---------------------------------------------------------------------------
+
+def error_name(code: u32) -> str:
+    """Return the GL_* name for an error code, for example `GL_INVALID_ENUM`."""
+    if code == GL_NO_ERROR:
+        return "GL_NO_ERROR"
+    if code == GL_INVALID_ENUM:
+        return "GL_INVALID_ENUM"
+    if code == GL_INVALID_VALUE:
+        return "GL_INVALID_VALUE"
+    if code == GL_INVALID_OPERATION:
+        return "GL_INVALID_OPERATION"
+    if code == GL_STACK_OVERFLOW:
+        return "GL_STACK_OVERFLOW"
+    if code == GL_STACK_UNDERFLOW:
+        return "GL_STACK_UNDERFLOW"
+    if code == GL_OUT_OF_MEMORY:
+        return "GL_OUT_OF_MEMORY"
+    if code == GL_TABLE_TOO_LARGE:
+        return "GL_TABLE_TOO_LARGE"
+    if code == GL_INVALID_FRAMEBUFFER_OPERATION:
+        return "GL_INVALID_FRAMEBUFFER_OPERATION"
+    return "0x" + hex_code(code)
+
+
+def hex_code(code: u32) -> str:
+    """Return an error code as bare uppercase hex digits."""
+    digits: str = "0123456789ABCDEF"
+    out: str = ""
+    value: i32 = code as i32
+    if value == 0:
+        return "0"
+    while value > 0:
+        out = digits[value & 15] + out
+        value = value >> 4
+    return out
+
+
+def error(operation: str) -> str:
+    """Return a readable message for the pending error, clearing it."""
+    code: u32 = take_error()
+    if code == GL_NO_ERROR:
+        return ""
+    return operation + " failed: " + error_name(code)
+
+
+def require(operation: str) -> void:
+    """Raise RuntimeError when the call named by `operation` left an error queued."""
+    code: u32 = take_error()
+    if code == GL_NO_ERROR:
+        return
+    raise RuntimeError(operation + " failed: " + error_name(code))
+
+
+def clear_all() -> void:
+    """Drain every pending error, discarding them."""
+    while take_error() != GL_NO_ERROR:
+        pass
+    return
+
+
+def pending() -> bool:
+    """Return whether an error is queued; the queue is left untouched."""
+    code: u32 = take_error()
+    if code == GL_NO_ERROR:
+        return False
+    while take_error() != GL_NO_ERROR:
+        pass
+    return True

@@ -1,0 +1,306 @@
+# Shader and program objects.
+#
+# GLSL compilation is a two-step process: each stage is compiled on its own, and
+# the stages are then attached to a program and linked together. Both steps
+# report failures through a log rather than a return code, so the classes here
+# keep that text on the object:
+#
+#     vertex: gl.Shader = gl.Shader(gl.GL_VERTEX_SHADER, vertex_source)
+#     fragment: gl.Shader = gl.Shader(gl.GL_FRAGMENT_SHADER, fragment_source)
+#     program: gl.Program = gl.Program()
+#     program.attach(vertex)
+#     program.attach(fragment)
+#     if not program.link():
+#         print(program.log)
+#     program.use()
+#
+# The uniform setters look the location up by name on every call, which is fine
+# for a handful of uniforms; cache `program.uniform("name")` when a loop sets the
+# same matrix thousands of times.
+#
+# Uniform values are `f64` in Sere and narrowed to `float` by the runtime, so a
+# `uniform vec4` block expects four numbers and a `uniform mat4` sixteen, in
+# column-major order.
+
+from gl.constants import *
+
+# ---------------------------------------------------------------------------
+# Native surface
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gl_create_shader"
+def create_shader(kind: u32) -> u32
+"""Create an empty shader object of GL_VERTEX_SHADER or GL_FRAGMENT_SHADER kind."""
+
+extern "C" "sere_gl_shader_source"
+def shader_source(shader: u32, source: str) -> void
+"""Replace a shader's GLSL source text."""
+
+extern "C" "sere_gl_compile_shader"
+def compile_shader(shader: u32) -> bool
+"""Compile a shader; returns False on failure and fills the shader log."""
+
+extern "C" "sere_gl_shader_log"
+def shader_log(shader: u32) -> str
+"""Return the compiler's diagnostic output for a shader."""
+
+extern "C" "sere_gl_delete_shader"
+def delete_shader(shader: u32) -> void
+"""Delete a shader object."""
+
+extern "C" "sere_gl_create_program"
+def create_program() -> u32
+"""Create an empty program object."""
+
+extern "C" "sere_gl_attach_shader"
+def attach_shader(program: u32, shader: u32) -> void
+"""Attach a compiled shader to a program."""
+
+extern "C" "sere_gl_detach_shader"
+def detach_shader(program: u32, shader: u32) -> void
+"""Detach a shader from a program."""
+
+extern "C" "sere_gl_link_program"
+def link_program(program: u32) -> bool
+"""Link a program's attached shaders; returns False on failure and fills the program log."""
+
+extern "C" "sere_gl_program_log"
+def program_log(program: u32) -> str
+"""Return the linker's diagnostic output for a program."""
+
+extern "C" "sere_gl_use_program"
+def use_program(program: u32) -> void
+"""Install a linked program as part of the current rendering state; 0 means none."""
+
+extern "C" "sere_gl_delete_program"
+def delete_program(program: u32) -> void
+"""Delete a program object."""
+
+extern "C" "sere_gl_uniform_location"
+def uniform_location(program: u32, name: str) -> i32
+"""Return a uniform's location, or -1 when the name is inactive or misspelled."""
+
+extern "C" "sere_gl_attrib_location"
+def attrib_location(program: u32, name: str) -> i32
+"""Return a vertex attribute's location, or -1 when it is not active."""
+
+extern "C" "sere_gl_bind_attrib"
+def bind_attrib(program: u32, index: u32, name: str) -> void
+"""Bind a vertex attribute name to a location before linking."""
+
+extern "C" "sere_gl_validate_program"
+def validate_program(program: u32) -> bool
+"""Ask the driver whether a program can execute in the current state."""
+
+extern "C" "sere_gl_uniform1f"
+def uniform1f(location: i32, x: f64) -> void
+"""Set a float uniform at a known location."""
+
+extern "C" "sere_gl_uniform2f"
+def uniform2f(location: i32, x: f64, y: f64) -> void
+"""Set a vec2 uniform at a known location."""
+
+extern "C" "sere_gl_uniform3f"
+def uniform3f(location: i32, x: f64, y: f64, z: f64) -> void
+"""Set a vec3 uniform at a known location."""
+
+extern "C" "sere_gl_uniform4f"
+def uniform4f(location: i32, x: f64, y: f64, z: f64, w: f64) -> void
+"""Set a vec4 uniform at a known location."""
+
+extern "C" "sere_gl_uniform1i"
+def uniform1i(location: i32, x: i32) -> void
+"""Set an int or bool uniform, and also a sampler bound to a texture unit."""
+
+extern "C" "sere_gl_uniform2i"
+def uniform2i(location: i32, x: i32, y: i32) -> void
+"""Set an ivec2 uniform at a known location."""
+
+extern "C" "sere_gl_uniform3i"
+def uniform3i(location: i32, x: i32, y: i32, z: i32) -> void
+"""Set an ivec3 uniform at a known location."""
+
+extern "C" "sere_gl_uniform4i"
+def uniform4i(location: i32, x: i32, y: i32, z: i32, w: i32) -> void
+"""Set an ivec4 uniform at a known location."""
+
+extern "C" "sere_gl_uniform_vec"
+def uniform_vec(location: i32, values: list[f64]) -> void
+"""Set a float vector uniform from a list; the length must match the declaration."""
+
+extern "C" "sere_gl_uniform_mat3"
+def uniform_mat3(location: i32, values: list[f64]) -> void
+"""Set a mat3 uniform from nine column-major numbers."""
+
+extern "C" "sere_gl_uniform_mat4"
+def uniform_mat4(location: i32, values: list[f64]) -> void
+"""Set a mat4 uniform from sixteen column-major numbers."""
+
+# ---------------------------------------------------------------------------
+# Shader
+# ---------------------------------------------------------------------------
+
+class Shader:
+    """A compiled vertex or fragment shader."""
+
+    id: u32
+    kind: u32
+    compiled: bool
+    log: str
+
+    def __init__(self, kind: u32, source: str):
+        """Compile `source` as GL_VERTEX_SHADER or GL_FRAGMENT_SHADER."""
+        self.kind = kind
+        self.id = create_shader(kind)
+        self.log = ""
+        self.compiled = False
+        shader_source(self.id, source)
+        self.compiled = compile_shader(self.id)
+        if not self.compiled:
+            self.log = shader_log(self.id)
+
+    def ok(self) -> bool:
+        """Return whether the source compiled."""
+        return self.compiled
+
+    def destroy(self) -> void:
+        """Delete the shader object and forget its name."""
+        delete_shader(self.id)
+        self.id = 0
+        self.compiled = False
+        return
+
+
+def vertex_shader(source: str) -> Shader:
+    """Compile a vertex shader, keeping the log on the returned object."""
+    return Shader(GL_VERTEX_SHADER, source)
+
+
+def fragment_shader(source: str) -> Shader:
+    """Compile a fragment shader, keeping the log on the returned object."""
+    return Shader(GL_FRAGMENT_SHADER, source)
+
+
+# ---------------------------------------------------------------------------
+# Program
+# ---------------------------------------------------------------------------
+
+class Program:
+    """A linked pair of shader stages, plus its uniform helpers."""
+
+    id: u32
+    linked: bool
+    log: str
+    _attached: list[u32]
+
+    def __init__(self):
+        """Create an empty program object."""
+        self.id = create_program()
+        self.linked = False
+        self.log = ""
+        self._attached = []
+
+    def attach(self, shader: Shader) -> void:
+        """Attach a compiled shader, to be used at the next link()."""
+        attach_shader(self.id, shader.id)
+        self._attached.append(shader.id)
+        return
+
+    def detach(self, shader: Shader) -> void:
+        """Detach a shader from the program."""
+        detach_shader(self.id, shader.id)
+        return
+
+    def bind_attribute(self, index: u32, name: str) -> void:
+        """Bind a vertex attribute name to a location; call this before link()."""
+        bind_attrib(self.id, index, name)
+        return
+
+    def link(self) -> bool:
+        """Link the attached stages; on failure the reason is in `log`."""
+        self.linked = link_program(self.id)
+        if not self.linked:
+            self.log = program_log(self.id)
+        return self.linked
+
+    def ok(self) -> bool:
+        """Return whether the program linked."""
+        return self.linked
+
+    def use(self) -> void:
+        """Install the program for subsequent draw calls."""
+        use_program(self.id)
+        return
+
+    def validate(self) -> bool:
+        """Ask the driver whether the program can run in the current state."""
+        return validate_program(self.id)
+
+    def uniform(self, name: str) -> i32:
+        """Return a uniform's location, or -1 when the name is inactive."""
+        return uniform_location(self.id, name)
+
+    def attribute(self, name: str) -> i32:
+        """Return a vertex attribute's location, or -1 when it is inactive."""
+        return attrib_location(self.id, name)
+
+    def set_float(self, name: str, x: f64) -> void:
+        """Set a float uniform by name."""
+        uniform1f(uniform_location(self.id, name), x)
+        return
+
+    def set_vec2(self, name: str, x: f64, y: f64) -> void:
+        """Set a vec2 uniform by name."""
+        uniform2f(uniform_location(self.id, name), x, y)
+        return
+
+    def set_vec3(self, name: str, x: f64, y: f64, z: f64) -> void:
+        """Set a vec3 uniform by name."""
+        uniform3f(uniform_location(self.id, name), x, y, z)
+        return
+
+    def set_vec4(self, name: str, x: f64, y: f64, z: f64, w: f64) -> void:
+        """Set a vec4 uniform by name."""
+        uniform4f(uniform_location(self.id, name), x, y, z, w)
+        return
+
+    def set_int(self, name: str, value: i32) -> void:
+        """Set an int or bool uniform by name."""
+        uniform1i(uniform_location(self.id, name), value)
+        return
+
+    def set_sampler(self, name: str, unit: i32) -> void:
+        """Point a sampler uniform at a texture unit."""
+        uniform1i(uniform_location(self.id, name), unit)
+        return
+
+    def set_vec_at(self, location: i32, values: list[f64]) -> void:
+        """Set a float vector uniform at a cached location."""
+        uniform_vec(location, values)
+        return
+
+    def set_mat3(self, name: str, values: list[f64]) -> void:
+        """Set a mat3 uniform by name from nine column-major numbers."""
+        uniform_mat3(uniform_location(self.id, name), values)
+        return
+
+    def set_mat4(self, name: str, values: list[f64]) -> void:
+        """Set a mat4 uniform by name from sixteen column-major numbers."""
+        uniform_mat4(uniform_location(self.id, name), values)
+        return
+
+    def destroy(self) -> void:
+        """Delete the program object and forget its name."""
+        delete_program(self.id)
+        self.id = 0
+        self.linked = False
+        return
+
+
+def build(vertex_source_text: str, fragment_source_text: str) -> Program:
+    """Compile and link the usual vertex/fragment pair; check ok() and log afterwards."""
+    program: Program = Program()
+    program.attach(Shader(GL_VERTEX_SHADER, vertex_source_text))
+    program.attach(Shader(GL_FRAGMENT_SHADER, fragment_source_text))
+    program.link()
+    return program

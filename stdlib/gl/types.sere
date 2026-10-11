@@ -1,0 +1,43 @@
+# Shared types for the OpenGL binding.
+#
+# The runtime crosses the FFI boundary with unsigned 32-bit enumerants, signed
+# 32-bit counts and coordinates, 64-bit byte offsets, and double-precision
+# scalars; blocks of data travel as Sere lists, whose element stride the runtime
+# reads at the call site. The aliases below give those shapes names so the
+# signatures in this package read like the specification.
+
+# An OpenGL enumerant: capability, target, format, mode, pname, usage, or type.
+type GLenum = u32
+
+# A mask built from GL_*_BUFFER_BIT values for clear() and blit_framebuffer().
+type GLbitfield = u32
+
+# An object name: buffer, texture, shader, program, framebuffer, renderbuffer.
+type GLuint = u32
+
+# A count, level, size, location, or reference value.
+type GLint = i32
+
+# A width, height, or stride, in pixels.
+type GLsizei = i32
+
+# A scalar value. The runtime converts doubles to the float the driver expects.
+type GLfloat = f64
+
+# A byte offset into a buffer object.
+type GLintptr = i64
+
+# An opaque window handle. `None` means creation failed or the window is gone.
+type GLhandle = Ptr[i8]
+
+# Vertex, colour, and matrix numbers handed to a buffer or a uniform.
+type VertexData = list[f64]
+
+# Element indices for draw_elements() and buffer_data_i32().
+type IndexData = list[i32]
+
+# Pixel data for texture uploads.
+type PixelData = list[byte]
+
+# Pixel data returned by read_pixels().
+type PixelRow = array[i8]

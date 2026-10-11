@@ -16,6 +16,7 @@
 #include "sere/driver/Library.h"
 #include "sere/driver/Project.h"
 #include "sere/driver/Registry.h"
+#include "sere/driver/Toolchain.h"
 
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/Support/Error.h>
@@ -737,16 +738,188 @@ enum class PayloadKind {
   return true;
 }
 
+/// Directories that are never part of a library a project vendors: the private
+/// environment, version control, and build output.
+[[nodiscard]] bool skipVendorDirName(std::string_view name) {
+  return name == "venv" || name == ".git" || name == "dist" || name == ".sere-lib" ||
+         name == "build" || name == "node_modules" || name == ".vs" || name == "CMakeFiles";
+}
+
+/// Copies a library folder into `destination`, skipping the directories above.
+[[nodiscard]] std::size_t copyLibraryTree(const std::filesystem::path& source,
+                                          const std::filesystem::path& destination,
+                                          std::string& error) {
+  std::error_code fsError;
+  std::size_t copied = 0;
+  std::filesystem::recursive_directory_iterator iterator(source, fsError);
+  const std::filesystem::recursive_directory_iterator end;
+  for (; iterator != end; iterator.increment(fsError)) {
+    if (fsError) {
+      error = "cannot read '" + source.string() + "'";
+      return copied;
+    }
+    const std::filesystem::directory_entry& entry = *iterator;
+    if (entry.is_directory(fsError)) {
+      if (skipVendorDirName(entry.path().filename().string())) {
+        iterator.disable_recursion_pending();
+      }
+      continue;
+    }
+    if (!entry.is_regular_file(fsError)) {
+      continue;
+    }
+    const std::filesystem::path relative =
+        std::filesystem::relative(entry.path(), source, fsError);
+    if (fsError || !isSafeLibraryPath(relative.generic_string())) {
+      continue;
+    }
+    const std::filesystem::path target = destination / relative;
+    std::filesystem::create_directories(target.parent_path(), fsError);
+    std::filesystem::copy_file(entry.path(), target,
+                               std::filesystem::copy_options::overwrite_existing, fsError);
+    if (fsError) {
+      error = "cannot write '" + target.string() + "'";
+      return copied;
+    }
+    ++copied;
+  }
+  return copied;
+}
+
+/// True when the argument names a local file or folder rather than a package.
+[[nodiscard]] bool looksLikeLocalPath(const std::string& spec) {
+  if (spec.empty()) {
+    return false;
+  }
+  if (spec == "." || spec == ".." || spec.front() == '.' || spec.front() == '/' ||
+      spec.front() == '\\') {
+    return true;
+  }
+  if (spec.find('/') != std::string::npos || spec.find('\\') != std::string::npos) {
+    return true;
+  }
+#ifdef _WIN32
+  if (spec.size() > 1 && spec[1] == ':') {
+    return true;
+  }
+#endif
+  std::error_code error;
+  return std::filesystem::is_directory(spec, error) ||
+         std::filesystem::is_regular_file(spec, error);
+}
+
+/// Entry file of an installed library: a folder library, an extracted `.slib`,
+/// or a single module.
+[[nodiscard]] std::filesystem::path
+installedLibraryEntry(const std::filesystem::path& installed) {
+  std::error_code error;
+  if (std::filesystem::is_directory(installed, error) && !error) {
+    return folderLibraryEntry(installed);
+  }
+  if (installed.extension() == ".slib") {
+    std::string extractError;
+    return ensureLibraryExtracted(installed, extractError);
+  }
+  if (installed.extension() == ".sere") {
+    return std::filesystem::weakly_canonical(installed, error);
+  }
+  return {};
+}
+
+/// Builds an installed library's native code, installs the tools it ships, and
+/// reports a system library this machine cannot satisfy — the same work a build
+/// would do, moved to the moment the library arrives where the cause is clear.
+void setUpInstalledLibrary(const ProjectManifest& manifest,
+                           const std::filesystem::path& installed) {
+  const std::filesystem::path entry = installedLibraryEntry(installed);
+  if (entry.empty()) {
+    return;
+  }
+  const std::vector<std::filesystem::path> imported{entry};
+  prepareImportedLibraryNative(imported);
+  const std::filesystem::path bin = manifest.root / "bin";
+  for (const std::filesystem::path& executable : packageExecutables(imported)) {
+    std::error_code error;
+    std::filesystem::create_directories(bin, error);
+    const std::filesystem::path target = bin / executable.filename();
+    std::filesystem::copy_file(executable, target,
+                              std::filesystem::copy_options::overwrite_existing, error);
+    if (!error) {
+      std::cout << "  tool:   " << target.lexically_relative(manifest.root).generic_string()
+                << '\n';
+    }
+  }
+  for (const std::string& name : packageSystemLibraries(imported)) {
+    if (!findSystemLibrary(name).has_value()) {
+      std::cout << "  note:   needs system library '" << name
+                << "', which was not found on this machine\n";
+    }
+  }
+}
+
+/// `sere add <path>`: vendor a local library, then set it up.
+[[nodiscard]] int addLocalLibrary(const CompilerOptions& options,
+                                  const ProjectManifest& manifest) {
+  std::error_code error;
+  const std::filesystem::path source =
+      std::filesystem::absolute(options.packageSpec, error);
+  const bool isDirectory = std::filesystem::is_directory(source, error) && !error;
+  const bool isFile = std::filesystem::is_regular_file(source, error) && !error;
+  if (!isDirectory && !isFile) {
+    llvm::errs() << "error: cannot read '" << options.packageSpec << "'\n";
+    return 1;
+  }
+  const std::string name = isDirectory ? source.filename().string() : source.stem().string();
+  if (name.empty() || !isSafeLibraryPath(name)) {
+    llvm::errs() << "error: cannot use '" << name << "' as a library name\n";
+    return 1;
+  }
+  std::filesystem::path destination = manifest.libs / name;
+  if (isFile) {
+    destination += source.extension().string();
+  }
+  if (options.dryRun) {
+    std::cout << "sere add --dry-run " << source.string() << " -> "
+              << destination.lexically_relative(manifest.root).generic_string() << '\n';
+    std::cout << "nothing installed; drop --dry-run to install\n";
+    return 0;
+  }
+  if (std::filesystem::exists(destination, error) && !options.force) {
+    llvm::errs() << "error: '" << destination.string()
+                 << "' already exists; pass --force to replace it\n";
+    return 1;
+  }
+  std::filesystem::create_directories(manifest.libs, error);
+  std::filesystem::remove_all(destination, error);
+  if (isDirectory) {
+    std::string copyError;
+    if (copyLibraryTree(source, destination, copyError) == 0) {
+      llvm::errs() << "error: "
+                   << (copyError.empty() ? "the folder had no files to vendor" : copyError)
+                   << '\n';
+      return 1;
+    }
+  } else {
+    std::filesystem::create_directories(destination.parent_path(), error);
+    std::filesystem::copy_file(source, destination,
+                               std::filesystem::copy_options::overwrite_existing, error);
+    if (error) {
+      llvm::errs() << "error: cannot copy '" << source.string() << "': " << error.message()
+                   << '\n';
+      return 1;
+    }
+  }
+  std::cout << "vendored " << name << " -> "
+            << destination.lexically_relative(manifest.root).generic_string() << '\n';
+  setUpInstalledLibrary(manifest, destination);
+  std::cout << "  import: import " << name << '\n';
+  return 0;
+}
+
 } // namespace
 
 int addCommand(const CompilerOptions& options) {
   std::string error;
-  PackageSpec spec;
-  if (!parsePackageSpec(options.packageSpec, spec, error)) {
-    llvm::errs() << "error: " << error << '\n';
-    llvm::errs() << "usage: sere add <name>[@<version>]\n";
-    return 1;
-  }
   std::error_code fsError;
   const std::optional<std::filesystem::path> root =
       findProjectRoot(std::filesystem::current_path(fsError));
@@ -758,6 +931,23 @@ int addCommand(const CompilerOptions& options) {
   ProjectManifest manifest;
   if (!loadProjectManifest(*root, manifest, error)) {
     llvm::errs() << "error: " << error << '\n';
+    return 1;
+  }
+  const std::string requested = trimCopy(options.packageSpec);
+  if (requested.empty()) {
+    llvm::errs() << "error: missing package name or path\n";
+    llvm::errs() << "usage: sere add <name>[@<version>] | <path>\n";
+    return 1;
+  }
+  // A local path never has to be packed: a library folder (with or without a
+  // manifest), a `.slib`, or a single `.sere` module is copied into `libs/`.
+  if (looksLikeLocalPath(requested)) {
+    return addLocalLibrary(options, manifest);
+  }
+  PackageSpec spec;
+  if (!parsePackageSpec(requested, spec, error)) {
+    llvm::errs() << "error: " << error << '\n';
+    llvm::errs() << "usage: sere add <name>[@<version>] | <path>\n";
     return 1;
   }
   const std::string base = registryBaseUrl();

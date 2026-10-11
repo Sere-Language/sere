@@ -61,6 +61,27 @@ def main() -> i32:
 note that an unpacked folder library (`libs/mathlib/mathlib.sere`,
 `libs/mathlib/lib.sere`, or `libs/mathlib/__init__.sere`) is importable too.
 
+### Packages and nested modules
+
+Imports resolve against the directory of the module that **writes** them, so a
+library can be as many files as it needs:
+
+```text
+libs/mathlib/
+    mathlib.sere        # the entry
+    util/text.sere      # a sibling package
+    util/format.sere
+```
+
+`mathlib.sere` can `from util.text import shout`, and `util/text.sere` can
+`import format` — each name resolves relative to the importing file, not to the
+program's entry file. The same layout works from a project's `src/`, from an
+unpacked library in `libs/`, and inside an extracted `.slib`.
+
+`import util.text` reaches `util/text.sere` with no `__init__.sere`; a directory
+is only needed as the module itself when you write `import util`, and then it must
+provide `__init__.sere`, `<name>.sere`, `lib.sere`, or a `sere.toml` (see below).
+
 ## Build and pack
 
 ```powershell
@@ -273,6 +294,49 @@ consumer links against the archive, and the extracted copy under
 `libs/.sere-lib/` is refreshed only when the `.slib` is newer. `sere clean`
 removes that cache.
 
+### Big libraries do not have to be packed
+
+A whole library project can live in `libs/` as a folder. Nothing is packed, the
+library's own `sere.toml` decides its entry, and its native code is built for the
+consumer's machine and platform:
+
+```text
+consumer/
+    sere.toml
+    src/main.sere
+    libs/mathlib/            # the library project, unpacked
+        sere.toml            kind = "lib", entry = "src/lib.sere"
+        src/lib.sere
+        libs/native/…
+        bin/hello-tool.exe
+```
+
+Everything a `.slib` provides works here: nested modules, native code (built at
+consumer build time), shipped tools (installed into the consumer's `bin/`), and
+`system_libs` ([slib.md](slib.md) covers the archive form).
+
+### `sere add`, local or from the registry
+
+```powershell
+sere add ..\mathlib          # a library project folder
+sere add dist/mathlib.slib   # a packed archive
+sere add mathlib@1.0.0       # the registry
+```
+
+A **local path** is copied into `libs/`; version-control metadata, `venv/`,
+`dist/`, and build output are left behind. `add` then does the setup a build
+would do, so the library works on the first `sere build`:
+
+* it builds the library's native code for this machine,
+* it installs the tools the library ships into your `bin/`,
+* it reports a system library the library needs that this machine cannot find,
+* and it prints the `import` line to use.
+
+`--dry-run` describes the work without writing; `--force` replaces an existing
+install.
+
+Repack and rebuild a registry install the same way after a version change.
+
 ## Publishing
 
 ```powershell
@@ -288,7 +352,8 @@ what consumers see. `--dry-run` describes the work without sending or writing.
 
 | Symptom | Check |
 | --- | --- |
-| `import mathlib` cannot be found | The `.slib` is in the consuming project's `libs/` and `[paths].entry` names the module |
+| `import mathlib` cannot be found | The `.slib` or library folder is in the consuming project's `libs/` and `[paths].entry` names the module |
+| A nested import inside the library cannot be found | Modules import their own siblings by a short name; check the file is beside the module that imports it |
 | `undefined reference to native_add` | `sere pack` reported `Native archives: 0`; fix the native build, then repack |
 | The package shipped no native binary | A native build failure is a note — read the pack output |
 | `Native archives: 0` and no note | Set `native = true`, or put the sources under `native/` / `libs/native/` |

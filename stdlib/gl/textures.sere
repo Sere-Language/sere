@@ -1,0 +1,193 @@
+# Textures.
+#
+# A texture is a block of pixels the driver samples during rasterisation. In this
+# binding the pixel data is a `list[byte]`, so an 8-bit-per-channel RGBA image is
+# four bytes per pixel, row by row, starting at the bottom-left corner OpenGL
+# expects:
+#
+#     texture: gl.Texture = gl.Texture()
+#     texture.bind(gl.GL_TEXTURE_2D)
+#     texture.parameter(gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
+#     texture.parameter(gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
+#     texture.image_2d(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, width, height, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, pixels)
+#
+# To sample it, enable the stage and point a sampler uniform at the unit the
+# texture is bound to:
+#
+#     gl.active_texture(gl.GL_TEXTURE0)
+#     texture.bind(gl.GL_TEXTURE_2D)
+#     program.set_sampler("image", 0)
+#
+# Row alignment matters: if the row length in bytes is not a multiple of four,
+# call gl.pixel_store(gl.GL_UNPACK_ALIGNMENT, 1) before uploading.
+
+from gl.constants import *
+
+# ---------------------------------------------------------------------------
+# Native surface
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gl_gen_texture"
+def gen_texture() -> u32
+"""Create one texture object and return its name."""
+
+extern "C" "sere_gl_delete_texture"
+def delete_texture(texture: u32) -> void
+"""Delete a texture object."""
+
+extern "C" "sere_gl_bind_texture"
+def bind_texture(target: u32, texture: u32) -> void
+"""Bind a texture to GL_TEXTURE_2D or GL_TEXTURE_1D; 0 unbinds."""
+
+extern "C" "sere_gl_active_texture"
+def active_texture(unit: u32) -> void
+"""Select the texture unit that later bind calls affect: GL_TEXTURE0 plus the unit index."""
+
+extern "C" "sere_gl_tex_param"
+def tex_param(target: u32, pname: u32, value: u32) -> void
+"""Set a texture parameter: wrap mode, filter, or edge clamp colour."""
+
+extern "C" "sere_gl_tex_image2d"
+def tex_image2d(target: u32, level: i32, internal_format: u32, width: i32, height: i32, format: u32, value_type: u32, pixels: list[byte]) -> void
+"""Upload an image into the bound texture; pass four bytes per pixel for RGBA."""
+
+extern "C" "sere_gl_tex_storage"
+def tex_storage(target: u32, internal_format: u32, width: i32, height: i32, format: u32) -> void
+"""Allocate an immutable image with no initial data, for render targets."""
+
+extern "C" "sere_gl_tex_sub_image2d"
+def tex_sub_image2d(target: u32, level: i32, x: i32, y: i32, width: i32, height: i32, format: u32, value_type: u32, pixels: list[byte]) -> void
+"""Replace a rectangle inside an existing image, for streaming updates."""
+
+extern "C" "sere_gl_generate_mipmap"
+def generate_mipmap(target: u32) -> void
+"""Build the mipmap chain for the bound texture."""
+
+# ---------------------------------------------------------------------------
+# Units and sampling
+# ---------------------------------------------------------------------------
+
+def texture_unit(index: u32) -> u32:
+    """Return the GL_TEXTURE0-based enum for a zero-based unit index."""
+    return GL_TEXTURE0 + index
+
+
+def bind_unit(unit: u32, texture: u32) -> void:
+    """Bind a texture to a unit without disturbing the other units."""
+    active_texture(texture_unit(unit))
+    bind_texture(GL_TEXTURE_2D, texture)
+    return
+
+
+def smooth_filter(target: u32) -> void:
+    """Set linear filtering for magnification and minification."""
+    tex_param(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+    tex_param(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+    return
+
+
+def nearest_filter(target: u32) -> void:
+    """Set nearest-neighbour filtering, which keeps pixel art crisp."""
+    tex_param(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+    tex_param(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+    return
+
+
+def repeat_wrap(target: u32) -> void:
+    """Let coordinates outside 0.0 to 1.0 tile the image."""
+    tex_param(target, GL_TEXTURE_WRAP_S, GL_REPEAT)
+    tex_param(target, GL_TEXTURE_WRAP_T, GL_REPEAT)
+    return
+
+
+def clamp_wrap(target: u32) -> void:
+    """Stretch the edge pixels instead of tiling."""
+    tex_param(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+    tex_param(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+    return
+
+
+def rgba_pixels(width: i32, height: i32, red: byte, green: byte, blue: byte, alpha: byte) -> list[byte]:
+    """Build a solid RGBA image, bottom row first, ready for image_2d()."""
+    data: list[byte] = []
+    count: i64 = (width as i64) * (height as i64)
+    i: i64 = 0
+    while i < count:
+        data.append(red)
+        data.append(green)
+        data.append(blue)
+        data.append(alpha)
+        i = i + 1
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Convenience
+# ---------------------------------------------------------------------------
+
+class Texture:
+    """A texture object with its target bound for the lifetime of the wrapper."""
+
+    id: u32
+    target: u32
+
+    def __init__(self, target: u32 = GL_TEXTURE_2D):
+        """Create a texture and remember the target it will be bound to."""
+        self.target = target
+        self.id = gen_texture()
+
+    def bind(self) -> void:
+        """Bind the texture to its target and make it current."""
+        bind_texture(self.target, self.id)
+        return
+
+    def parameter(self, pname: u32, value: u32) -> void:
+        """Set a wrap mode or filter."""
+        tex_param(self.target, pname, value)
+        return
+
+    def image_2d(self, level: i32, internal_format: u32, width: i32, height: i32, format: u32, value_type: u32, pixels: list[byte]) -> void:
+        """Upload an image; the texture must be bound first."""
+        tex_image2d(self.target, level, internal_format, width, height, format, value_type, pixels)
+        return
+
+    def storage(self, internal_format: u32, width: i32, height: i32, format: u32) -> void:
+        """Allocate an empty image; the texture must be bound first."""
+        tex_storage(self.target, internal_format, width, height, format)
+        return
+
+    def sub_image_2d(self, level: i32, x: i32, y: i32, width: i32, height: i32, format: u32, value_type: u32, pixels: list[byte]) -> void:
+        """Replace part of an image; the texture must be bound first."""
+        tex_sub_image2d(self.target, level, x, y, width, height, format, value_type, pixels)
+        return
+
+    def generate_mipmap(self) -> void:
+        """Build the mipmap chain; the texture must be bound first."""
+        generate_mipmap(self.target)
+        return
+
+    def smooth(self) -> void:
+        """Set linear filtering."""
+        smooth_filter(self.target)
+        return
+
+    def nearest(self) -> void:
+        """Set nearest-neighbour filtering."""
+        nearest_filter(self.target)
+        return
+
+    def repeat(self) -> void:
+        """Tile coordinates outside 0.0 to 1.0."""
+        repeat_wrap(self.target)
+        return
+
+    def clamp(self) -> void:
+        """Stretch edge pixels instead of tiling."""
+        clamp_wrap(self.target)
+        return
+
+    def destroy(self) -> void:
+        """Delete the texture object and forget its name."""
+        delete_texture(self.id)
+        self.id = 0
+        return

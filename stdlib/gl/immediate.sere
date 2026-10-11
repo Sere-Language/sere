@@ -1,0 +1,117 @@
+# Immediate-mode drawing.
+#
+# The fixed-function pipeline takes geometry between begin() and end(). Every
+# vertex is built from the state set since the last one, so the usual order is
+# colour or texture coordinate first, then the position:
+#
+#     gl.begin(gl.GL_TRIANGLES)
+#     gl.color3f(1.0, 0.0, 0.0)
+#     gl.vertex2f(0.0, 0.5)
+#     gl.color3f(0.0, 1.0, 0.0)
+#     gl.vertex2f(-0.5, -0.5)
+#     gl.color3f(0.0, 0.0, 1.0)
+#     gl.vertex2f(0.5, -0.5)
+#     gl.end()
+#
+# Windows drivers ship a compatibility profile, so this is the quickest way to
+# get pixels on screen. Core profiles reject it: use shaders instead.
+
+from gl.constants import *
+
+import math
+
+# ---------------------------------------------------------------------------
+# Native surface
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gl_begin"
+def begin(mode: u32) -> void
+"""Start a primitive batch: GL_POINTS, GL_LINES, GL_TRIANGLES, GL_QUADS, ..."""
+
+extern "C" "sere_gl_end"
+def end() -> void
+"""Finish the batch started by begin() and draw it."""
+
+extern "C" "sere_gl_vertex2f"
+def vertex2f(x: f64, y: f64) -> void
+"""Add a vertex in the current coordinate space."""
+
+extern "C" "sere_gl_vertex3f"
+def vertex3f(x: f64, y: f64, z: f64) -> void
+"""Add a three-dimensional vertex."""
+
+extern "C" "sere_gl_color3f"
+def color3f(red: f64, green: f64, blue: f64) -> void
+"""Set the colour used by following vertices, in the 0.0 to 1.0 range."""
+
+extern "C" "sere_gl_color4f"
+def color4f(red: f64, green: f64, blue: f64, alpha: f64) -> void
+"""Set the colour and alpha used by following vertices."""
+
+extern "C" "sere_gl_texcoord2f"
+def texcoord2f(u: f64, v: f64) -> void
+"""Set the texture coordinate of the next vertex."""
+
+extern "C" "sere_gl_normal3f"
+def normal3f(x: f64, y: f64, z: f64) -> void
+"""Set the normal of the next vertex, for the built-in lighting models."""
+
+# ---------------------------------------------------------------------------
+# Convenience
+# ---------------------------------------------------------------------------
+
+def vertex(x: f64, y: f64) -> void:
+    """Add a two-dimensional vertex; sugar for vertex2f()."""
+    vertex2f(x, y)
+    return
+
+
+def color(red: f64, green: f64, blue: f64) -> void:
+    """Set an opaque colour; sugar for color3f()."""
+    color3f(red, green, blue)
+    return
+
+
+def rect(x: f64, y: f64, width: f64, height: f64) -> void:
+    """Draw a filled axis-aligned rectangle with GL_QUADS."""
+    begin(GL_QUADS)
+    vertex2f(x, y)
+    vertex2f(x + width, y)
+    vertex2f(x + width, y + height)
+    vertex2f(x, y + height)
+    end()
+    return
+
+
+def line(x0: f64, y0: f64, x1: f64, y1: f64) -> void:
+    """Draw a straight segment with GL_LINES."""
+    begin(GL_LINES)
+    vertex2f(x0, y0)
+    vertex2f(x1, y1)
+    end()
+    return
+
+
+def triangle(x0: f64, y0: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> void:
+    """Draw a filled triangle with GL_TRIANGLES."""
+    begin(GL_TRIANGLES)
+    vertex2f(x0, y0)
+    vertex2f(x1, y1)
+    vertex2f(x2, y2)
+    end()
+    return
+
+
+def circle(x: f64, y: f64, radius: f64, segments: i32 = 48) -> void:
+    """Draw a filled circle as a triangle fan."""
+    begin(GL_TRIANGLE_FAN)
+    vertex2f(x, y)
+    step: f64 = math.pi() * 2.0 / (segments as f64)
+    angle: f64 = 0.0
+    count: i32 = 0
+    while count <= segments:
+        vertex2f(x + math.cos(angle) * radius, y + math.sin(angle) * radius)
+        angle = angle + step
+        count = count + 1
+    end()
+    return

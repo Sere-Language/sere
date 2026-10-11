@@ -27,6 +27,7 @@ void printUsage(std::string& error) {
       "  logout              Forget the saved registry token\n"
       "  publish             Pack this library project and upload it to the registry\n"
       "  add <name>[@ver]    Install a registry package into ./libs\n"
+      "  add <path>          Vendor a local library folder, .slib, or .sere into ./libs\n"
       "  refresh-bin         Copy this compiler into ./bin (stdlib and runtime too)\n"
       "  update              Install the latest GitHub portable release or refreshed asset\n"
       "  update-local        Copy this compiler into %LOCALAPPDATA%\\Programs\\Sere if it differs, "

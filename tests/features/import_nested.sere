@@ -1,0 +1,12 @@
+# Imports resolve against the directory of the module that writes them, so a
+# package can reach its own siblings by a short name. This test lives in
+# features/, its helper in features/import_nested_pkg/, and the helper imports
+# its sibling as `util` — which only resolves per-module, not against this file.
+
+from import_nested_pkg.helper import doubled
+
+
+def main() -> i32:
+    assert doubled(20) == 42
+    print("nested imports work")
+    return 0

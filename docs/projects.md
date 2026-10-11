@@ -107,9 +107,11 @@ the entry, the local modules it imports, and compiled native objects. Unused
 neighboring source files are excluded.
 
 An unpacked `libs/mathlib/lib.sere` or `libs/mathlib/mathlib.sere` also provides
-`import mathlib`. See [modules and imports](language.md#modules-and-imports) for
-exports and resolution, and [native interop](language.md#native-interop) for C
-bindings. Repack and rebuild consumers after changes to compiled library code.
+`import mathlib`, and a whole library project can be dropped into `libs/`
+unpacked — `sere add <path>` vendors one for you and sets it up. See
+[modules and imports](language.md#modules-and-imports) for exports and
+resolution, and [native interop](language.md#native-interop) for C bindings.
+Repack and rebuild consumers after changes to compiled library code.
 
 [libraries.md](libraries.md) covers the author's side: the scaffold, the public
 API, native code, shipping command-line tools with `executables`, and

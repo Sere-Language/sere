@@ -156,12 +156,17 @@ struct Sha256 {
   return !leftError && !rightError && a == b;
 }
 
-[[nodiscard]] bool skipCollectDir(const std::filesystem::path& path) {
+[[nodiscard]] bool skipCollectDir(const std::filesystem::path& path, bool skipExtracted = true) {
   const std::string text = path.generic_string();
-  const bool skip = text.find("/CMakeFiles/") != std::string::npos ||
+  const bool extracted =
+      skipExtracted && (text.find("/.sere-lib/") != std::string::npos ||
+                        text.find("\\.sere-lib\\") != std::string::npos);
+  const bool skip = extracted ||
+                    text.find("/CMakeFiles/") != std::string::npos ||
                     text.find("\\CMakeFiles\\") != std::string::npos ||
-                    text.find("/.sere-lib/") != std::string::npos ||
-                    text.find("\\.sere-lib\\") != std::string::npos ||
+                    // CMake/MSVC intermediates: `<target>.dir` holds the objects
+                    // an archive already contains.
+                    path.filename().extension() == ".dir" ||
                     // The project's private environment holds the toolchain's own
                     // runtime and stdlib; it is never package content, and scanning
                     // it would put megabytes of compiler runtime into every archive.
@@ -340,13 +345,24 @@ void collectByPredicate(const std::filesystem::path& directory,
     return;
   }
   const std::filesystem::recursive_directory_iterator end;
+  // Scanning an extracted package (`.sere-lib/<name>`) must not skip its own
+  // members: the exclusion above only guards against packing a stale extraction
+  // cache that sits inside a project being packed.
+  const bool insideExtracted = isExtractedLibraryPath(directory);
   for (std::filesystem::recursive_directory_iterator it(directory, error); it != end;
        it.increment(error)) {
     if (error) {
       break;
     }
     const std::filesystem::path path = it->path();
-    if (!it->is_regular_file(error) || skipCollectDir(path) || !accept(path)) {
+    // A skipped directory is not walked at all: its children (the objects under
+    // `<target>.dir`, the toolchain copies under `venv/`) are not package content
+    // either, and descending is how the same objects used to be collected twice.
+    if (skipCollectDir(path, /*skipExtracted=*/!insideExtracted)) {
+      it.disable_recursion_pending();
+      continue;
+    }
+    if (!it->is_regular_file(error) || !accept(path)) {
       continue;
     }
     addUniquePath(files, path);
@@ -512,9 +528,35 @@ std::filesystem::path libraryExtractDir(const std::filesystem::path& slibPath) {
   return slibPath.parent_path() / ".sere-lib" / slibPath.stem();
 }
 
+namespace {
+
+/// A static archive or import library: what a linker takes directly.
+[[nodiscard]] bool isNativeArchiveFile(const std::filesystem::path& path) {
+  const std::string ext = path.extension().string();
+  return ext == ".lib" || ext == ".a";
+}
+
+} // namespace
+
 void collectNativeLinkFiles(const std::filesystem::path& directory,
                             std::vector<std::filesystem::path>& libraries) {
-  collectByPredicate(directory, isNativeLinkFile, libraries);
+  // A build tree contains both the archive and the objects it was made from
+  // (`libs/native/build/Debug/sere_native.lib` and `sere_native.dir/…/example.obj`).
+  // Linking both defines every symbol twice, so an archive wins and the bare
+  // objects are only used when no archive was produced at all.
+  std::vector<std::filesystem::path> archives;
+  collectByPredicate(directory, isNativeArchiveFile, archives);
+  if (!archives.empty()) {
+    for (const std::filesystem::path& file : archives) {
+      addUniquePath(libraries, file);
+    }
+    return;
+  }
+  std::vector<std::filesystem::path> objects;
+  collectByPredicate(directory, isNativeObjectFile, objects);
+  for (const std::filesystem::path& file : objects) {
+    addUniquePath(libraries, file);
+  }
 }
 
 void collectNativeRuntimeFiles(const std::filesystem::path& directory,

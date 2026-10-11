@@ -1,0 +1,226 @@
+# Framebuffer objects, renderbuffers, and pixel readback.
+#
+# Rendering to a texture instead of the window is how shadows, reflections, and
+# post-processing work. Attach either a texture or a renderbuffer to a
+# framebuffer and check that the driver accepts the combination before drawing:
+#
+#     target: gl.Framebuffer = gl.Framebuffer()
+#     target.bind()
+#
+#     colour: gl.Texture = gl.Texture()
+#     colour.bind()
+#     colour.storage(gl.GL_RGBA, width, height, gl.GL_RGBA)
+#     target.attach_texture(gl.GL_COLOR_ATTACHMENT0, colour.id)
+#
+#     depth: gl.Renderbuffer = gl.Renderbuffer()
+#     depth.bind()
+#     depth.storage(gl.GL_DEPTH_COMPONENT24, width, height)
+#     target.attach_renderbuffer(gl.GL_DEPTH_ATTACHMENT, depth.id)
+#
+#     if not target.complete():
+#         print(target.status_name())
+#
+#     gl.viewport(0, 0, width, height)
+#     ... draw ...
+#     gl.bind_framebuffer(gl.GL_FRAMEBUFFER, 0)   # back to the window
+#
+# A renderbuffer is write-only storage, which is all a depth or stencil buffer
+# needs; a texture attachment can also be sampled afterwards.
+
+from gl.constants import *
+
+# ---------------------------------------------------------------------------
+# Native surface
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gl_gen_framebuffer"
+def gen_framebuffer() -> u32
+"""Create one framebuffer object and return its name."""
+
+extern "C" "sere_gl_delete_framebuffer"
+def delete_framebuffer(framebuffer: u32) -> void
+"""Delete a framebuffer object."""
+
+extern "C" "sere_gl_bind_framebuffer"
+def bind_framebuffer(target: u32, framebuffer: u32) -> void
+"""Bind a framebuffer to GL_FRAMEBUFFER; 0 restores the window's framebuffer."""
+
+extern "C" "sere_gl_framebuffer_texture2d"
+def framebuffer_texture2d(target: u32, attachment: u32, texture_target: u32, texture: u32, level: i32) -> void
+"""Attach a texture image as a colour, depth, or stencil attachment."""
+
+extern "C" "sere_gl_check_framebuffer"
+def check_framebuffer(target: u32) -> u32
+"""Return the completeness status of the bound framebuffer: GL_FRAMEBUFFER_COMPLETE when usable."""
+
+extern "C" "sere_gl_gen_renderbuffer"
+def gen_renderbuffer() -> u32
+"""Create one renderbuffer object and return its name."""
+
+extern "C" "sere_gl_delete_renderbuffer"
+def delete_renderbuffer(renderbuffer: u32) -> void
+"""Delete a renderbuffer object."""
+
+extern "C" "sere_gl_bind_renderbuffer"
+def bind_renderbuffer(target: u32, renderbuffer: u32) -> void
+"""Bind a renderbuffer to GL_RENDERBUFFER; 0 unbinds."""
+
+extern "C" "sere_gl_renderbuffer_storage"
+def renderbuffer_storage(target: u32, internal_format: u32, width: i32, height: i32) -> void
+"""Allocate renderbuffer storage, for example GL_DEPTH_COMPONENT24."""
+
+extern "C" "sere_gl_framebuffer_renderbuffer"
+def framebuffer_renderbuffer(target: u32, attachment: u32, renderbuffer_target: u32, renderbuffer: u32) -> void
+"""Attach the bound renderbuffer to a framebuffer attachment."""
+
+extern "C" "sere_gl_blit_framebuffer"
+def blit_framebuffer(src_x0: i32, src_y0: i32, src_x1: i32, src_y1: i32, dst_x0: i32, dst_y0: i32, dst_x1: i32, dst_y1: i32, mask: u32, filter: u32) -> void
+"""Copy a rectangle between the read and draw framebuffers; filter is GL_NEAREST or GL_LINEAR."""
+
+extern "C" "sere_gl_read_pixels"
+def read_pixels(x: i32, y: i32, width: i32, height: i32, format: u32, value_type: u32) -> array[i8]
+"""Read a rectangle from the read framebuffer, bottom row first, as raw bytes."""
+
+# ---------------------------------------------------------------------------
+# Status
+# ---------------------------------------------------------------------------
+
+def framebuffer_status_name(status: u32) -> str:
+    """Return the GL_* name for a check_framebuffer() result."""
+    if status == GL_FRAMEBUFFER_COMPLETE:
+        return "GL_FRAMEBUFFER_COMPLETE"
+    if status == GL_FRAMEBUFFER_UNDEFINED:
+        return "GL_FRAMEBUFFER_UNDEFINED"
+    if status == GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT:
+        return "GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT"
+    if status == GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT:
+        return "GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT"
+    if status == GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER:
+        return "GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER"
+    if status == GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER:
+        return "GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER"
+    if status == GL_FRAMEBUFFER_UNSUPPORTED:
+        return "GL_FRAMEBUFFER_UNSUPPORTED"
+    if status == GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE:
+        return "GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE"
+    if status == GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS:
+        return "GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS"
+    return "GL_FRAMEBUFFER_UNKNOWN"
+
+
+def is_complete(status: u32) -> bool:
+    """Return whether a check_framebuffer() result means the target is drawable."""
+    return status == GL_FRAMEBUFFER_COMPLETE
+
+
+# ---------------------------------------------------------------------------
+# Readback helpers
+# ---------------------------------------------------------------------------
+
+def pixel_count(width: i32, height: i32, components: i32) -> i64:
+    """Return how many numbers read_pixels() yields for a rectangle."""
+    return (width as i64) * (height as i64) * (components as i64)
+
+
+def pixel_at(pixels: array[i8], width: i32, x: i32, y: i32, components: i32) -> list[i32]:
+    """Return one pixel's channel values, given a buffer from read_pixels().
+
+    `pixels` holds rows bottom-first, which is the order OpenGL reads them in.
+    """
+    out: list[i32] = []
+    base: i64 = ((y as i64) * (width as i64) + (x as i64)) * (components as i64)
+    i: i32 = 0
+    while i < components:
+        if base + (i as i64) < len(pixels):
+            value: i64 = (pixels[base + (i as i64)] as i64) & 255
+            out.append(value as i32)
+        i = i + 1
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Convenience
+# ---------------------------------------------------------------------------
+
+class Framebuffer:
+    """A framebuffer object you render into instead of the window."""
+
+    id: u32
+
+    def __init__(self):
+        """Create a framebuffer object."""
+        self.id = gen_framebuffer()
+
+    def bind(self) -> void:
+        """Make the framebuffer the draw and read target."""
+        bind_framebuffer(GL_FRAMEBUFFER, self.id)
+        return
+
+    def unbind(self) -> void:
+        """Return to the window's default framebuffer."""
+        bind_framebuffer(GL_FRAMEBUFFER, 0)
+        return
+
+    def attach_texture(self, attachment: u32, texture: u32, level: i32 = 0) -> void:
+        """Attach one mip level of a texture as a colour, depth, or stencil image."""
+        framebuffer_texture2d(GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D, texture, level)
+        return
+
+    def attach_renderbuffer(self, attachment: u32, renderbuffer: u32) -> void:
+        """Attach the bound renderbuffer as a colour, depth, or stencil image."""
+        framebuffer_renderbuffer(GL_FRAMEBUFFER, attachment, GL_RENDERBUFFER, renderbuffer)
+        return
+
+    def status(self) -> u32:
+        """Return the completeness status; check while this framebuffer is bound."""
+        return check_framebuffer(GL_FRAMEBUFFER)
+
+    def complete(self) -> bool:
+        """Return whether the attached images form a usable target."""
+        return is_complete(check_framebuffer(GL_FRAMEBUFFER))
+
+    def status_name(self) -> str:
+        """Return the status as a readable GL_* name."""
+        return framebuffer_status_name(check_framebuffer(GL_FRAMEBUFFER))
+
+    def destroy(self) -> void:
+        """Delete the framebuffer object and forget its name."""
+        delete_framebuffer(self.id)
+        self.id = 0
+        return
+
+
+class Renderbuffer:
+    """Write-only storage for a colour, depth, or stencil attachment."""
+
+    id: u32
+
+    def __init__(self):
+        """Create a renderbuffer object."""
+        self.id = gen_renderbuffer()
+
+    def bind(self) -> void:
+        """Make the renderbuffer the storage target."""
+        bind_renderbuffer(GL_RENDERBUFFER, self.id)
+        return
+
+    def storage(self, internal_format: u32, width: i32, height: i32) -> void:
+        """Allocate storage; the renderbuffer must be bound first."""
+        renderbuffer_storage(GL_RENDERBUFFER, internal_format, width, height)
+        return
+
+    def destroy(self) -> void:
+        """Delete the renderbuffer object and forget its name."""
+        delete_renderbuffer(self.id)
+        self.id = 0
+        return
+
+
+def read_rgba(x: i32, y: i32, width: i32, height: i32) -> array[i8]:
+    """Read an RGBA rectangle from the current read framebuffer, bottom row first."""
+    return read_pixels(x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE)
+
+
+def read_depth(x: i32, y: i32, width: i32, height: i32) -> array[i8]:
+    """Read a depth rectangle as 32-bit floats interpreted as raw bytes."""
+    return read_pixels(x, y, width, height, GL_DEPTH_COMPONENT, GL_FLOAT)

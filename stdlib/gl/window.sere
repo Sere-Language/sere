@@ -1,0 +1,725 @@
+# Windows, input, and timing.
+#
+# A `Window` owns an operating-system window and an OpenGL context, and it also
+# owns the event queue: nothing arrives until `poll()` or `wait()` is called, so
+# an application loop looks like this:
+#
+#     window: gl.Window = gl.Window("sere", 960, 540)
+#     if not window.is_open():
+#         print("no display available")
+#         return 1
+#
+#     window.make_current()
+#     gl.default_depth_state()
+#
+#     while window.is_open():
+#         window.poll()
+#         if window.should_close():
+#             window.close()
+#
+#         gl.viewport(0, 0, window.framebuffer_width(), window.framebuffer_height())
+#         gl.clear_color(0.1, 0.1, 0.12, 1.0)
+#         gl.clear(gl.GL_COLOR_BUFFER_BIT + gl.GL_DEPTH_BUFFER_BIT)
+#         ... draw ...
+#         window.swap()
+#
+#     window.destroy()
+#
+# `is_open()` is False when the runtime could not create a context, which is the
+# case on a host without a display; there is no exception to catch.
+#
+# Keys are virtual-key codes, so `window.key(gl.KEY_ESCAPE)` reads the same on
+# any keyboard layout. `key_char()` returns the last typed character as a code
+# point, for text entry. Mouse events are per frame: `mouse_pressed()` is true
+# only on the frame the button went down.
+#
+# Timing comes from `time()` (seconds since the window was created) and `dt()`
+# (seconds since the previous frame), both monotonic, which is what a simulation
+# wants rather than the wall clock.
+
+from gl.constants import *
+
+# ---------------------------------------------------------------------------
+# Native surface
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gl_window_new"
+def _window_new(title: str, width: i32, height: i32) -> Ptr[i8]
+"""Create a window and its context with the default flags."""
+
+extern "C" "sere_gl_window_new_ex"
+def _window_new_ex(title: str, width: i32, height: i32, flags: i32) -> Ptr[i8]
+"""Create a window and its context from WINDOW_* flag bits."""
+
+extern "C" "sere_gl_window_poll"
+def _window_poll(window: Ptr[i8]) -> i32
+"""Process the events that have arrived and refresh the input state."""
+
+extern "C" "sere_gl_window_wait"
+def _window_wait(window: Ptr[i8]) -> i32
+"""Block until at least one event arrives, then process it."""
+
+extern "C" "sere_gl_window_should_close"
+def _window_should_close(window: Ptr[i8]) -> bool
+"""Return whether the user asked to close the window, or it is already gone."""
+
+extern "C" "sere_gl_window_set_should_close"
+def _window_set_should_close(window: Ptr[i8], value: i32) -> void
+"""Set or clear the close request; pass 1 to request closing."""
+
+extern "C" "sere_gl_window_is_open"
+def _window_is_open(window: Ptr[i8]) -> bool
+"""Return whether the window exists and has not been asked to close."""
+
+extern "C" "sere_gl_window_swap"
+def _window_swap(window: Ptr[i8]) -> void
+"""Present the back buffer, blocking on vsync when it is enabled."""
+
+extern "C" "sere_gl_window_make_current"
+def _window_make_current(window: Ptr[i8]) -> void
+"""Bind the window's context to the calling thread."""
+
+extern "C" "sere_gl_window_destroy"
+def _window_destroy(window: Ptr[i8]) -> void
+"""Release the context, the device context, and the window itself."""
+
+extern "C" "sere_gl_window_width"
+def _window_width(window: Ptr[i8]) -> i32
+"""Return the client-area width in logical pixels."""
+
+extern "C" "sere_gl_window_height"
+def _window_height(window: Ptr[i8]) -> i32
+"""Return the client-area height in logical pixels."""
+
+extern "C" "sere_gl_window_fb_width"
+def _window_fb_width(window: Ptr[i8]) -> i32
+"""Return the framebuffer width in physical pixels."""
+
+extern "C" "sere_gl_window_fb_height"
+def _window_fb_height(window: Ptr[i8]) -> i32
+"""Return the framebuffer height in physical pixels."""
+
+extern "C" "sere_gl_window_x"
+def _window_x(window: Ptr[i8]) -> i32
+"""Return the window's horizontal position on the desktop."""
+
+extern "C" "sere_gl_window_y"
+def _window_y(window: Ptr[i8]) -> i32
+"""Return the window's vertical position on the desktop."""
+
+extern "C" "sere_gl_window_set_title"
+def _window_set_title(window: Ptr[i8], title: str) -> void
+"""Replace the title bar text."""
+
+extern "C" "sere_gl_window_title"
+def _window_title(window: Ptr[i8]) -> str
+"""Return the current title bar text."""
+
+extern "C" "sere_gl_window_set_vsync"
+def _window_set_vsync(window: Ptr[i8], enabled: i32) -> void
+"""Enable or disable vertical sync, which caps the frame rate at the refresh rate."""
+
+extern "C" "sere_gl_window_vsync"
+def _window_vsync(window: Ptr[i8]) -> bool
+"""Return whether vertical sync is enabled."""
+
+extern "C" "sere_gl_window_show_cursor"
+def _window_show_cursor(window: Ptr[i8], show: i32) -> void
+"""Show or hide the mouse cursor over the window."""
+
+extern "C" "sere_gl_window_set_cursor_mode"
+def _window_set_cursor_mode(window: Ptr[i8], mode: i32) -> void
+"""Set the cursor mode: CURSOR_NORMAL, CURSOR_HIDDEN, CURSOR_DISABLED, or CURSOR_CAPTURED."""
+
+extern "C" "sere_gl_window_cursor_mode"
+def _window_cursor_mode(window: Ptr[i8]) -> i32
+"""Return the current CURSOR_* mode."""
+
+extern "C" "sere_gl_window_set_cursor_pos"
+def _window_set_cursor_pos(window: Ptr[i8], x: i32, y: i32) -> void
+"""Warp the cursor to a position inside the window."""
+
+extern "C" "sere_gl_window_set_size"
+def _window_set_size(window: Ptr[i8], width: i32, height: i32) -> void
+"""Resize the client area."""
+
+extern "C" "sere_gl_window_set_pos"
+def _window_set_pos(window: Ptr[i8], x: i32, y: i32) -> void
+"""Move the window to a position on the desktop."""
+
+extern "C" "sere_gl_window_set_min_size"
+def _window_set_min_size(window: Ptr[i8], width: i32, height: i32) -> void
+"""Set the smallest size the user may drag the window to."""
+
+extern "C" "sere_gl_window_set_max_size"
+def _window_set_max_size(window: Ptr[i8], width: i32, height: i32) -> void
+"""Set the largest size the user may drag the window to."""
+
+extern "C" "sere_gl_window_show"
+def _window_show(window: Ptr[i8]) -> void
+"""Make a hidden window visible."""
+
+extern "C" "sere_gl_window_hide"
+def _window_hide(window: Ptr[i8]) -> void
+"""Hide the window without destroying its context."""
+
+extern "C" "sere_gl_window_minimize"
+def _window_minimize(window: Ptr[i8]) -> void
+"""Minimise the window."""
+
+extern "C" "sere_gl_window_maximize"
+def _window_maximize(window: Ptr[i8]) -> void
+"""Maximise the window."""
+
+extern "C" "sere_gl_window_restore"
+def _window_restore(window: Ptr[i8]) -> void
+"""Restore the window from a minimised or maximised state."""
+
+extern "C" "sere_gl_window_focus"
+def _window_focus(window: Ptr[i8]) -> void
+"""Give the window keyboard focus."""
+
+extern "C" "sere_gl_window_request_attention"
+def _window_request_attention(window: Ptr[i8]) -> void
+"""Ask the window manager to draw attention to the window."""
+
+extern "C" "sere_gl_window_set_fullscreen"
+def _window_set_fullscreen(window: Ptr[i8], enabled: i32) -> void
+"""Switch the window to or from fullscreen."""
+
+extern "C" "sere_gl_window_fullscreen"
+def _window_fullscreen(window: Ptr[i8]) -> bool
+"""Return whether the window is fullscreen."""
+
+extern "C" "sere_gl_window_set_resizable"
+def _window_set_resizable(window: Ptr[i8], enabled: i32) -> void
+"""Allow or forbid the user resizing the window."""
+
+extern "C" "sere_gl_window_set_decorated"
+def _window_set_decorated(window: Ptr[i8], enabled: i32) -> void
+"""Show or hide the title bar and border."""
+
+extern "C" "sere_gl_window_set_floating"
+def _window_set_floating(window: Ptr[i8], enabled: i32) -> void
+"""Keep the window above the other windows that are not floating."""
+
+extern "C" "sere_gl_window_set_opacity"
+def _window_set_opacity(window: Ptr[i8], opacity: f64) -> void
+"""Set the window opacity, where 1.0 is fully opaque."""
+
+extern "C" "sere_gl_window_resizable"
+def _window_resizable(window: Ptr[i8]) -> bool
+"""Return whether the window may be resized by the user."""
+
+extern "C" "sere_gl_window_decorated"
+def _window_decorated(window: Ptr[i8]) -> bool
+"""Return whether the window has decorations."""
+
+extern "C" "sere_gl_window_floating"
+def _window_floating(window: Ptr[i8]) -> bool
+"""Return whether the window floats above the others."""
+
+extern "C" "sere_gl_window_opacity"
+def _window_opacity(window: Ptr[i8]) -> f64
+"""Return the window opacity."""
+
+extern "C" "sere_gl_window_content_scale"
+def _window_content_scale(window: Ptr[i8]) -> f64
+"""Return the ratio between logical and physical pixels, for example 2.0 on a HiDPI display."""
+
+extern "C" "sere_gl_window_focused"
+def _window_focused(window: Ptr[i8]) -> bool
+"""Return whether the window has keyboard focus."""
+
+extern "C" "sere_gl_window_minimized"
+def _window_minimized(window: Ptr[i8]) -> bool
+"""Return whether the window is minimised."""
+
+extern "C" "sere_gl_window_maximized"
+def _window_maximized(window: Ptr[i8]) -> bool
+"""Return whether the window is maximised."""
+
+extern "C" "sere_gl_window_visible"
+def _window_visible(window: Ptr[i8]) -> bool
+"""Return whether the window is visible."""
+
+extern "C" "sere_gl_window_hovered"
+def _window_hovered(window: Ptr[i8]) -> bool
+"""Return whether the cursor is over the window."""
+
+extern "C" "sere_gl_window_resized"
+def _window_resized(window: Ptr[i8]) -> bool
+"""Return whether the window was resized since the previous frame."""
+
+extern "C" "sere_gl_window_time"
+def _window_time(window: Ptr[i8]) -> f64
+"""Return seconds elapsed since the window was created."""
+
+extern "C" "sere_gl_window_dt"
+def _window_dt(window: Ptr[i8]) -> f64
+"""Return seconds elapsed since the previous frame."""
+
+extern "C" "sere_gl_window_key"
+def _window_key(window: Ptr[i8], key_code: i32) -> bool
+"""Return whether a key is held down."""
+
+extern "C" "sere_gl_window_key_pressed"
+def _window_key_pressed(window: Ptr[i8], key_code: i32) -> bool
+"""Return whether a key went down during this frame."""
+
+extern "C" "sere_gl_window_key_released"
+def _window_key_released(window: Ptr[i8], key_code: i32) -> bool
+"""Return whether a key came up during this frame."""
+
+extern "C" "sere_gl_window_mods"
+def _window_mods(window: Ptr[i8]) -> i32
+"""Return the MOD_* bits for the modifier keys currently held."""
+
+extern "C" "sere_gl_window_char"
+def _window_char(window: Ptr[i8]) -> i32
+"""Return the code point typed during this frame, or 0."""
+
+extern "C" "sere_gl_window_mouse_x"
+def _window_mouse_x(window: Ptr[i8]) -> i32
+"""Return the cursor's horizontal position inside the window."""
+
+extern "C" "sere_gl_window_mouse_y"
+def _window_mouse_y(window: Ptr[i8]) -> i32
+"""Return the cursor's vertical position inside the window."""
+
+extern "C" "sere_gl_window_mouse_dx"
+def _window_mouse_dx(window: Ptr[i8]) -> i32
+"""Return how far the cursor moved horizontally since the previous frame."""
+
+extern "C" "sere_gl_window_mouse_dy"
+def _window_mouse_dy(window: Ptr[i8]) -> i32
+"""Return how far the cursor moved vertically since the previous frame."""
+
+extern "C" "sere_gl_window_mouse_button"
+def _window_mouse_button(window: Ptr[i8], button: i32) -> bool
+"""Return whether a mouse button is held; pass a MOUSE_* constant."""
+
+extern "C" "sere_gl_window_mouse_button_pressed"
+def _window_mouse_button_pressed(window: Ptr[i8], button: i32) -> bool
+"""Return whether a mouse button went down during this frame."""
+
+extern "C" "sere_gl_window_mouse_button_released"
+def _window_mouse_button_released(window: Ptr[i8], button: i32) -> bool
+"""Return whether a mouse button came up during this frame."""
+
+extern "C" "sere_gl_window_wheel"
+def _window_wheel(window: Ptr[i8]) -> i32
+"""Return the wheel detents scrolled during this frame, positive for up."""
+
+extern "C" "sere_gl_window_clipboard_get"
+def _window_clipboard_get(window: Ptr[i8]) -> str
+"""Return the clipboard text."""
+
+extern "C" "sere_gl_window_clipboard_set"
+def _window_clipboard_set(window: Ptr[i8], text: str) -> void
+"""Replace the clipboard text."""
+
+# ---------------------------------------------------------------------------
+# Window
+# ---------------------------------------------------------------------------
+
+class Window:
+    """An operating-system window with an OpenGL context and an input queue."""
+
+    handle: Ptr[i8]
+    flags: i32
+
+    def __init__(self, title: str, width: i32, height: i32, flags: i32 = WINDOW_DEFAULT):
+        """Create a window and its context.
+
+        `flags` is a sum of WINDOW_* bits: visible, resizable, decorated,
+        maximised, floating, focused, fullscreen, and vsync. `handle` stays
+        `None` when the host cannot create a window, which makes `is_open()`
+        False without raising.
+        """
+        self.flags = flags
+        self.handle = _window_new_ex(title, width, height, flags)
+
+    # -- lifetime ----------------------------------------------------------
+
+    def is_open(self) -> bool:
+        """Return whether the window exists and has not been asked to close."""
+        return _window_is_open(self.handle)
+
+    def should_close(self) -> bool:
+        """Return whether the user has asked to close the window."""
+        return _window_should_close(self.handle)
+
+    def close(self) -> void:
+        """Ask the loop to stop; destroy() releases the resources."""
+        _window_set_should_close(self.handle, 1)
+        return
+
+    def destroy(self) -> void:
+        """Release the context, the device context, and the window."""
+        _window_destroy(self.handle)
+        self.handle = None
+        return
+
+    # -- the frame loop ----------------------------------------------------
+
+    def poll(self) -> i32:
+        """Process pending events and refresh the input state; returns how many were handled."""
+        return _window_poll(self.handle)
+
+    def wait(self) -> i32:
+        """Block until an event arrives, then process it."""
+        return _window_wait(self.handle)
+
+    def swap(self) -> void:
+        """Present the back buffer."""
+        _window_swap(self.handle)
+        return
+
+    def make_current(self) -> void:
+        """Bind the window's context to the calling thread."""
+        _window_make_current(self.handle)
+        return
+
+    # -- geometry ----------------------------------------------------------
+
+    def width(self) -> i32:
+        """Return the client-area width in logical pixels."""
+        return _window_width(self.handle)
+
+    def height(self) -> i32:
+        """Return the client-area height in logical pixels."""
+        return _window_height(self.handle)
+
+    def framebuffer_width(self) -> i32:
+        """Return the framebuffer width in physical pixels; use this for the viewport."""
+        return _window_fb_width(self.handle)
+
+    def framebuffer_height(self) -> i32:
+        """Return the framebuffer height in physical pixels; use this for the viewport."""
+        return _window_fb_height(self.handle)
+
+    def size(self) -> list[i32]:
+        """Return the client area as `[width, height]` in logical pixels."""
+        out: list[i32] = [self.width(), self.height()]
+        return out
+
+    def framebuffer_size(self) -> list[i32]:
+        """Return the framebuffer as `[width, height]` in physical pixels."""
+        out: list[i32] = [self.framebuffer_width(), self.framebuffer_height()]
+        return out
+
+    def x(self) -> i32:
+        """Return the window's horizontal position on the desktop."""
+        return _window_x(self.handle)
+
+    def y(self) -> i32:
+        """Return the window's vertical position on the desktop."""
+        return _window_y(self.handle)
+
+    def set_size(self, width: i32, height: i32) -> void:
+        """Resize the client area."""
+        _window_set_size(self.handle, width, height)
+        return
+
+    def set_position(self, x: i32, y: i32) -> void:
+        """Move the window on the desktop."""
+        _window_set_pos(self.handle, x, y)
+        return
+
+    def set_min_size(self, width: i32, height: i32) -> void:
+        """Set the smallest size the user may drag the window to."""
+        _window_set_min_size(self.handle, width, height)
+        return
+
+    def set_max_size(self, width: i32, height: i32) -> void:
+        """Set the largest size the user may drag the window to."""
+        _window_set_max_size(self.handle, width, height)
+        return
+
+    def content_scale(self) -> f64:
+        """Return the ratio between logical and physical pixels."""
+        return _window_content_scale(self.handle)
+
+    # -- appearance --------------------------------------------------------
+
+    def set_title(self, title: str) -> void:
+        """Replace the title bar text."""
+        _window_set_title(self.handle, title)
+        return
+
+    def title(self) -> str:
+        """Return the title bar text."""
+        return _window_title(self.handle)
+
+    def set_vsync(self, enabled: bool) -> void:
+        """Enable or disable vertical sync."""
+        value: i32 = 0
+        if enabled:
+            value = 1
+        _window_set_vsync(self.handle, value)
+        return
+
+    def vsync(self) -> bool:
+        """Return whether vertical sync is enabled."""
+        return _window_vsync(self.handle)
+
+    def set_fullscreen(self, enabled: bool) -> void:
+        """Switch the window to or from fullscreen."""
+        value: i32 = 0
+        if enabled:
+            value = 1
+        _window_set_fullscreen(self.handle, value)
+        return
+
+    def fullscreen(self) -> bool:
+        """Return whether the window is fullscreen."""
+        return _window_fullscreen(self.handle)
+
+    def set_resizable(self, enabled: bool) -> void:
+        """Allow or forbid the user resizing the window."""
+        value: i32 = 0
+        if enabled:
+            value = 1
+        _window_set_resizable(self.handle, value)
+        return
+
+    def resizable(self) -> bool:
+        """Return whether the window may be resized."""
+        return _window_resizable(self.handle)
+
+    def set_decorated(self, enabled: bool) -> void:
+        """Show or hide the title bar and border."""
+        value: i32 = 0
+        if enabled:
+            value = 1
+        _window_set_decorated(self.handle, value)
+        return
+
+    def decorated(self) -> bool:
+        """Return whether the window has decorations."""
+        return _window_decorated(self.handle)
+
+    def set_floating(self, enabled: bool) -> void:
+        """Keep the window above the others that are not floating."""
+        value: i32 = 0
+        if enabled:
+            value = 1
+        _window_set_floating(self.handle, value)
+        return
+
+    def floating(self) -> bool:
+        """Return whether the window floats above the others."""
+        return _window_floating(self.handle)
+
+    def set_opacity(self, opacity: f64) -> void:
+        """Set the window opacity, where 1.0 is fully opaque."""
+        _window_set_opacity(self.handle, opacity)
+        return
+
+    def opacity(self) -> f64:
+        """Return the window opacity."""
+        return _window_opacity(self.handle)
+
+    # -- visibility and focus ---------------------------------------------
+
+    def show(self) -> void:
+        """Make a hidden window visible."""
+        _window_show(self.handle)
+        return
+
+    def hide(self) -> void:
+        """Hide the window without destroying its context."""
+        _window_hide(self.handle)
+        return
+
+    def minimize(self) -> void:
+        """Minimise the window."""
+        _window_minimize(self.handle)
+        return
+
+    def maximize(self) -> void:
+        """Maximise the window."""
+        _window_maximize(self.handle)
+        return
+
+    def restore(self) -> void:
+        """Restore the window from a minimised or maximised state."""
+        _window_restore(self.handle)
+        return
+
+    def focus(self) -> void:
+        """Give the window keyboard focus."""
+        _window_focus(self.handle)
+        return
+
+    def request_attention(self) -> void:
+        """Ask the window manager to draw attention to the window."""
+        _window_request_attention(self.handle)
+        return
+
+    def focused(self) -> bool:
+        """Return whether the window has keyboard focus."""
+        return _window_focused(self.handle)
+
+    def minimized(self) -> bool:
+        """Return whether the window is minimised."""
+        return _window_minimized(self.handle)
+
+    def maximized(self) -> bool:
+        """Return whether the window is maximised."""
+        return _window_maximized(self.handle)
+
+    def visible(self) -> bool:
+        """Return whether the window is visible."""
+        return _window_visible(self.handle)
+
+    def hovered(self) -> bool:
+        """Return whether the cursor is over the window."""
+        return _window_hovered(self.handle)
+
+    def resized(self) -> bool:
+        """Return whether the window was resized since the previous frame."""
+        return _window_resized(self.handle)
+
+    # -- timing ------------------------------------------------------------
+
+    def time(self) -> f64:
+        """Return seconds since the window was created."""
+        return _window_time(self.handle)
+
+    def dt(self) -> f64:
+        """Return seconds since the previous frame, for frame-rate independent motion."""
+        return _window_dt(self.handle)
+
+    # -- cursor ------------------------------------------------------------
+
+    def show_cursor(self, show: bool) -> void:
+        """Show or hide the mouse cursor over the window."""
+        value: i32 = 0
+        if show:
+            value = 1
+        _window_show_cursor(self.handle, value)
+        return
+
+    def set_cursor_mode(self, mode: i32) -> void:
+        """Set the cursor mode: CURSOR_NORMAL, CURSOR_HIDDEN, CURSOR_DISABLED, or CURSOR_CAPTURED."""
+        _window_set_cursor_mode(self.handle, mode)
+        return
+
+    def cursor_mode(self) -> i32:
+        """Return the current CURSOR_* mode."""
+        return _window_cursor_mode(self.handle)
+
+    def set_cursor_position(self, x: i32, y: i32) -> void:
+        """Warp the cursor to a position inside the window."""
+        _window_set_cursor_pos(self.handle, x, y)
+        return
+
+    # -- keyboard ----------------------------------------------------------
+
+    def key(self, key_code: i32) -> bool:
+        """Return whether a key is held down; pass a KEY_* constant."""
+        return _window_key(self.handle, key_code)
+
+    def key_pressed(self, key_code: i32) -> bool:
+        """Return whether a key went down during this frame."""
+        return _window_key_pressed(self.handle, key_code)
+
+    def key_released(self, key_code: i32) -> bool:
+        """Return whether a key came up during this frame."""
+        return _window_key_released(self.handle, key_code)
+
+    def mods(self) -> i32:
+        """Return the MOD_* bits for the modifier keys currently held."""
+        return _window_mods(self.handle)
+
+    def modifier(self, mod: i32) -> bool:
+        """Return whether one MOD_* bit is set."""
+        return (self.mods() & mod) != 0
+
+    def typed_char(self) -> i32:
+        """Return the code point typed during this frame, or 0."""
+        return _window_char(self.handle)
+
+    # -- mouse -------------------------------------------------------------
+
+    def mouse_x(self) -> i32:
+        """Return the cursor's horizontal position inside the window."""
+        return _window_mouse_x(self.handle)
+
+    def mouse_y(self) -> i32:
+        """Return the cursor's vertical position inside the window."""
+        return _window_mouse_y(self.handle)
+
+    def mouse_dx(self) -> i32:
+        """Return how far the cursor moved horizontally since the previous frame."""
+        return _window_mouse_dx(self.handle)
+
+    def mouse_dy(self) -> i32:
+        """Return how far the cursor moved vertically since the previous frame."""
+        return _window_mouse_dy(self.handle)
+
+    def mouse_position(self) -> list[i32]:
+        """Return the cursor position as `[x, y]`."""
+        out: list[i32] = [self.mouse_x(), self.mouse_y()]
+        return out
+
+    def mouse_delta(self) -> list[i32]:
+        """Return the cursor movement as `[dx, dy]`."""
+        out: list[i32] = [self.mouse_dx(), self.mouse_dy()]
+        return out
+
+    def mouse_button(self, button: i32) -> bool:
+        """Return whether a mouse button is held; pass a MOUSE_* constant."""
+        return _window_mouse_button(self.handle, button)
+
+    def mouse_pressed(self, button: i32) -> bool:
+        """Return whether a mouse button went down during this frame."""
+        return _window_mouse_button_pressed(self.handle, button)
+
+    def mouse_released(self, button: i32) -> bool:
+        """Return whether a mouse button came up during this frame."""
+        return _window_mouse_button_released(self.handle, button)
+
+    def wheel(self) -> i32:
+        """Return the wheel detents scrolled during this frame, positive for up."""
+        return _window_wheel(self.handle)
+
+    # -- clipboard ---------------------------------------------------------
+
+    def clipboard(self) -> str:
+        """Return the clipboard text."""
+        return _window_clipboard_get(self.handle)
+
+    def set_clipboard(self, text: str) -> void:
+        """Replace the clipboard text."""
+        _window_clipboard_set(self.handle, text)
+        return
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def is_key_down(window: Window, key_code: i32) -> bool:
+    """Return whether a key is held down."""
+    return window.key(key_code)
+
+
+def cursor_mode_name(mode: i32) -> str:
+    """Return the CURSOR_* name for a cursor mode."""
+    if mode == CURSOR_NORMAL:
+        return "CURSOR_NORMAL"
+    if mode == CURSOR_HIDDEN:
+        return "CURSOR_HIDDEN"
+    if mode == CURSOR_DISABLED:
+        return "CURSOR_DISABLED"
+    if mode == CURSOR_CAPTURED:
+        return "CURSOR_CAPTURED"
+    return "CURSOR_UNKNOWN"
+
+
+def has_modifier(mods: i32, mod: i32) -> bool:
+    """Return whether one MOD_* bit is set in a modifier mask."""
+    return (mods & mod) != 0

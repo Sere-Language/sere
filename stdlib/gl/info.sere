@@ -1,0 +1,99 @@
+# Queries about the loader, the driver, and the display.
+#
+# `available()` reports whether the runtime managed to load an OpenGL library at
+# start-up. On a host without a display subsystem (or when sere_rt was built
+# without one) it returns `False` and every other query yields an empty string
+# or zero, so callers can test once and fall back.
+
+from gl.constants import *
+
+import string
+
+# ---------------------------------------------------------------------------
+# Native surface
+# ---------------------------------------------------------------------------
+
+extern "C" "sere_gl_available"
+def available() -> bool
+"""Return whether the runtime loaded an OpenGL library."""
+
+extern "C" "sere_gl_get_string"
+def get_string(name: u32) -> str
+"""Return a GL_* string: GL_VENDOR, GL_RENDERER, GL_VERSION, GL_EXTENSIONS, ..."""
+
+extern "C" "sere_gl_get_integer"
+def get_integer(pname: u32) -> i32
+"""Return an integer GL_* query such as GL_MAX_TEXTURE_SIZE."""
+
+extern "C" "sere_gl_get_float"
+def get_float(pname: u32) -> f64
+"""Return a floating-point GL_* query such as GL_SMOOTH_LINE_WIDTH_RANGE's first value."""
+
+extern "C" "sere_gl_screen_width"
+def screen_width() -> i32
+"""Return the width of the primary display, in pixels."""
+
+extern "C" "sere_gl_screen_height"
+def screen_height() -> i32
+"""Return the height of the primary display, in pixels."""
+
+# ---------------------------------------------------------------------------
+# Driver identity
+# ---------------------------------------------------------------------------
+
+def vendor() -> str:
+    """Return the driver vendor, for example `Intel`."""
+    return get_string(GL_VENDOR)
+
+
+def renderer() -> str:
+    """Return the renderer name, for example `Intel(R) UHD Graphics 620`."""
+    return get_string(GL_RENDERER)
+
+
+def version() -> str:
+    """Return the driver's GL_VERSION string, for example `2.1.0 - Build 25.20`."""
+    return get_string(GL_VERSION)
+
+
+def shading_language_version() -> str:
+    """Return the highest supported GLSL version, for example `1.20`."""
+    return get_string(GL_SHADING_LANGUAGE_VERSION)
+
+
+def extensions() -> list[str]:
+    """Return the supported extension names as a list."""
+    parts: list[str] = string.split(get_string(GL_EXTENSIONS), " ")
+    out: list[str] = []
+    for part in parts:
+        if len(part) > 0:
+            out.append(part)
+    return out
+
+
+def supports(extension: str) -> bool:
+    """Return whether the driver advertises one extension."""
+    return contains_item(extensions(), extension)
+
+
+def major_version() -> i32:
+    """Return GL_MAJOR_VERSION; only meaningful on 3.0 and later."""
+    return get_integer(0x821B)
+
+
+def minor_version() -> i32:
+    """Return GL_MINOR_VERSION; only meaningful on 3.0 and later."""
+    return get_integer(0x821C)
+
+
+def max_texture_size() -> i32:
+    """Return the largest texture edge the driver accepts."""
+    return get_integer(GL_MAX_TEXTURE_SIZE)
+
+
+def screen_size() -> list[i32]:
+    """Return the primary display size as `[width, height]`."""
+    size: list[i32] = [0, 0]
+    size[0] = screen_width()
+    size[1] = screen_height()
+    return size

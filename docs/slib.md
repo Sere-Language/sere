@@ -10,6 +10,10 @@ This page covers the archive format and native linking. For the author's
 workflow — scaffold, public API, packing, `system_libs`, shipping tools, and
 publishing — see [libraries.md](libraries.md).
 
+> A `.slib` is for distribution, not a requirement: a library project can be
+> consumed straight from `libs/` as a folder, and `sere add <path>` vendors one
+> for you. See [libraries.md](libraries.md#big-libraries-do-not-have-to-be-packed).
+
 ```text
 mylib/
     sere.toml

@@ -622,6 +622,11 @@ bool Frontend::loadImports(const std::filesystem::path& origin,
                                               ? originPath.parent_path()
                                               : originPath;
   const LanguageContext context = resolveLanguageContext(originPath);
+  // The entry file's own view of the search path stays available to every module
+  // (Python's script directory): it is what lets a package import itself by its
+  // absolute dotted name, `from gl.window import Window` in `gl/__init__.sere`.
+  std::vector<std::filesystem::path> entryDirs = importSearchDirs(originDir, stdlibDir);
+  appendLanguageContextDirs(entryDirs, context);
   std::map<std::string, std::vector<std::filesystem::path>> searchDirCache;
   const auto searchDirsFor = [&](const std::filesystem::path& directory) {
     const std::string key = directory.generic_string();
@@ -629,8 +634,13 @@ bool Frontend::loadImports(const std::filesystem::path& origin,
     if (found != searchDirCache.end()) {
       return found->second;
     }
+    // The module's own directory comes first, so a short name binds to a sibling
+    // before anything further away.
     std::vector<std::filesystem::path> dirs = importSearchDirs(directory, stdlibDir);
     appendLanguageContextDirs(dirs, context);
+    for (const std::filesystem::path& extra : entryDirs) {
+      appendImportSearchDir(dirs, extra);
+    }
     searchDirCache.emplace(key, dirs);
     return dirs;
   };

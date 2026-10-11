@@ -1,0 +1,5 @@
+import util
+
+
+def doubled(value: i32) -> i32:
+    return util.bump(value) + util.bump(value)
