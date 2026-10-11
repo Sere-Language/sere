@@ -1,0 +1,83 @@
+# The OpenGL binding: enumerant values, driver queries, error names, and the
+# value helpers that do not need a context.
+#
+# No window is created, so this runs on any host and in both backends. When the
+# runtime cannot load a driver, `available()` is False and the driver queries
+# return zeroes or empty strings; the enumerants and the pure helpers are still
+# checked.
+
+import gl
+
+
+def main() -> i32:
+    assert gl.GL_COLOR_BUFFER_BIT == 0x4000
+    assert gl.GL_DEPTH_BUFFER_BIT == 0x0100
+    assert gl.GL_STENCIL_BUFFER_BIT == 0x0400
+    assert gl.GL_TRIANGLES == 0x0004
+    assert gl.GL_QUADS == 0x0007
+    assert gl.GL_TEXTURE0 == 0x84C0
+    assert gl.GL_TEXTURE1 == 0x84C1
+    assert gl.GL_ARRAY_BUFFER == 0x8892
+    assert gl.GL_ELEMENT_ARRAY_BUFFER == 0x8893
+    assert gl.GL_STATIC_DRAW == 0x88E4
+    assert gl.GL_FLOAT == 0x1406
+    assert gl.GL_UNSIGNED_BYTE == 0x1401
+    assert gl.GL_RGBA == 0x1908
+    assert gl.GL_VERTEX_SHADER == 0x8B31
+    assert gl.GL_FRAGMENT_SHADER == 0x8B30
+    assert gl.GL_FRAMEBUFFER == 0x8D40
+    assert gl.GL_FRAMEBUFFER_COMPLETE == 0x8CD5
+    assert gl.GL_COLOR_ATTACHMENT0 == 0x8CE0
+    assert gl.GL_DEPTH_ATTACHMENT == 0x8D00
+    assert gl.GL_SRC_ALPHA == 0x0302
+    assert gl.GL_ONE_MINUS_SRC_ALPHA == 0x0303
+    assert gl.GL_LESS == 0x0201
+    assert gl.GL_NO_ERROR == 0
+
+    assert gl.WINDOW_VISIBLE == 1
+    assert gl.WINDOW_RESIZABLE == 2
+    assert gl.WINDOW_DECORATED == 4
+    assert gl.WINDOW_DEFAULT == 167
+    assert gl.CURSOR_DISABLED == 2
+    assert gl.MOUSE_LEFT == 0
+    assert gl.MOD_CONTROL == 2
+
+    assert gl.KEY_ESCAPE == 27
+    assert gl.KEY_SPACE == 32
+    assert gl.KEY_A == 65
+    assert gl.KEY_F1 == 112
+
+    assert gl.texture_unit(0) == gl.GL_TEXTURE0
+    assert gl.texture_unit(7) == gl.GL_TEXTURE0 + 7
+    assert gl.error_name(gl.GL_NO_ERROR) == "GL_NO_ERROR"
+    assert gl.error_name(gl.GL_INVALID_ENUM) == "GL_INVALID_ENUM"
+    assert gl.error_name(gl.GL_OUT_OF_MEMORY) == "GL_OUT_OF_MEMORY"
+    assert gl.framebuffer_status_name(gl.GL_FRAMEBUFFER_COMPLETE) == "GL_FRAMEBUFFER_COMPLETE"
+    assert gl.is_complete(gl.GL_FRAMEBUFFER_COMPLETE)
+    assert not gl.is_complete(gl.GL_FRAMEBUFFER_UNSUPPORTED)
+    assert gl.cursor_mode_name(gl.CURSOR_HIDDEN) == "CURSOR_HIDDEN"
+    assert gl.has_modifier(gl.MOD_SHIFT + gl.MOD_ALT, gl.MOD_ALT)
+    assert not gl.has_modifier(gl.MOD_SHIFT, gl.MOD_CONTROL)
+
+    pixels: list[byte] = gl.rgba_pixels(2, 3, 10, 20, 30, 255)
+    assert len(pixels) == 24
+    assert pixels[0] == 10
+    assert pixels[1] == 20
+    assert pixels[2] == 30
+    assert pixels[3] == 255
+
+    unit: gl.GLenum = gl.GL_TEXTURE2
+    assert unit == 0x84C2
+
+    # Driver strings need a current context, which this test never creates, so
+    # only the context-free display queries are asserted. A missing driver makes
+    # every one of them answer zero.
+    if gl.available():
+        assert gl.screen_width() > 0
+        assert gl.screen_height() > 0
+    else:
+        assert gl.screen_width() == 0
+        assert gl.max_texture_size() == 0
+
+    print("gl binding ok", gl.available(), len(gl.extensions()), gl.screen_width())
+    return 0
