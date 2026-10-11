@@ -23,11 +23,19 @@ def get_string(name: u32) -> str
 
 extern "C" "sere_gl_get_integer"
 def get_integer(pname: u32) -> i32
-"""Return an integer GL_* query such as GL_MAX_TEXTURE_SIZE."""
+"""Return the first component of an integer GL_* query such as GL_MAX_TEXTURE_SIZE."""
+
+extern "C" "sere_gl_get_integers"
+def get_integers(pname: u32, values: list[i32]) -> void
+"""Fill a list with an integer query's components, up to its length."""
 
 extern "C" "sere_gl_get_float"
 def get_float(pname: u32) -> f64
-"""Return a floating-point GL_* query such as GL_SMOOTH_LINE_WIDTH_RANGE's first value."""
+"""Return the first component of a floating-point GL_* query."""
+
+extern "C" "sere_gl_get_floats"
+def get_floats(pname: u32, values: list[f64]) -> void
+"""Fill a list with a floating-point query's components, up to its length."""
 
 extern "C" "sere_gl_screen_width"
 def screen_width() -> i32
@@ -89,6 +97,54 @@ def minor_version() -> i32:
 def max_texture_size() -> i32:
     """Return the largest texture edge the driver accepts."""
     return get_integer(GL_MAX_TEXTURE_SIZE)
+
+
+def floats(pname: u32, count: i32) -> list[f64]:
+    """Return `count` components of a floating-point query.
+
+    Queries such as GL_SMOOTH_LINE_WIDTH_RANGE, GL_ALIASED_LINE_WIDTH_RANGE
+    and GL_POINT_SIZE_RANGE answer with a low and a high value; matrix queries
+    answer with sixteen. Components beyond the query's own length are zero.
+    """
+    buffer: list[f64] = [0.0, 0.0, 0.0, 0.0]
+    get_floats(pname, buffer)
+    out: list[f64] = []
+    i: i32 = 0
+    while i < count:
+        out.append(buffer[i])
+        i = i + 1
+    return out
+
+
+def integers(pname: u32, count: i32) -> list[i32]:
+    """Return `count` components of an integer query.
+
+    GL_MAX_VIEWPORT_DIMS answers with two values, matrix queries with sixteen.
+    Components beyond the query's own length are zero.
+    """
+    buffer: list[i32] = [0, 0, 0, 0]
+    get_integers(pname, buffer)
+    out: list[i32] = []
+    i: i32 = 0
+    while i < count:
+        out.append(buffer[i])
+        i = i + 1
+    return out
+
+
+def line_width_range() -> list[f64]:
+    """Return the supported smooth line widths as `[minimum, maximum]`."""
+    return floats(GL_SMOOTH_LINE_WIDTH_RANGE, 2)
+
+
+def point_size_range() -> list[f64]:
+    """Return the supported point sizes as `[minimum, maximum]`."""
+    return floats(GL_POINT_SIZE_RANGE, 2)
+
+
+def max_viewport_dims() -> list[i32]:
+    """Return the largest viewport as `[width, height]`."""
+    return integers(GL_MAX_VIEWPORT_DIMS, 2)
 
 
 def screen_size() -> list[i32]:

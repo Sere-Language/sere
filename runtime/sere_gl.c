@@ -36,6 +36,12 @@ static void outEmpty(const char** out_data, int64_t* out_len) {
   }
 }
 
+// A GL query writes as many components as the pname calls for: two for the
+// width and size ranges, and sixteen for the matrix and viewport queries. The
+// single-value wrappers below declare a wide local buffer so that a range or
+// matrix query cannot walk off the stack; they return the first component only.
+#define SERE_GL_QUERY_COMPONENTS 16
+
 // Only the Win32 GL path uses these; the stub build above must not carry them.
 #ifdef SERE_HAS_GL
 
@@ -436,6 +442,10 @@ double sere_gl_get_float(uint32_t pname) {
   (void)pname;
   return 0.0;
 }
+void sere_gl_get_floats(uint32_t pname, void* out) {
+  (void)pname;
+  (void)out;
+}
 int32_t sere_gl_validate_program(uint32_t program) {
   (void)program;
   return 0;
@@ -477,6 +487,10 @@ uint32_t sere_gl_get_error(void) { return 0; }
 int32_t sere_gl_get_integer(uint32_t pname) {
   (void)pname;
   return 0;
+}
+void sere_gl_get_integers(uint32_t pname, void* out) {
+  (void)pname;
+  (void)out;
 }
 void sere_gl_get_string(uint32_t name, const char** out_data, int64_t* out_len) {
   (void)name;
@@ -1257,6 +1271,47 @@ static const void* listBytes(void* list, int64_t* nbytes) {
   return typed->data;
 }
 
+// Copy a GL query result into a Sere list, honouring the list's element width so
+// both `list[f64]` and `list[i32]` destinations work. Extra components are
+// dropped and missing ones are left as the caller initialised them.
+static void copyFloats(void* out, const GLfloat* values, int available) {
+  SereList* typed = asList(out);
+  if (typed == NULL || typed->data == NULL || typed->len <= 0) {
+    return;
+  }
+  const int64_t count = typed->len < (int64_t)available ? typed->len : (int64_t)available;
+  if (typed->stride == (int64_t)sizeof(double)) {
+    double* dst = (double*)typed->data;
+    for (int64_t i = 0; i < count; ++i) {
+      dst[i] = (double)values[i];
+    }
+  } else if (typed->stride == (int64_t)sizeof(float)) {
+    float* dst = (float*)typed->data;
+    for (int64_t i = 0; i < count; ++i) {
+      dst[i] = values[i];
+    }
+  }
+}
+
+static void copyIntegers(void* out, const GLint* values, int available) {
+  SereList* typed = asList(out);
+  if (typed == NULL || typed->data == NULL || typed->len <= 0) {
+    return;
+  }
+  const int64_t count = typed->len < (int64_t)available ? typed->len : (int64_t)available;
+  if (typed->stride == (int64_t)sizeof(int32_t)) {
+    int32_t* dst = (int32_t*)typed->data;
+    for (int64_t i = 0; i < count; ++i) {
+      dst[i] = (int32_t)values[i];
+    }
+  } else if (typed->stride == (int64_t)sizeof(int64_t)) {
+    int64_t* dst = (int64_t*)typed->data;
+    for (int64_t i = 0; i < count; ++i) {
+      dst[i] = (int64_t)values[i];
+    }
+  }
+}
+
 static uint32_t genOne(const char* name) {
   typedef void(APIENTRY* GenFn)(int, unsigned int*);
   GenFn fn = (GenFn)glProc(name);
@@ -1912,9 +1967,15 @@ void sere_gl_sample_coverage(double value, int32_t invert) {
   fn((float)value, invert != 0 ? 1 : 0);
 }
 double sere_gl_get_float(uint32_t pname) {
-  GLfloat value = 0.0f;
-  glGetFloatv(pname, &value);
-  return (double)value;
+  GLfloat values[SERE_GL_QUERY_COMPONENTS] = {0.0f};
+  glGetFloatv(pname, values);
+  return (double)values[0];
+}
+
+void sere_gl_get_floats(uint32_t pname, void* out) {
+  GLfloat values[SERE_GL_QUERY_COMPONENTS] = {0.0f};
+  glGetFloatv(pname, values);
+  copyFloats(out, values, SERE_GL_QUERY_COMPONENTS);
 }
 int32_t sere_gl_validate_program(uint32_t program) {
   SERE_GL_LOAD_RET(PFNGLVALIDATEPROGRAMPROC, "glValidateProgram", 0);
@@ -1941,9 +2002,15 @@ void sere_gl_normal3f(double x, double y, double z) { glNormal3f((float)x, (floa
 uint32_t sere_gl_get_error(void) { return (uint32_t)glGetError(); }
 
 int32_t sere_gl_get_integer(uint32_t pname) {
-  GLint value = 0;
-  glGetIntegerv(pname, &value);
-  return (int32_t)value;
+  GLint values[SERE_GL_QUERY_COMPONENTS] = {0};
+  glGetIntegerv(pname, values);
+  return (int32_t)values[0];
+}
+
+void sere_gl_get_integers(uint32_t pname, void* out) {
+  GLint values[SERE_GL_QUERY_COMPONENTS] = {0};
+  glGetIntegerv(pname, values);
+  copyIntegers(out, values, SERE_GL_QUERY_COMPONENTS);
 }
 
 void sere_gl_get_string(uint32_t name, const char** out_data, int64_t* out_len) {
