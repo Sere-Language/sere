@@ -24,6 +24,7 @@ so the whole surface stays navigable.
 | [Pipeline state](#pipeline-state) | Clear, viewport, blending, depth, stencil, raster |
 | [Immediate-mode drawing](#immediate-mode-drawing) | `begin`/`end` and the shape helpers |
 | [Shaders](#shaders) | `Shader`, `Program`, uniforms, GLSL notes |
+| [Matrices and 3D math](#matrices-and-3d-math) | Storage order, projections, cameras, transforms, picking |
 | [Buffers and vertex arrays](#buffers-and-vertex-arrays) | VBOs, VAOs, attribute layouts, drawing |
 | [Textures](#textures) | Uploads, filtering, wrapping, units |
 | [Framebuffers](#framebuffers) | Off-screen rendering, completeness, renderbuffers |
@@ -97,12 +98,13 @@ throwing; see [Errors](#errors).
 | `gl.textures` | `Texture`, filtering/wrapping helpers, uploads, `rgba_pixels` |
 | `gl.framebuffer` | `Framebuffer`, `Renderbuffer`, `blit_framebuffer`, `read_pixels` |
 | `gl.window` | `Window`: creation, the frame loop, input, timing, cursor, clipboard |
+| `gl.transform` | Projections, views, `Camera`, `Transform`, matrix uniform uploads, screen space, picking |
 
-`gl/__init__.sere` is a generated barrel that star-imports every part and
+`gl/__init__.sere` is a generated barrel that imports every part by name and
 re-exports it, so `import gl` reaches all of it. Reach for `gl.window` and
 friends only if you want to import a single part by name:
 
-```sere
+```sere ignore
 from gl.window import Window
 from gl.constants import GL_COLOR_BUFFER_BIT
 ```
@@ -243,7 +245,7 @@ page hangs off it:
 `gl.Window` wraps the runtime's window and context: creation, the event loop,
 geometry, appearance, visibility, focus, the cursor, and the clipboard.
 
-```sere
+```sere ignore
 window: gl.Window = gl.Window("title", 960, 540)
 ```
 
@@ -818,8 +820,14 @@ def main() -> i32:
 
 - **Scalars arrive as `f64` and are narrowed to `float`.** `set_vec4` takes four
   numbers because a `vec4` is four floats.
-- **Matrices are `list[f64]` of 9 or 16 values, column-major**, which is the order
-  `arrays.matmul` and the `matrix` module produce.
+- **Matrices are `list[f64]` of 9 or 16 values, stored column-major** at the
+  driver boundary: `glUniformMatrix4fv` is handed `transpose = 0`, so the block
+  is read column by column. The `matrix` module stores **row-major**, which is the
+  same transform in the opposite order, so a `matrix.Mat4` must be transposed on
+  the way in — `gl.set_matrix4(program, name, value)` and
+  `gl.matrix4_data(value)` do that for you. `program.set_mat4(name, values)`
+  takes an already-column-major block. See
+  [Matrices and 3D math](#matrices-and-3d-math).
 - **Samplers take a texture unit index**, not a texture name: bind the texture to
   `GL_TEXTURE0 + n`, then `program.set_sampler("image", n)`.
 - **A misspelled or unused uniform is harmless.** `uniform("nope")` returns `-1`
@@ -864,7 +872,9 @@ def main() -> i32:
         return 1
     program.use()
 
-    # Column-major 4x4: three scaled basis axes and no translation.
+    # Column-major 4x4: three scaled basis axes and no translation. This scalar
+    # matrix is symmetric, so the storage order does not change it; for a
+    # rotation or a translation use gl.set_matrix4, which transposes.
     transform: list[f64] = [
         2.0, 0.0, 0.0, 0.0,
         0.0, 2.0, 0.0, 0.0,
@@ -876,6 +886,544 @@ def main() -> i32:
 
     window.swap()
     program.destroy()
+    window.destroy()
+    return 0
+```
+
+## Matrices and 3D math
+
+`gl.transform` is the math layer: projections, view matrices, a camera, a
+composable transform, the uploads that feed them to a shader, and the
+screen-space helpers that tell you where a world point ended up. It is pure Sere
+on top of `matrix`, `vec`, and the uniform setters in `gl.shaders` — no new
+natives, nothing to free, and no context needed to compute a matrix.
+
+| Module | Contents |
+| --- | --- |
+| `gl.transform` | `perspective`, `perspective_deg`, `perspective_window`, `ortho`, `ortho_2d`, `ortho_centered`, `look_at`, `Camera`, `Transform`, `compose`, `set_matrix4`, `set_matrix3`, `set_normal_matrix`, `project_to_screen`, `ray_from_screen` |
+| `matrix` | The raw math: `Mat2`/`Mat3`/`Mat4`, `translate`, `rotate_x/y/z`, `rotate_axis`, `scale`, `perspective`, `ortho`, `look_at`, `inverse`, `upper3` |
+| `vec` | `Vec2`/`Vec3`/`Vec4` with `add`, `sub`, `scale`, `dot`, `cross`, `normalized`, `to_list` |
+
+### Two storage orders, one transform
+
+This is the single most important thing to get right, and the one that silently
+produces a wrong picture rather than an error.
+
+| | `matrix` | An OpenGL `mat4` uniform |
+| --- | --- | --- |
+| Storage | **Row-major**: `data[0..3]` is row 0 | **Column-major**: a block read column by column |
+| Convention | Column vector: `p' = M * p` | Column vector: `gl_Position = mvp * vec4(p, 1.0)` |
+| Translation lives in | `data[3]`, `data[7]`, `data[11]` | Block indices 12, 13, 14 |
+
+They describe the same transform in opposite orders, so the block you upload has
+to be the transpose of `matrix`'s data — and the runtime hands the driver
+`transpose = 0`, so there is no shortcut on the driver side.
+
+```sere ignore
+program.set_mat4("model", model.data)   # wrong: the shader sees the transpose
+gl.set_matrix4(program, "model", model) # right: transposes on the way in
+
+# or, when you want the block yourself:
+block: list[f64] = gl.matrix4_data(model)
+program.set_mat4("model", block)
+```
+
+For a translation this is unmistakable: `matrix.translate(1.0, 0.0, 0.0).data`
+puts the 1 at index 3, while `gl.matrix4_data(...)` puts it at index 12, which is
+where a column-major reader expects the fourth column.
+
+The practical rule: **a `matrix.Mat4` never goes to `program.set_mat4` directly.**
+Use `gl.set_matrix4`, and keep the raw path for hand-written blocks.
+
+### Projections
+
+```sere
+import gl
+import matrix
+
+def main() -> i32:
+    aspect: f64 = gl.aspect_ratio(1280, 720)
+
+    # Degrees for people, radians for the matrix module.
+    perspective: matrix.Mat4 = gl.perspective_deg(60.0, aspect, 0.1, 1000.0)
+    same: matrix.Mat4 = gl.perspective(gl.to_radians(60.0), aspect, 0.1, 1000.0)
+
+    # Two dimensions, in pixels: the origin is the top-left corner and y grows
+    # downward, which is what a sprite or UI layer wants.
+    screen: matrix.Mat4 = gl.ortho_2d(1280, 720)
+
+    # Y up, centred on the origin: the shape a 2D game or a plot wants.
+    centred: matrix.Mat4 = gl.ortho_centered(16.0, 9.0)
+
+    # An explicit box, for a CAD view or a shadow map pass.
+    box: matrix.Mat4 = gl.ortho(-10.0, 10.0, -5.0, 5.0, 0.1, 100.0)
+
+    print(perspective.data[0], same.data[5], screen.data[0], centred.data[5], box.data[0])
+    return 0
+```
+
+| Function | Use |
+| --- | --- |
+| `perspective_deg(fov_degrees, aspect, near_z, far_z)` | The usual projection; 60 degrees is a good default |
+| `perspective(fov_radians, aspect, near_z, far_z)` | The same thing in radians, for math you already have |
+| `perspective_window(window, fov_degrees?, near?, far?)` | Recomputes the aspect from the framebuffer each call |
+| `aspect_ratio(width, height)` | `width / height`, and `1.0` when the height is zero |
+| `aspect_of_window(window)` | The same, from a window's framebuffer |
+| `ortho_2d(width, height)` | Pixels, y down, origin top-left |
+| `ortho_centered(width, height)` | Y up, centred on the origin |
+| `ortho(left, right, bottom, top, near, far)` | An explicit box |
+
+A minimised window reports a zero-sized framebuffer. `aspect_ratio` returns `1.0`
+there instead of dividing by zero, so one frame of a degenerate projection is not
+something you have to guard for.
+
+### Views and the camera
+
+A view matrix is just another matrix, but `Camera` keeps the five numbers that
+describe one together: a position, a target, an up vector, a field of view, and a
+depth range. It owns its aspect ratio rather than reading a window, so the same
+camera works for an off-screen target.
+
+| `Camera` | Result |
+| --- | --- |
+| `Camera(position, target)` | Create one; the defaults are 60 degrees, `(0, 1, 0)` up, 0.1 to 1000 |
+| `.view()`, `.projection()`, `.view_projection()` | The three matrices |
+| `.set_aspect(w, h)`, `.set_aspect_ratio(f)`, `.set_fov_degrees(f)`, `.set_clip(near, far)` | The lens |
+| `.orbit(yaw_degrees, pitch_degrees, distance)` | Place it on a sphere around its target |
+| `.move(dx, dy, dz)`, `.dolly(distance)` | Slide it, or move along its view direction |
+| `.forward()`, `.right()`, `.true_up()` | Unit basis vectors |
+| `.upload(program, view_name?, projection_name?)` | Two `mat4` uniforms, named `view` and `projection` by default |
+| `.upload_mvp(program, name, model)` | One combined `mat4` |
+| `.ray(x, y, width, height)` | A picking ray through a pixel |
+
+```sere
+import gl
+import matrix
+
+def main() -> i32:
+    # Look at a point from an angle, rather than picking the position by hand.
+    camera: gl.Camera = gl.orbit_camera(gl.vec3(0.0, 1.0, 0.0), 35.0, 20.0, 8.0)
+    camera.set_fov_degrees(50.0)
+    camera.set_clip(0.1, 200.0)
+    camera.set_aspect_ratio(16.0 / 9.0)
+
+    print(camera.position.to_list())
+    print(camera.forward().to_list(), camera.right().to_list())
+
+    view: matrix.Mat4 = camera.view()
+    projection: matrix.Mat4 = camera.projection()
+    combined: matrix.Mat4 = camera.view_projection()
+    print(view.data[11], projection.data[0], combined.data[0])
+    return 0
+```
+
+Orbiting is **absolute**, not incremental: `orbit(35.0, 20.0, 8.0)` always puts the
+camera in the same place, so it is safe to call every frame from mouse input
+without drift accumulating.
+
+The other view constructors are for when you already know two points:
+
+| Function | Use |
+| --- | --- |
+| `look_at(eye, target, up)` | From three `Vec3` values |
+| `look_at_y_up(eye, target)` | The common case, with the world's y axis up |
+| `look_at_dir(eye, forward, up)` | From a position and a direction |
+| `look_at_values(eye, target, up)` | From three plain three-element lists |
+
+### Transforms
+
+`Transform` is position, Euler rotation, and scale, composed into a model matrix.
+The order is fixed and deliberate: `translate * rotate_z * rotate_y * rotate_x *
+scale`, so a model is scaled first, then rotated about x, then y, then z, and
+finally moved.
+
+```sere
+import gl
+
+def main() -> i32:
+    model: gl.Transform = gl.Transform()
+    model.position = gl.vec3(2.0, 0.0, 0.0)
+    model.rotation = gl.vec3(0.0, 0.0, gl.to_radians(30.0))
+    model.scaling = gl.vec3(2.0, 1.0, 1.0)
+
+    # The model matrix, and the normal matrix that goes with an uneven scale.
+    print(model.matrix().data[3], model.normal_matrix().data[0])
+
+    # The same thing with the mutating helpers: turn spins by a frame's worth
+    # of radians, move slides it along, scale_by multiplies.
+    model.turn(0.0, 0.01, 0.0)
+    model.move(0.0, 0.0, -0.5)
+    model.scale_by(1.0, 1.0, 1.0)
+    print(model.position.to_list())
+
+    # A unit quad placed at a pixel rectangle, for ortho_2d drawing.
+    quad: gl.Transform = gl.Transform()
+    print(gl.sprite_matrix(10.0, 20.0, 30.0, 40.0).transform_point(1.0, 1.0, 0.0))
+    return 0
+```
+
+When the matrix has to be built from something other than position/rotation/scale
+— a bone, a fitted basis, a camera-relative frame — use `compose`, which
+multiplies a list left to right so the last entry applies to the point first:
+
+| Function | Result |
+| --- | --- |
+| `compose([a, b, c])` | `a * b * c`: c applies first, then b, then a |
+| `model_view(model, view)` | The view with the model folded in |
+| `model_view_projection(model, view, projection)` | The usual single `mvp` matrix |
+| `transform(x, y, z)` | A `Transform` already positioned |
+| `sprite_matrix(x, y, width, height)` | A unit quad scaled and placed at a pixel rectangle |
+
+### Uploading matrices
+
+These are the uploads that transpose for you. Every one of them is a no-op when
+the uniform name is inactive — a name the GLSL compiler optimised away resolves
+to location `-1`, and the driver ignores a uniform set at `-1` — so a misspelled
+name quietly does nothing rather than failing.
+
+| Function | Result |
+| --- | --- |
+| `set_matrix4(program, name, mat4)` | A `mat4` uniform from a `matrix.Mat4` |
+| `set_matrix3(program, name, mat3)` | A `mat3` uniform from a `matrix.Mat3` |
+| `set_normal_matrix(program, name, model)` | The inverse transpose of the model's upper 3x3 |
+| `set_vec2/set_vec3/set_vec4(program, name, v)` | A vector uniform from a `Vec2`/`Vec3`/`Vec4` |
+| `set_matrix4_at(location, mat4)` | A cached location, skipping the lookup |
+| `matrix4_data(mat4)`, `matrix3_data(mat3)` | The transposed block, for `program.set_mat4` |
+| `normal_matrix(model)` | The `Mat3` behind `set_normal_matrix` |
+| `set_mvp(program, name, model, camera)` | The combined matrix in one call |
+
+A lit mesh, end to end:
+
+```sere
+import gl
+import matrix
+
+VERTEX: str = """#version 120
+attribute vec3 position;
+attribute vec3 normal;
+uniform mat4 mvp;
+uniform mat4 model;
+uniform mat3 normal_matrix;
+varying vec3 shade;
+void main() {
+    shade = normalize(normal_matrix * normal);
+    gl_Position = mvp * vec4(position, 1.0);
+}
+"""
+
+FRAGMENT: str = """#version 120
+varying vec3 shade;
+void main() {
+    gl_FragColor = vec4(abs(shade), 1.0);
+}
+"""
+
+def main() -> i32:
+    window: gl.Window = gl.Window("lit", 640, 400)
+    if not window.is_open():
+        return 1
+    window.make_current()
+
+    program: gl.Program = gl.build(VERTEX, FRAGMENT)
+    if not program.ok():
+        print(program.log)
+        window.destroy()
+        return 1
+    program.bind_attribute(0, "position")
+    program.bind_attribute(1, "normal")
+    program.link()
+    program.use()
+
+    camera: gl.Camera = gl.orbit_camera(gl.vec3(0.0, 0.0, 0.0), 30.0, 20.0, 6.0)
+    camera.set_aspect_ratio(gl.aspect_of_window(window))
+    camera.upload(program)
+
+    model: gl.Transform = gl.Transform()
+    model.uniform_scale(1.5)
+    gl.set_matrix4(program, "model", model.matrix())
+    gl.set_normal_matrix(program, "normal_matrix", model.matrix())
+    camera.upload_mvp(program, "mvp", model.matrix())
+
+    gl.apply_viewport(window)
+    gl.clear_color(0.1, 0.1, 0.12, 1.0)
+    gl.clear(gl.GL_COLOR_BUFFER_BIT + gl.GL_DEPTH_BUFFER_BIT)
+    gl.enable(gl.GL_DEPTH_TEST)
+    gl.draw_arrays(gl.GL_TRIANGLES, 0, 36)
+    window.swap()
+
+    program.destroy()
+    window.destroy()
+    return 0
+```
+
+The normal matrix matters as soon as the scale is uneven: without it, a squashed
+model lights as if it were sheared, which is the classic "why is my shading
+wrong" bug.
+
+### Screen space, depth, and picking
+
+Normalised device coordinates are the -1 to 1 cube the rasteriser works in.
+Window coordinates are pixels with y growing downward. These helpers convert, and
+`project_to_screen` chains them onto a projection so a label or a health bar can
+follow a 3D object.
+
+| Function | Result |
+| --- | --- |
+| `project_ndc(mvp, point)` | A world `Vec3` to `[x, y, z]` in the cube, divide included |
+| `project_to_screen(mvp, point, width, height)` | The same, in pixels |
+| `unproject(mvp, ndc)` | Back to a world `Vec3` |
+| `screen_from_ndc(x, y, w, h)`, `ndc_from_screen(x, y, w, h)` | The two conversions on their own |
+| `linear_depth(z_ndc, near, far)` | A depth buffer value as a distance from the camera |
+| `ray_from_screen(camera, x, y, w, h)` | A picking ray as `[ox, oy, oz, dx, dy, dz]` |
+| `Camera.ray(x, y, w, h)` | The same, from the camera |
+
+```sere
+import gl
+import math
+
+def ray_sphere(ray: list[f64], cx: f64, cy: f64, cz: f64, radius: f64) -> f64:
+    """Return how far along a ray a sphere is hit, or -1.0 for a miss.
+
+    The ray is [ox, oy, oz, dx, dy, dz] with a unit direction, which is exactly
+    what Camera.ray returns.
+    """
+    ox: f64 = ray[0] - cx
+    oy: f64 = ray[1] - cy
+    oz: f64 = ray[2] - cz
+    b: f64 = ox * ray[3] + oy * ray[4] + oz * ray[5]
+    c: f64 = ox * ox + oy * oy + oz * oz - radius * radius
+    disc: f64 = b * b - c
+    if disc < 0.0:
+        return -1.0
+    return -b - math.sqrt(disc)
+
+def main() -> i32:
+    camera: gl.Camera = gl.make_camera(gl.vec3(0.0, 0.0, 5.0), gl.vec3(0.0, 0.0, 0.0))
+    camera.set_aspect_ratio(1.0)
+
+    # A click in the middle of the window, aimed at a sphere at the origin.
+    ray: list[f64] = camera.ray(320.0, 240.0, 640, 480)
+    print("ray:", ray)
+    print("hit at:", ray_sphere(ray, 0.0, 0.0, 0.0, 1.0))
+    print("misses:", ray_sphere(ray, 3.0, 0.0, 0.0, 1.0))
+
+    # Where a world point lands on screen, for an overlay.
+    mvp: matrix.Mat4 = camera.view_projection()
+    print(gl.project_to_screen(mvp, gl.vec3(1.0, 1.0, 0.0), 640, 480))
+    return 0
+```
+
+Depth buffers are non-linear, so almost all of the precision sits close to the
+near plane. `linear_depth` recovers a distance from a sampled depth value, which
+is what depth-of-field, fog, and soft particles need.
+
+A picking ray starts **on the near plane**, not at the camera, so marching along
+it never hits something between the camera and its own near clip.
+
+### Vertex data
+
+`gl.transform` also flattens vectors for upload, so a geometry builder can work in
+`Vec3`/`Vec4` and hand the result straight to a buffer.
+
+| Function | Result |
+| --- | --- |
+| `points_to_data(points)` | A `list[Vec3]` as a flat `list[f64]` for `buffer_data_f64` |
+| `vectors4_to_data(values)` | The same for `Vec4`, which suits colours and tangent frames |
+| `fan_indices(vertex_count)` | Triangle indices for a fan, for `buffer_data_i32` |
+| `quad_vertices(x, y, width, height)` | Two triangles as twelve numbers, wound counter-clockwise |
+
+```sere
+import gl
+import vec
+
+def main() -> i32:
+    ring: list[vec.Vec3] = []
+    step: i32 = 0
+    while step < 12:
+        angle: f64 = gl.to_radians((step as f64) * 30.0)
+        ring.append(gl.vec3(angle, 0.0, 0.0))
+        step = step + 1
+
+    positions: list[f64] = gl.points_to_data(ring)
+    colours: list[f64] = gl.vectors4_to_data([gl.vec4(1.0, 0.0, 0.0, 1.0), gl.vec4(0.0, 1.0, 0.0, 1.0)])
+    indices: list[i32] = gl.fan_indices(12)
+    quad: list[f64] = gl.quad_vertices(0.0, 0.0, 32.0, 32.0)
+
+    print(len(positions), len(colours), len(indices), len(quad))
+    return 0
+```
+
+### Window helpers
+
+| Function | Result |
+| --- | --- |
+| `apply_viewport(window)` | Set the viewport to the whole framebuffer |
+| `apply_frame(camera, window)` | The viewport **and** the camera's aspect, in one call |
+
+```sere ignore
+while window.is_open():
+    window.poll()
+    gl.apply_frame(camera, window)   # resize-safe: viewport and aspect together
+    ...
+```
+
+The framebuffer size changes when a window moves between displays with different
+scaling, not only when the user drags an edge, so this belongs in the frame loop
+rather than in a resize branch.
+
+### Recipes
+
+A lit, spinning cube — the program most 3D code starts from, and the one that
+exercises the whole layer: camera, projection, model transform, normals, depth
+buffer, and buffers.
+
+```sere
+import gl
+import matrix
+
+VERTEX: str = """#version 120
+attribute vec3 position;
+attribute vec3 normal;
+uniform mat4 mvp;
+uniform mat3 normal_matrix;
+varying vec3 shade;
+void main() {
+    shade = normalize(normal_matrix * normal);
+    gl_Position = mvp * vec4(position, 1.0);
+}
+"""
+
+FRAGMENT: str = """#version 120
+varying vec3 shade;
+void main() {
+    gl_FragColor = vec4(normalize(shade) * 0.5 + 0.5, 1.0);
+}
+"""
+
+CUBE: list[f64] = [
+    -1.0, -1.0,  1.0,  0.0,  0.0,  1.0,
+     1.0, -1.0,  1.0,  0.0,  0.0,  1.0,
+     1.0,  1.0,  1.0,  0.0,  0.0,  1.0,
+    -1.0, -1.0,  1.0,  0.0,  0.0,  1.0,
+     1.0,  1.0,  1.0,  0.0,  0.0,  1.0,
+    -1.0,  1.0,  1.0,  0.0,  0.0,  1.0]
+
+def main() -> i32:
+    window: gl.Window = gl.Window("cube", 640, 400)
+    if not window.is_open():
+        return 1
+    window.make_current()
+
+    program: gl.Program = gl.build(VERTEX, FRAGMENT)
+    if not program.ok():
+        print(program.log)
+        window.destroy()
+        return 1
+    program.bind_attribute(0, "position")
+    program.bind_attribute(1, "normal")
+    program.link()
+    program.use()
+
+    vao: gl.VertexArray = gl.VertexArray()
+    vao.bind()
+    vbo: gl.Buffer = gl.Buffer(gl.GL_ARRAY_BUFFER)
+    vbo.bind()
+    vbo.data_f64(CUBE, gl.GL_STATIC_DRAW)
+    vao.float_attribute(0, 3, 24, 0)
+    vao.float_attribute(1, 3, 24, 12)
+
+    camera: gl.Camera = gl.orbit_camera(gl.vec3(0.0, 0.0, 0.0), 30.0, 20.0, 8.0)
+    camera.upload(program, "view", "projection")
+
+    model: gl.Transform = gl.Transform()
+    gl.enable(gl.GL_DEPTH_TEST)
+    gl.default_depth_state()
+
+    while window.is_open():
+        window.poll()
+        if window.should_close() or window.key_pressed(gl.KEY_ESCAPE):
+            window.destroy()
+
+        gl.apply_frame(camera, window)
+        gl.clear_color(0.1, 0.1, 0.14, 1.0)
+        gl.clear(gl.GL_COLOR_BUFFER_BIT + gl.GL_DEPTH_BUFFER_BIT)
+
+        model.turn(0.4 * window.dt(), 0.7 * window.dt(), 0.0)
+        gl.set_matrix4(program, "model", model.matrix())
+        gl.set_normal_matrix(program, "normal_matrix", model.matrix())
+        camera.upload_mvp(program, "mvp", model.matrix())
+
+        gl.draw_arrays(gl.GL_TRIANGLES, 0, 6)
+        window.swap()
+
+    vao.destroy()
+    vbo.destroy()
+    program.destroy()
+    return 0
+```
+
+An orbit camera driven by the mouse: yaw and pitch come straight from the
+accumulated movement, and because `orbit` is absolute there is no drift.
+
+```sere
+import gl
+
+def main() -> i32:
+    window: gl.Window = gl.Window("orbit", 800, 500)
+    if not window.is_open():
+        return 1
+    window.make_current()
+
+    camera: gl.Camera = gl.orbit_camera(gl.vec3(0.0, 0.0, 0.0), 35.0, 20.0, 6.0)
+    yaw: f64 = 35.0
+    pitch: f64 = 20.0
+    distance: f64 = 6.0
+
+    while window.is_open():
+        window.poll()
+        if window.should_close() or window.key_pressed(gl.KEY_ESCAPE):
+            window.destroy()
+
+        # Drag to orbit, wheel to zoom. The delta setters are per frame.
+        if window.mouse_button(gl.MOUSE_LEFT):
+            yaw = yaw + (window.mouse_dx() as f64) * 0.4
+            pitch = pitch + (window.mouse_dy() as f64) * 0.4
+        distance = distance - (window.wheel() as f64) * 0.5
+        if distance < 1.0:
+            distance = 1.0
+        camera.orbit(yaw, pitch, distance)
+
+        gl.apply_frame(camera, window)
+        gl.clear_color(0.1, 0.1, 0.12, 1.0)
+        gl.clear(gl.GL_COLOR_BUFFER_BIT)
+        window.swap()
+
+    window.destroy()
+    return 0
+```
+
+A sprite layer drawn over a 3D scene: switch to the pixel projection, drop the
+depth test, and place unit quads with `sprite_matrix`.
+
+```sere
+import gl
+import matrix
+
+def main() -> i32:
+    window: gl.Window = gl.Window("ui", 800, 500)
+    if not window.is_open():
+        return 1
+    window.make_current()
+
+    gl.apply_viewport(window)
+    screen: matrix.Mat4 = gl.ortho_2d(window.framebuffer_width(), window.framebuffer_height())
+
+    health: gl.Transform = gl.Transform()
+    health.position = gl.vec3(20.0, 20.0, 0.0)
+    health.scaling = gl.vec3(120.0 * 0.4, 14.0, 1.0)
+
+    gl.disable(gl.GL_DEPTH_TEST)
+    print(screen.data[0], health.matrix().transform_point(1.0, 1.0, 0.0))
     window.destroy()
     return 0
 ```
@@ -1779,6 +2327,12 @@ names keep their `GL_` prefix so they are easy to search for.
 | Multi-window apps | One context per process; a context is current only on the thread that bound it | Keep one window, or call `make_current()` before touching GL from another thread |
 | `destroy()` then more calls | `handle` is `None`; every call is a safe no-op | Destroy last, after the loop |
 | Treating `dt()` as bounded | A dragging window or a breakpoint can produce a huge delta, and the first frame is a large value | Clamp it (`if delta > 0.1: delta = 0.1`) |
+| Uploading `matrix.Mat4.data` directly | `matrix` is row-major and a `mat4` uniform is column-major, so the shader receives the transpose: a translation becomes a shear-like displacement and a rotation turns the wrong way | `gl.set_matrix4(program, name, m)` or `gl.matrix4_data(m)` |
+| Multiplying transforms in the wrong order | `matrix.mul(a, b)` is `a * b`, so **b applies to the point first**; `mul(scale, translate)` scales the translation | Read `compose([...])` left to right, with the rightmost entry applied first |
+| Passing degrees where radians are wanted | `matrix.rotate_y(30.0)` is 30 radians, which is not a small rotation | `gl.to_radians(30.0)`, or `gl.perspective_deg` when a field of view is in degrees |
+| A uniform set by a misspelled name | The location is `-1` and the driver ignores it, so nothing happens and no error is raised | Check `program.uniform("name") != -1` while bringing a shader up |
+| Lighting a scaled model without the normal matrix | Non-uniform scale shears the normals, so the shading drifts with the model's scale | `gl.set_normal_matrix(program, name, model)` |
+| Comparing a projection against hand-written numbers | `perspective` follows the spec but is stored row-major here, so `data[11]` is not the value a column-major listing shows | Compare through `gl.matrix4_data(...)`, or test behaviour (see `tests/features/gl_math.sere`) |
 
 ## Testing
 
@@ -1791,10 +2345,30 @@ window: it asserts enumerant values, the pure helpers (`error_name`,
 ctest --preset windows-clang-cl-relwithdebinfo -R gl_binding --output-on-failure
 ```
 
-The Serem backend is skipped for this test through `SERE_LLVM_ONLY_FEATURES` in
+`tests/features/gl_math.sere` does the same for the math layer, and it needs no
+context either, which is the point: projections, camera placement, orbiting,
+transform composition, the normal matrix, screen-space projection, rays, and the
+upload layout are all arithmetic. It pins the transpose convention down, so a
+change to `matrix4_data` cannot silently flip every rotation:
+
+```
+ctest --preset windows-clang-cl-relwithdebinfo -R gl_math --output-on-failure
+```
+
+The Serem backend is skipped for both tests through `SERE_LLVM_ONLY_FEATURES` in
 `tests/CMakeLists.txt`, because it cannot yet lower package member access
 (`gl.CONSTANT` on an imported package); the entry lives in one place so it is
 easy to remove when that lands.
+
+The examples on this page are compiled, not just written:
+
+```
+py scripts\check-doc-examples.py docs/gl.md
+```
+
+That script compiles every ```` ```sere ```` block as a standalone program, so an
+API rename cannot leave the documentation behind. A block that is deliberately a
+fragment rather than a program is marked ```` ```sere ignore ````.
 
 Tests that need a real context — shader compilation, uploading a mesh,
 framebuffer completeness — belong in a program you run by hand, not in the
@@ -1821,12 +2395,17 @@ def main() -> i32:
 | Path | Role |
 | --- | --- |
 | `stdlib/gl/*.sere` | The binding: one module per area, plus the barrel |
+| `stdlib/gl/transform.sere` | The math layer: projections, `Camera`, `Transform`, uploads, picking |
 | `stdlib/gl/README.md` | Short overview, conventions, and a first program |
+| `stdlib/matrix.sere` | The matrix math underneath: `Mat4`, `rotate_axis`, `inverse3`, `upper3` |
+| `stdlib/vec.sere` | `Vec2`/`Vec3`/`Vec4`, which the math layer takes and returns |
 | `scripts/gen-gl-constants.py` | Writes `stdlib/gl/constants.sere` from tables of spec values |
 | `scripts/gen-gl-init.py` | Writes `stdlib/gl/__init__.sere` from the public names in the parts |
+| `scripts/check-doc-examples.py` | Compiles every `sere` block in the documentation |
 | `runtime/sere_gl.c` | Windows/WGL layer, the entry-point loader, and the stubs for other hosts |
 | `runtime/sere_rt.h` | The declarations the binding's `extern "C"` names match |
-| `tests/features/gl_binding.sere` | The context-free regression test |
+| `tests/features/gl_binding.sere` | The context-free binding regression test |
+| `tests/features/gl_math.sere` | The context-free math regression test |
 
 Every one of the 184 `sere_gl_*` functions is bound. If you add a runtime
 function, bind it in the matching part, then regenerate:

@@ -1,0 +1,45 @@
+import wavio
+
+def main() -> i32:
+    buffer: wavio.AudioBuffer = wavio.AudioBuffer(480, 2, 48000)
+    assert buffer.is_open()
+    assert buffer.tone(1000.0, 0.25) == 0
+    assert buffer.peak() > 0.24
+    assert buffer.rms() > 0.17
+    assert buffer.set(-1, 1.0) < 0
+    assert len(wavio.error_message(wavio.last_error())) > 0
+    assert wavio.write("wavio-sere.wav", buffer) == 0
+    reader: wavio.AudioReader = wavio.AudioReader("wavio-sere.wav")
+    assert reader.is_open()
+    assert reader.frames() == 480
+    assert reader.channels() == 2
+    assert reader.sample_rate() == 48000
+    assert reader.read(buffer) == 480
+    reader.close()
+    filter: wavio.Filter = wavio.Filter(500.0)
+    assert filter.is_open()
+    assert filter.process(buffer) == 0
+    assert filter.reset() == 0
+    filter.close()
+    context: wavio.AudioContext = wavio.AudioContext(48000, 2, 2)
+    assert context.is_open()
+    assert context.device_count() > 0
+    assert len(context.device_name(0)) > 0
+    sound: wavio.Sound = wavio.Sound(context, "wavio-sere.wav")
+    assert sound.is_open()
+    bus: wavio.Bus = wavio.Bus(context)
+    assert bus.is_open()
+    assert sound.route(bus) == 0
+    assert sound.play() == 0
+    assert context.render(buffer) == 0
+    assert buffer.peak() > 0.2
+    assert sound.stop() == 0
+    context.close()
+    bus.close()
+    sound.close()
+    buffer.close()
+    buffer.close()
+    assert wavio.can_decode("flac")
+    assert not wavio.can_encode("flac")
+    assert not wavio.can_decode("opus")
+    return 0

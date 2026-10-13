@@ -32,6 +32,11 @@ struct ProjectManifest {
   std::filesystem::path output;
   OptLevel optLevel = OptLevel::O0;
   bool native = false;
+  /// Prebuilt archives, objects, and shared libraries to ship as they are
+  /// (`native_libs = ["prebuilt/foo.lib", "bin/foo.dll"]`), for a library whose
+  /// C/C++ is already compiled somewhere else. Paths outside the project are
+  /// packed under `native/` and linked the same way.
+  std::vector<std::filesystem::path> nativeLibs;
   /// System libraries the package's native code was built against
   /// (`system_libs = ["opengl32", "gdi32"]`), resolved for the consumer.
   std::vector<std::string> systemLibs;
@@ -72,7 +77,19 @@ void prepareProjectStdlib(const ProjectManifest& manifest);
 [[nodiscard]] int buildNativeLibs(const std::filesystem::path& nativeDir);
 
 /// Builds native code next to imported folder libraries and extracted .slib trees.
-void prepareImportedLibraryNative(const std::vector<std::filesystem::path>& importedPaths);
+/// Returns false when a build failed, which the caller reports: a package whose
+/// C/C++ did not compile would otherwise fail later as an undefined symbol.
+[[nodiscard]] bool prepareImportedLibraryNative(const std::vector<std::filesystem::path>& importedPaths);
+
+/// The directory holding the staged C API headers (`sere/api/sere_mod.h`), or an
+/// empty path when this build does not ship them. Native builds get it as
+/// `SERE_INCLUDE_DIR`, both as a CMake cache variable and in the environment.
+[[nodiscard]] std::filesystem::path nativeIncludeDirectory();
+
+/// Puts `nativeIncludeDirectory()` where a compiler looks by default (`INCLUDE`
+/// on Windows, `CPATH` elsewhere) and exports `SERE_INCLUDE_DIR`, so a native
+/// CMakeLists written before any of this still finds the C API headers.
+void applyNativeIncludeEnvironment();
 
 [[nodiscard]] int buildProject(const CompilerOptions& options);
 [[nodiscard]] int packLibrary(const CompilerOptions& options);

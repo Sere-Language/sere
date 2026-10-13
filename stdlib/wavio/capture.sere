@@ -1,0 +1,41 @@
+"""Buffered capture. The native callback never enters Sere or performs file I/O."""
+from wavio._native import _capture_close, _capture_dropped, _capture_open, _capture_read, _capture_start, _capture_stop
+from wavio.context import AudioContext
+from wavio.buffer import AudioBuffer
+
+class Recorder:
+    """One native capture device and an SPSC ring drained by one application thread."""
+    handle: Ptr[i8]
+
+    def __init__(self, context: AudioContext, device: i32 = -1, channels: i32 = 1, sample_rate: i32 = 48000, capacity: i32 = 48000, loopback: i32 = 0):
+        """Open input device (-1 default), with capacity in frames; start explicitly.
+
+        loopback=1 selects an output device for system recording and fails on
+        unsupported backends. It never silently records the microphone instead.
+        """
+        self.handle = _capture_open(context.handle, device, channels, sample_rate, capacity, loopback)
+
+    def is_open(self) -> bool:
+        """Return whether device/ring initialization succeeded."""
+        return self.handle != None
+
+    def close(self) -> void:
+        """Stop and join native callbacks before releasing ring storage."""
+        _capture_close(self.handle)
+        self.handle = None
+
+    def start(self) -> i32:
+        """Start or resume capture; return zero or a negative status."""
+        return _capture_start(self.handle)
+
+    def stop(self) -> i32:
+        """Pause capture, preserving queued frames for draining."""
+        return _capture_stop(self.handle)
+
+    def read(self, buffer: AudioBuffer) -> i64:
+        """Drain available frames into matching storage; silence tail; return count/error."""
+        return _capture_read(self.handle, buffer.handle)
+
+    def dropped_frames(self) -> i64:
+        """Return frames dropped because the application did not drain the ring in time."""
+        return _capture_dropped(self.handle)

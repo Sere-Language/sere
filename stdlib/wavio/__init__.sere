@@ -1,0 +1,31 @@
+"""Wavio: native audio buffers, files, playback, capture, submixes, and offline DSP.
+
+Resources require explicit close(). Check is_open() after construction and
+negative status returns after operations. See docs/wavio.md for threading,
+supported capabilities, limitations, and examples.
+"""
+from wavio._native import _last_error, _error_message
+from wavio.buffer import AudioBuffer
+from wavio.codec import AudioReader, AudioWriter, write
+from wavio.context import AudioContext
+from wavio.sound import Sound, Bus
+from wavio.capture import Recorder
+from wavio.dsp import Filter
+
+def last_error() -> i32:
+    """Return the calling thread's last native status; inspect immediately after failure."""
+    return _last_error()
+
+def error_message(code: i32) -> str:
+    """Return an owned human-readable description of a native status code."""
+    return _error_message(code)
+
+def can_decode(format: str) -> bool:
+    """Report built-in decoders; optional formats are never advertised implicitly."""
+    return format == "wav" or format == "flac" or format == "mp3"
+
+def can_encode(format: str) -> bool:
+    """Report implemented encoders independently of decoding support."""
+    return format == "wav"
+
+__exports__ = [AudioBuffer, AudioReader, AudioWriter, AudioContext, Sound, Bus, Recorder, Filter, write, last_error, error_message, can_decode, can_encode]

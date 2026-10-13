@@ -460,12 +460,60 @@ bool isExtractedLibraryPath(const std::filesystem::path& path) {
   return pathHasPart(path, ".sere-lib");
 }
 
+/// Reads `key = "value"` from a package marker, without pulling in the project
+/// parser: the marker shares `sere.toml`'s line-oriented shape, and only its
+/// identity is needed here (the dependency files next to it carry the rest).
+[[nodiscard]] std::string markerValue(const std::filesystem::path& file,
+                                      std::string_view wanted) {
+  std::ifstream input(file);
+  if (!input) {
+    return {};
+  }
+  std::string line;
+  while (std::getline(input, line)) {
+    const std::string text = trimCopy(line);
+    if (text.empty() || text.front() == '#' || text.front() == '[') {
+      continue;
+    }
+    const std::size_t equals = text.find('=');
+    if (equals == std::string::npos || trimCopy(text.substr(0, equals)) != wanted) {
+      continue;
+    }
+    std::string value = trimCopy(text.substr(equals + 1));
+    if (value.size() >= 2 && (value.front() == '"' || value.front() == '\'') &&
+        value.back() == value.front()) {
+      value = value.substr(1, value.size() - 2);
+    }
+    return value;
+  }
+  return {};
+}
+
+/// True when a directory is the root of a library: either a project with its own
+/// manifest, or an unpacked package (which carries the marker instead).
+[[nodiscard]] bool isLibraryRootDirectory(const std::filesystem::path& directory) {
+  if (directory.empty()) {
+    return false;
+  }
+  std::error_code error;
+  return std::filesystem::is_regular_file(directory / "sere.toml", error) ||
+         std::filesystem::is_regular_file(directory / kPackageMarkerFile, error);
+}
+
 std::filesystem::path folderLibraryEntry(const std::filesystem::path& directory) {
   std::error_code error;
   if (!std::filesystem::is_directory(directory, error) || error) {
     return {};
   }
   const std::string name = directory.filename().string();
+  // An unpacked package names its own entry, which is what makes `sere pack
+  // --dir` output importable straight from `libs/<name>/`.
+  if (std::filesystem::is_regular_file(directory / kPackageMarkerFile, error) && !error) {
+    const std::string entry = markerValue(directory / kPackageMarkerFile, "entry");
+    if (!entry.empty() && std::filesystem::is_regular_file(directory / entry, error) && !error) {
+      return std::filesystem::weakly_canonical(directory / entry, error);
+    }
+  }
   // A whole library project can live in `libs/` unpacked, for projects too big or
   // too native to want a single archive: honour its manifest first so
   // `libs/<name>/` behaves like `libs/<name>.slib`.
@@ -508,12 +556,11 @@ std::filesystem::path libraryNativeRoot(const std::filesystem::path& importedPat
   std::error_code error;
   // A library project keeps its native code, metadata, and shipped tools at its
   // root, which is one level above `src/` when the entry lives there.
-  if (std::filesystem::is_regular_file(parent / "sere.toml", error) && !error) {
+  if (isLibraryRootDirectory(parent)) {
     return parent;
   }
   const std::filesystem::path grandParent = parent.parent_path();
-  if (!grandParent.empty() && std::filesystem::is_regular_file(grandParent / "sere.toml", error) &&
-      !error) {
+  if (!grandParent.empty() && isLibraryRootDirectory(grandParent)) {
     return grandParent;
   }
   const std::string stem = importedPath.stem().string();
@@ -572,6 +619,11 @@ void collectNativeHeaderFiles(const std::filesystem::path& directory,
 void collectNativeObjectFiles(const std::filesystem::path& directory,
                               std::vector<std::filesystem::path>& files) {
   collectByPredicate(directory, isNativeObjectFile, files);
+}
+
+void collectNativeSourceFiles(const std::filesystem::path& directory,
+                              std::vector<std::filesystem::path>& files) {
+  collectByPredicate(directory, isNativeSourceFile, files);
 }
 
 void collectSiblingNative(const std::filesystem::path& importedPath,
@@ -747,6 +799,47 @@ void appendExtractedLibraryRuntimes(const std::vector<std::filesystem::path>& im
   for (const std::filesystem::path& imported : importedPaths) {
     collectSiblingNative(imported, isNativeRuntimeFile, files);
   }
+}
+
+bool writePackedDirectory(const std::filesystem::path& directory,
+                          const PackedLibrary& library,
+                          std::string& error) {
+  if (library.entry.empty() || library.files.empty()) {
+    error = "library has no entry file";
+    return false;
+  }
+  if (!isSafeLibraryPath(library.entry) || !hasEntry(library)) {
+    error = "library entry '" + library.entry + "' is missing or unsafe";
+    return false;
+  }
+  // A folder package is the same set of members as an archive, written out in the
+  // clear: it imports from `libs/<name>/` without any unpacking step, and the
+  // marker file written by the packer names its entry.
+  std::error_code fsError;
+  std::filesystem::create_directories(directory, fsError);
+  if (fsError) {
+    error = "cannot create '" + directory.string() + "': " + fsError.message();
+    return false;
+  }
+  for (const LibraryMember& file : library.files) {
+    if (!isSafeLibraryPath(file.relativePath)) {
+      error = "unsafe library path '" + file.relativePath + "'";
+      return false;
+    }
+    const std::filesystem::path target = directory / file.relativePath;
+    std::filesystem::create_directories(target.parent_path(), fsError);
+    std::ofstream output(target, std::ios::binary | std::ios::trunc);
+    if (!output) {
+      error = "cannot write '" + target.string() + "'";
+      return false;
+    }
+    output.write(file.bytes.data(), static_cast<std::streamsize>(file.bytes.size()));
+    if (!output) {
+      error = "cannot write '" + target.string() + "'";
+      return false;
+    }
+  }
+  return true;
 }
 
 bool writePackedLibrary(const std::filesystem::path& slibPath,

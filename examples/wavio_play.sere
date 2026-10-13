@@ -1,0 +1,22 @@
+import wavio
+import time
+
+def main() -> i32:
+    samples: wavio.AudioBuffer = wavio.AudioBuffer(48000, 2, 48000)
+    assert samples.is_open()
+    assert samples.tone(440.0, 0.1) == 0
+    assert wavio.write("wavio-tone.wav", samples) == 0
+    samples.close()
+    context: wavio.AudioContext = wavio.AudioContext()
+    if not context.is_open():
+        print(wavio.error_message(wavio.last_error()))
+        return 1
+    for index in range(context.device_count()):
+        print(context.device_name(index))
+    sound: wavio.Sound = wavio.Sound(context, "wavio-tone.wav")
+    assert sound.is_open()
+    assert sound.play() == 0
+    time.sleep_ms(1200)
+    sound.close()
+    context.close()
+    return 0

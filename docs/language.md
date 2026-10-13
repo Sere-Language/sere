@@ -1372,7 +1372,7 @@ Reported as `error[NameError]: ...` (and other exception names).
 
 Suppression:
 
-```sere
+```sere ignore
 # type[NameError]: ignore          # whole file if at the top
 def main() -> i32:
     n: i32 = "nope"                # TypeError still reported

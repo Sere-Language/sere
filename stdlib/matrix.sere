@@ -1,5 +1,8 @@
 # Matrices and camera transforms. Import with: import matrix
 # Packed row-major f64. Mat4 is 16 values. Column vector: p' = M * p
+# mul(A, B) is the row-major product, so B applies to a point first.
+
+import math
 
 extern "C" "sere_mat_identity"
 def _identity_n(n: i64) -> list[f64]
@@ -77,6 +80,31 @@ extern "C" "sere_mat4_transform_dir"
 def _transform_dir(matrix: list[f64], x: f64, y: f64, z: f64) -> list[f64]
 """Transform a direction by a 4 by 4 matrix."""
 
+def inverse3(values: list[f64]) -> list[f64]:
+    """Return the inverse of a packed row-major 3 by 3 matrix.
+
+    The inverse is the adjugate divided by the determinant. A singular matrix
+    returns zeroes rather than raising, so a caller that cannot rule out a
+    degenerate basis still gets a matrix it can work with.
+    """
+    a: f64 = values[0]
+    b: f64 = values[1]
+    c: f64 = values[2]
+    d: f64 = values[3]
+    e: f64 = values[4]
+    f: f64 = values[5]
+    g: f64 = values[6]
+    h: f64 = values[7]
+    i: f64 = values[8]
+    det: f64 = det3(values)
+    if det == 0.0:
+        return [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    scale: f64 = 1.0 / det
+    return [
+        (e * i - f * h) * scale, (c * h - b * i) * scale, (b * f - c * e) * scale,
+        (f * g - d * i) * scale, (a * i - c * g) * scale, (c * d - a * f) * scale,
+        (d * h - e * g) * scale, (b * g - a * h) * scale, (a * e - b * d) * scale]
+
 class Mat2:
     """A 2 by 2 row-major matrix."""
     data: list[f64]
@@ -121,6 +149,10 @@ class Mat3:
         """Return the transposed matrix."""
         return Mat3(_transpose_n(self.data, 3, 3))
 
+    def inverse(self) -> Mat3:
+        """Return the inverse matrix, or zeroes when this matrix is singular."""
+        return Mat3(inverse3(self.data))
+
     def det(self) -> f64:
         """Return the determinant."""
         return det3(self.data)
@@ -148,6 +180,18 @@ class Mat4:
     def inverse(self) -> Mat4:
         """Return the inverse matrix."""
         return Mat4(_inverse4(self.data))
+
+    def upper3(self) -> Mat3:
+        """Return the upper-left 3 by 3 block: the rotation and scale part."""
+        values: list[f64] = [
+            self.get(0, 0), self.get(0, 1), self.get(0, 2),
+            self.get(1, 0), self.get(1, 1), self.get(1, 2),
+            self.get(2, 0), self.get(2, 1), self.get(2, 2)]
+        return Mat3(values)
+
+    def translation(self) -> list[f64]:
+        """Return the translation this matrix carries, from its last column."""
+        return [self.data[3], self.data[7], self.data[11]]
 
     def transform_point(self, x: f64, y: f64, z: f64) -> list[f64]:
         """Transform a point by this matrix."""
@@ -188,6 +232,32 @@ def rotate_y(radians: f64) -> Mat4:
 def rotate_z(radians: f64) -> Mat4:
     """Return a rotation matrix around the z axis."""
     return Mat4(_rotate_z(radians))
+
+def rotate_axis(axis: list[f64], radians: f64) -> Mat4:
+    """Return a rotation of radians around an arbitrary axis.
+
+    The axis is normalised first, so any non-zero vector works, and a zero
+    vector yields the identity. The rotation follows the right-hand rule, the
+    same way rotate_x, rotate_y, and rotate_z do, which is what a free camera
+    or an orbit control needs.
+    """
+    x: f64 = axis[0]
+    y: f64 = axis[1]
+    z: f64 = axis[2]
+    length: f64 = math.sqrt(x * x + y * y + z * z)
+    if length == 0.0:
+        return identity()
+    x = x / length
+    y = y / length
+    z = z / length
+    c: f64 = math.cos(radians)
+    s: f64 = math.sin(radians)
+    t: f64 = 1.0 - c
+    return Mat4([
+        t * x * x + c, t * x * y - s * z, t * x * z + s * y, 0.0,
+        t * x * y + s * z, t * y * y + c, t * y * z - s * x, 0.0,
+        t * x * z - s * y, t * y * z + s * x, t * z * z + c, 0.0,
+        0.0, 0.0, 0.0, 1.0])
 
 def perspective(fov_y: f64, aspect: f64, near_z: f64, far_z: f64) -> Mat4:
     """Return a perspective projection matrix."""

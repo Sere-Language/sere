@@ -67,7 +67,7 @@ sere pack mylib 1.0.0
 
 The consumer copies `dist/mylib.slib` into its `libs/` directory and imports it:
 
-```sere
+```sere ignore
 import mylib
 
 def main() -> i32:

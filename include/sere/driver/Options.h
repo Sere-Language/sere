@@ -65,6 +65,12 @@ struct CompilerOptions {
   std::string packageSpec;
   /// `sere add --force`: replace an existing install in libs/.
   bool force = false;
+  /// `sere add --local`: read the argument as a path even when a package of that
+  /// name exists in the registry.
+  bool addLocal = false;
+  /// `sere pack --dir`: write the package as a folder of files (the same members
+  /// an archive holds) instead of a single `.slib`.
+  bool packDirectory = false;
   /// `--dry-run`: describe the registry work without sending or writing.
   bool dryRun = false;
   std::vector<std::string> programArgs;

@@ -84,6 +84,20 @@ void copyIfExists(const std::filesystem::path& from, const std::filesystem::path
   std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing, error);
 }
 
+/// Copies the staged C API headers (`sere/api/sere_mod.h`, `sere_gc.h`) into a
+/// project or library's `venv/include`, so a native build can include them even
+/// when a developer runs cmake without sere driving it.
+void copyCApiHeaders(const std::filesystem::path& compilerDir,
+                     const std::filesystem::path& root) {
+  for (const char* name : {"sere_mod.h", "sere_gc.h"}) {
+    const std::filesystem::path next = compilerDir / "include" / "sere" / "api" / name;
+    const std::filesystem::path source =
+        compilerDir.parent_path() / "include" / "sere" / "api" / name;
+    copyIfExists(std::filesystem::exists(next) ? next : source,
+                 root / "venv" / "include" / "sere" / "api" / name);
+  }
+}
+
 void copyNamed(const std::filesystem::path& directory,
                std::string_view stem,
                const std::filesystem::path& destDir) {
@@ -153,8 +167,12 @@ void makeExecutable(const std::filesystem::path& path) {
          escapeToml(output) +
          "\"\n"
          "opt = \"O0\"\n"
-         "# Build loose C/C++ files in libs/native when enabled.\n"
-         "native = false\n"
+         "# Build the C/C++ in libs/native, then link what they produce.\n"
+         "native = true\n"
+         "\n# Prebuilt artifacts to link as they are (archives, objects, DLLs):\n"
+         "# native_libs = [\"prebuilt/mylib.lib\"]\n"
+         "\n# System libraries the native code needs on this machine:\n"
+         "# system_libs = [\"opengl32\"]\n"
          "\n# Custom tool settings belong in [tool.<name>] tables.\n";
 }
 
@@ -351,8 +369,16 @@ namespace {
   const char* nativeCmake = "cmake_minimum_required(VERSION 3.20)\n"
                             "project(sere_native LANGUAGES C CXX)\n"
                             "add_library(sere_native STATIC example.cpp)\n"
-                            "target_include_directories(sere_native PUBLIC "
-                            "\"${CMAKE_CURRENT_SOURCE_DIR}/../../venv/include\")\n";
+                            "# sere passes the staged C API headers here; the venv copy is a\n"
+                            "# fallback for a build run outside sere.\n"
+                            "if(NOT DEFINED SERE_INCLUDE_DIR)\n"
+                            "  if(DEFINED ENV{SERE_INCLUDE_DIR})\n"
+                            "    set(SERE_INCLUDE_DIR \"$ENV{SERE_INCLUDE_DIR}\")\n"
+                            "  else()\n"
+                            "    set(SERE_INCLUDE_DIR \"${CMAKE_CURRENT_SOURCE_DIR}/../../venv/include\")\n"
+                            "  endif()\n"
+                            "endif()\n"
+                            "target_include_directories(sere_native PUBLIC \"${SERE_INCLUDE_DIR}\")\n";
   const char* nativeSere = "extern \"C\" \"native_add\"\n"
                            "def add(left: i32, right: i32) -> i32\n";
   const char* gitignore = "bin/*\n"
@@ -451,18 +477,7 @@ void copyToolchain(const std::filesystem::path& compilerDir, const std::filesyst
   copyIfExists(scripts / "sere-path.ps1", root / "bin" / "sere-path.ps1");
   copyIfExists(scripts / "sere-path.cmd", root / "bin" / "sere-path.cmd");
   copyIfExists(scripts / "sere-path.sh", root / "bin" / "sere-path.sh");
-  const std::filesystem::path apiNextToCompiler =
-      compilerDir / "include" / "sere" / "api" / "sere_mod.h";
-  const std::filesystem::path apiFromSource =
-      compilerDir.parent_path() / "include" / "sere" / "api" / "sere_mod.h";
-  copyIfExists(std::filesystem::exists(apiNextToCompiler) ? apiNextToCompiler : apiFromSource,
-               root / "venv" / "include" / "sere" / "api" / "sere_mod.h");
-  const std::filesystem::path gcNextToCompiler =
-      compilerDir / "include" / "sere" / "api" / "sere_gc.h";
-  const std::filesystem::path gcFromSource =
-      compilerDir.parent_path() / "include" / "sere" / "api" / "sere_gc.h";
-  copyIfExists(std::filesystem::exists(gcNextToCompiler) ? gcNextToCompiler : gcFromSource,
-               root / "venv" / "include" / "sere" / "api" / "sere_gc.h");
+  copyCApiHeaders(compilerDir, root);
 }
 
 [[nodiscard]] std::string libraryTomlText(const std::string& name) {
@@ -484,8 +499,13 @@ void copyToolchain(const std::filesystem::path& compilerDir, const std::filesyst
          escapeToml(name) +
          ".slib\"\n"
          "opt = \"O0\"\n"
-         "# Build loose C/C++ files in libs/native when enabled.\n"
-         "native = false\n"
+         "# Build the C/C++ in libs/native and pack the archive with the library.\n"
+         "# The scaffolded native example needs this on, so it starts enabled.\n"
+         "native = true\n"
+         "\n# Prebuilt artifacts to ship as they are (archives, objects, DLLs):\n"
+         "# native_libs = [\"prebuilt/mylib.lib\"]\n"
+         "\n# System libraries the native code needs on the consumer (\"opengl32\"):\n"
+         "# system_libs = []\n"
          "\n# Custom tool settings belong in [tool.<name>] tables.\n";
 }
 
@@ -506,7 +526,17 @@ void copyToolchain(const std::filesystem::path& compilerDir, const std::filesyst
                           "}\n";
   const char* nativeCmake = "cmake_minimum_required(VERSION 3.20)\n"
                             "project(sere_native LANGUAGES C CXX)\n"
-                            "add_library(sere_native STATIC example.cpp)\n";
+                            "add_library(sere_native STATIC example.cpp)\n"
+                            "# sere passes the staged C API headers here, so `#include\n"
+                            "# \"sere/api/sere_mod.h\"` works with no other setup.\n"
+                            "if(NOT DEFINED SERE_INCLUDE_DIR)\n"
+                            "  if(DEFINED ENV{SERE_INCLUDE_DIR})\n"
+                            "    set(SERE_INCLUDE_DIR \"$ENV{SERE_INCLUDE_DIR}\")\n"
+                            "  else()\n"
+                            "    set(SERE_INCLUDE_DIR \"${CMAKE_CURRENT_SOURCE_DIR}/../../venv/include\")\n"
+                            "  endif()\n"
+                            "endif()\n"
+                            "target_include_directories(sere_native PUBLIC \"${SERE_INCLUDE_DIR}\")\n";
   const char* nativeSere = "extern \"C\" \"native_add\"\n"
                            "def add(left: i32, right: i32) -> i32\n";
   const char* gitignore = "dist/\n"
@@ -550,7 +580,23 @@ void copyToolchain(const std::filesystem::path& compilerDir, const std::filesyst
       "\n"
       "```\n"
       "\n"
-      "Set `native = true` in `sere.toml` to compile `libs/native` into the `.slib`.\n";
+      "## Native code\n"
+      "\n"
+      "`libs/native/` holds C/C++ for the library. `native = true` in `sere.toml`\n"
+      "makes `sere pack` build it and ship the archive with the `.slib`, so the\n"
+      "consumer links it with no setup. A build that fails stops the pack instead of\n"
+      "producing an archive that cannot link.\n"
+      "\n"
+      "To ship something already built, list it instead of building it:\n"
+      "\n"
+      "```toml\n"
+      "[build]\n"
+      "native = false\n"
+      "native_libs = [\"prebuilt/" +
+      name +
+      ".lib\"]\n"
+      "system_libs = [\"opengl32\"]\n"
+      "```\n";
   return writeText(root / "src" / "lib.sere", libSere) &&
          writeText(root / "libs" / "native" / "example.cpp", nativeCpp) &&
          writeText(root / "libs" / "native" / "CMakeLists.txt", nativeCmake) &&
@@ -578,6 +624,10 @@ int initSereLibrary(const std::filesystem::path& name, std::string& error) {
     error = "cannot write library files";
     return 1;
   }
+  // The C API headers, so `libs/native/CMakeLists.txt` can include
+  // `sere/api/sere_mod.h` whether sere drives the build or a developer runs
+  // cmake by hand.
+  copyCApiHeaders(compilerDirectory(), root);
   std::cout << "created Sere library '" << root.string() << "'\n";
   std::cout << "  edit:   src/lib.sere\n";
   std::cout << "  pack:   sere pack\n";

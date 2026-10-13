@@ -23,18 +23,140 @@
 #   gl.textures     Textures.
 #   gl.framebuffer  Framebuffer objects, renderbuffers, and pixel readback.
 #   gl.window       Windows, input, and timing.
+#   gl.transform    Matrices, cameras, and transforms for the `gl` binding.
 
-from gl.constants import *
-from gl.types import *
-from gl.info import *
-from gl.errors import *
-from gl.state import *
-from gl.immediate import *
-from gl.shaders import *
-from gl.buffers import *
-from gl.textures import *
-from gl.framebuffer import *
-from gl.window import *
+from gl.constants import GL_DEPTH_BUFFER_BIT, GL_STENCIL_BUFFER_BIT, GL_COLOR_BUFFER_BIT, GL_POINTS, GL_LINES, GL_LINE_LOOP
+from gl.constants import GL_LINE_STRIP, GL_TRIANGLES, GL_TRIANGLE_STRIP, GL_TRIANGLE_FAN, GL_QUADS, GL_QUAD_STRIP
+from gl.constants import GL_POLYGON, GL_LINES_ADJACENCY, GL_LINE_STRIP_ADJACENCY, GL_TRIANGLES_ADJACENCY, GL_TRIANGLE_STRIP_ADJACENCY, GL_PATCHES
+from gl.constants import GL_FALSE, GL_TRUE, GL_ZERO, GL_ONE, GL_NONE, GL_NO_ERROR
+from gl.constants import GL_INVALID_ENUM, GL_INVALID_VALUE, GL_INVALID_OPERATION, GL_STACK_OVERFLOW, GL_STACK_UNDERFLOW, GL_OUT_OF_MEMORY
+from gl.constants import GL_INVALID_FRAMEBUFFER_OPERATION, GL_TABLE_TOO_LARGE, GL_BLEND, GL_SRC_COLOR, GL_ONE_MINUS_SRC_COLOR, GL_SRC_ALPHA
+from gl.constants import GL_ONE_MINUS_SRC_ALPHA, GL_DST_ALPHA, GL_ONE_MINUS_DST_ALPHA, GL_DST_COLOR, GL_ONE_MINUS_DST_COLOR, GL_SRC_ALPHA_SATURATE
+from gl.constants import GL_CONSTANT_COLOR, GL_ONE_MINUS_CONSTANT_COLOR, GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA, GL_SRC1_COLOR, GL_ONE_MINUS_SRC1_COLOR
+from gl.constants import GL_SRC1_ALPHA, GL_ONE_MINUS_SRC1_ALPHA, GL_FUNC_ADD, GL_FUNC_SUBTRACT, GL_FUNC_REVERSE_SUBTRACT, GL_MIN
+from gl.constants import GL_MAX, GL_BLEND_COLOR, GL_BLEND_EQUATION, GL_BLEND_DST_RGB, GL_BLEND_SRC_RGB, GL_BLEND_DST_ALPHA
+from gl.constants import GL_BLEND_SRC_ALPHA, GL_BLEND_SRC, GL_BLEND_DST, GL_NEVER, GL_LESS, GL_EQUAL
+from gl.constants import GL_LEQUAL, GL_GREATER, GL_NOTEQUAL, GL_GEQUAL, GL_ALWAYS, GL_DEPTH_TEST
+from gl.constants import GL_DEPTH_FUNC, GL_DEPTH_RANGE, GL_DEPTH_WRITEMASK, GL_DEPTH_CLEAR_VALUE, GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT16
+from gl.constants import GL_DEPTH_COMPONENT24, GL_DEPTH_COMPONENT32, GL_DEPTH_COMPONENT32F, GL_DEPTH_STENCIL, GL_DEPTH24_STENCIL8, GL_DEPTH_STENCIL_ATTACHMENT
+from gl.constants import GL_STENCIL_TEST, GL_STENCIL_FUNC, GL_STENCIL_REF, GL_STENCIL_VALUE_MASK, GL_STENCIL_FAIL, GL_STENCIL_PASS_DEPTH_FAIL
+from gl.constants import GL_STENCIL_PASS_DEPTH_PASS, GL_STENCIL_WRITEMASK, GL_STENCIL_CLEAR_VALUE, GL_KEEP, GL_REPLACE, GL_INCR
+from gl.constants import GL_DECR, GL_INVERT, GL_INCR_WRAP, GL_DECR_WRAP, GL_FRONT, GL_BACK
+from gl.constants import GL_FRONT_AND_BACK, GL_CW, GL_CCW, GL_CULL_FACE, GL_CULL_FACE_MODE, GL_FRONT_FACE
+from gl.constants import GL_POLYGON_MODE, GL_POINT, GL_LINE, GL_FILL, GL_POLYGON_OFFSET_POINT, GL_POLYGON_OFFSET_LINE
+from gl.constants import GL_POLYGON_OFFSET_FILL, GL_POLYGON_OFFSET_FACTOR, GL_POLYGON_OFFSET_UNITS, GL_POLYGON_SMOOTH, GL_POLYGON_SMOOTH_HINT, GL_LINE_SMOOTH
+from gl.constants import GL_LINE_SMOOTH_HINT, GL_PERSPECTIVE_CORRECTION_HINT, GL_SMOOTH_LINE_WIDTH_RANGE, GL_LINE_WIDTH, GL_LINE_WIDTH_RANGE, GL_ALIASED_LINE_WIDTH_RANGE
+from gl.constants import GL_POINT_SIZE, GL_POINT_SIZE_RANGE, GL_POINT_SIZE_GRANULARITY, GL_PROGRAM_POINT_SIZE, GL_DITHER, GL_COLOR_LOGIC_OP
+from gl.constants import GL_MULTISAMPLE, GL_SAMPLE_ALPHA_TO_COVERAGE, GL_SAMPLE_ALPHA_TO_ONE, GL_SAMPLE_COVERAGE, GL_SAMPLES, GL_SAMPLE_COVERAGE_VALUE
+from gl.constants import GL_SAMPLE_COVERAGE_INVERT, GL_MAX_SAMPLES, GL_FRAMEBUFFER_SRGB, GL_SCISSOR_TEST, GL_SCISSOR_BOX, GL_VIEWPORT
+from gl.constants import GL_MAX_VIEWPORT_DIMS, GL_STEREO, GL_DOUBLEBUFFER, GL_BYTE, GL_UNSIGNED_BYTE, GL_SHORT
+from gl.constants import GL_UNSIGNED_SHORT, GL_INT, GL_UNSIGNED_INT, GL_FLOAT, GL_2_BYTES, GL_3_BYTES
+from gl.constants import GL_4_BYTES, GL_DOUBLE, GL_HALF_FLOAT, GL_FIXED, GL_INT_2_10_10_10_REV, GL_UNSIGNED_INT_2_10_10_10_REV
+from gl.constants import GL_UNSIGNED_INT_24_8, GL_UNSIGNED_SHORT_4_4_4_4, GL_UNSIGNED_SHORT_5_5_5_1, GL_UNSIGNED_SHORT_5_6_5, GL_UNSIGNED_INT_8_8_8_8, GL_UNSIGNED_INT_10_10_10_2
+from gl.constants import GL_CLEAR, GL_AND, GL_AND_REVERSE, GL_COPY, GL_AND_INVERTED, GL_NOOP
+from gl.constants import GL_XOR, GL_OR, GL_NOR, GL_EQUIV, GL_OR_REVERSE, GL_COPY_INVERTED
+from gl.constants import GL_OR_INVERTED, GL_NAND, GL_SET, GL_DONT_CARE, GL_FASTEST, GL_NICEST
+from gl.constants import GL_GENERATE_MIPMAP_HINT, GL_TEXTURE_COMPRESSION_HINT, GL_FRAGMENT_SHADER_DERIVATIVE_HINT, GL_VENDOR, GL_RENDERER, GL_VERSION
+from gl.constants import GL_EXTENSIONS, GL_SHADING_LANGUAGE_VERSION, GL_MAJOR_VERSION, GL_MINOR_VERSION, GL_NUM_EXTENSIONS, GL_ARRAY_BUFFER
+from gl.constants import GL_ELEMENT_ARRAY_BUFFER, GL_PIXEL_PACK_BUFFER, GL_PIXEL_UNPACK_BUFFER, GL_UNIFORM_BUFFER, GL_TEXTURE_BUFFER, GL_COPY_READ_BUFFER
+from gl.constants import GL_COPY_WRITE_BUFFER, GL_TRANSFORM_FEEDBACK_BUFFER, GL_DRAW_INDIRECT_BUFFER, GL_SHADER_STORAGE_BUFFER, GL_STREAM_DRAW, GL_STREAM_READ
+from gl.constants import GL_STREAM_COPY, GL_STATIC_DRAW, GL_STATIC_READ, GL_STATIC_COPY, GL_DYNAMIC_DRAW, GL_DYNAMIC_READ
+from gl.constants import GL_DYNAMIC_COPY, GL_BUFFER_SIZE, GL_BUFFER_USAGE, GL_BUFFER_BINDING, GL_MAP_READ_BIT, GL_MAP_WRITE_BIT
+from gl.constants import GL_MAP_INVALIDATE_RANGE_BIT, GL_MAP_INVALIDATE_BUFFER_BIT, GL_MAP_FLUSH_EXPLICIT_BIT, GL_MAP_UNSYNCHRONIZED_BIT, GL_VERTEX_ARRAY_BINDING, GL_CURRENT_VERTEX_ATTRIB
+from gl.constants import GL_FRAGMENT_SHADER, GL_VERTEX_SHADER, GL_GEOMETRY_SHADER, GL_TESS_EVALUATION_SHADER, GL_TESS_CONTROL_SHADER, GL_COMPUTE_SHADER
+from gl.constants import GL_COMPILE_STATUS, GL_LINK_STATUS, GL_VALIDATE_STATUS, GL_INFO_LOG_LENGTH, GL_SHADER_TYPE, GL_SHADER_SOURCE_LENGTH
+from gl.constants import GL_DELETE_STATUS, GL_CURRENT_PROGRAM, GL_ACTIVE_UNIFORMS, GL_ACTIVE_ATTRIBUTES, GL_ACTIVE_UNIFORM_BLOCKS, GL_MAX_VERTEX_ATTRIBS
+from gl.constants import GL_MAX_TEXTURE_IMAGE_UNITS, GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS, GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, GL_MAX_VERTEX_UNIFORM_COMPONENTS, GL_MAX_FRAGMENT_UNIFORM_COMPONENTS, GL_TEXTURE_1D
+from gl.constants import GL_TEXTURE_2D, GL_TEXTURE_3D, GL_TEXTURE_2D_MULTISAMPLE, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_CUBE_MAP_POSITIVE_X, GL_TEXTURE_CUBE_MAP_NEGATIVE_X
+from gl.constants import GL_TEXTURE_CUBE_MAP_POSITIVE_Y, GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, GL_TEXTURE_CUBE_MAP_POSITIVE_Z, GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, GL_TEXTURE0, GL_TEXTURE1
+from gl.constants import GL_TEXTURE2, GL_TEXTURE3, GL_TEXTURE4, GL_TEXTURE5, GL_TEXTURE6, GL_TEXTURE7
+from gl.constants import GL_ACTIVE_TEXTURE, GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER, GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T, GL_TEXTURE_WRAP_R
+from gl.constants import GL_TEXTURE_BASE_LEVEL, GL_TEXTURE_MAX_LEVEL, GL_TEXTURE_LOD_BIAS, GL_TEXTURE_BORDER_COLOR, GL_TEXTURE_COMPARE_MODE, GL_TEXTURE_COMPARE_FUNC
+from gl.constants import GL_TEXTURE_MAX_ANISOTROPY_EXT, GL_NEAREST, GL_LINEAR, GL_NEAREST_MIPMAP_NEAREST, GL_LINEAR_MIPMAP_NEAREST, GL_NEAREST_MIPMAP_LINEAR
+from gl.constants import GL_LINEAR_MIPMAP_LINEAR, GL_REPEAT, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_BORDER, GL_MIRRORED_REPEAT, GL_MIRROR_CLAMP_TO_EDGE
+from gl.constants import GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA, GL_RGB, GL_RGBA
+from gl.constants import GL_LUMINANCE, GL_LUMINANCE_ALPHA, GL_BGR, GL_BGRA, GL_RG, GL_RED_INTEGER
+from gl.constants import GL_RG_INTEGER, GL_RGB_INTEGER, GL_RGBA_INTEGER, GL_R8, GL_R16, GL_RG8
+from gl.constants import GL_RG16, GL_RGB8, GL_RGB16, GL_RGBA8, GL_RGBA16, GL_R16F
+from gl.constants import GL_R32F, GL_RG16F, GL_RG32F, GL_RGB16F, GL_RGB32F, GL_RGBA16F
+from gl.constants import GL_RGBA32F, GL_SRGB, GL_SRGB8, GL_SRGB_ALPHA, GL_SRGB8_ALPHA8, GL_MAX_TEXTURE_SIZE
+from gl.constants import GL_MAX_TEXTURE_UNITS, GL_MAX_CUBE_MAP_TEXTURE_SIZE, GL_MAX_3D_TEXTURE_SIZE, GL_MAX_ARRAY_TEXTURE_LAYERS, GL_PACK_ALIGNMENT, GL_UNPACK_ALIGNMENT
+from gl.constants import GL_PACK_ROW_LENGTH, GL_UNPACK_ROW_LENGTH, GL_PACK_SKIP_ROWS, GL_UNPACK_SKIP_ROWS, GL_PACK_SKIP_PIXELS, GL_UNPACK_SKIP_PIXELS
+from gl.constants import GL_PACK_SWAP_BYTES, GL_UNPACK_SWAP_BYTES, GL_FRAMEBUFFER, GL_READ_FRAMEBUFFER, GL_DRAW_FRAMEBUFFER, GL_RENDERBUFFER
+from gl.constants import GL_FRAMEBUFFER_BINDING, GL_DRAW_FRAMEBUFFER_BINDING, GL_READ_FRAMEBUFFER_BINDING, GL_RENDERBUFFER_BINDING, GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1
+from gl.constants import GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4, GL_COLOR_ATTACHMENT5, GL_COLOR_ATTACHMENT6, GL_COLOR_ATTACHMENT7
+from gl.constants import GL_COLOR_ATTACHMENT8, GL_COLOR_ATTACHMENT9, GL_COLOR_ATTACHMENT10, GL_COLOR_ATTACHMENT11, GL_COLOR_ATTACHMENT12, GL_COLOR_ATTACHMENT13
+from gl.constants import GL_COLOR_ATTACHMENT14, GL_COLOR_ATTACHMENT15, GL_DEPTH_ATTACHMENT, GL_STENCIL_ATTACHMENT, GL_MAX_COLOR_ATTACHMENTS, GL_FRAMEBUFFER_COMPLETE
+from gl.constants import GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT, GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT, GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER, GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER, GL_FRAMEBUFFER_UNSUPPORTED, GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE
+from gl.constants import GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS, GL_FRAMEBUFFER_UNDEFINED, GL_DRAW_BUFFER, GL_READ_BUFFER, GL_RENDERBUFFER_WIDTH, GL_RENDERBUFFER_HEIGHT
+from gl.constants import GL_RENDERBUFFER_INTERNAL_FORMAT, GL_RENDERBUFFER_SAMPLES, GL_STENCIL_INDEX, GL_STENCIL_INDEX8, GL_COLOR_CLEAR_VALUE, GL_COLOR_WRITEMASK
+from gl.constants import WINDOW_VISIBLE, WINDOW_RESIZABLE, WINDOW_DECORATED, WINDOW_MAXIMIZED, WINDOW_FLOATING, WINDOW_FOCUSED
+from gl.constants import WINDOW_FULLSCREEN, WINDOW_VSYNC, WINDOW_DEFAULT, CURSOR_NORMAL, CURSOR_HIDDEN, CURSOR_DISABLED
+from gl.constants import CURSOR_CAPTURED, MOUSE_LEFT, MOUSE_RIGHT, MOUSE_MIDDLE, MOUSE_X1, MOUSE_X2
+from gl.constants import MOD_SHIFT, MOD_CONTROL, MOD_ALT, MOD_SUPER, MOD_CAPS_LOCK, MOD_NUM_LOCK
+from gl.constants import KEY_BACKSPACE, KEY_TAB, KEY_ENTER, KEY_SHIFT, KEY_CONTROL, KEY_ALT
+from gl.constants import KEY_PAUSE, KEY_CAPS_LOCK, KEY_ESCAPE, KEY_SPACE, KEY_PAGE_UP, KEY_PAGE_DOWN
+from gl.constants import KEY_END, KEY_HOME, KEY_LEFT, KEY_UP, KEY_RIGHT, KEY_DOWN
+from gl.constants import KEY_PRINT_SCREEN, KEY_INSERT, KEY_DELETE, KEY_0, KEY_1, KEY_2
+from gl.constants import KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8
+from gl.constants import KEY_9, KEY_A, KEY_B, KEY_C, KEY_D, KEY_E
+from gl.constants import KEY_F, KEY_G, KEY_H, KEY_I, KEY_J, KEY_K
+from gl.constants import KEY_L, KEY_M, KEY_N, KEY_O, KEY_P, KEY_Q
+from gl.constants import KEY_R, KEY_S, KEY_T, KEY_U, KEY_V, KEY_W
+from gl.constants import KEY_X, KEY_Y, KEY_Z, KEY_LEFT_SUPER, KEY_RIGHT_SUPER, KEY_NUMPAD0
+from gl.constants import KEY_NUMPAD1, KEY_NUMPAD2, KEY_NUMPAD3, KEY_NUMPAD4, KEY_NUMPAD5, KEY_NUMPAD6
+from gl.constants import KEY_NUMPAD7, KEY_NUMPAD8, KEY_NUMPAD9, KEY_MULTIPLY, KEY_ADD, KEY_SEPARATOR
+from gl.constants import KEY_SUBTRACT, KEY_DECIMAL, KEY_DIVIDE, KEY_F1, KEY_F2, KEY_F3
+from gl.constants import KEY_F4, KEY_F5, KEY_F6, KEY_F7, KEY_F8, KEY_F9
+from gl.constants import KEY_F10, KEY_F11, KEY_F12, KEY_NUM_LOCK, KEY_SCROLL_LOCK, KEY_LEFT_SHIFT
+from gl.constants import KEY_RIGHT_SHIFT, KEY_LEFT_CONTROL, KEY_RIGHT_CONTROL, KEY_LEFT_ALT, KEY_RIGHT_ALT, KEY_SEMICOLON
+from gl.constants import KEY_EQUAL, KEY_COMMA, KEY_MINUS, KEY_PERIOD, KEY_SLASH, KEY_GRAVE
+from gl.constants import KEY_LEFT_BRACKET, KEY_BACKSLASH, KEY_RIGHT_BRACKET, KEY_APOSTROPHE
+from gl.types import GLenum, GLbitfield, GLuint, GLint, GLsizei, GLfloat
+from gl.types import GLintptr, GLhandle, VertexData, IndexData, PixelData, PixelRow
+from gl.info import available, get_string, get_integer, get_integers, get_float, get_floats
+from gl.info import screen_width, screen_height, vendor, renderer, version, shading_language_version
+from gl.info import extensions, supports, major_version, minor_version, max_texture_size, floats
+from gl.info import integers, line_width_range, point_size_range, max_viewport_dims, screen_size
+from gl.errors import take_error, error_name, hex_code, error, require, clear_all
+from gl.errors import pending
+from gl.state import clear_color, clear, clear_depth, clear_stencil, viewport, scissor
+from gl.state import viewport_whole, enable, disable, is_enabled, set_enabled, blend_func
+from gl.state import blend_func_separate, blend_equation, blend_equation_separate, blend_color, alpha_blend, additive_blend
+from gl.state import depth_func, depth_mask, depth_range, stencil_func, stencil_op, stencil_mask
+from gl.state import color_mask, cull_face, front_face, polygon_mode, polygon_offset, line_width
+from gl.state import point_size, logic_op, pixel_store, hint, draw_buffer, read_buffer
+from gl.state import sample_coverage, finish, flush, default_depth_state, wireframe
+from gl.immediate import begin, end, vertex2f, vertex3f, color3f, color4f
+from gl.immediate import texcoord2f, normal3f, vertex, color, rect, line
+from gl.immediate import triangle, circle
+from gl.shaders import create_shader, shader_source, compile_shader, shader_log, delete_shader, create_program
+from gl.shaders import attach_shader, detach_shader, link_program, program_log, use_program, delete_program
+from gl.shaders import uniform_location, attrib_location, bind_attrib, validate_program, uniform1f, uniform2f
+from gl.shaders import uniform3f, uniform4f, uniform1i, uniform2i, uniform3i, uniform4i
+from gl.shaders import uniform_vec, uniform_mat3, uniform_mat4, Shader, vertex_shader, fragment_shader
+from gl.shaders import Program, build
+from gl.buffers import gen_buffer, delete_buffer, bind_buffer, buffer_data_f64, buffer_data_i32, buffer_data_bytes
+from gl.buffers import buffer_sub_f64, gen_vao, delete_vao, bind_vao, enable_attrib, disable_attrib
+from gl.buffers import attrib_pointer, float_attribute, uint_attribute, ubyte_attribute, draw_arrays, draw_elements
+from gl.buffers import draw_arrays_all, Buffer, VertexArray
+from gl.textures import gen_texture, delete_texture, bind_texture, active_texture, tex_param, tex_image2d
+from gl.textures import tex_storage, tex_sub_image2d, generate_mipmap, texture_unit, bind_unit, smooth_filter
+from gl.textures import nearest_filter, repeat_wrap, clamp_wrap, rgba_pixels, Texture
+from gl.framebuffer import gen_framebuffer, delete_framebuffer, bind_framebuffer, framebuffer_texture2d, check_framebuffer, gen_renderbuffer
+from gl.framebuffer import delete_renderbuffer, bind_renderbuffer, renderbuffer_storage, framebuffer_renderbuffer, blit_framebuffer, read_pixels
+from gl.framebuffer import framebuffer_status_name, is_complete, pixel_count, pixel_at, Framebuffer, Renderbuffer
+from gl.framebuffer import read_rgba, read_depth
+from gl.window import Window, is_key_down, cursor_mode_name, has_modifier
+from gl.transform import DEGREES_TO_RADIANS, RADIANS_TO_DEGREES, to_radians, to_degrees, aspect_ratio, aspect_of_window
+from gl.transform import perspective, perspective_deg, perspective_window, ortho, ortho_2d, ortho_centered
+from gl.transform import look_at, look_at_y_up, look_at_values, look_at_dir, compose, model_view
+from gl.transform import model_view_projection, matrix4_data, matrix3_data, normal_matrix, set_matrix4, set_matrix4_at
+from gl.transform import set_matrix3, set_matrix3_at, set_normal_matrix, set_vec2, set_vec3, set_vec4
+from gl.transform import Camera, set_mvp, Transform, transform, sprite_matrix, project_ndc
+from gl.transform import unproject, screen_from_ndc, ndc_from_screen, project_to_screen, linear_depth, ray_from_screen
+from gl.transform import points_to_data, vectors4_to_data, fan_indices, quad_vertices, apply_viewport, apply_frame
+from gl.transform import vec2, vec3, vec4, make_camera, orbit_camera
 
 __exports__ = [GL_DEPTH_BUFFER_BIT]
 __exports__ += [GL_STENCIL_BUFFER_BIT, GL_COLOR_BUFFER_BIT, GL_POINTS, GL_LINES, GL_LINE_LOOP, GL_LINE_STRIP]
@@ -155,4 +277,13 @@ __exports__ += [rgba_pixels, Texture, gen_framebuffer, delete_framebuffer, bind_
 __exports__ += [check_framebuffer, gen_renderbuffer, delete_renderbuffer, bind_renderbuffer, renderbuffer_storage, framebuffer_renderbuffer]
 __exports__ += [blit_framebuffer, read_pixels, framebuffer_status_name, is_complete, pixel_count, pixel_at]
 __exports__ += [Framebuffer, Renderbuffer, read_rgba, read_depth, Window, is_key_down]
-__exports__ += [cursor_mode_name, has_modifier]
+__exports__ += [cursor_mode_name, has_modifier, DEGREES_TO_RADIANS, RADIANS_TO_DEGREES, to_radians, to_degrees]
+__exports__ += [aspect_ratio, aspect_of_window, perspective, perspective_deg, perspective_window, ortho]
+__exports__ += [ortho_2d, ortho_centered, look_at, look_at_y_up, look_at_values, look_at_dir]
+__exports__ += [compose, model_view, model_view_projection, matrix4_data, matrix3_data, normal_matrix]
+__exports__ += [set_matrix4, set_matrix4_at, set_matrix3, set_matrix3_at, set_normal_matrix, set_vec2]
+__exports__ += [set_vec3, set_vec4, Camera, set_mvp, Transform, transform]
+__exports__ += [sprite_matrix, project_ndc, unproject, screen_from_ndc, ndc_from_screen, project_to_screen]
+__exports__ += [linear_depth, ray_from_screen, points_to_data, vectors4_to_data, fan_indices, quad_vertices]
+__exports__ += [apply_viewport, apply_frame, vec2, vec3, vec4, make_camera]
+__exports__ += [orbit_camera]

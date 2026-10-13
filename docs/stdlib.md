@@ -39,7 +39,7 @@ calling the existing intrinsic rather than reimplementing I/O in Sere.
 | `inspect` | Runtime inspection helpers |
 | `html_lang` | Indent-body HTML macro support |
 | `windows` | Win32 primitives: console, processes, synchronisation, native windows |
-| `gl` | OpenGL: windows and input, state, immediate mode, shaders, buffers, textures, framebuffers |
+| `gl` | OpenGL: windows and input, state, immediate mode, shaders, buffers, textures, framebuffers, 3D math |
 | `requests` | HTTP client (`get` / `post` / `put` / `delete`) |
 | `socket` | Low-level TCP/UDP sockets, address resolution, blocking modes, and integer options |
 | `wsgi` | Blocking HTTP server; subclass `Handler` and implement `handle` |
@@ -58,10 +58,19 @@ The string must match a symbol in `sere_rt` (or a library passed with `--link`).
 `gl` is a folder package that binds every `sere_gl_*` entry point the runtime
 exposes (184 of them), splitting them by area: `gl.constants`, `gl.types`,
 `gl.info`, `gl.errors`, `gl.state`, `gl.immediate`, `gl.shaders`, `gl.buffers`,
-`gl.textures`, `gl.framebuffer`, and `gl.window`. A barrel re-exports the lot, so
-`import gl` is the only import a program needs. See
-[`stdlib/gl/README.md`](../stdlib/gl/README.md) for the conventions and a
-complete program.
+`gl.textures`, `gl.framebuffer`, `gl.window`, and `gl.transform`. A barrel
+re-exports the lot, so `import gl` is the only import a program needs. See
+[`stdlib/gl/README.md`](../stdlib/gl/README.md) for the conventions, and
+[docs/gl.md](gl.md) for the full guide.
+
+`gl.transform` is the math layer that ties the binding to
+[`matrix`](../stdlib/matrix.sere) and [`vec`](../stdlib/vec.sere): projections,
+a `Camera`, a composable `Transform`, the matrix uniform uploads, screen-space
+projection, and picking rays. It is pure Sere, needs no context, and is where the
+row-major `matrix` storage is translated into the column-major block a `mat4`
+uniform expects, so a `matrix.Mat4` is uploaded with
+`gl.set_matrix4(program, name, value)` rather than `program.set_mat4` on
+`value.data`.
 
 ```sere
 import gl

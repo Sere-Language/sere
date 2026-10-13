@@ -18,7 +18,7 @@ void printUsage(std::string& error) {
       "  init <name>         Create a Sere project (src, libs, bin, venv)\n"
       "  init-lib <name>     Create a drop-in library project (src, libs, dist)\n"
       "  build               Compile the project; also accepts the compiler options below\n"
-      "  pack [file.sere]    Build a single-file .slib you can drop into libs/\n"
+      "  pack [file.sere]    Build a .slib you can drop into libs/ (--dir for a folder)\n"
       "  slib-info <f.slib>  Describe a packed library: modules, native content, entry\n"
       "  slib-verify <f.slib> Check a packed library's hashes, paths, and members\n"
       "  run [args...]       Build and run; everything after `run` goes to the program\n"
@@ -28,6 +28,7 @@ void printUsage(std::string& error) {
       "  publish             Pack this library project and upload it to the registry\n"
       "  add <name>[@ver]    Install a registry package into ./libs\n"
       "  add <path>          Vendor a local library folder, .slib, or .sere into ./libs\n"
+      "  add --local <path>  Same, for a path that looks like a package name\n"
       "  refresh-bin         Copy this compiler into ./bin (stdlib and runtime too)\n"
       "  update              Install the latest GitHub portable release or refreshed asset\n"
       "  update-local        Copy this compiler into %LOCALAPPDATA%\\Programs\\Sere if it differs, "
@@ -67,6 +68,8 @@ void printUsage(std::string& error) {
       "  --publish           Same as publish\n"
       "  --token <token>     Registry token for this command (sere login, publish)\n"
       "  --force             With add: replace a package already in libs/\n"
+      "  --local             With add: read the argument as a path, not a package name\n"
+      "  --dir               With pack: write dist/<name>/ (a folder package), not a .slib\n"
       "  --dry-run           With publish or add: describe the work, change nothing\n"
       "  --link <lib>        Link an extra native C/C++ library into the program\n"
       "  --color=<mode>      Color diagnostics: auto, always, never\n"
@@ -345,6 +348,27 @@ bool parseCommandLine(int argc, char** argv, CompilerOptions& options, std::stri
     }
     if (argument == "--force") {
       options.force = true;
+      continue;
+    }
+    if (argument == "--local") {
+      options.addLocal = true;
+      continue;
+    }
+    if (argument == "--dir") {
+      options.packDirectory = true;
+      continue;
+    }
+    if (argument.starts_with("--format=")) {
+      const std::string format = std::string(argument.substr(9));
+      if (format == "dir" || format == "folder" || format == "directory") {
+        options.packDirectory = true;
+        continue;
+      }
+      if (format != "slib" && format != "archive") {
+        error = "unknown pack format '" + format + "'; use --format=slib or --format=dir";
+        return false;
+      }
+      options.packDirectory = false;
       continue;
     }
     if (argument == "--link") {

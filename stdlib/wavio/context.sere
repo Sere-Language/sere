@@ -1,0 +1,60 @@
+"""Native output engines and device snapshots. All control calls use one application thread."""
+from wavio._native import _context_backend, _context_channels, _context_clock, _context_close, _context_create, _context_rate, _context_render, _device_count, _device_default, _device_name
+from wavio.buffer import AudioBuffer
+
+class AudioContext:
+    """An output engine with a worker decoder and native mixing callback.
+
+    Sounds, buses, and recorders retain the native context after close().
+    Close all children to release its device. No automatic GC cleanup is promised.
+    """
+    handle: Ptr[i8]
+
+    def __init__(self, sample_rate: i32 = 48000, channels: i32 = 2, mode: i32 = 0, device: i32 = -1):
+        """Open hardware(0), explicit null device(1), or offline engine(2).
+
+        Device -1 selects the default; other indices select an output snapshot entry.
+        Hardware initialization never silently falls back to a null device.
+        """
+        self.handle = _context_create(sample_rate, channels, mode, device)
+
+    def is_open(self) -> bool:
+        """Return whether context creation succeeded."""
+        return self.handle != None
+
+    def close(self) -> void:
+        """Release this reference; children keep their engine alive."""
+        _context_close(self.handle)
+        self.handle = None
+
+    def sample_rate(self) -> i32:
+        """Return negotiated engine sample rate, not physical device clock rate."""
+        return _context_rate(self.handle)
+
+    def channels(self) -> i32:
+        """Return negotiated engine channel count."""
+        return _context_channels(self.handle)
+
+    def backend(self) -> i32:
+        """Return miniaudio backend identifier; -1 when closed."""
+        return _context_backend(self.handle)
+
+    def clock(self) -> i64:
+        """Return mixed engine frames; this is not a hardware presentation timestamp."""
+        return _context_clock(self.handle)
+
+    def render(self, buffer: AudioBuffer) -> i32:
+        """Render an offline engine into matching PCM storage; hardware engines reject this."""
+        return _context_render(self.handle, buffer.handle)
+
+    def device_count(self, capture: i32 = 0) -> i32:
+        """Return snapshot output count (0), input count (1), or negative status."""
+        return _device_count(self.handle, capture)
+
+    def device_name(self, index: i32, capture: i32 = 0) -> str:
+        """Return an owned copy of a device name; invalid index returns empty text."""
+        return _device_name(self.handle, capture, index)
+
+    def device_is_default(self, index: i32, capture: i32 = 0) -> bool:
+        """Return whether the snapshot marks this device as the default."""
+        return _device_default(self.handle, capture, index) != 0

@@ -836,7 +836,10 @@ void setUpInstalledLibrary(const ProjectManifest& manifest,
     return;
   }
   const std::vector<std::filesystem::path> imported{entry};
-  prepareImportedLibraryNative(imported);
+  if (!prepareImportedLibraryNative(imported)) {
+    std::cout << "  note:   its native code did not build; the error above is repeated at "
+                 "build time\n";
+  }
   const std::filesystem::path bin = manifest.root / "bin";
   for (const std::filesystem::path& executable : packageExecutables(imported)) {
     std::error_code error;

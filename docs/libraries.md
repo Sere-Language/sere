@@ -48,7 +48,7 @@ def add(left: i32, right: i32) -> i32:
 
 Consumers then write:
 
-```sere
+```sere ignore
 import mathlib
 
 def main() -> i32:

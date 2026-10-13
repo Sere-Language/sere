@@ -1,0 +1,28 @@
+"""Stateful native offline filters. Process does not allocate; control calls are serialized."""
+from wavio._native import _filter_close, _filter_create, _filter_process, _filter_reset
+from wavio.buffer import AudioBuffer
+
+class Filter:
+    """A second-order Butterworth low-pass or high-pass with per-channel history."""
+    handle: Ptr[i8]
+
+    def __init__(self, cutoff: f64, channels: i32 = 2, sample_rate: i32 = 48000, highpass: i32 = 0):
+        """Allocate state; cutoff must be strictly between zero and Nyquist."""
+        self.handle = _filter_create(highpass, channels, sample_rate, cutoff)
+
+    def is_open(self) -> bool:
+        """Return whether the configuration and allocation succeeded."""
+        return self.handle != None
+
+    def close(self) -> void:
+        """Release filter state; repeated closes on this object are harmless."""
+        _filter_close(self.handle)
+        self.handle = None
+
+    def process(self, buffer: AudioBuffer) -> i32:
+        """Process matching PCM in place, preserving history; return zero/error."""
+        return _filter_process(self.handle, buffer.handle)
+
+    def reset(self) -> i32:
+        """Clear signal history without changing coefficients or allocating."""
+        return _filter_reset(self.handle)

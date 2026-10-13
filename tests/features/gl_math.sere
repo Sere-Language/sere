@@ -1,0 +1,195 @@
+# The gl math layer: projections, cameras, transforms, the upload layout, and
+# the screen-space helpers.
+#
+# No window and no OpenGL context are created, so this runs on any host and in
+# any order. What it checks instead is the arithmetic and the one convention
+# that is easy to get wrong: `matrix` is row-major while a `mat4` uniform is
+# column-major, so every upload transposes once. `matrix4_data` is that
+# transpose, and the tests below pin it down.
+
+import gl
+import matrix
+
+
+def near(left: f64, right: f64, tolerance: f64) -> bool:
+    """Return whether two numbers are within a tolerance of each other."""
+    difference: f64 = left - right
+    if difference < 0.0:
+        difference = -difference
+    return difference <= tolerance
+
+
+def near3(left: list[f64], x: f64, y: f64, z: f64) -> bool:
+    """Return whether a three-element list matches three numbers."""
+    return near(left[0], x, 1.0e-6) and near(left[1], y, 1.0e-6) and near(left[2], z, 1.0e-6)
+
+
+def main() -> i32:
+    # -- angles and aspect -------------------------------------------------
+
+    assert near(gl.to_radians(180.0), 3.141592653589793, 1.0e-12)
+    assert near(gl.to_degrees(3.141592653589793), 180.0, 1.0e-12)
+    assert near(gl.DEGREES_TO_RADIANS, 0.017453292519943295, 1.0e-18)
+    assert near(gl.RADIANS_TO_DEGREES, 57.29577951308232, 1.0e-12)
+    assert near(gl.aspect_ratio(1600, 900), 1.7777777777777777, 1.0e-12)
+    assert near(gl.aspect_ratio(0, 0), 1.0, 1.0e-12)
+
+    # -- projections -------------------------------------------------------
+
+    # A 90 degree field of view with a square aspect makes f = 1, which fixes
+    # every other entry of the matrix.
+    projection: matrix.Mat4 = gl.perspective_deg(90.0, 1.0, 1.0, 100.0)
+    assert near(projection.data[0], 1.0, 1.0e-12)
+    assert near(projection.data[5], 1.0, 1.0e-12)
+    assert near(projection.data[10], -101.0 / 99.0, 1.0e-9)
+    assert near(projection.data[11], -200.0 / 99.0, 1.0e-9)
+    assert near(projection.data[14], -1.0, 1.0e-12)
+
+    # The upload block is the transpose: the -1 that divides w has to land in
+    # the fourth column of the block, which is index 11 there, not index 14.
+    block: list[f64] = gl.matrix4_data(projection)
+    assert near(block[11], -1.0, 1.0e-12)
+    assert near(block[14], -200.0 / 99.0, 1.0e-9)
+    assert near(block[15], 0.0, 1.0e-12)
+
+    # An orthographic pixel projection round-trips through screen space.
+    pixels: matrix.Mat4 = gl.ortho_2d(200, 100)
+    screen: list[f64] = gl.project_to_screen(pixels, gl.vec3(40.0, 55.0, 0.0), 200, 100)
+    assert near(screen[0], 40.0, 1.0e-6)
+    assert near(screen[1], 55.0, 1.0e-6)
+
+    # -- views -------------------------------------------------------------
+
+    view: matrix.Mat4 = gl.look_at_y_up(gl.vec3(0.0, 0.0, 5.0), gl.vec3(0.0, 0.0, 0.0))
+    assert near(view.data[11], -5.0, 1.0e-12)
+    assert near(view.transform_point(0.0, 0.0, 0.0)[2], -5.0, 1.0e-12)
+    assert near(gl.matrix4_data(view)[14], -5.0, 1.0e-12)
+
+    # -- camera ------------------------------------------------------------
+
+    camera: gl.Camera = gl.make_camera(gl.vec3(0.0, 0.0, 5.0), gl.vec3(0.0, 0.0, 0.0))
+    camera.set_aspect(200, 100)
+    assert near(camera.aspect, 2.0, 1.0e-12)
+    assert near3(camera.forward().to_list(), 0.0, 0.0, -1.0)
+    assert near3(camera.right().to_list(), 1.0, 0.0, 0.0)
+    assert near3(camera.true_up().to_list(), 0.0, 1.0, 0.0)
+
+    # The origin sits on the camera's forward axis, so it keeps its screen
+    # position and lands just inside the far plane's depth range.
+    centre: list[f64] = camera.view_projection().transform_point(0.0, 0.0, 0.0)
+    assert near(centre[0], 0.0, 1.0e-12)
+    assert near(centre[1], 0.0, 1.0e-12)
+    assert near(centre[2], 0.960196, 1.0e-6)
+
+    # Orbiting is absolute, so the same angles always give the same place.
+    orbit: gl.Camera = gl.orbit_camera(gl.vec3(0.0, 0.0, 0.0), 0.0, 0.0, 5.0)
+    assert near3(orbit.position.to_list(), 0.0, 0.0, 5.0)
+    orbit.orbit(90.0, 0.0, 5.0)
+    assert near3(orbit.position.to_list(), 5.0, 0.0, 0.0)
+    orbit.orbit(0.0, 90.0, 5.0)
+    assert near3(orbit.position.to_list(), 0.0, 5.0, 0.0)
+    orbit.orbit(45.0, 35.264389682754654, 5.0)
+    assert near3(orbit.position.to_list(), 2.886751, 2.886751, 2.886751)
+
+    # -- picking -----------------------------------------------------------
+
+    # A ray through the middle of the viewport starts on the near plane and
+    # points straight down the camera's forward axis.
+    ray: list[f64] = camera.ray(100.0, 50.0, 200, 100)
+    assert near(ray[0], 0.0, 1.0e-6)
+    assert near(ray[1], 0.0, 1.0e-6)
+    assert near(ray[2], 4.9, 1.0e-6)
+    assert near(ray[3], 0.0, 1.0e-6)
+    assert near(ray[4], 0.0, 1.0e-6)
+    assert near(ray[5], -1.0, 1.0e-6)
+
+    assert near(gl.ndc_from_screen(100.0, 50.0, 200, 100)[0], 0.0, 1.0e-12)
+    assert near(gl.ndc_from_screen(0.0, 0.0, 200, 100)[0], -1.0, 1.0e-12)
+    assert near(gl.ndc_from_screen(0.0, 0.0, 200, 100)[1], 1.0, 1.0e-12)
+    assert near(gl.screen_from_ndc(0.0, 0.0, 200, 100)[0], 100.0, 1.0e-12)
+    assert near(gl.screen_from_ndc(0.0, 0.0, 200, 100)[1], 50.0, 1.0e-12)
+    assert near(gl.linear_depth(1.0, 0.1, 1000.0), 1000.0, 1.0e-9)
+    assert near(gl.linear_depth(-1.0, 0.1, 1000.0), 0.1, 1.0e-12)
+    assert near(gl.linear_depth(0.0, 1.0, 101.0), 1.9803921568627452, 1.0e-9)
+
+    # -- transforms --------------------------------------------------------
+
+    model: gl.Transform = gl.transform(1.0, 0.0, 0.0)
+    model.uniform_scale(2.0)
+    assert near3(model.matrix().transform_point(0.0, 0.0, 0.0), 1.0, 0.0, 0.0)
+    assert near3(model.matrix().transform_point(1.0, 1.0, 1.0), 3.0, 2.0, 2.0)
+    # A uniform scale has an inverse transpose of 1/s on each axis.
+    assert near(model.normal_matrix().data[0], 0.5, 1.0e-12)
+    assert near(model.normal_matrix().data[4], 0.5, 1.0e-12)
+    assert near(model.normal_matrix().data[8], 0.5, 1.0e-12)
+
+    # Uneven scale is where the inverse transpose stops looking like the model.
+    model.scaling = gl.vec3(2.0, 1.0, 1.0)
+    assert near(model.normal_matrix().data[0], 0.5, 1.0e-12)
+    assert near(model.normal_matrix().data[4], 1.0, 1.0e-12)
+    assert near(model.normal_matrix().data[8], 1.0, 1.0e-12)
+    assert near(model.matrix().translation()[0], 1.0, 1.0e-12)
+
+    # Composition is left to right, so the last matrix applies first.
+    moved: matrix.Mat4 = matrix.translate(1.0, 0.0, 0.0)
+    scaled: matrix.Mat4 = matrix.scale(2.0, 2.0, 2.0)
+    assert near3(gl.compose([moved, scaled]).transform_point(0.0, 0.0, 0.0), 1.0, 0.0, 0.0)
+    assert near3(gl.compose([scaled, moved]).transform_point(0.0, 0.0, 0.0), 2.0, 0.0, 0.0)
+    assert near3(gl.model_view(moved, matrix.identity()).transform_point(0.0, 0.0, 0.0), 1.0, 0.0, 0.0)
+
+    sprite: matrix.Mat4 = gl.sprite_matrix(10.0, 20.0, 30.0, 40.0)
+    assert near3(sprite.transform_point(0.0, 0.0, 0.0), 10.0, 20.0, 0.0)
+    assert near3(sprite.transform_point(1.0, 1.0, 0.0), 40.0, 60.0, 0.0)
+
+    # -- matrix helpers the gl layer builds on -----------------------------
+
+    # An axis-angle rotation agrees with the dedicated axis rotations, and a
+    # zero axis is the identity rather than a division by zero.
+    quarter: matrix.Mat4 = matrix.rotate_axis([0.0, 1.0, 0.0], gl.to_radians(90.0))
+    assert near3(quarter.transform_dir(1.0, 0.0, 0.0), 0.0, 0.0, -1.0)
+    assert near3(matrix.rotate_axis([0.0, 0.0, 0.0], 1.0).transform_point(1.0, 2.0, 3.0), 1.0, 2.0, 3.0)
+    assert near3(matrix.rotate_z(gl.to_radians(90.0)).transform_dir(1.0, 0.0, 0.0), 0.0, 1.0, 0.0)
+
+    # A 3x3 inverse round-trips, which is what the normal matrix relies on.
+    basis: matrix.Mat3 = matrix.Mat3([2.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 8.0])
+    product: matrix.Mat3 = basis.inverse().mul(basis)
+    assert near(product.data[0], 1.0, 1.0e-12)
+    assert near(product.data[4], 1.0, 1.0e-12)
+    assert near(product.data[8], 1.0, 1.0e-12)
+    assert near(product.data[1], 0.0, 1.0e-12)
+    assert near(matrix.inverse3([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])[0], 0.0, 1.0e-12)
+
+    upper: matrix.Mat3 = model.matrix().upper3()
+    assert near(upper.data[0], 2.0, 1.0e-12)
+    assert near(upper.data[4], 1.0, 1.0e-12)
+
+    # -- vertex data -------------------------------------------------------
+
+    assert len(gl.fan_indices(4)) == 6
+    assert gl.fan_indices(4)[0] == 0
+    assert gl.fan_indices(4)[1] == 1
+    assert gl.fan_indices(4)[2] == 2
+    assert gl.fan_indices(4)[3] == 0
+    assert gl.fan_indices(4)[4] == 2
+    assert gl.fan_indices(4)[5] == 3
+    assert len(gl.fan_indices(2)) == 0
+
+    quad: list[f64] = gl.quad_vertices(0.0, 0.0, 10.0, 10.0)
+    assert len(quad) == 12
+    assert near(quad[0], 0.0, 1.0e-12)
+    assert near(quad[4], 10.0, 1.0e-12)
+    assert near(quad[5], 10.0, 1.0e-12)
+    assert near(quad[11], 10.0, 1.0e-12)
+
+    points: list[f64] = gl.points_to_data([gl.vec3(1.0, 2.0, 3.0), gl.vec3(4.0, 5.0, 6.0)])
+    assert len(points) == 6
+    assert near(points[0], 1.0, 1.0e-12)
+    assert near(points[5], 6.0, 1.0e-12)
+
+    colours: list[f64] = gl.vectors4_to_data([gl.vec4(1.0, 0.0, 0.0, 1.0), gl.vec4(0.0, 1.0, 0.0, 1.0)])
+    assert len(colours) == 8
+    assert near(colours[1], 0.0, 1.0e-12)
+    assert near(colours[5], 1.0, 1.0e-12)
+
+    print("gl math ok", projection.data[10], camera.position.to_list())
+    return 0

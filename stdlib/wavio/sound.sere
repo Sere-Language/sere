@@ -1,0 +1,110 @@
+"""Independent playback voices, bounded file streaming, and submix buses."""
+from wavio._native import _bus_close, _bus_create, _bus_volume, _sound_close, _sound_fade, _sound_length, _sound_loop, _sound_open, _sound_pan, _sound_pause, _sound_pitch, _sound_play, _sound_playing, _sound_position, _sound_route, _sound_schedule, _sound_seek, _sound_stop, _sound_volume
+from wavio.context import AudioContext
+
+class Bus:
+    """A native submix with linear gain. Routed voices retain its native lifetime."""
+    handle: Ptr[i8]
+
+    def __init__(self, context: AudioContext):
+        """Create a bus connected to the context's master output."""
+        self.handle = _bus_create(context.handle)
+
+    def is_open(self) -> bool:
+        """Return whether bus initialization succeeded."""
+        return self.handle != None
+
+    def close(self) -> void:
+        """Release ownership; routed sounds keep the bus alive until closed or rerouted."""
+        _bus_close(self.handle)
+        self.handle = None
+
+    def set_volume(self, gain: f64) -> i32:
+        """Set linear gain 0..16; zero mutes. Return zero or negative status."""
+        return _bus_volume(self.handle, gain)
+
+class Sound:
+    """An independent playback instance referencing the engine's shared decoded cache.
+
+    Construct multiple Sound objects for overlapping playback of the same file.
+    Streaming voices decode fixed-size pages on the resource manager worker.
+    Control methods return zero on success or negative native status.
+    """
+    handle: Ptr[i8]
+
+    def __init__(self, context: AudioContext, path: str, stream: i32 = 0):
+        """Load/decode a file before returning; stream=1 instead uses bounded streaming."""
+        self.handle = _sound_open(context.handle, path, stream)
+
+    def is_open(self) -> bool:
+        """Return whether loading succeeded; last_error() describes failure."""
+        return self.handle != None
+
+    def close(self) -> void:
+        """Detach the voice, wait for native processing, and release its resources."""
+        _sound_close(self.handle)
+        self.handle = None
+
+    def play(self) -> i32:
+        """Start or resume at the current cursor; use stop then play to restart."""
+        return _sound_play(self.handle)
+
+    def pause(self) -> i32:
+        """Stop processing without resetting the playback position."""
+        return _sound_pause(self.handle)
+
+    def resume(self) -> i32:
+        """Resume playback at the current position."""
+        return _sound_play(self.handle)
+
+    def stop(self) -> i32:
+        """Pause and request a seek to frame zero."""
+        return _sound_stop(self.handle)
+
+    def seek(self, frame: i64) -> i32:
+        """Request a source-frame seek, applied by the native engine/stream worker."""
+        return _sound_seek(self.handle, frame)
+
+    def is_playing(self) -> bool:
+        """Return whether the native voice is currently marked playing."""
+        return _sound_playing(self.handle) != 0
+
+    def position(self) -> i64:
+        """Return current source frame, or a negative status while unavailable."""
+        return _sound_position(self.handle)
+
+    def frames(self) -> i64:
+        """Return source frame length, or a negative status while unavailable."""
+        return _sound_length(self.handle)
+
+    def set_volume(self, gain: f64) -> i32:
+        """Set smoothed linear gain 0..16."""
+        return _sound_volume(self.handle, gain)
+
+    def set_pan(self, pan: f64) -> i32:
+        """Set balance from -1 (left) to +1 (right)."""
+        return _sound_pan(self.handle, pan)
+
+    def set_pitch(self, ratio: f64) -> i32:
+        """Set resampling ratio 0.125..8; changes both pitch and duration."""
+        return _sound_pitch(self.handle, ratio)
+
+    def set_looping(self, enabled: i32 = 1) -> i32:
+        """Enable (nonzero) or disable (zero) whole-file looping."""
+        return _sound_loop(self.handle, enabled)
+
+    def fade(self, start_gain: f64, end_gain: f64, frames: i64) -> i32:
+        """Apply a native gain ramp over engine frames; gains must lie in 0..16."""
+        return _sound_fade(self.handle, start_gain, end_gain, frames)
+
+    def schedule(self, frame: i64) -> i32:
+        """Start at an absolute engine-clock frame; streaming readiness may delay output."""
+        return _sound_schedule(self.handle, frame)
+
+    def set_position(self, x: f64, y: f64, z: f64) -> i32:
+        """Enable native 3D attenuation/panning relative to the default origin listener."""
+        return _sound_position3d(self.handle, x, y, z)
+
+    def route(self, bus: Bus) -> i32:
+        """Route exclusively to a bus in the same context; reject cross-context routing."""
+        return _sound_route(self.handle, bus.handle)

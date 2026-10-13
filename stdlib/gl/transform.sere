@@ -1,0 +1,671 @@
+# Matrices, cameras, and transforms for the `gl` binding.
+#
+# This is the module the `gl` package uses to do 3D and 2D math: projections,
+# view matrices, cameras, model transforms, the uniform uploads that feed them to
+# a shader, and the screen-space helpers that point at what you just drew.
+#
+# It is the bridge between `matrix` (packed row-major math, column vectors,
+# `p' = M * p`) and OpenGL's uniform upload, which reads a flat block of 32-bit
+# floats as **column-major**. Those are the same transform stored in opposite
+# orders, so every upload here transposes once and hands the driver the block it
+# expects:
+#
+#     camera: gl.Camera = gl.Camera(gl.vec3(0.0, 2.0, 6.0), gl.vec3(0.0, 0.0, 0.0))
+#     camera.set_aspect(gl.aspect_of_window(window))
+#
+#     model: gl.Transform = gl.Transform()
+#     model.turn(0.0, spin, 0.0)
+#
+#     camera.upload(program, "view", "projection")
+#     gl.set_matrix4(program, "model", model.matrix())
+#     gl.set_matrix4(program, "mvp", gl.model_view_projection(model.matrix(), camera.view(), camera.projection()))
+#
+# The rule to remember: `matrix.Mat4.data` is *not* what a uniform wants.
+# `set_matrix4`, `set_matrix3`, `set_normal_matrix`, and `matrix4_data` are the
+# uploads; `program.set_mat4("mvp", m.data)` would send the transpose of the
+# transform and quietly place everything in the wrong spot.
+#
+# There are no new natives here and nothing to free: it is arithmetic on top of
+# `matrix`, `vec`, and the uniform setters in `gl.shaders`. Only the upload
+# helpers touch the driver, and they are no-ops when a uniform name is inactive.
+
+from gl.shaders import Program, uniform2f, uniform3f, uniform4f, uniform_mat3, uniform_mat4
+from gl.state import viewport
+from gl.window import Window
+
+from matrix import Mat3, Mat4
+from vec import Vec2, Vec3, Vec4
+
+import matrix
+
+# ---------------------------------------------------------------------------
+# Angles and aspect
+# ---------------------------------------------------------------------------
+
+const DEGREES_TO_RADIANS: f64 = 0.017453292519943295
+const RADIANS_TO_DEGREES: f64 = 57.29577951308232
+
+def to_radians(degrees: f64) -> f64:
+    """Convert degrees to radians, for rotations and fields of view."""
+    return degrees * DEGREES_TO_RADIANS
+
+
+def to_degrees(radians: f64) -> f64:
+    """Convert radians to degrees."""
+    return radians * RADIANS_TO_DEGREES
+
+
+def aspect_ratio(width: i32, height: i32) -> f64:
+    """Return width / height, guarding against a zero-height surface.
+
+    A minimised window reports a zero-sized framebuffer, which would otherwise
+    make the projection degenerate for that frame.
+    """
+    if height <= 0:
+        return 1.0
+    return (width as f64) / (height as f64)
+
+
+def aspect_of_window(window: Window) -> f64:
+    """Return a window's framebuffer aspect ratio."""
+    return aspect_ratio(window.framebuffer_width(), window.framebuffer_height())
+
+
+# ---------------------------------------------------------------------------
+# Projections
+# ---------------------------------------------------------------------------
+
+def perspective(fov_y: f64, aspect: f64, near_z: f64, far_z: f64) -> Mat4:
+    """Return a perspective projection from a vertical field of view in radians."""
+    return matrix.perspective(fov_y, aspect, near_z, far_z)
+
+
+def perspective_deg(fov_y_degrees: f64, aspect: f64, near_z: f64, far_z: f64) -> Mat4:
+    """Return a perspective projection from a vertical field of view in degrees.
+
+    The usual choice is 60 degrees for a first-person view, 45 for a product
+    shot, and 90 or more to exaggerate depth.
+    """
+    return matrix.perspective(to_radians(fov_y_degrees), aspect, near_z, far_z)
+
+
+def perspective_window(window: Window, fov_y_degrees: f64 = 60.0, near_z: f64 = 0.1, far_z: f64 = 1000.0) -> Mat4:
+    """Return a perspective projection sized to a window's framebuffer.
+
+    The aspect ratio is recomputed on every call, so this is safe inside a
+    resize handler or a frame loop without any bookkeeping.
+    """
+    return perspective_deg(fov_y_degrees, aspect_of_window(window), near_z, far_z)
+
+
+def ortho(left: f64, right: f64, bottom: f64, top: f64, near_z: f64, far_z: f64) -> Mat4:
+    """Return an orthographic projection for an explicit box."""
+    return matrix.ortho(left, right, bottom, top, near_z, far_z)
+
+
+def ortho_2d(width: i32, height: i32) -> Mat4:
+    """Return an orthographic projection in pixels, with y growing downward.
+
+    This is the sprite and UI projection: the origin is the top-left corner of
+    the framebuffer, x runs right, y runs down, and one unit is one pixel.
+    """
+    return matrix.ortho(0.0, width as f64, height as f64, 0.0, -1.0, 1.0)
+
+
+def ortho_centered(width: f64, height: f64) -> Mat4:
+    """Return an orthographic projection centred on the origin, with y up."""
+    return matrix.ortho(-width * 0.5, width * 0.5, -height * 0.5, height * 0.5, -1.0, 1.0)
+
+
+# ---------------------------------------------------------------------------
+# Views
+# ---------------------------------------------------------------------------
+
+def look_at(eye: Vec3, target: Vec3, up: Vec3) -> Mat4:
+    """Return a view matrix for a camera at `eye` looking at `target`."""
+    return matrix.look_at(eye.to_list(), target.to_list(), up.to_list())
+
+
+def look_at_y_up(eye: Vec3, target: Vec3) -> Mat4:
+    """Return a view matrix with the world's y axis as up."""
+    return look_at(eye, target, Vec3(0.0, 1.0, 0.0))
+
+
+def look_at_values(eye: list[f64], target: list[f64], up: list[f64]) -> Mat4:
+    """Return a view matrix from three plain three-element lists."""
+    return matrix.look_at(eye, target, up)
+
+
+def look_at_dir(eye: Vec3, forward: Vec3, up: Vec3) -> Mat4:
+    """Return a view matrix from a position and a viewing direction."""
+    return look_at(eye, eye.add(forward), up)
+
+
+# ---------------------------------------------------------------------------
+# Composition and upload
+# ---------------------------------------------------------------------------
+
+def compose(matrices: list[Mat4]) -> Mat4:
+    """Multiply a list of matrices in order, so the last one applies first.
+
+    `compose([translate, rotate, scale])` is the usual model matrix: a point is
+    scaled, then rotated, then moved.
+    """
+    result: Mat4 = matrix.identity()
+    i: i64 = 0
+    while i < len(matrices):
+        result = result.mul(matrices[i])
+        i = i + 1
+    return result
+
+
+def model_view(model: Mat4, view: Mat4) -> Mat4:
+    """Return the view matrix with the model matrix folded in."""
+    return view.mul(model)
+
+
+def model_view_projection(model: Mat4, view: Mat4, projection: Mat4) -> Mat4:
+    """Return the combined model, view, and projection matrix."""
+    return projection.mul(view).mul(model)
+
+
+def matrix4_data(value: Mat4) -> list[f64]:
+    """Return the column-major block a `mat4` uniform expects.
+
+    `matrix` stores rows first and OpenGL reads columns first, so this is the
+    transpose. Use it with `program.set_mat4(name, data)`, or with
+    `set_matrix4_at` when you cache a uniform location yourself.
+    """
+    return value.transpose().data
+
+
+def matrix3_data(value: Mat3) -> list[f64]:
+    """Return the column-major block a `mat3` uniform expects."""
+    return value.transpose().data
+
+
+def normal_matrix(model: Mat4) -> Mat3:
+    """Return the matrix that transforms normals by a model matrix.
+
+    Normals need the inverse transpose of the model's upper 3 by 3 block;
+    otherwise a non-uniform scale shears the shading instead of scaling it.
+    """
+    return model.upper3().inverse().transpose()
+
+
+def set_matrix4(program: Program, name: str, value: Mat4) -> void:
+    """Upload a matrix as a `mat4` uniform, with the transpose OpenGL expects."""
+    uniform_mat4(program.uniform(name), matrix4_data(value))
+    return
+
+
+def set_matrix4_at(location: i32, value: Mat4) -> void:
+    """Upload a matrix to a cached uniform location."""
+    uniform_mat4(location, matrix4_data(value))
+    return
+
+
+def set_matrix3(program: Program, name: str, value: Mat3) -> void:
+    """Upload a matrix as a `mat3` uniform."""
+    uniform_mat3(program.uniform(name), matrix3_data(value))
+    return
+
+
+def set_matrix3_at(location: i32, value: Mat3) -> void:
+    """Upload a 3 by 3 matrix to a cached uniform location."""
+    uniform_mat3(location, matrix3_data(value))
+    return
+
+
+def set_normal_matrix(program: Program, name: str, model: Mat4) -> void:
+    """Upload the normal matrix derived from a model matrix."""
+    set_matrix3(program, name, normal_matrix(model))
+    return
+
+
+def set_vec2(program: Program, name: str, value: Vec2) -> void:
+    """Upload a two-component vector to a `vec2` uniform."""
+    uniform2f(program.uniform(name), value.x, value.y)
+    return
+
+
+def set_vec3(program: Program, name: str, value: Vec3) -> void:
+    """Upload a three-component vector to a `vec3` uniform."""
+    uniform3f(program.uniform(name), value.x, value.y, value.z)
+    return
+
+
+def set_vec4(program: Program, name: str, value: Vec4) -> void:
+    """Upload a four-component vector to a `vec4` uniform."""
+    uniform4f(program.uniform(name), value.x, value.y, value.z, value.w)
+    return
+
+
+# ---------------------------------------------------------------------------
+# Camera
+# ---------------------------------------------------------------------------
+
+class Camera:
+    """A perspective camera: a position, a target, and a lens.
+
+    The camera owns its aspect ratio instead of reading a window, so the same
+    object works for an off-screen render target. Point it at something, set the
+    aspect from whatever surface you draw into, and upload:
+
+        camera: gl.Camera = gl.Camera(gl.vec3(0.0, 2.0, 6.0), gl.vec3(0.0, 0.0, 0.0))
+        camera.set_aspect(gl.aspect_ratio(width, height))
+        camera.upload(program)
+    """
+
+    position: Vec3
+    target: Vec3
+    up: Vec3
+    fov_degrees: f64
+    aspect: f64
+    near_z: f64
+    far_z: f64
+
+    def __init__(self, position: Vec3, target: Vec3):
+        """Create a camera at `position` looking at `target`.
+
+        The defaults are a 60 degree field of view, a square aspect, an up
+        vector of (0, 1, 0), and a 0.1 to 1000 depth range. Set the fields or use
+        the setters for anything else.
+        """
+        self.position = position
+        self.target = target
+        self.up = Vec3(0.0, 1.0, 0.0)
+        self.fov_degrees = 60.0
+        self.aspect = 1.0
+        self.near_z = 0.1
+        self.far_z = 1000.0
+
+    # -- the three matrices ------------------------------------------------
+
+    def view(self) -> Mat4:
+        """Return the view matrix for the current position and target."""
+        return look_at(self.position, self.target, self.up)
+
+    def projection(self) -> Mat4:
+        """Return the perspective projection for the current lens."""
+        return perspective_deg(self.fov_degrees, self.aspect, self.near_z, self.far_z)
+
+    def view_projection(self) -> Mat4:
+        """Return the projection with the view folded in.
+
+        Use this when the model matrix is the only per-object matrix, which
+        halves the number of uniforms a shader needs.
+        """
+        return self.projection().mul(self.view())
+
+    # -- the lens ----------------------------------------------------------
+
+    def set_aspect(self, width: i32, height: i32) -> void:
+        """Set the aspect ratio from a surface size in pixels."""
+        self.aspect = aspect_ratio(width, height)
+        return
+
+    def set_aspect_ratio(self, aspect: f64) -> void:
+        """Set the aspect ratio directly, for an off-screen target."""
+        self.aspect = aspect
+        return
+
+    def set_fov_degrees(self, fov_degrees: f64) -> void:
+        """Set the vertical field of view in degrees."""
+        self.fov_degrees = fov_degrees
+        return
+
+    def set_clip(self, near_z: f64, far_z: f64) -> void:
+        """Set the near and far clip distances."""
+        self.near_z = near_z
+        self.far_z = far_z
+        return
+
+    # -- movement ----------------------------------------------------------
+
+    def forward(self) -> Vec3:
+        """Return the unit vector the camera looks along."""
+        return self.target.sub(self.position).normalized()
+
+    def right(self) -> Vec3:
+        """Return the camera's unit right vector."""
+        return self.forward().cross(self.up).normalized()
+
+    def true_up(self) -> Vec3:
+        """Return the camera's unit up vector, perpendicular to the view."""
+        return self.right().cross(self.forward()).normalized()
+
+    def orbit(self, yaw_degrees: f64, pitch_degrees: f64, distance: f64) -> void:
+        """Place the camera on a sphere around its target.
+
+        Yaw sweeps around the world's y axis and pitch lifts or drops the
+        camera; a pitch of 90 looks straight down. Both angles are absolute, so
+        calling this every frame from mouse input cannot drift.
+        """
+        yaw: f64 = to_radians(yaw_degrees)
+        pitch: f64 = to_radians(pitch_degrees)
+        offset: list[f64] = matrix.rotate_y(yaw).mul(matrix.rotate_x(-pitch)).transform_dir(0.0, 0.0, 1.0)
+        self.position = self.target.add(Vec3(offset[0], offset[1], offset[2]).scale(distance))
+        return
+
+    def move(self, dx: f64, dy: f64, dz: f64) -> void:
+        """Translate the camera and its target together."""
+        shift: Vec3 = Vec3(dx, dy, dz)
+        self.position = self.position.add(shift)
+        self.target = self.target.add(shift)
+        return
+
+    def dolly(self, distance: f64) -> void:
+        """Move the camera along its view direction, keeping the target fixed."""
+        self.position = self.position.add(self.forward().scale(distance))
+        return
+
+    # -- uploads -----------------------------------------------------------
+
+    def upload(self, program: Program, view_name: str = "view", projection_name: str = "projection") -> void:
+        """Upload the view and projection matrices to two `mat4` uniforms."""
+        set_matrix4(program, view_name, self.view())
+        set_matrix4(program, projection_name, self.projection())
+        return
+
+    def upload_mvp(self, program: Program, name: str, model: Mat4) -> void:
+        """Upload the model, view, and projection matrix as one `mat4`."""
+        set_matrix4(program, name, model_view_projection(model, self.view(), self.projection()))
+        return
+
+    def ray(self, screen_x: f64, screen_y: f64, width: i32, height: i32) -> list[f64]:
+        """Return a picking ray through a pixel as `[ox, oy, oz, dx, dy, dz]`.
+
+        The origin sits on the near plane, so a caller can march from there
+        without clipping against the camera's own position. Intersect it with
+        your geometry to turn a click into a selection.
+        """
+        return ray_from_screen(self, screen_x, screen_y, width, height)
+
+
+def set_mvp(program: Program, name: str, model: Mat4, camera: Camera) -> void:
+    """Upload the combined model, view, and projection matrix as one `mat4`."""
+    camera.upload_mvp(program, name, model)
+    return
+
+
+# ---------------------------------------------------------------------------
+# Transform
+# ---------------------------------------------------------------------------
+
+class Transform:
+    """Position, Euler rotation, and scale, composed into a model matrix.
+
+    The matrix is `translate * rotate_z * rotate_y * rotate_x * scale`, so a
+    point is scaled, rotated about x, then y, then z, and finally moved. Every
+    field is public; the methods keep the common mutations short:
+
+        sprite: gl.Transform = gl.Transform()
+        sprite.position = gl.vec3(2.0, 0.0, 0.0)
+        sprite.rotation = gl.vec3(0.0, 0.0, gl.to_radians(30.0))
+        sprite.scaling = gl.vec3(2.0, 1.0, 1.0)
+        gl.set_matrix4(program, "model", sprite.matrix())
+    """
+
+    position: Vec3
+    rotation: Vec3
+    scaling: Vec3
+
+    def __init__(self):
+        """Create an identity transform: at the origin, unrotated, unit scale."""
+        self.position = Vec3(0.0, 0.0, 0.0)
+        self.rotation = Vec3(0.0, 0.0, 0.0)
+        self.scaling = Vec3(1.0, 1.0, 1.0)
+
+    def matrix(self) -> Mat4:
+        """Return the model matrix for the current position, rotation, and scale."""
+        return compose([
+            matrix.translate(self.position.x, self.position.y, self.position.z),
+            matrix.rotate_z(self.rotation.z),
+            matrix.rotate_y(self.rotation.y),
+            matrix.rotate_x(self.rotation.x),
+            matrix.scale(self.scaling.x, self.scaling.y, self.scaling.z)])
+
+    def normal_matrix(self) -> Mat3:
+        """Return the normal matrix for the current model matrix."""
+        return normal_matrix(self.matrix())
+
+    def reset(self) -> void:
+        """Return to the origin with no rotation and unit scale."""
+        self.position = Vec3(0.0, 0.0, 0.0)
+        self.rotation = Vec3(0.0, 0.0, 0.0)
+        self.scaling = Vec3(1.0, 1.0, 1.0)
+        return
+
+    def move(self, dx: f64, dy: f64, dz: f64) -> void:
+        """Shift the position relative to where it is now."""
+        self.position = self.position.add(Vec3(dx, dy, dz))
+        return
+
+    def turn(self, x_radians: f64, y_radians: f64, z_radians: f64) -> void:
+        """Add to the rotation around each axis, in radians."""
+        self.rotation = self.rotation.add(Vec3(x_radians, y_radians, z_radians))
+        return
+
+    def scale_by(self, x: f64, y: f64, z: f64) -> void:
+        """Multiply the scale on each axis."""
+        self.scaling = Vec3(self.scaling.x * x, self.scaling.y * y, self.scaling.z * z)
+        return
+
+    def uniform_scale(self, factor: f64) -> void:
+        """Set the same scale on all three axes."""
+        self.scaling = Vec3(factor, factor, factor)
+        return
+
+    def upload(self, program: Program, name: str) -> void:
+        """Upload the model matrix under one `mat4` uniform name."""
+        set_matrix4(program, name, self.matrix())
+        return
+
+    def upload_normal(self, program: Program, name: str) -> void:
+        """Upload the normal matrix under one `mat3` uniform name."""
+        set_matrix3(program, name, self.normal_matrix())
+        return
+
+
+def transform(x: f64, y: f64, z: f64) -> Transform:
+    """Create a transform at a position, for callers that want one line."""
+    result: Transform = Transform()
+    result.position = Vec3(x, y, z)
+    return result
+
+
+def sprite_matrix(x: f64, y: f64, width: f64, height: f64) -> Mat4:
+    """Return a model matrix that places a unit quad at a pixel rectangle.
+
+    The quad is expected to span (0, 0) to (1, 1), which is what a shader can
+    build from `gl_VertexID`; pair this with `ortho_2d` for screen-space drawing.
+    """
+    return compose([
+        matrix.translate(x, y, 0.0),
+        matrix.scale(width, height, 1.0)])
+
+
+# ---------------------------------------------------------------------------
+# Screen space and picking
+# ---------------------------------------------------------------------------
+
+def project_ndc(mvp: Mat4, point: Vec3) -> list[f64]:
+    """Project a world point to normalised device coordinates.
+
+    The perspective divide is done for you, so the result is a plain `[x, y, z]`
+    inside the -1 to 1 cube, for anything in front of the camera.
+    """
+    return mvp.transform_point(point.x, point.y, point.z)
+
+
+def unproject(mvp: Mat4, ndc: Vec3) -> Vec3:
+    """Undo `project_ndc`: turn normalised device coordinates back into a world point."""
+    world: list[f64] = mvp.inverse().transform_point(ndc.x, ndc.y, ndc.z)
+    return Vec3(world[0], world[1], world[2])
+
+
+def screen_from_ndc(x_ndc: f64, y_ndc: f64, width: i32, height: i32) -> list[f64]:
+    """Convert normalised device coordinates to pixels, with y growing downward."""
+    return [((x_ndc + 1.0) * 0.5) * (width as f64), ((1.0 - y_ndc) * 0.5) * (height as f64)]
+
+
+def ndc_from_screen(x: f64, y: f64, width: i32, height: i32) -> list[f64]:
+    """Convert pixels in window coordinates back to normalised device coordinates."""
+    if width <= 0 or height <= 0:
+        return [0.0, 0.0]
+    return [(x / (width as f64)) * 2.0 - 1.0, 1.0 - (y / (height as f64)) * 2.0]
+
+
+def project_to_screen(mvp: Mat4, point: Vec3, width: i32, height: i32) -> list[f64]:
+    """Project a world point all the way to a pixel position.
+
+    This is how a label or a health bar follows a 3D object: project the anchor
+    point, then draw the overlay quad at the pixel you get back.
+    """
+    ndc: list[f64] = project_ndc(mvp, point)
+    return screen_from_ndc(ndc[0], ndc[1], width, height)
+
+
+def linear_depth(z_ndc: f64, near_z: f64, far_z: f64) -> f64:
+    """Turn a value from the depth buffer back into a distance from the camera.
+
+    Depth buffers are non-linear: almost all the precision sits near the near
+    plane. Reconstructing distance this way is what depth-of-field and soft
+    particles need.
+    """
+    if z_ndc <= -1.0:
+        return near_z
+    return (2.0 * near_z * far_z) / (far_z + near_z - z_ndc * (far_z - near_z))
+
+
+def ray_from_screen(camera: Camera, screen_x: f64, screen_y: f64, width: i32, height: i32) -> list[f64]:
+    """Return a picking ray through a pixel as `[ox, oy, oz, dx, dy, dz]`.
+
+    The ray starts on the near plane and points away from the camera, with a
+    unit direction.
+    """
+    ndc: list[f64] = ndc_from_screen(screen_x, screen_y, width, height)
+    mvp: Mat4 = camera.view_projection()
+    near_point: Vec3 = unproject(mvp, Vec3(ndc[0], ndc[1], -1.0))
+    far_point: Vec3 = unproject(mvp, Vec3(ndc[0], ndc[1], 1.0))
+    direction: Vec3 = far_point.sub(near_point).normalized()
+    return [near_point.x, near_point.y, near_point.z, direction.x, direction.y, direction.z]
+
+
+# ---------------------------------------------------------------------------
+# Vertex data
+# ---------------------------------------------------------------------------
+
+def points_to_data(points: list[Vec3]) -> list[f64]:
+    """Flatten points into the block `buffer_data_f64` uploads."""
+    out: list[f64] = []
+    i: i64 = 0
+    while i < len(points):
+        out.append(points[i].x)
+        out.append(points[i].y)
+        out.append(points[i].z)
+        i = i + 1
+    return out
+
+
+def vectors4_to_data(values: list[Vec4]) -> list[f64]:
+    """Flatten four-component vectors into an upload block.
+
+    Handy for vertex colours and for tangent frames, which are the usual
+    companions of a position in an interleaved layout.
+    """
+    out: list[f64] = []
+    i: i64 = 0
+    while i < len(values):
+        out.append(values[i].x)
+        out.append(values[i].y)
+        out.append(values[i].z)
+        out.append(values[i].w)
+        i = i + 1
+    return out
+
+
+def fan_indices(vertex_count: i32) -> list[i32]:
+    """Return triangle indices for a fan over a ring of vertices.
+
+    A circle or a cap is a fan: every triangle shares vertex 0. Upload the result
+    with `buffer_data_i32` and draw it with `draw_elements` and
+    `GL_UNSIGNED_INT`.
+    """
+    out: list[i32] = []
+    i: i32 = 1
+    while i + 1 < vertex_count:
+        out.append(0)
+        out.append(i)
+        out.append(i + 1)
+        i = i + 1
+    return out
+
+
+def quad_vertices(x: f64, y: f64, width: f64, height: f64) -> list[f64]:
+    """Return two triangles as twelve numbers, from a pixel rectangle.
+
+    The winding is counter-clockwise, which is what `GL_CULL_FACE` expects with
+    the default `GL_CCW` front face.
+    """
+    x1: f64 = x + width
+    y1: f64 = y + height
+    return [x, y, x1, y, x1, y1, x, y, x1, y1, x, y1]
+
+
+# ---------------------------------------------------------------------------
+# Window helpers
+# ---------------------------------------------------------------------------
+
+def apply_viewport(window: Window) -> void:
+    """Set the viewport to cover a window's whole framebuffer.
+
+    Call it every frame, or from a resize branch: the framebuffer size changes
+    when a window moves between displays with different scaling, not only when
+    the user drags an edge.
+    """
+    viewport(0, 0, window.framebuffer_width(), window.framebuffer_height())
+    return
+
+
+def apply_frame(camera: Camera, window: Window) -> void:
+    """Resize the viewport and the camera's aspect for the current window."""
+    apply_viewport(window)
+    camera.set_aspect(window.framebuffer_width(), window.framebuffer_height())
+    return
+
+
+# ---------------------------------------------------------------------------
+# Convenience constructors
+# ---------------------------------------------------------------------------
+
+def vec2(x: f64, y: f64) -> Vec2:
+    """Create a two-component vector, for call sites that read better with `gl.`"""
+    return Vec2(x, y)
+
+
+def vec3(x: f64, y: f64, z: f64) -> Vec3:
+    """Create a three-component vector, for call sites that read better with `gl.`"""
+    return Vec3(x, y, z)
+
+
+def vec4(x: f64, y: f64, z: f64, w: f64) -> Vec4:
+    """Create a four-component vector, for call sites that read better with `gl.`"""
+    return Vec4(x, y, z, w)
+
+
+def make_camera(position: Vec3, target: Vec3) -> Camera:
+    """Create a camera looking from `position` at `target`."""
+    return Camera(position, target)
+
+
+def orbit_camera(target: Vec3, yaw_degrees: f64, pitch_degrees: f64, distance: f64) -> Camera:
+    """Create a camera already placed on a sphere around `target`.
+
+    This is the quickest way to frame an object: pick a distance, pick an angle,
+    and the camera looks at the target from there.
+    """
+    result: Camera = Camera(Vec3(0.0, 0.0, 0.0), target)
+    result.orbit(yaw_degrees, pitch_degrees, distance)
+    return result

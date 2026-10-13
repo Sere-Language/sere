@@ -1,0 +1,77 @@
+"""Streaming WAV/FLAC/MP3 decoding and PCM/float WAV encoding on the calling thread."""
+from wavio._native import _last_error, _reader_channels, _reader_close, _reader_length, _reader_open, _reader_rate, _reader_read, _reader_seek, _writer_close, _writer_open, _writer_write
+from wavio.buffer import AudioBuffer
+
+class AudioReader:
+    """A seekable native decoder; reads into caller-owned buffers without full loading."""
+    handle: Ptr[i8]
+
+    def __init__(self, path: str):
+        """Open an audio file. Check is_open() before reading; close explicitly."""
+        self.handle = _reader_open(path)
+
+    def is_open(self) -> bool:
+        """Return whether decoding initialization succeeded."""
+        return self.handle != None
+
+    def close(self) -> void:
+        """Release the decoder and file handle; safe to repeat on this object."""
+        _reader_close(self.handle)
+        self.handle = None
+
+    def frames(self) -> i64:
+        """Return total frames, or a negative error if the length cannot be queried."""
+        return _reader_length(self.handle)
+
+    def channels(self) -> i32:
+        """Return decoded channel count, or zero when closed."""
+        return _reader_channels(self.handle)
+
+    def sample_rate(self) -> i32:
+        """Return decoded sample rate, or zero when closed."""
+        return _reader_rate(self.handle)
+
+    def seek(self, frame: i64) -> i32:
+        """Seek to a nonnegative frame; return zero or a negative native status."""
+        return _reader_seek(self.handle, frame)
+
+    def read(self, buffer: AudioBuffer) -> i64:
+        """Read up to buffer.frames(); return frames read, zero at EOF, or error.
+
+        Buffer channels/rate must match. Unfilled trailing samples are silenced.
+        """
+        return _reader_read(self.handle, buffer.handle)
+
+class AudioWriter:
+    """A streaming WAV writer. Close finalizes the header and releases the file."""
+    handle: Ptr[i8]
+
+    def __init__(self, path: str, channels: i32 = 2, sample_rate: i32 = 48000, format: i32 = 5):
+        """Create WAV: U8=1, S16=2, packed S24=3, S32=4, F32=5."""
+        self.handle = _writer_open(path, channels, sample_rate, format)
+
+    def is_open(self) -> bool:
+        """Return whether file creation and encoder initialization succeeded."""
+        return self.handle != None
+
+    def write(self, buffer: AudioBuffer) -> i64:
+        """Write all frames with matching channels/rate; return count or negative error."""
+        return _writer_write(self.handle, buffer.handle)
+
+    def close(self) -> i32:
+        """Finalize WAV; return zero or negative I/O error. Always release ownership."""
+        result: i32 = _writer_close(self.handle)
+        self.handle = None
+        return result
+
+def write(path: str, buffer: AudioBuffer, format: i32 = 5) -> i32:
+    """Write a complete buffer to WAV; return zero or negative native status."""
+    writer: AudioWriter = AudioWriter(path, buffer.channels(), buffer.sample_rate(), format)
+    if not writer.is_open():
+        return _last_error()
+    count: i64 = writer.write(buffer)
+    status: i32 = _last_error()
+    closed: i32 = writer.close()
+    if count < 0:
+        return status
+    return closed

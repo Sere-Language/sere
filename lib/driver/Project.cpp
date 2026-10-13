@@ -179,6 +179,14 @@ void applyTomlKey(ProjectManifest& manifest, std::string_view key, std::string_v
     manifest.native = (value == "true" || value == "1" || value == "yes");
     return;
   }
+  if (key == "native_libs" || key == "native-libs") {
+    for (const std::string& entry : parseTomlList(value)) {
+      if (!entry.empty()) {
+        manifest.nativeLibs.emplace_back(entry);
+      }
+    }
+    return;
+  }
   if (key == "system_libs" || key == "system-libs") {
     manifest.systemLibs = parseTomlList(value);
     return;
@@ -214,8 +222,16 @@ void collectLinkLibraries(const std::filesystem::path& directory,
 [[nodiscard]] int configureNative(const std::string& cmake,
                                   const std::filesystem::path& nativeDir) {
   const std::filesystem::path buildDir = nativeDir / "build";
-  const std::vector<std::string> configure{
+  std::vector<std::string> configure{
       cmake, "-S", nativeDir.string(), "-B", buildDir.string()};
+  // A native target almost always wants `#include "sere/api/sere_mod.h"`, so the
+  // staged headers travel to the build both as a cache variable and in the
+  // environment: a CMakeLists here can use ${SERE_INCLUDE_DIR} or
+  // $ENV{SERE_INCLUDE_DIR}, whichever it prefers.
+  const std::filesystem::path include = nativeIncludeDirectory();
+  if (!include.empty()) {
+    configure.push_back("-DSERE_INCLUDE_DIR=" + include.string());
+  }
   return runProcess(cmake, configure);
 }
 
@@ -241,11 +257,24 @@ void collectLinkLibraries(const std::filesystem::path& directory,
                  << '\n';
     return 0;
   }
+  applyNativeIncludeEnvironment();
   const int configured = configureNative(*cmake, nativeDir);
   if (configured != 0) {
+    llvm::errs() << "error: cmake could not configure " << nativeDir.string() << " (exit "
+                 << configured << ")\n";
     return configured;
   }
-  return compileNative(*cmake, nativeDir);
+  const int built = compileNative(*cmake, nativeDir);
+  if (built != 0) {
+    llvm::errs() << "error: cmake could not build " << nativeDir.string() << " (exit " << built
+                 << ")\n";
+    if (std::filesystem::exists(nativeDir / "build")) {
+      llvm::errs() << "  note: a cached build directory is in " << (nativeDir / "build").string()
+                   << "; delete it and run the command again if the error mentions a missing "
+                      "header\n";
+    }
+  }
+  return built;
 }
 
 void collectLooseNativeSources(const std::filesystem::path& directory,
@@ -339,10 +368,15 @@ void collectLooseNativeSources(const std::filesystem::path& directory,
     const std::filesystem::path object = nativeDir / (source.stem().string() + ".o");
 #endif
     std::vector<std::string> compile{*clang, "-c", source.string(), "-o", object.string()};
+    if (const std::filesystem::path include = nativeIncludeDirectory(); !include.empty()) {
+      compile.push_back("-I" + include.string());
+    }
+    compile.push_back("-I" + nativeDir.string());
 #ifdef _WIN32
     compile.push_back("-fms-runtime-lib=static");
 #endif
     if (runProcess(*clang, compile) != 0) {
+      llvm::errs() << "error: native source " << source.string() << " did not compile\n";
       return 1;
     }
     objects.push_back(object);
@@ -564,6 +598,110 @@ void collectPackageNative(PackedLibrary& library,
   collectPackedNativeSources(library, root, libs / "native");
 }
 
+/// Packs the artifacts a manifest names with `native_libs`, which is how a
+/// library ships C/C++ that was built elsewhere: a prebuilt archive, a loose
+/// object, or a shared library. Files inside the project keep their path; files
+/// outside it land under `native/` so the archive stays self-contained.
+void collectManifestNativeLibs(PackedLibrary& library,
+                               const std::filesystem::path& root,
+                               const ProjectManifest& manifest) {
+  for (const std::filesystem::path& entry : manifest.nativeLibs) {
+    const std::filesystem::path path =
+        entry.is_absolute() ? entry : manifest.root / entry;
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path, error) || error) {
+      llvm::errs() << "error: native_libs entry '" << entry.string() << "' is not a file\n";
+      continue;
+    }
+    if (pathIsUnderRoot(path, root)) {
+      addPackedFile(library, root, path);
+      continue;
+    }
+    std::optional<std::string> bytes = readBytes(path);
+    if (!bytes.has_value()) {
+      llvm::errs() << "error: cannot read native_libs entry '" << path.string() << "'\n";
+      continue;
+    }
+    const std::string relative =
+        (std::filesystem::path("native") / path.filename()).generic_string();
+    bool replaced = false;
+    for (LibraryMember& existing : library.files) {
+      if (existing.relativePath == relative) {
+        existing.bytes = *bytes;
+        replaced = true;
+        break;
+      }
+    }
+    if (!replaced) {
+      LibraryMember member;
+      member.relativePath = relative;
+      member.bytes = *bytes;
+      library.files.push_back(std::move(member));
+    }
+    std::cout << "  native: " << relative << " <- " << path.string() << '\n';
+  }
+}
+
+/// True when a packed module declares a native symbol, which only a linker can
+/// resolve: the signal that the package had better carry C/C++ content.
+[[nodiscard]] bool packedModulesDeclareExterns(const PackedLibrary& library) {
+  for (const LibraryMember& file : library.files) {
+    if (std::filesystem::path(file.relativePath).extension() != ".sere") {
+      continue;
+    }
+    if (file.bytes.find("extern \"C\"") != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Every C/C++ source under the layouts a pack would have built.
+[[nodiscard]] std::vector<std::filesystem::path>
+libraryNativeSources(const std::filesystem::path& root, const std::filesystem::path& libs) {
+  std::vector<std::filesystem::path> sources;
+  collectNativeSourceFiles(root / "native", sources);
+  collectNativeSourceFiles(libs / "native", sources);
+  return sources;
+}
+
+/// Refuses to write a package that declares native symbols but ships none of the
+/// code behind them.
+///
+/// This is the mistake that used to travel silently: `native = false` (or a
+/// native build that failed) produced a small, valid-looking archive whose
+/// consumer failed later with `undefined symbol`. The author is here now, so the
+/// message names the two ways to fix it.
+[[nodiscard]] bool reportNativeGap(const ProjectManifest& manifest,
+                                   const PackedLibrary& library) {
+  if (libraryHasNativeBinary(library)) {
+    return false;
+  }
+  const std::vector<std::filesystem::path> sources = libraryNativeSources(manifest.root,
+                                                                         manifest.libs);
+  if (sources.empty()) {
+    return false;
+  }
+  const std::filesystem::path directory = manifest.libs / "native";
+  if (!packedModulesDeclareExterns(library)) {
+    llvm::errs() << "note: " << sources.size() << " native source file(s) in "
+                 << directory.string() << " were not packed; set `native = true` in [build] to"
+                    " compile them into the library\n";
+    return false;
+  }
+  llvm::errs() << "error: this library declares `extern \"C\"` symbols and has " << sources.size()
+               << " native source file(s) in " << directory.string()
+               << ", but no native code was packed: a consumer would fail to link\n";
+  llvm::errs() << "  fix:  set `native = true` under [build] in sere.toml so `sere pack` builds "
+                  "them and ships the archive, or\n";
+  llvm::errs() << "        list prebuilt artifacts under [build] with `native_libs = [\"path/"
+                  "foo.lib\"]` and they are shipped as they are\n";
+  if (!manifest.native) {
+    llvm::errs() << "  note: [build] native is currently false\n";
+  }
+  return true;
+}
+
 /// Adds a generated member: metadata the packer writes rather than copies.
 void addPackedText(PackedLibrary& library, const std::string& relativePath,
                    const std::string& text) {
@@ -590,6 +728,22 @@ void writePackageMetadata(PackedLibrary& library, const ProjectManifest& manifes
     deps += '\n';
   }
   addPackedText(library, std::string(kNativeDepsFile), deps);
+  // A self-describing marker, so an unpacked copy of the package is still
+  // recognisable as one: `sere pack --dir` writes this next to the members and
+  // the import search treats that directory as the library root.
+  std::string marker = "[package]\nname = \"" + library.name + "\"\nversion = \"" +
+                       library.version + "\"\nentry = \"" + library.entry + "\"\n";
+  if (!manifest.systemLibs.empty()) {
+    marker += "\n[build]\nsystem_libs = [";
+    for (std::size_t index = 0; index < manifest.systemLibs.size(); ++index) {
+      if (index != 0) {
+        marker += ", ";
+      }
+      marker += "\"" + manifest.systemLibs[index] + "\"";
+    }
+    marker += "]\n";
+  }
+  addPackedText(library, std::string(kPackageMarkerFile), marker);
 }
 
 /// Copies the executables a library installs into the archive under `bin/`.
@@ -686,7 +840,7 @@ struct PackSummary {
 }
 
 void printPackSummary(const PackedLibrary& library, const std::filesystem::path& output,
-                      std::uintmax_t bytes) {
+                      std::uintmax_t bytes, bool folder = false) {
   const PackSummary summary = summarizeLibrary(library);
   std::cout << "sere pack " << library.name << ' ' << library.version << '\n';
   std::cout << "  Sere modules:     " << summary.sereModules << '\n';
@@ -698,8 +852,40 @@ void printPackSummary(const PackedLibrary& library, const std::filesystem::path&
     std::cout << "  note: no native content was packed; add C/C++ under native/ and set"
                  " native = true in sere.toml\n";
   }
+  if (folder) {
+    std::cout << "  Folder:           " << output.string() << " (" << library.files.size()
+              << " files)\n";
+    return;
+  }
   std::cout << "  Archive:          " << output.string() << " (" << bytes << " bytes, "
             << library.files.size() << " files)\n";
+}
+
+/// Writes the assembled package as an archive or, with `--dir`, as a folder.
+[[nodiscard]] int writeLibraryOutput(const CompilerOptions& options,
+                                     const PackedLibrary& library,
+                                     std::filesystem::path output) {
+  std::string error;
+  if (options.packDirectory) {
+    if (output.extension() == ".slib") {
+      output.replace_extension();
+    }
+    if (!writePackedDirectory(output, library, error)) {
+      llvm::errs() << "error: " << error << '\n';
+      return 1;
+    }
+    printPackSummary(library, output, 0, /*folder=*/true);
+    return 0;
+  }
+  std::error_code fsError;
+  std::filesystem::create_directories(output.parent_path(), fsError);
+  if (!writePackedLibrary(output, library, error)) {
+    llvm::errs() << "error: " << error << '\n';
+    return 1;
+  }
+  std::error_code sizeError;
+  printPackSummary(library, output, std::filesystem::file_size(output, sizeError));
+  return 0;
 }
 
 void collectReachableSere(PackedLibrary& library,
@@ -739,18 +925,27 @@ void collectModuleNative(PackedLibrary& library,
   collectPackedNativeSources(library, root, parent / "native");
 }
 
-void buildPackNative(const std::filesystem::path& root, bool buildRoot) {
-  static_cast<void>(buildNativeLibs(root / "native"));
-  static_cast<void>(buildNativeLibs(root / "libs" / "native"));
+/// Builds every native directory a pack knows about. Returns the first
+/// non-zero exit code, because a package that cannot build its C/C++ must not be
+/// written: the failure would reappear at the consumer as an undefined symbol.
+[[nodiscard]] int buildPackNative(const std::filesystem::path& root, bool buildRoot) {
+  const int native = buildNativeLibs(root / "native");
+  if (native != 0) {
+    return native;
+  }
+  const int libsNative = buildNativeLibs(root / "libs" / "native");
+  if (libsNative != 0) {
+    return libsNative;
+  }
   // A standalone pack (`sere pack file.sere`) keeps C/C++ beside the entry, so
   // the module's own directory is built too. A library project keeps its native
   // code in `libs/native/`, already handled above, so its root is left alone —
   // building it as well would compile those sources twice.
   if (buildRoot) {
-    static_cast<void>(buildNativeLibs(root));
+    return buildNativeLibs(root);
   }
+  return 0;
 }
-
 struct PackCheck {
   int code = 1;
   std::vector<std::filesystem::path> imported;
@@ -806,7 +1001,10 @@ struct PackCheck {
   if (check.code != 0) {
     return 1;
   }
-  buildPackNative(root, /*buildRoot=*/true);
+  if (buildPackNative(root, /*buildRoot=*/true) != 0) {
+    llvm::errs() << "error: native build failed, so the package was not written\n";
+    return 1;
+  }
   collectReachableSere(library, root, stdlib, entry, check.imported);
   collectPackageNative(library, root, root / "libs");
   collectModuleNative(library, root, entry);
@@ -816,17 +1014,13 @@ struct PackCheck {
   ProjectManifest standalone;
   standalone.root = root;
   writePackageMetadata(library, standalone);
+  if (reportNativeGap(standalone, library)) {
+    return 1;
+  }
   const std::filesystem::path output =
       options.outputPath.empty() ? std::filesystem::current_path() / (library.name + ".slib")
                                  : options.outputPath;
-  std::string packError;
-  if (!writePackedLibrary(output, library, packError)) {
-    llvm::errs() << "error: " << packError << '\n';
-    return 1;
-  }
-  std::error_code sizeError;
-  printPackSummary(library, output, std::filesystem::file_size(output, sizeError));
-  return 0;
+  return writeLibraryOutput(options, library, output);
 }
 
 } // namespace
@@ -843,7 +1037,60 @@ int buildNativeLibs(const std::filesystem::path& nativeDir) {
   return compileLooseNative(nativeDir);
 }
 
-void prepareImportedLibraryNative(const std::vector<std::filesystem::path>& importedPaths) {
+std::filesystem::path nativeIncludeDirectory() {
+  const std::filesystem::path compiler = compilerDirectory();
+  for (const std::filesystem::path& candidate :
+       {compiler / "include", compiler.parent_path() / "include"}) {
+    if (candidate.empty()) {
+      continue;
+    }
+    std::error_code error;
+    if (std::filesystem::is_regular_file(candidate / "sere" / "api" / "sere_mod.h", error) &&
+        !error) {
+      return candidate;
+    }
+  }
+  return {};
+}
+
+void applyNativeIncludeEnvironment() {
+  const std::filesystem::path include = nativeIncludeDirectory();
+  if (include.empty()) {
+    return;
+  }
+  const std::string text = include.string();
+  setEnvironmentVariable("SERE_INCLUDE_DIR", text);
+  // Three ways in, because the build systems disagree about what they read:
+  //  * `SERE_INCLUDE_DIR` for a CMakeLists that names it explicitly,
+  //  * `INCLUDE` (MSVC/clang-cl) and `CPATH` (clang/gcc) for a plain compile,
+  //  * `CFLAGS`/`CXXFLAGS` because CMake seeds `CMAKE_<LANG>_FLAGS` from them at
+  //    configure time, and its Visual Studio generator ignores `INCLUDE`.
+#ifdef _WIN32
+  const char* includeVariable = "INCLUDE";
+  const char separator = ';';
+#else
+  const char* includeVariable = "CPATH";
+  const char separator = ':';
+#endif
+  std::string value = text;
+  if (const char* existing = std::getenv(includeVariable);
+      existing != nullptr && *existing != '\0') {
+    value += separator;
+    value += existing;
+  }
+  setEnvironmentVariable(includeVariable, value);
+  const std::string flag = "-I" + include.string();
+  for (const char* name : {"CFLAGS", "CXXFLAGS"}) {
+    std::string flags = flag;
+    if (const char* existing = std::getenv(name); existing != nullptr && *existing != '\0') {
+      flags += ' ';
+      flags += existing;
+    }
+    setEnvironmentVariable(name, flags);
+  }
+}
+
+bool prepareImportedLibraryNative(const std::vector<std::filesystem::path>& importedPaths) {
   std::vector<std::filesystem::path> dirs;
   for (const std::filesystem::path& imported : importedPaths) {
     const std::filesystem::path parent = imported.parent_path();
@@ -863,9 +1110,16 @@ void prepareImportedLibraryNative(const std::vector<std::filesystem::path>& impo
       }
     }
   }
+  bool ok = true;
   for (const std::filesystem::path& directory : dirs) {
-    static_cast<void>(buildNativeLibs(directory));
+    const int code = buildNativeLibs(directory);
+    if (code != 0) {
+      llvm::errs() << "error: native code for an imported library did not build in "
+                   << directory.string() << " (exit " << code << ")\n";
+      ok = false;
+    }
   }
+  return ok;
 }
 
 void copyIfPresent(const std::filesystem::path& from, const std::filesystem::path& to) {
@@ -1075,8 +1329,12 @@ int packLibrary(const CompilerOptions& options) {
     // The same layouts the standalone pack builds: `native/` beside the
     // manifest, `libs/native/`, and — when the entry sits in the root — that
     // directory too.
-    buildPackNative(manifest->root,
-                    manifest->entry.parent_path() == manifest->root);
+    if (buildPackNative(manifest->root, manifest->entry.parent_path() == manifest->root) != 0) {
+      llvm::errs() << "error: native build failed, so the library was not packed; fix the "
+                      "C/C++ above, or set `native = false` and list prebuilt artifacts with "
+                      "`native_libs`\n";
+      return 1;
+    }
   }
   prepareProjectStdlib(*manifest);
   const std::filesystem::path stdlib =
@@ -1091,23 +1349,19 @@ int packLibrary(const CompilerOptions& options) {
   library.entry = relativeGeneric(manifest->root, manifest->entry);
   collectReachableSere(library, manifest->root, stdlib, manifest->entry, check.imported);
   collectPackageNative(library, manifest->root, manifest->libs);
+  collectManifestNativeLibs(library, manifest->root, *manifest);
   collectModuleNative(library, manifest->root, manifest->entry);
   for (const std::filesystem::path& imported : check.imported) {
     collectModuleNative(library, manifest->root, imported);
   }
   writePackageMetadata(library, *manifest);
   collectPackedExecutables(library, manifest->root, *manifest);
-  collectPackedExecutables(library, manifest->root, *manifest);
-  const std::filesystem::path output =
-      options.outputPath.empty() ? manifest->output : options.outputPath;
-  std::filesystem::create_directories(output.parent_path(), fsError);
-  if (!writePackedLibrary(output, library, error)) {
-    llvm::errs() << "error: " << error << '\n';
+  if (reportNativeGap(*manifest, library)) {
     return 1;
   }
-  std::error_code sizeError;
-  printPackSummary(library, output, std::filesystem::file_size(output, sizeError));
-  return 0;
+  const std::filesystem::path output =
+      options.outputPath.empty() ? manifest->output : options.outputPath;
+  return writeLibraryOutput(options, library, output);
 }
 
 /// Lists the members of a packed library, grouped by kind.

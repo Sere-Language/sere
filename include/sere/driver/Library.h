@@ -36,6 +36,11 @@ struct PackedLibrary {
 inline constexpr std::string_view kNativeDepsFile = "sere-native-deps.txt";
 inline constexpr std::string_view kPackageBinsFile = "sere-package-bins.txt";
 
+/// Marks a directory as an unpacked package: `sere pack --dir` writes one next to
+/// the members, and both the import search and the native lookup read it, so an
+/// unpacked folder behaves exactly like the `.slib` it came from.
+inline constexpr std::string_view kPackageMarkerFile = "sere-package.toml";
+
 [[nodiscard]] bool isNativeRuntimeFile(const std::filesystem::path& path);
 
 [[nodiscard]] bool isNativeSourceFile(const std::filesystem::path& path);
@@ -71,6 +76,11 @@ void collectNativeHeaderFiles(const std::filesystem::path& directory,
 void collectNativeObjectFiles(const std::filesystem::path& directory,
                               std::vector<std::filesystem::path>& files);
 
+/// Collects C/C++ sources under a directory, for callers that need to know
+/// whether a package left native code behind unbuilt.
+void collectNativeSourceFiles(const std::filesystem::path& directory,
+                              std::vector<std::filesystem::path>& files);
+
 void appendExtractedLibraryLinks(const std::vector<std::filesystem::path>& importedPaths,
                                  std::vector<std::filesystem::path>& libraries);
 
@@ -86,6 +96,13 @@ packageSystemLibraries(const std::vector<std::filesystem::path>& importedPaths);
 /// package that was extracted for each imported module.
 [[nodiscard]] std::vector<std::filesystem::path>
 packageExecutables(const std::vector<std::filesystem::path>& importedPaths);
+
+/// Writes a package as a folder of files instead of an archive: the members are
+/// written in the clear and `sere-package.toml` names the entry, so
+/// `libs/<name>/` imports with no unpacking step.
+[[nodiscard]] bool writePackedDirectory(const std::filesystem::path& directory,
+                                        const PackedLibrary& library,
+                                        std::string& error);
 
 [[nodiscard]] bool writePackedLibrary(const std::filesystem::path& slibPath,
                                       const PackedLibrary& library,

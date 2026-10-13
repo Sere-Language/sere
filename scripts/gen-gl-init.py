@@ -37,6 +37,7 @@ PARTS = [
     "textures",
     "framebuffer",
     "window",
+    "transform",
 ]
 
 # Top-level declarations that become part of `gl`. Enum and struct bodies are
@@ -104,20 +105,27 @@ def main() -> int:
     for part in parts:
         lines.append(f"#   gl.{part.ljust(width)}  {module_docstring(part)}")
     lines.append("")
-    for part in parts:
-        lines.append(f"from gl.{part} import *")
-    lines.append("")
 
+    # Import every part by name rather than with `import *`. A star import also
+    # re-exports the names a part imported for its own use — `gl.transform` brings
+    # in `Program`, `viewport`, and `Window` — and the barrel would then declare
+    # those twice, once from their own part and once from the user of theirs.
     seen: dict[str, str] = {}
     duplicates: list[str] = []
     exports: list[str] = []
     for part in parts:
+        names: list[str] = []
         for name in collect(part):
             if name in seen:
                 duplicates.append(f"{name} ({seen[name]} and {part})")
                 continue
             seen[name] = part
             exports.append(name)
+            names.append(name)
+        for index in range(0, len(names), 6):
+            chunk = names[index:index + 6]
+            lines.append(f"from gl.{part} import {', '.join(chunk)}")
+    lines.append("")
 
     lines.append(f"__exports__ = [{exports[0]}]")
     for index in range(1, len(exports), 6):

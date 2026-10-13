@@ -2,7 +2,7 @@
 file(GLOB SERE_FEATURE_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/features/*.sere")
 # The OpenGL binding is exercised on the LLVM backend only: the Serem backend has
 # not grown lowering for package member access, which the binding's barrel uses.
-set(SERE_LLVM_ONLY_FEATURES gl_binding)
+set(SERE_LLVM_ONLY_FEATURES gl_binding gl_math wavio_audio)
 foreach(source IN LISTS SERE_FEATURE_TESTS)
   get_filename_component(feature "${source}" NAME_WE)
   foreach(backend IN ITEMS llvm serem)
@@ -49,3 +49,8 @@ endforeach()
 add_executable(sere_test_docformat DocFormatTest.cpp)
 target_link_libraries(sere_test_docformat PRIVATE sere_docformat)
 add_test(NAME sere.test.docformat COMMAND sere_test_docformat)
+
+add_executable(sere_test_wavio WavioTest.cpp)
+target_link_libraries(sere_test_wavio PRIVATE sere_runtime)
+add_test(NAME sere.test.wavio COMMAND sere_test_wavio)
+set_tests_properties(sere.test.wavio PROPERTIES TIMEOUT 30 LABELS "wavio")

@@ -1,0 +1,94 @@
+"""Owned interleaved float32 audio buffers and offline numerical operations.
+
+Close each buffer explicitly. Methods return zero on success, negative status
+on failure; constructors expose failure through is_open() and last_error().
+Frame counts are per channel. No method in this module is an audio callback.
+"""
+from wavio._native import _buffer_channels, _buffer_close, _buffer_convert, _buffer_create, _buffer_fill, _buffer_frames, _buffer_gain, _buffer_get, _buffer_mix, _buffer_normalize, _buffer_peak, _buffer_rate, _buffer_reverse, _buffer_rms, _buffer_set, _buffer_slice, _buffer_tone
+
+class AudioBuffer:
+    """Native PCM storage, independent of the Sere garbage collector."""
+    handle: Ptr[i8]
+
+    def __init__(self, frames: i64 = 0, channels: i32 = 2, sample_rate: i32 = 48000):
+        """Allocate silent frames; channels 1..32, sample_rate 8000..384000."""
+        self.handle = _buffer_create(frames, channels, sample_rate)
+
+    def is_open(self) -> bool:
+        """Return whether allocation succeeded and close has not been called."""
+        return self.handle != None
+
+    def close(self) -> void:
+        """Release native samples; repeat calls on this object are harmless."""
+        _buffer_close(self.handle)
+        self.handle = None
+
+    def frames(self) -> i64:
+        """Return frames per channel, or zero when closed."""
+        return _buffer_frames(self.handle)
+
+    def channels(self) -> i32:
+        """Return the channel count, or zero when closed."""
+        return _buffer_channels(self.handle)
+
+    def sample_rate(self) -> i32:
+        """Return frames per second, or zero when closed."""
+        return _buffer_rate(self.handle)
+
+    def get(self, sample: i64) -> f64:
+        """Read an interleaved sample; invalid indices return zero and set last_error."""
+        return _buffer_get(self.handle, sample)
+
+    def set(self, sample: i64, value: f64) -> i32:
+        """Write a finite sample; reject invalid indices and unrepresentable values."""
+        return _buffer_set(self.handle, sample, value)
+
+    def fill(self, value: f64 = 0.0) -> i32:
+        """Fill all samples with a finite value; zero produces silence."""
+        return _buffer_fill(self.handle, value)
+
+    def gain(self, value: f64) -> i32:
+        """Multiply all samples by a linear gain; reject overflow."""
+        return _buffer_gain(self.handle, value)
+
+    def peak(self) -> f64:
+        """Return maximum absolute amplitude across all channels."""
+        return _buffer_peak(self.handle)
+
+    def rms(self) -> f64:
+        """Return root mean square amplitude across all channels."""
+        return _buffer_rms(self.handle)
+
+    def normalize(self, peak: f64 = 1.0) -> i32:
+        """Scale peak to 0..1; leave silence unchanged."""
+        return _buffer_normalize(self.handle, peak)
+
+    def reverse(self) -> i32:
+        """Reverse frames while preserving channel order."""
+        return _buffer_reverse(self.handle)
+
+    def slice(self, first: i64, count: i64) -> AudioBuffer:
+        """Copy a frame range into independently owned storage; close the result."""
+        result: AudioBuffer = AudioBuffer()
+        result.close()
+        result.handle = _buffer_slice(self.handle, first, count)
+        return result
+
+    def convert(self, channels: i32, sample_rate: i32) -> AudioBuffer:
+        """Allocate converted channels/rate using miniaudio's linear resampler."""
+        result: AudioBuffer = AudioBuffer()
+        result.close()
+        result.handle = _buffer_convert(self.handle, channels, sample_rate)
+        return result
+
+    def mix(self, source: AudioBuffer, offset: i64 = 0, gain: f64 = 1.0) -> i32:
+        """Add source at a frame offset; require matching formats and enough space."""
+        return _buffer_mix(self.handle, source.handle, offset, gain)
+
+    def tone(self, frequency: f64 = 440.0, amplitude: f64 = 0.25, waveform: i32 = 0, phase: f64 = 0.0) -> i32:
+        """Fill with sine(0), square(1), triangle(2), or saw(3); phase is cycles.
+
+        Non-sine waves are naive oscillators, not band limited synthesizers.
+        Frequency must lie strictly between zero and Nyquist; amplitude is -1..1.
+        """
+        return _buffer_tone(self.handle, waveform, frequency, amplitude, phase)

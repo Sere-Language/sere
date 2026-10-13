@@ -764,7 +764,13 @@ int compileInput(const CompilerOptions& options) {
     return 1;
   }
   std::vector<std::filesystem::path> linkLibraries = options.linkLibraries;
-  prepareImportedLibraryNative(frontend.importedModulePaths());
+  if (!prepareImportedLibraryNative(frontend.importedModulePaths())) {
+    // The failure is the missing native code itself; linking now would only
+    // report it as an undefined symbol with no hint about who did not build.
+    llvm::errs() << "error: an imported library's native code did not build; see the output "
+                    "above\n";
+    return 1;
+  }
   appendExtractedLibraryLinks(frontend.importedModulePaths(), linkLibraries);
   // A package records the system libraries its native code was built against, so
   // a consumer never has to know that, say, an OpenGL binding needs opengl32.
