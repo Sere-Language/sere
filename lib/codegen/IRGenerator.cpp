@@ -6407,8 +6407,9 @@ void IRGenerator::declareFunctions(const Module& ast) {
         continue;
       }
       const std::string llvmName = llvmNameFor(function);
-      llvm::Function* fn =
-          functions_.contains(llvmName) ? functions_[llvmName] : module_->getFunction(llvmName);
+      // functions_ also contains unqualified lookup aliases. Only reuse an
+      // actual linker symbol here; an alias may name a shadowed prelude helper.
+      llvm::Function* fn = module_->getFunction(llvmName);
       if (fn == nullptr) {
         fn = llvm::Function::Create(
             llvmFunctionType(function), llvm::Function::ExternalLinkage, llvmName, module_);

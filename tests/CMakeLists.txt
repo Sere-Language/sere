@@ -1,14 +1,8 @@
 # Compile and execute language feature regressions through both backends.
 file(GLOB SERE_FEATURE_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/features/*.sere")
-# The OpenGL binding is exercised on the LLVM backend only: the Serem backend has
-# not grown lowering for package member access, which the binding's barrel uses.
-set(SERE_LLVM_ONLY_FEATURES gl_binding gl_math wavio_audio)
 foreach(source IN LISTS SERE_FEATURE_TESTS)
   get_filename_component(feature "${source}" NAME_WE)
   foreach(backend IN ITEMS llvm serem)
-    if(backend STREQUAL "serem" AND feature IN_LIST SERE_LLVM_ONLY_FEATURES)
-      continue()
-    endif()
     add_test(NAME sere.feature.${feature}.${backend}
       COMMAND "${CMAKE_COMMAND}"
         "-DCOMPILER=${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}"
@@ -29,7 +23,7 @@ add_test(NAME sere.bindings.diagnostics
     "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/binding-diagnostics"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/run_binding_diagnostics.cmake")
 
-set(SERE_STDLIB_TEST_GROUPS crypto hash os sys sockets wsgi)
+set(SERE_STDLIB_TEST_GROUPS crypto hash os sys sockets wsgi generics pathlib multiprocessing)
 if(WIN32)
   list(APPEND SERE_STDLIB_TEST_GROUPS windows)
 endif()

@@ -6601,6 +6601,17 @@ bool TypeChecker::collectMethods(Module& module) {
     for (const Type* base : record->bases()) {
       inheritBaseMethods(record, base);
     }
+    // Computed properties are installed after field flattening. Copy those
+    // descriptors too, so derived classes expose their inherited accessors.
+    std::vector<RecordField> inheritedFields = record->fields();
+    for (const Type* base : record->bases()) {
+      for (const RecordField& field : base->fields()) {
+        if (field.stored || record->findField(field.name) != nullptr)
+          continue;
+        inheritedFields.push_back(field);
+      }
+    }
+    types_->setRecordFields(record, std::move(inheritedFields));
     bool abstractClass = false;
     for (const RecordMethod& method : record->methods()) {
       abstractClass = abstractClass || method.isAbstract;
@@ -6788,8 +6799,12 @@ bool TypeChecker::collectExports(Module& module) {
       alias.paramNames = symbol->paramNames;
       if (symbol->function != nullptr) {
         const FunctionDef& function = *symbol->function;
+        const std::string prefix = !function.modulePrefix().empty() ? function.modulePrefix()
+                                   : moduleName_ != "__main__"      ? moduleName_
+                                                                   : std::string{};
         alias.llvmName = function.isExtern() ? function.externName()
-                                             : function.modulePrefix() + "_" + function.name();
+                        : prefix.empty()    ? function.name()
+                                            : prefix + "_" + function.name();
         for (const ParamDecl& param : function.params()) {
           if (param.defaultValue == nullptr)
             ++alias.requiredArgs;

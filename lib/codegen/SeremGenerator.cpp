@@ -498,6 +498,47 @@ SeremGenerator::emit(const Module& module,
       }
     }
   }
+  // Package barrels re-export globals from dependencies. Resolve these after
+  // direct imports, iterating because a barrel may itself import another barrel.
+  bool globalsChanged = true;
+  while (globalsChanged) {
+    globalsChanged = false;
+    for (std::size_t index = 0; index < modules.size(); ++index) {
+      const std::string& key = moduleKeys[index];
+      for (const auto& statement : modules[index]->statements()) {
+        if (statement->kind() != NodeKind::ImportStmt)
+          continue;
+        const auto& import = static_cast<const ImportStmt&>(*statement);
+        if (!import.isFrom() || import.modulePath().empty())
+          continue;
+        std::string path;
+        for (const auto& part : import.modulePath()) {
+          if (!path.empty())
+            path += '.';
+          path += part;
+        }
+        const auto alias = moduleAliases_[key].find(path);
+        if (alias == moduleAliases_[key].end())
+          continue;
+        const auto source = importedModuleGlobals_.find(alias->second);
+        if (source == importedModuleGlobals_.end())
+          continue;
+        // A self import must not mutate the map being iterated.
+        const auto exports = source->second;
+        if (import.star()) {
+          for (const auto& [name, global] : exports)
+            globalsChanged |= importedModuleGlobals_[key].try_emplace(name, global).second;
+        } else {
+          for (std::size_t nameIndex = 0; nameIndex < import.names().size(); ++nameIndex) {
+            const auto global = exports.find(import.names()[nameIndex]);
+            if (global != exports.end())
+              globalsChanged |= importedModuleGlobals_[key]
+                                    .try_emplace(import.boundName(nameIndex), global->second).second;
+          }
+        }
+      }
+    }
+  }
   for (const Module* current : modules)
     declareTypes(*current);
   declareInstances(modules);
@@ -809,7 +850,13 @@ SeremGenerator::moduleMemberGlobal(const MemberExpr& expression) const {
   if (module == moduleGlobals_.end())
     return nullptr;
   const auto global = module->second.find(expression.field());
-  return global == module->second.end() ? nullptr : &global->second;
+  if (global != module->second.end())
+    return &global->second;
+  const auto exports = importedModuleGlobals_.find(alias->second);
+  if (exports == importedModuleGlobals_.end())
+    return nullptr;
+  const auto exported = exports->second.find(expression.field());
+  return exported == exports->second.end() ? nullptr : &exported->second;
 }
 
 bool SeremGenerator::emitModuleInitializers(const std::vector<const Module*>& modules,
@@ -1697,53 +1744,9 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
     if (assign.op() != AssignOp::Assign) {
       const serem::ValuePtr current =
           builder_->load(slot, lowerType(assign.target().resolvedType()));
-      BinaryOp binaryOp = BinaryOp::Add;
-      const Type* targetType = assign.target().resolvedType();
-      const Type* record = targetType == nullptr ? nullptr : targetType->valueType();
-      bool dispatched = false;
-      if (record != nullptr && record->isRecord() && binaryOpForAssign(assign.op(), binaryOp)) {
-        const BinaryDunderNames names = binaryDunderNames(binaryOp);
-        if (names.method != nullptr && record->methodIndex(names.method) >= 0) {
-          value = callMethod(record, names.method, current, {value});
-          dispatched = value != nullptr;
-        }
-      }
-      if (!dispatched && binaryOpForAssign(assign.op(), binaryOp)) {
-        switch (binaryOp) {
-        case BinaryOp::Add:
-          value = builder_->add(current, value, lowerType(assign.target().resolvedType()));
-          break;
-        case BinaryOp::Sub:
-          value = builder_->sub(current, value, lowerType(assign.target().resolvedType()));
-          break;
-        case BinaryOp::Mul:
-          value = builder_->mul(current, value, lowerType(assign.target().resolvedType()));
-          break;
-        case BinaryOp::Div:
-          value = builder_->div(current, value, lowerType(assign.target().resolvedType()));
-          break;
-        case BinaryOp::Mod:
-          value = builder_->rem(current, value, lowerType(assign.target().resolvedType()));
-          break;
-        case BinaryOp::BitAnd:
-          value = builder_->bitAnd(current, value, lowerType(assign.target().resolvedType()));
-          break;
-        case BinaryOp::BitOr:
-          value = builder_->bitOr(current, value, lowerType(assign.target().resolvedType()));
-          break;
-        case BinaryOp::BitXor:
-          value = builder_->bitXor(current, value, lowerType(assign.target().resolvedType()));
-          break;
-        case BinaryOp::Shl:
-          value = builder_->shiftLeft(current, value, lowerType(assign.target().resolvedType()));
-          break;
-        case BinaryOp::Shr:
-          value = builder_->shiftRight(current, value, lowerType(assign.target().resolvedType()));
-          break;
-        default:
-          break;
-        }
-      }
+      value = compoundAssignValue(assign.op(), current, value, assign.target().resolvedType());
+      if (value == nullptr)
+        return false;
     }
     builder_->store(std::move(value), slot);
     return true;

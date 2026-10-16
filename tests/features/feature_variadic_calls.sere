@@ -1,0 +1,32 @@
+def total(start: i32, *items: list[i32], extra: i32 = 0) -> i32:
+    result: i32 = start + extra
+    for item in items:
+        result += item
+    return result
+
+
+class Words:
+    items: list[str]
+
+    def __init__(self, *items: list[str]) -> void:
+        self.items = items
+
+    def join(self, *more: list[str]) -> str:
+        result: str = ""
+        for item in self.items:
+            result += item
+        for item in more:
+            result += item
+        return result
+
+
+def main() -> i32:
+    assert total(1) == 1
+    assert total(1, 2, 3, extra=4) == 10
+    assert total(1, items=[2, 3], extra=4) == 10
+    assert Words().join() == ""
+    words: Words = Words("a", "b")
+    assert words.join() == "ab"
+    assert words.join("c", "d") == "abcd"
+    assert Words(items=["x"]).join(more=["y"]) == "xy"
+    return 0
