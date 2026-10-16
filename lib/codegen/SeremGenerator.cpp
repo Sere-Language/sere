@@ -621,6 +621,9 @@ SeremGenerator::emit(const Module& module,
     const Module* current = modules[moduleIndex];
     currentModuleKey_ = moduleKeys[moduleIndex];
     for (const auto& statement : current->statements()) {
+      // Lowering a method or prelude helper may switch to its defining module.
+      // Each top-level declaration starts in the module that owns it.
+      currentModuleKey_ = moduleKeys[moduleIndex];
       if (statement->kind() == NodeKind::FunctionDef &&
           !emitFunction(static_cast<const FunctionDef&>(*statement)))
         return nullptr;
@@ -3312,6 +3315,44 @@ serem::ValuePtr SeremGenerator::emitBinary(const BinaryExpr& expression) {
   }
 }
 
+bool SeremGenerator::appendVariadicArguments(const std::string& symbol,
+                                             const CallExpr& expression, std::size_t skip,
+                                             std::vector<serem::ValuePtr>& arguments) {
+  const auto found = definitions_.find(symbol);
+  if (found == definitions_.end() || found->second == nullptr)
+    return false;
+  const FunctionDef& function = *found->second;
+  bool variadic = false;
+  for (const auto& parameter : function.params())
+    variadic = variadic || parameter.kind == ParamKind::VarArg;
+  if (!variadic || function.resolvedType() == nullptr)
+    return false;
+  const auto& params = function.resolvedType()->paramTypes();
+  for (std::size_t index = skip; index < function.params().size(); ++index) {
+    const auto& parameter = function.params()[index];
+    const Type* expected = resolveType(params[index]);
+    const Expr* bound = index < expression.boundArguments().size()
+                            ? expression.boundArguments()[index] : nullptr;
+    if (parameter.kind == ParamKind::VarArg && bound == nullptr) {
+      const Type* element = expected->elementType();
+      std::vector<serem::ValuePtr> items;
+      for (std::size_t position = index - skip; position < expression.arguments().size(); ++position) {
+        const Expr& argument = *expression.arguments()[position];
+        items.push_back(coerce(emitExpression(argument), argument.resolvedType(), element));
+      }
+      arguments.push_back(builder_->operation(
+          "aggregate.list", lowerType(expected), std::move(items),
+          {{"element", element->display()}, {"element.kind", listElementKindText(element)}}));
+    } else {
+      if (bound == nullptr)
+        bound = parameter.defaultValue.get();
+      if (bound != nullptr)
+        arguments.push_back(coerce(emitExpression(*bound), bound->resolvedType(), expected));
+    }
+  }
+  return true;
+}
+
 void SeremGenerator::appendDefaults(const std::string& symbol,
                                     std::vector<serem::ValuePtr>& arguments) {
   const auto found = definitions_.find(symbol);
@@ -3561,7 +3602,9 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
                                    : argument.resolvedType();
         args.push_back(coerce(emitExpression(argument), argument.resolvedType(), expected));
       };
-      if (!expression.boundArguments().empty()) {
+      if (appendVariadicArguments(symbol, expression, 0, args)) {
+        // The variadic parameter is passed as one list, including when empty.
+      } else if (!expression.boundArguments().empty()) {
         for (const Expr* argument : expression.boundArguments()) {
           if (argument != nullptr)
             pushArgument(*argument);
@@ -3821,13 +3864,15 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
       }
       args.push_back(std::move(value));
     };
-    for (const Expr* argument : expression.boundArguments()) {
-      if (argument != nullptr)
-        appendOperand(*argument);
-    }
-    if (args.empty()) {
-      for (const std::unique_ptr<Expr>& argument : expression.arguments()) {
-        appendOperand(*argument);
+    if (!appendVariadicArguments(initSymbol, expression, 1, args)) {
+      for (const Expr* argument : expression.boundArguments()) {
+        if (argument != nullptr)
+          appendOperand(*argument);
+      }
+      if (args.empty()) {
+        for (const std::unique_ptr<Expr>& argument : expression.arguments()) {
+          appendOperand(*argument);
+        }
       }
     }
     if (record->isEnum() && expression.callee().kind() == NodeKind::MemberExpr) {
@@ -3959,7 +4004,9 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
       serem::ValuePtr callee = std::make_shared<serem::FunctionRef>(
           symbol, lowerType(expression.callee().resolvedType()));
       args.push_back(emitExpression(member.object()));
-      if (!expression.boundArguments().empty()) {
+      if (appendVariadicArguments(symbol, expression, 1, args)) {
+        // The receiver is already in the first argument slot.
+      } else if (!expression.boundArguments().empty()) {
         for (const Expr* argument : expression.boundArguments()) {
           if (argument != nullptr)
             args.push_back(emitExpression(*argument));
@@ -3997,6 +4044,11 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
   }
   if (callee == nullptr) {
     callee = emitExpression(expression.callee());
+  }
+  if (callee != nullptr && callee->valueKind() == serem::ValueKind::FunctionRef &&
+      appendVariadicArguments(static_cast<const serem::FunctionRef&>(*callee).name(),
+                              expression, 0, args)) {
+    return builder_->call(std::move(callee), std::move(args), lowerType(expression.resolvedType()));
   }
   if (!expression.boundArguments().empty()) {
     for (const Expr* argument : expression.boundArguments()) {

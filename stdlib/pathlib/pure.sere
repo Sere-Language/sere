@@ -2,9 +2,8 @@
 # and `PureWindowsPath`: the same drive/root/tail model, the same properties,
 # and the same pure transformations. No filesystem access happens here.
 #
-# Python exposes these as read-only properties; Sere has no `@property`, so the
-# immutable-looking attributes (`name`, `suffix`, `parts`, ...) are plain fields
-# computed once when the path is parsed. Treat them as read-only.
+# Scalar attributes are computed when the path is parsed. Ancestors are lazy
+# properties so constructing a path does not recursively construct its parents.
 
 import bytes
 from pathlib.parser import Parser, FLAVOUR_POSIX, FLAVOUR_WINDOWS, segment_match
@@ -74,8 +73,6 @@ class PurePath:
     suffixes: list[str]
     stem: str
     parts: list[str]
-    parent: PurePath
-    parents: list[PurePath]
 
     _drv: str
     _root: str
@@ -89,6 +86,17 @@ class PurePath:
             _init(self, FLAVOUR_WINDOWS, segments)
         else:
             _init(self, FLAVOUR_POSIX, segments)
+
+    @public parent.get -> PurePath:
+        if len(self._tail) == 0:
+            return self
+        return _from_parts(self._flavour, self._drv, self._root, _take(self._tail, len(self._tail) - 1))
+
+    @public parents.get -> list[PurePath]:
+        ancestors: list[PurePath] = []
+        for k in range(len(self._tail) - 1, -1, -1):
+            ancestors.append(_from_parts(self._flavour, self._drv, self._root, _take(self._tail, k)))
+        return ancestors
 
     # -- representation -----------------------------------------------------
 
@@ -355,14 +363,6 @@ def _init(target: PurePath, flavour: i32, raw: list[str]) -> void:
     target.suffixes = _suffixes_of(target.name)
     target.stem = _stem_of(target.name)
     target.parts = _anchor_and_tail(target)
-    if len(tail) == 0:
-        target.parent = target
-    else:
-        target.parent = _from_parts(flavour, drive, root, _take(tail, len(tail) - 1))
-    ancestors: list[PurePath] = []
-    for k in range(len(tail) - 1, -1, -1):
-        ancestors.append(_from_parts(flavour, drive, root, _take(tail, k)))
-    target.parents = ancestors
 
 
 def _anchor_and_tail(path: PurePath) -> list[str]:

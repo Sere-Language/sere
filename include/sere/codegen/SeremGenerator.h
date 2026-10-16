@@ -139,6 +139,8 @@ private:
                                            serem::ValuePtr self,
                                            const std::vector<serem::ValuePtr>& arguments);
   void appendDefaults(const std::string& symbol, std::vector<serem::ValuePtr>& arguments);
+  bool appendVariadicArguments(const std::string& symbol, const CallExpr& expression,
+                               std::size_t skip, std::vector<serem::ValuePtr>& arguments);
   [[nodiscard]] serem::ValuePtr emitName(const NameExpr& expression);
   [[nodiscard]] const ModuleGlobal* moduleGlobal(std::string_view name) const;
   [[nodiscard]] const ModuleGlobal* moduleMemberGlobal(const MemberExpr& expression) const;

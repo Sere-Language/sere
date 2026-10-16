@@ -6625,7 +6625,7 @@ llvm::Function* IRGenerator::declareInstantiation(const FunctionInstantiation& i
   std::vector<llvm::Type*> params;
   for (std::size_t index = 0; index < inst.specializedType->paramTypes().size(); ++index) {
     const Type* param = inst.specializedType->paramTypes()[index];
-    if (inst.isMethod && index == 0) {
+    if ((inst.isMethod && index == 0) || recordHasTypeId(resolveType(param))) {
       params.push_back(llvm::PointerType::getUnqual(*context_));
     } else {
       params.push_back(lower(param));

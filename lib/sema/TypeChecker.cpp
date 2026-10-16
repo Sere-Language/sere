@@ -6784,6 +6784,7 @@ bool TypeChecker::collectExports(Module& module) {
       alias.name = name->name();
       alias.type = symbol->type;
       alias.isPublic = true;
+      alias.isTypeExport = symbol->kind == SymbolKind::Class;
       alias.paramNames = symbol->paramNames;
       if (symbol->function != nullptr) {
         const FunctionDef& function = *symbol->function;

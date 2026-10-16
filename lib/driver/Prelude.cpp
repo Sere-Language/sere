@@ -127,6 +127,13 @@ std::unique_ptr<Module> parsePrelude(DiagnosticEngine& diagnostics,
   if (prelude == nullptr || diagnostics.diagnostics().size() > errorCount) {
     return nullptr;
   }
+  // Prelude helpers may be shadowed by user functions. Keep their linker
+  // symbols distinct even when both declarations live in the same module.
+  for (const auto& statement : prelude->statements()) {
+    if (statement->kind() == NodeKind::FunctionDef) {
+      static_cast<FunctionDef&>(*statement).setModulePrefix("prelude");
+    }
+  }
   return prelude;
 }
 
