@@ -1,0 +1,10 @@
+"""Calling-thread native status reporting; inspect immediately after failure."""
+from wavio._native import _error_message, _last_error
+
+def last_error() -> i32:
+    """Return the calling thread's most recent native operation status."""
+    return _last_error()
+
+def error_message(code: i32) -> str:
+    """Return an owned human-readable description of a native status code."""
+    return _error_message(code)

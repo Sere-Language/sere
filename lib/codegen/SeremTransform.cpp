@@ -370,6 +370,9 @@ public:
       }
     };
     mark(std::string(kEntryPoint));
+    // The native entry wrapper calls this before main. Keep its side effects
+    // even though that wrapper is introduced after Serem reachability runs.
+    mark("sere.module.init");
     while (!pending.empty()) {
       const std::string current = pending.back();
       pending.pop_back();

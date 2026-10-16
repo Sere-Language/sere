@@ -240,6 +240,16 @@ resolvedConstraints(const std::vector<std::unique_ptr<TypeExpr>>& expressions) {
     }
     return true;
   }
+  if (pattern->kind() == TypeKind::Function && actual->kind() == TypeKind::Function &&
+      pattern->paramTypes().size() == actual->paramTypes().size()) {
+    if (!inferTypeBindings(pattern->returnType(), actual->returnType(), bindings))
+      return false;
+    for (std::size_t i = 0; i < pattern->paramTypes().size(); ++i) {
+      if (!inferTypeBindings(pattern->paramTypes()[i], actual->paramTypes()[i], bindings))
+        return false;
+    }
+    return true;
+  }
   if (pattern->isRecord() && actual->isRecord() &&
       pattern->name().substr(0, pattern->name().find('[')) ==
           actual->name().substr(0, actual->name().find('['))) {
@@ -3388,10 +3398,7 @@ bool TypeChecker::checkFor(ForStmt& statement, const Type* expectedReturn) {
     return false;
   }
   pushScope(statement.range());
-  Symbol symbol;
-  symbol.kind = SymbolKind::Variable;
-  symbol.type = element;
-  if (!declare(statement.name(), symbol, statement.range().start)) {
+  if (!checkBindingPattern(statement.target(), element, true)) {
     popScope();
     return false;
   }
@@ -3727,8 +3734,10 @@ const Type* TypeChecker::specializeCall(CallExpr& expr, const Symbol& symbol) {
       }
       subst[symbol.function->typeParams()[index]] = resolved;
     }
-  } else if (expr.arguments().size() == functionType->paramTypes().size()) {
-    for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
+  } else {
+    for (std::size_t index = 0;
+         index < expr.arguments().size() && index < functionType->paramTypes().size();
+         ++index) {
       const Expr& argument = *expr.arguments()[index];
       // An empty collection literal carries no element types, so it cannot
       // contribute bindings here; checkFunctionArguments later binds it to the
@@ -3751,12 +3760,40 @@ const Type* TypeChecker::specializeCall(CallExpr& expr, const Symbol& symbol) {
         return nullptr;
       }
     }
+    for (const NamedArgument& argument : expr.keywordArguments()) {
+      const auto& params = symbol.function->params();
+      const auto found = std::find_if(params.begin(), params.end(), [&](const ParamDecl& param) {
+        return param.name == argument.name;
+      });
+      if (found == params.end())
+        continue; // Normal argument binding diagnoses unknown names.
+      if ((argument.value->kind() == NodeKind::ListLiteral &&
+           static_cast<const ListLiteral&>(*argument.value).elements().empty()) ||
+          (argument.value->kind() == NodeKind::DictLiteral &&
+           static_cast<const DictLiteral&>(*argument.value).values().empty()))
+        continue;
+      const Type* actual = checkExpr(*argument.value);
+      if (actual == nullptr)
+        return nullptr;
+      if (!inferTypeBindings(functionType->paramTypes()[found - params.begin()], actual, subst)) {
+        diagnostics_->error(argument.value->range(), "conflicting generic argument types");
+        return nullptr;
+      }
+    }
+  }
+  if (expr.typeArgs().empty() && expectedExprType_ != nullptr) {
+    std::unordered_map<std::string, const Type*> context;
+    if (inferTypeBindings(functionType->returnType(), expectedExprType_, context)) {
+      for (const auto& [name, type] : context)
+        subst.try_emplace(name, type);
+    }
   }
   std::vector<const Type*> instArgs;
   for (const std::string& param : symbol.function->typeParams()) {
     const auto found = subst.find(param);
     if (found == subst.end()) {
       diagnostics_->error(expr.range(), "cannot infer type argument '" + param + "'");
+      diagnostics_->help("specify explicit type arguments or provide a suitable type annotation");
       return nullptr;
     }
     instArgs.push_back(found->second);
@@ -3767,7 +3804,12 @@ const Type* TypeChecker::specializeCall(CallExpr& expr, const Symbol& symbol) {
                             expr.range()))
     return nullptr;
   const FunctionInstantiation* inst = types_->instantiateFunction(
-      symbol.function->name(), symbol.function->typeParams(), functionType, instArgs);
+      symbol.function->modulePrefix().empty()
+          ? symbol.function->name()
+          : symbol.function->modulePrefix() + "_" + symbol.function->name(),
+      symbol.function->typeParams(),
+      functionType,
+      instArgs);
   if (inst == nullptr || inst->specializedType == nullptr) {
     diagnostics_->error(expr.range(), "failed to instantiate '" + symbol.function->name() + "'");
     return nullptr;
@@ -5009,53 +5051,78 @@ Symbol* TypeChecker::lookupAssignment(const std::string& name) {
   return nullptr;
 }
 
+bool TypeChecker::checkBindingPattern(Expr& target, const Type* type, bool declaration) {
+  // Validate the whole tree before adding any names to the scope.
+  std::vector<std::pair<NameExpr*, const Type*>> leaves;
+  std::unordered_map<std::string, const Type*> pending;
+  const auto validate = [&](auto&& self, Expr& pattern, const Type* valueType) -> bool {
+    valueType = valueType->canonical();
+    if (pattern.kind() == NodeKind::TupleExpr) {
+      auto& tuple = static_cast<TupleExpr&>(pattern);
+      if (!valueType->isGenericCtor("tuple") ||
+          tuple.elements().size() != valueType->args().size()) {
+        diagnostics_->error(pattern.range(),
+                            "tuple unpacking expects " + std::to_string(tuple.elements().size()) +
+                                " values, but value has type " + quoteType(valueType));
+        diagnostics_->help("use a tuple pattern with the same shape as the value");
+        return false;
+      }
+      pattern.setResolvedType(valueType);
+      for (std::size_t i = 0; i < tuple.elements().size(); ++i) {
+        if (!self(self, *tuple.elements()[i], valueType->args()[i]))
+          return false;
+      }
+      return true;
+    }
+    if (pattern.kind() != NodeKind::NameExpr) {
+      diagnostics_->error(pattern.range(), "tuple binding target must be a name or tuple pattern");
+      return false;
+    }
+    auto& name = static_cast<NameExpr&>(pattern);
+    Symbol* existing = declaration ? nullptr : lookupAssignment(name.name());
+    const auto prior = pending.find(name.name());
+    const Type* destination = existing != nullptr      ? existing->type
+                              : prior != pending.end() ? prior->second
+                                                       : valueType;
+    if (existing != nullptr && existing->readonly) {
+      diagnostics_->error(pattern.range(), "cannot assign to '" + name.name() + "'");
+      return false;
+    }
+    if (!isAssignable(valueType, destination)) {
+      diagnostics_->error(pattern.range(),
+                          "cannot unpack " + quoteType(valueType) + " into '" + name.name() +
+                              "' of type " + quoteType(destination));
+      return false;
+    }
+    name.setResolvedType(destination);
+    pending[name.name()] = destination;
+    leaves.emplace_back(&name, destination);
+    return true;
+  };
+  if (!validate(validate, target, type))
+    return false;
+  for (const auto& [name, destination] : leaves) {
+    if (!pending.contains(name->name()))
+      continue;
+    pending.erase(name->name());
+    if (declaration || lookupAssignment(name->name()) == nullptr) {
+      if (!declareInferred(*name, destination, name->range().start))
+        return false;
+    }
+  }
+  return true;
+}
+
 bool TypeChecker::checkAssign(AssignStmt& statement) {
   Expr& targetExpr = const_cast<Expr&>(statement.target());
   if (statement.op() == AssignOp::Assign && targetExpr.kind() == NodeKind::TupleExpr) {
-    auto& targets = static_cast<TupleExpr&>(targetExpr);
     const Type* valueType = checkExpr(const_cast<Expr&>(statement.value()));
-    if (valueType == nullptr) {
+    if (valueType == nullptr || !checkBindingPattern(targetExpr, valueType, false))
       return false;
-    }
-    if (!valueType->isGenericCtor("tuple") ||
-        valueType->args().size() != targets.elements().size()) {
-      diagnostics_->error(statement.range(),
-                          "tuple unpack expected " + std::to_string(targets.elements().size()) +
-                              " values");
-      diagnostics_->help("right-hand side must be a tuple of the same length");
-      return false;
-    }
-    bool ok = true;
-    for (std::size_t index = 0; index < targets.elements().size(); ++index) {
-      Expr& item = *targets.elements()[index];
-      const Type* elemType = valueType->args()[index];
-      if (item.kind() != NodeKind::NameExpr) {
-        diagnostics_->error(item.range(), "tuple unpack target must be a name");
-        ok = false;
-        continue;
-      }
-      auto& name = static_cast<NameExpr&>(item);
-      Symbol* existing = lookupAssignment(name.name());
-      if (existing != nullptr) {
-        if (existing->readonly) {
-          diagnostics_->error(item.range(), "cannot assign to '" + name.name() + "'");
-          ok = false;
-          continue;
-        }
-        name.setResolvedType(existing->type);
-        if (elemType != nullptr && existing->type != nullptr &&
-            !isAssignable(elemType, existing->type)) {
-          diagnostics_->error(
-              item.range(), "cannot unpack " + quoteType(elemType) + " into '" + name.name() + "'");
-          ok = false;
-        }
-      } else {
-        ok = declareInferred(name, elemType, statement.range().start) && ok;
-      }
-    }
     statement.setResolvedType(valueType);
-    return ok;
+    return true;
   }
+
   if (statement.op() == AssignOp::Assign) {
     NameExpr* target = asName(targetExpr);
     const NameExpr* value = asName(statement.value());
@@ -5445,7 +5512,13 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
       return false;
     }
     if (param.defaultValue != nullptr) {
-      const Type* defaultType = checkExpr(*param.defaultValue);
+      ExpectedExprScope expected(expectedExprType_, type);
+      const bool collection =
+          (param.defaultValue->kind() == NodeKind::ListLiteral && type->isSequence()) ||
+          (param.defaultValue->kind() == NodeKind::DictLiteral && type->isDict());
+      const Type* defaultType =
+          collection ? (bindCollectionInit(*param.defaultValue, type) ? type : nullptr)
+                     : checkExpr(*param.defaultValue);
       if (defaultType == nullptr || !isAssignable(defaultType, type)) {
         diagnostics_->error(param.range, "default value type mismatch for '" + param.name + "'");
         if (bestEffort_) {
@@ -5692,6 +5765,7 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
   };
   const auto checkArg =
       [&](Expr& argument, const Type* expected, const std::string& label) -> bool {
+    ExpectedExprScope context(expectedExprType_, expected);
     if (expected != nullptr &&
         ((argument.kind() == NodeKind::ListLiteral && expected->isSequence()) ||
          (argument.kind() == NodeKind::DictLiteral && expected->isDict()))) {
@@ -5757,7 +5831,10 @@ bool TypeChecker::checkFunctionArguments(CallExpr& expr,
                                    instArgs,
                                    argument.range())) {
             const FunctionInstantiation* inst = types_->instantiateFunction(
-                symbol->function->name(), symbol->function->typeParams(), symbol->type, instArgs);
+                loweredCallName(static_cast<const NameExpr&>(argument), *symbol),
+                symbol->function->typeParams(),
+                symbol->type,
+                instArgs);
             if (inst != nullptr && inst->specializedType != nullptr) {
               argType = inst->specializedType;
               argument.setResolvedType(argType);

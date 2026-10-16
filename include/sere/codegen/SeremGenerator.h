@@ -75,6 +75,10 @@ private:
   [[nodiscard]] serem::ValuePtr emitIfValue(const IfStmt& statement, const Type* resultType);
   [[nodiscard]] bool emitWhile(const WhileStmt& statement);
   [[nodiscard]] bool emitFor(const ForStmt& statement);
+  [[nodiscard]] bool emitBinding(const Expr& pattern,
+                                 serem::ValuePtr value,
+                                 const Type* type,
+                                 bool declaration = false);
   void declareTypes(const Module& module);
   void declareClass(const ClassDef& classDef);
   /// Declares a Serem record type for every instantiated generic class, so the

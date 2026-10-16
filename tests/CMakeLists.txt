@@ -22,6 +22,13 @@ foreach(source IN LISTS SERE_FEATURE_TESTS)
 endforeach()
 
 # Focused standard-library regressions. Windows tests avoid interactive desktop APIs.
+add_test(NAME sere.bindings.diagnostics
+  COMMAND "${CMAKE_COMMAND}"
+    "-DCOMPILER=${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}"
+    "-DSTDLIB=${CMAKE_SOURCE_DIR}/stdlib"
+    "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/binding-diagnostics"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/run_binding_diagnostics.cmake")
+
 set(SERE_STDLIB_TEST_GROUPS crypto hash os sys sockets wsgi)
 if(WIN32)
   list(APPEND SERE_STDLIB_TEST_GROUPS windows)

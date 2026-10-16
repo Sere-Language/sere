@@ -1,5 +1,5 @@
 """Independent playback voices, bounded file streaming, and submix buses."""
-from wavio._native import _bus_close, _bus_create, _bus_volume, _sound_close, _sound_fade, _sound_length, _sound_loop, _sound_open, _sound_pan, _sound_pause, _sound_pitch, _sound_play, _sound_playing, _sound_position, _sound_route, _sound_schedule, _sound_seek, _sound_stop, _sound_volume
+from wavio._native import _bus_close, _bus_create, _bus_volume, _sound_close, _sound_fade, _sound_length, _sound_loop, _sound_open, _sound_pan, _sound_pause, _sound_pitch, _sound_play, _sound_playing, _sound_position, _sound_position3d, _sound_route, _sound_schedule, _sound_seek, _sound_stop, _sound_volume
 from wavio.context import AudioContext
 
 class Bus:

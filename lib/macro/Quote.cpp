@@ -646,8 +646,10 @@ std::unique_ptr<Stmt> cloneStmt(const Stmt& stmt) {
   }
   case NodeKind::ForStmt: {
     const auto& loop = static_cast<const ForStmt&>(stmt);
-    return std::make_unique<ForStmt>(
-        stmt.range(), loop.name(), cloneExpr(loop.iterable()), cloneStmts(loop.body()));
+    return std::make_unique<ForStmt>(stmt.range(),
+                                     cloneExpr(loop.target()),
+                                     cloneExpr(loop.iterable()),
+                                     cloneStmts(loop.body()));
   }
   case NodeKind::AssertStmt: {
     const auto& assertion = static_cast<const AssertStmt&>(stmt);

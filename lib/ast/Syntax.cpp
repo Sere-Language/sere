@@ -738,8 +738,20 @@ ForStmt::ForStmt(SourceRange range,
                  std::string name,
                  std::unique_ptr<Expr> iterable,
                  std::vector<std::unique_ptr<Stmt>> body)
-    : Stmt(NodeKind::ForStmt, range), name_(std::move(name)), iterable_(std::move(iterable)),
-      body_(std::move(body)) {
+    : ForStmt(range,
+              std::make_unique<NameExpr>(range, std::move(name)),
+              std::move(iterable),
+              std::move(body)) {
+}
+
+ForStmt::ForStmt(SourceRange range,
+                 std::unique_ptr<Expr> target,
+                 std::unique_ptr<Expr> iterable,
+                 std::vector<std::unique_ptr<Stmt>> body)
+    : Stmt(NodeKind::ForStmt, range),
+      name_(target->kind() == NodeKind::NameExpr ? static_cast<const NameExpr&>(*target).name()
+                                                 : "$unpack"),
+      iterable_(std::move(iterable)), target_(std::move(target)), body_(std::move(body)) {
 }
 
 const std::string& ForStmt::name() const {

@@ -419,7 +419,23 @@ SeremGenerator::emit(const Module& module,
     const Module& current = *modules[index];
     const std::string& key = moduleKeys[index];
     moduleGlobals_.try_emplace(key);
+    const auto declarePattern = [&](auto&& self, const Expr& target) -> void {
+      if (target.kind() == NodeKind::TupleExpr) {
+        for (const auto& item : static_cast<const TupleExpr&>(target).elements())
+          self(self, *item);
+      } else if (target.kind() == NodeKind::NameExpr) {
+        const auto& name = static_cast<const NameExpr&>(target);
+        const ModuleGlobal global{"module." + key + "." + name.name(), name.resolvedType()};
+        moduleGlobals_[key].insert_or_assign(name.name(), global);
+        globalsByName_.insert_or_assign(name.name(), global);
+      }
+    };
     for (const std::unique_ptr<Stmt>& statement : current.statements()) {
+      if (statement != nullptr && statement->kind() == NodeKind::AssignStmt) {
+        const auto& assign = static_cast<const AssignStmt&>(*statement);
+        if (assign.target().kind() == NodeKind::TupleExpr)
+          declarePattern(declarePattern, assign.target());
+      }
       if (statement == nullptr || statement->kind() != NodeKind::VarDecl)
         continue;
       const auto& declaration = static_cast<const VarDecl&>(*statement);
@@ -561,7 +577,15 @@ SeremGenerator::emit(const Module& module,
   }
   // Generic instantiations are emitted per concrete type argument, so a call
   // site can name the specialized symbol directly.
-  for (const FunctionInstantiation& inst : types_->functionInstantiations()) {
+  for (std::size_t instIndex = 0; instIndex < types_->functionInstantiations().size();
+       ++instIndex) {
+    // Emitting a generic body can discover further concrete specializations.
+    const FunctionInstantiation inst = types_->functionInstantiations()[instIndex];
+    bool unresolved = false;
+    for (const Type* arg : inst.args)
+      unresolved = unresolved || arg->isTypeParam() || arg->hasTypeParameters();
+    if (unresolved)
+      continue;
     if (inst.specializedType != nullptr && !functions_.contains(inst.llvmName)) {
       functions_.insert_or_assign(inst.llvmName, lowerType(inst.specializedType));
     }
@@ -619,7 +643,14 @@ SeremGenerator::emit(const Module& module,
     }
   }
   currentModuleKey_ = rootModuleKey_;
-  for (const FunctionInstantiation& inst : types_->functionInstantiations()) {
+  for (std::size_t instIndex = 0; instIndex < types_->functionInstantiations().size();
+       ++instIndex) {
+    const FunctionInstantiation inst = types_->functionInstantiations()[instIndex];
+    bool unresolved = false;
+    for (const Type* arg : inst.args)
+      unresolved = unresolved || arg->isTypeParam() || arg->hasTypeParameters();
+    if (unresolved)
+      continue;
     subst_.clear();
     for (std::size_t index = 0; index < inst.typeParams.size() && index < inst.args.size();
          ++index) {
@@ -629,7 +660,7 @@ SeremGenerator::emit(const Module& module,
     for (const Module* current : modules) {
       for (const auto& statement : current->statements()) {
         if (statement->kind() == NodeKind::FunctionDef &&
-            static_cast<const FunctionDef&>(*statement).name() == inst.sourceName) {
+            functionName(static_cast<const FunctionDef&>(*statement)) == inst.sourceName) {
           source = static_cast<const FunctionDef*>(statement.get());
           break;
         }
@@ -802,6 +833,13 @@ bool SeremGenerator::emitModuleInitializers(const std::vector<const Module*>& mo
   for (std::size_t index = 1; index < modules.size() && index < moduleKeys.size(); ++index) {
     currentModuleKey_ = moduleKeys[index];
     for (const std::unique_ptr<Stmt>& statement : modules[index]->statements()) {
+      if (statement != nullptr && statement->kind() == NodeKind::AssignStmt) {
+        const auto& assign = static_cast<const AssignStmt&>(*statement);
+        if (assign.target().kind() == NodeKind::TupleExpr &&
+            !emitBinding(
+                assign.target(), emitExpression(assign.value()), assign.value().resolvedType()))
+          return false;
+      }
       if (statement == nullptr || statement->kind() != NodeKind::VarDecl)
         continue;
       const auto& declaration = static_cast<const VarDecl&>(*statement);
@@ -819,6 +857,13 @@ bool SeremGenerator::emitModuleInitializers(const std::vector<const Module*>& mo
   }
   currentModuleKey_ = rootModuleKey_;
   for (const std::unique_ptr<Stmt>& statement : modules.front()->statements()) {
+    if (statement != nullptr && statement->kind() == NodeKind::AssignStmt) {
+      const auto& assign = static_cast<const AssignStmt&>(*statement);
+      if (assign.target().kind() == NodeKind::TupleExpr &&
+          !emitBinding(
+              assign.target(), emitExpression(assign.value()), assign.value().resolvedType()))
+        return false;
+    }
     if (statement == nullptr || statement->kind() != NodeKind::VarDecl)
       continue;
     const auto& declaration = static_cast<const VarDecl&>(*statement);
@@ -1373,33 +1418,10 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
     const auto& assign = static_cast<const AssignStmt&>(statement);
     // `a, b = pair` reads each element of the aggregate out by position.
     if (assign.target().kind() == NodeKind::TupleExpr) {
-      const auto& tuple = static_cast<const TupleExpr&>(assign.target());
-      serem::ValuePtr packed = coerce(emitExpression(assign.value()),
-                                      assign.value().resolvedType(),
-                                      assign.target().resolvedType());
-      if (packed == nullptr) {
-        return false;
-      }
-      const Type* target = assign.target().resolvedType();
-      const Type* canonical = target == nullptr ? nullptr : target->canonical();
-      for (std::size_t index = 0; index < tuple.elements().size(); ++index) {
-        const Expr& element = *tuple.elements()[index];
-        if (element.kind() != NodeKind::NameExpr) {
-          continue;
-        }
-        const auto& name = static_cast<const NameExpr&>(element);
-        const Type* elementType = canonical != nullptr && index < canonical->args().size()
-                                      ? canonical->args()[index]
-                                      : name.resolvedType();
-        const serem::IRType lowered = lowerType(elementType);
-        serem::ValuePtr extracted = builder_->extract(packed, index, lowered);
-        serem::ValuePtr slot = builder_->alloca(lowered);
-        builder_->store(std::move(extracted), slot);
-        locals_[name.name()] = slot;
-        localTypes_[name.name()] = elementType;
-      }
-      return true;
+      return emitBinding(
+          assign.target(), emitExpression(assign.value()), assign.value().resolvedType());
     }
+
     serem::ValuePtr value = coerce(emitExpression(assign.value()),
                                    assign.value().resolvedType(),
                                    assign.target().resolvedType());
@@ -2209,7 +2231,62 @@ bool SeremGenerator::emitWhile(const WhileStmt& statement) {
   return true;
 }
 
+bool SeremGenerator::emitBinding(const Expr& pattern,
+                                 serem::ValuePtr value,
+                                 const Type* type,
+                                 bool declaration) {
+  if (value == nullptr || type == nullptr)
+    return false;
+  type = resolveType(type)->canonical();
+  if (pattern.kind() == NodeKind::TupleExpr) {
+    const auto& tuple = static_cast<const TupleExpr&>(pattern);
+    for (std::size_t i = 0; i < tuple.elements().size(); ++i) {
+      auto extracted = builder_->extract(value, i, lowerType(type->args()[i]));
+      if (!emitBinding(*tuple.elements()[i], extracted, type->args()[i], declaration))
+        return false;
+    }
+    return true;
+  }
+  if (pattern.kind() != NodeKind::NameExpr)
+    return unsupported(pattern, "invalid binding pattern");
+  const auto& name = static_cast<const NameExpr&>(pattern);
+  const Type* destination = resolveType(name.resolvedType());
+  value = coerce(value, type, destination);
+  if (!declaration) {
+    const auto statik = functionStatics_.find(name.name());
+    const ModuleGlobal* global =
+        local(name.name()) == nullptr ? moduleGlobal(name.name()) : nullptr;
+    if (statik != functionStatics_.end() || global != nullptr) {
+      (void)builder_->operation(
+          "static.set",
+          serem::IRType::voidType(),
+          {value},
+          {{"symbol", statik != functionStatics_.end() ? statik->second : global->symbol}});
+      return true;
+    }
+  }
+  auto slot = declaration ? nullptr : local(name.name());
+  if (slot == nullptr) {
+    slot = builder_->alloca(lowerType(destination));
+    locals_[name.name()] = slot;
+    localTypes_[name.name()] = destination;
+  }
+  builder_->store(value, slot);
+  return true;
+}
+
 bool SeremGenerator::emitFor(const ForStmt& statement) {
+  struct RestoreBindings {
+    decltype(locals_)& locals;
+    decltype(localTypes_)& types;
+    decltype(locals_) savedLocals;
+    decltype(localTypes_) savedTypes;
+    ~RestoreBindings() {
+      locals = std::move(savedLocals);
+      types = std::move(savedTypes);
+    }
+  } restore{locals_, localTypes_, locals_, localTypes_};
+
   const Type* iterable = statement.iterable().resolvedType();
   const Type* custom = iterable == nullptr ? nullptr : iterable->valueType();
   serem::ValuePtr customIterator;
@@ -2240,10 +2317,8 @@ bool SeremGenerator::emitFor(const ForStmt& statement) {
     auto promise = builder_->operation(
         "coro.promise", serem::IRType::ptr(loweredElement), {iterator}, attributes);
     auto value = builder_->load(promise, loweredElement);
-    auto slot = builder_->alloca(value->type());
-    builder_->store(value, slot);
-    locals_[statement.name()] = slot;
-    localTypes_[statement.name()] = elementType;
+    if (!emitBinding(statement.target(), value, elementType, true))
+      return false;
     breakTargets_.push_back(exit);
     continueTargets_.push_back(condition);
     const bool ok = emitBlock(statement.body());
@@ -2281,10 +2356,8 @@ bool SeremGenerator::emitFor(const ForStmt& statement) {
   builder_->setInsertBlock(*body);
   auto next = builder_->operation(
       "iter.next", lowerType(elementType), {source, iterator}, iteratorAttributes);
-  auto slot = builder_->alloca(next->type());
-  builder_->store(next, slot);
-  locals_[statement.name()] = slot;
-  localTypes_[statement.name()] = elementType;
+  if (!emitBinding(statement.target(), next, elementType, true))
+    return false;
   breakTargets_.push_back(exit);
   continueTargets_.push_back(condition);
   const bool ok = emitBlock(statement.body());
@@ -3359,6 +3432,33 @@ serem::ValuePtr SeremGenerator::emitDecoratorClosure(const Expr& decorator,
 }
 
 serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
+  std::string loweredName = expression.loweredName();
+  if (!subst_.empty()) {
+    // Keep the source AST immutable across instantiations, and copy the entry
+    // before interning: the specialization vector can reallocate.
+    for (const FunctionInstantiation& entry : types_->functionInstantiations()) {
+      if (entry.llvmName != loweredName)
+        continue;
+      const FunctionInstantiation source = entry;
+      std::vector<const Type*> args;
+      bool concrete = true;
+      for (const Type* arg : source.args) {
+        arg = resolveType(arg);
+        concrete = concrete && !arg->isTypeParam() && !arg->hasTypeParameters();
+        args.push_back(arg);
+      }
+      if (concrete) {
+        const auto* inst = types_->instantiateFunction(
+            source.sourceName, source.typeParams, source.specializedType, args, source.isMethod);
+        if (inst != nullptr) {
+          loweredName = inst->llvmName;
+          functions_.insert_or_assign(loweredName, lowerType(inst->specializedType));
+        }
+      }
+      break;
+    }
+  }
+
   if (expression.intrinsic() == IntrinsicKind::Str && !expression.arguments().empty()) {
     const Expr& argument = *expression.arguments()[0];
     const Type* source = types_->substitute(argument.resolvedType(), subst_);
@@ -3445,10 +3545,10 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
     const Type* receiver = member.object().resolvedType();
     if (receiver != nullptr && receiver->isModule() && !expression.isConstructor()) {
       const RecordField* field = receiver->findField(member.field());
-      const std::string symbol = !expression.loweredName().empty() &&
-                                         functions_.contains(expression.loweredName())
-                                     ? expression.loweredName()
-                                 : field == nullptr ? member.field() : field->llvmName;
+      const std::string symbol = !loweredName.empty() && functions_.contains(loweredName)
+                                     ? loweredName
+                                 : field == nullptr ? member.field()
+                                                    : field->llvmName;
       // Each parameter takes its declared layout, so an argument whose Serem type
       // differs (a handle passed where `Handle | None` is expected, say) is
       // coerced here rather than reaching the backend unconverted.
@@ -3562,7 +3662,7 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
     for (const std::unique_ptr<Expr>& argument : expression.arguments()) {
       args.push_back(emitExpression(*argument));
     }
-    std::unordered_map<std::string, std::string> attributes{{"name", expression.loweredName()}};
+    std::unordered_map<std::string, std::string> attributes{{"name", loweredName}};
     const Type* objectType = resolveType(member.object().resolvedType());
     if (objectType != nullptr && objectType->isList() && objectType->elementType() != nullptr) {
       attributes["element"] = objectType->elementType()->display();
@@ -3780,10 +3880,10 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
     if (member.object().kind() == NodeKind::NameExpr && member.object().resolvedType() != nullptr &&
         member.object().resolvedType()->isModule()) {
       const RecordField* field = member.object().resolvedType()->findField(member.field());
-      const std::string symbol = !expression.loweredName().empty() &&
-                                         functions_.contains(expression.loweredName())
-                                     ? expression.loweredName()
-                                     : field == nullptr ? member.field() : field->llvmName;
+      const std::string symbol = !loweredName.empty() && functions_.contains(loweredName)
+                                     ? loweredName
+                                 : field == nullptr ? member.field()
+                                                    : field->llvmName;
       const auto found = functions_.find(symbol);
       if (found != functions_.end()) {
         for (const Expr* argument : expression.boundArguments()) {
@@ -3832,11 +3932,11 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
       const std::string owner = receiver->canonical()->name();
       const std::string qualified = owner + "." + member.field();
       const std::string method = methodSymbol(receiver, member.field());
-      const std::string symbol = !expression.loweredName().empty() &&
-                                         functions_.contains(expression.loweredName())
-                                     ? expression.loweredName()
-                                     : !method.empty() ? method
-                                     : functions_.contains(qualified) ? qualified : member.field();
+      const std::string symbol = !loweredName.empty() && functions_.contains(loweredName)
+                                     ? loweredName
+                                 : !method.empty()                ? method
+                                 : functions_.contains(qualified) ? qualified
+                                                                  : member.field();
       const auto methodDefinition = definitions_.find(symbol);
       if (methodDefinition != definitions_.end() && methodDefinition->second != nullptr &&
           !methodDefinition->second->decoratorExprs().empty()) {
@@ -3889,10 +3989,10 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
   serem::ValuePtr callee;
   // A generic instantiation names its specialized symbol, which the type
   // checker records on the call as the lowered name.
-  if (!expression.loweredName().empty() && expression.callee().kind() == NodeKind::NameExpr) {
-    const auto found = functions_.find(expression.loweredName());
+  if (!loweredName.empty() && expression.callee().kind() == NodeKind::NameExpr) {
+    const auto found = functions_.find(loweredName);
     if (found != functions_.end()) {
-      callee = std::make_shared<serem::FunctionRef>(expression.loweredName(), found->second);
+      callee = std::make_shared<serem::FunctionRef>(loweredName, found->second);
     }
   }
   if (callee == nullptr) {
@@ -3905,7 +4005,23 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
       const Type* expected = signature != nullptr && args.size() < signature->paramTypes().size()
                                  ? signature->paramTypes()[args.size()]
                                  : argument->resolvedType();
+      const auto saved = subst_;
+      bool supplied = false;
+      for (const auto& input : expression.arguments())
+        supplied = supplied || input.get() == argument;
+      for (const auto& input : expression.keywordArguments())
+        supplied = supplied || input.value.get() == argument;
+      if (!supplied) {
+        for (const FunctionInstantiation& inst : types_->functionInstantiations()) {
+          if (inst.llvmName != loweredName)
+            continue;
+          for (std::size_t i = 0; i < inst.typeParams.size(); ++i)
+            subst_[inst.typeParams[i]] = inst.args[i];
+          break;
+        }
+      }
       args.push_back(coerce(emitExpression(*argument), argument->resolvedType(), expected));
+      subst_ = saved;
     }
   } else {
     for (const std::unique_ptr<Expr>& argument : expression.arguments()) {

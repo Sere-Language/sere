@@ -201,6 +201,7 @@ private:
   bool checkIf(IfStmt& statement, const Type* expectedReturn);
   bool checkWhile(WhileStmt& statement, const Type* expectedReturn);
   bool checkFor(ForStmt& statement, const Type* expectedReturn);
+  bool checkBindingPattern(Expr& target, const Type* type, bool declaration);
   bool checkAssert(AssertStmt& statement);
   bool checkRaise(RaiseStmt& statement);
   bool checkTry(TryStmt& statement, const Type* expectedReturn);

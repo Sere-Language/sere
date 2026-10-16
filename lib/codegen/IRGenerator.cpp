@@ -649,7 +649,20 @@ llvm::Value* IRGenerator::emitIndexI64(llvm::IRBuilder<>& builder, const Expr& i
 }
 
 void IRGenerator::declareGlobals(const Module& ast) {
+  const auto declarePattern = [&](auto&& self, const Expr& target) -> void {
+    if (target.kind() == NodeKind::TupleExpr) {
+      for (const auto& item : static_cast<const TupleExpr&>(target).elements())
+        self(self, *item);
+    } else if (target.kind() == NodeKind::NameExpr) {
+      declareGlobal(static_cast<const NameExpr&>(target).name(), target.resolvedType());
+    }
+  };
   for (const std::unique_ptr<Stmt>& statement : ast.statements()) {
+    if (statement->kind() == NodeKind::AssignStmt) {
+      const auto& assign = static_cast<const AssignStmt&>(*statement);
+      if (assign.target().kind() == NodeKind::TupleExpr)
+        declarePattern(declarePattern, assign.target());
+    }
     if (statement->kind() == NodeKind::VarDecl) {
       const auto& decl = static_cast<const VarDecl&>(*statement);
       declareGlobal(decl.name(), decl.resolvedType());
@@ -798,6 +811,14 @@ void IRGenerator::emitModuleInitFn(const Module& ast, const std::vector<const Mo
   };
   auto emitInits = [&](const Module& source) {
     for (const std::unique_ptr<Stmt>& statement : source.statements()) {
+      if (statement->kind() == NodeKind::AssignStmt) {
+        const auto& assign = static_cast<const AssignStmt&>(*statement);
+        if (assign.target().kind() == NodeKind::TupleExpr)
+          (void)emitUnpack(builder,
+                           static_cast<const TupleExpr&>(assign.target()),
+                           emitExpr(builder, assign.value()),
+                           assign.value().resolvedType());
+      }
       if (statement->kind() == NodeKind::VarDecl) {
         const auto& decl = static_cast<const VarDecl&>(*statement);
         llvm::Value* slot = globals_[decl.name()];
@@ -1305,7 +1326,22 @@ void IRGenerator::appendBoundCallArgs(llvm::IRBuilder<>& builder,
     if (argument == nullptr) {
       return nullptr;
     }
-    return emitCallArgument(builder, *argument, toType);
+    const auto saved = subst_;
+    for (const ParamDecl& param : function.params()) {
+      if (param.defaultValue.get() != argument)
+        continue;
+      for (const FunctionInstantiation& inst : types_->functionInstantiations()) {
+        if (inst.specializedType != fnType)
+          continue;
+        for (std::size_t i = 0; i < inst.typeParams.size(); ++i)
+          subst_[inst.typeParams[i]] = inst.args[i];
+        break;
+      }
+      break;
+    }
+    llvm::Value* value = emitCallArgument(builder, *argument, toType);
+    subst_ = saved;
+    return value;
   };
   const auto appendArgument = [&](const Expr* argument, const Type* toType) {
     llvm::Value* value = emitArgument(argument, toType);
@@ -3473,6 +3509,18 @@ llvm::Value* IRGenerator::emitCall(llvm::IRBuilder<>& builder, const CallExpr& e
       fnType = functionDef->resolvedType();
     }
   }
+  // Specializations retain the source declaration's parameter names and defaults,
+  // but arguments must be converted to the specialized signature.
+  for (const FunctionInstantiation& inst : types_->functionInstantiations()) {
+    if (inst.llvmName != calleeName)
+      continue;
+    const auto source = functionDefs_.find(inst.sourceName);
+    if (source != functionDefs_.end()) {
+      functionDef = source->second;
+      fnType = inst.specializedType;
+    }
+    break;
+  }
   if (functionDef != nullptr) {
     appendBoundCallArgs(builder, expr, *functionDef, fnType, args, 0);
   } else {
@@ -5042,6 +5090,38 @@ bool IRGenerator::emitIteratorLoop(llvm::IRBuilder<>& builder,
 bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
                           const ForStmt& statement,
                           const Type* returnType) {
+  struct RestoreBindings {
+    decltype(locals_)& locals;
+    decltype(localTypes_)& types;
+    decltype(locals_) savedLocals;
+    decltype(localTypes_) savedTypes;
+    ~RestoreBindings() {
+      locals = std::move(savedLocals);
+      types = std::move(savedTypes);
+    }
+  } restore{locals_, localTypes_, locals_, localTypes_};
+
+  const auto emitBody = [&]() {
+    if (statement.target().kind() == NodeKind::TupleExpr) {
+      const auto& pattern = static_cast<const TupleExpr&>(statement.target());
+      const Type* element = resolveType(pattern.resolvedType());
+      llvm::Value* packed = builder.CreateLoad(lower(element), locals_.at(statement.name()));
+      // Loop bindings introduce locals in the loop's lexical scope.
+      const auto prepare = [&](auto&& self, const Expr& target) -> void {
+        if (target.kind() == NodeKind::TupleExpr) {
+          for (const auto& child : static_cast<const TupleExpr&>(target).elements())
+            self(self, *child);
+        } else {
+          const auto& name = static_cast<const NameExpr&>(target);
+          createLocalSlot(builder, name.name(), resolveType(name.resolvedType()));
+        }
+      };
+      prepare(prepare, pattern);
+      if (!emitUnpack(builder, pattern, packed, element))
+        return false;
+    }
+    return emitBlock(builder, statement.body(), returnType);
+  };
   llvm::Function* function = builder.GetInsertBlock()->getParent();
   const Expr& iterable = statement.iterable();
   const Type* iterableType = resolveType(iterable.resolvedType());
@@ -5051,9 +5131,8 @@ bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
     llvm::Value* iterator = customIterator ? emitDunderCall(builder, iterable, "__iter__", {})
                                            : emitExpr(builder, iterable);
     const Type* element = resolveType(iteratorType->genericArg(0));
-    return emitIteratorLoop(builder, iterator, element, statement.name(), [&] {
-      return emitBlock(builder, statement.body(), returnType);
-    });
+    return emitIteratorLoop(
+        builder, iterator, element, statement.name(), [&] { return emitBody(); });
   }
 
   if (iterable.kind() == NodeKind::CallExpr &&
@@ -5096,7 +5175,7 @@ bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
     builder.CreateCondBr(builder.CreateSelect(positive, fwd, back), body, exit);
     builder.SetInsertPoint(body);
     loops_.emplace_back(increment, exit);
-    if (!emitBlock(builder, statement.body(), returnType)) {
+    if (!emitBody()) {
       loops_.pop_back();
       return false;
     }
@@ -5144,7 +5223,7 @@ bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
                                 builder.CreateLoad(builder.getInt64Ty(), lenSlot)),
                         item);
     loops_.emplace_back(increment, exit);
-    if (!emitBlock(builder, statement.body(), returnType)) {
+    if (!emitBody()) {
       loops_.pop_back();
       return false;
     }
@@ -5183,7 +5262,7 @@ bool IRGenerator::emitFor(llvm::IRBuilder<>& builder,
   llvm::Value* slot = builder.CreateCall(itemFn, {list, current});
   builder.CreateStore(builder.CreateLoad(lower(element), slot), item);
   loops_.emplace_back(increment, exit);
-  if (!emitBlock(builder, statement.body(), returnType)) {
+  if (!emitBody()) {
     loops_.pop_back();
     return false;
   }
@@ -6317,6 +6396,8 @@ void IRGenerator::declareFunctions(const Module& ast) {
   for (const std::unique_ptr<Stmt>& statement : ast.statements()) {
     if (statement->kind() == NodeKind::FunctionDef) {
       const auto& function = static_cast<const FunctionDef&>(*statement);
+      functionDefs_[llvmNameFor(function)] = &function;
+      functionDefs_[function.name()] = &function;
       if (!function.typeParams().empty()) {
         continue;
       }
@@ -6647,7 +6728,7 @@ bool IRGenerator::emitInstantiationBody(const FunctionInstantiation& inst,
     }
     for (const std::unique_ptr<Stmt>& statement : module->statements()) {
       if (statement->kind() == NodeKind::FunctionDef &&
-          static_cast<const FunctionDef&>(*statement).name() == inst.sourceName) {
+          llvmNameFor(static_cast<const FunctionDef&>(*statement)) == inst.sourceName) {
         source = static_cast<const FunctionDef*>(statement.get());
         break;
       }
@@ -8310,23 +8391,27 @@ bool IRGenerator::emitUnpack(llvm::IRBuilder<>& builder,
   if (value == nullptr || valueType == nullptr) {
     return false;
   }
+  valueType = resolveType(valueType)->canonical();
   for (std::size_t index = 0; index < targets.elements().size(); ++index) {
     const Expr& item = *targets.elements()[index];
-    const NameExpr* name = asName(item);
-    if (name == nullptr) {
-      return false;
-    }
-    const Type* elemType =
-        index < valueType->args().size() ? valueType->args()[index] : item.resolvedType();
-    if (!locals_.contains(name->name()) && !globals_.contains(name->name())) {
-      createLocalSlot(builder, name->name(), elemType);
-    }
-    llvm::Value* slot =
-        locals_.contains(name->name()) ? locals_[name->name()] : globals_[name->name()];
+    const Type* elemType = valueType->args()[index];
     llvm::Value* extracted = builder.CreateExtractValue(value, {static_cast<unsigned>(index)});
-    if (slot != nullptr) {
-      builder.CreateStore(extracted, slot);
+    if (item.kind() == NodeKind::TupleExpr) {
+      if (!emitUnpack(builder, static_cast<const TupleExpr&>(item), extracted, elemType))
+        return false;
+      continue;
     }
+    const NameExpr* name = asName(item);
+    if (name == nullptr)
+      return false;
+    const Type* destination = resolveType(item.resolvedType());
+    if (!locals_.contains(name->name()) && !globals_.contains(name->name()))
+      createLocalSlot(builder, name->name(), destination);
+    llvm::Value* slot = emitAddress(builder, item);
+    extracted = emitCoerce(builder, extracted, elemType, destination);
+    if (slot == nullptr || extracted == nullptr)
+      return false;
+    builder.CreateStore(extracted, slot);
   }
   return true;
 }

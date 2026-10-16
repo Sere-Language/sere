@@ -57,6 +57,22 @@ for value in items:
     index += 1
 ```
 
+When an iterable yields tuples, its loop target may unpack any tuple arity,
+including nested tuples:
+
+```sere
+for number, text in [(1, "one"), (2, "two")]:
+    print(number, text)
+
+for id, (name, age) in [(1, ("Bob", 20)), (2, ("Alice", 25))]:
+    print(id, name, age)
+```
+
+Each name gets the corresponding component type in the loop's scope. Wrong
+arities and non-tuple values are compile-time errors. Targets are names or nested
+tuple patterns; objects are not unpacked by their field order. This works with
+list elements and tuple values yielded by `Iterator` or `__iter__`.
+
 `range` is typed by its bounds — `range(0, n)` where `n: i64` yields `i64`, and
 `range(3)` yields `i32`. This matters when the loop variable feeds an `i64`
 parameter:

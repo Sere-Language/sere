@@ -172,6 +172,9 @@ if [[ -d "${ROOT}/include/sere/api" ]]; then
   cp -a "${ROOT}/include/sere/api/." "${DEST}/include/sere/api/"
 fi
 cp -f "${ROOT}/LICENSE" "${DEST}/LICENSE"
+cp -f "${ROOT}/runtime/wavio/wavio.h" "${DEST}/include/sere/api/wavio.h"
+mkdir -p "${DEST}/licenses"
+cp -f "${ROOT}/packaging/licenses/miniaudio.txt" "${DEST}/licenses/miniaudio.txt"
 if [[ -d "${ROOT}/docs" ]]; then
   cp -a "${ROOT}/docs/." "${DEST}/docs/"
 fi

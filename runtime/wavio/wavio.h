@@ -39,7 +39,8 @@ WavioBuffer* wavio_buffer_slice(WavioBuffer* b, int64_t first, int64_t count);
 WavioBuffer* wavio_buffer_convert(WavioBuffer* b, int32_t channels, int32_t rate);
 int32_t wavio_buffer_mix(WavioBuffer* dest, WavioBuffer* source, int64_t offset, double gain);
 /* Waveforms: 0 sine, 1 square, 2 triangle, 3 saw. phase is in cycles. */
-int32_t wavio_buffer_tone(WavioBuffer* b, int32_t waveform, double hz, double amplitude, double phase);
+int32_t
+wavio_buffer_tone(WavioBuffer* b, int32_t waveform, double hz, double amplitude, double phase);
 /* All file paths are UTF-8, with explicit byte lengths (also the Sere str ABI). */
 WavioReader* wavio_reader_open(const char* path, int64_t length);
 void wavio_reader_close(WavioReader* r);
@@ -49,7 +50,8 @@ int32_t wavio_reader_rate(WavioReader* r);
 int32_t wavio_reader_seek(WavioReader* r, int64_t frame);
 int64_t wavio_reader_read(WavioReader* r, WavioBuffer* b);
 /* WAV formats: 1 unsigned8, 2 signed16, 3 packed24, 4 signed32, 5 float32. */
-WavioWriter* wavio_writer_open(const char* path, int64_t length, int32_t channels, int32_t rate, int32_t format);
+WavioWriter*
+wavio_writer_open(const char* path, int64_t length, int32_t channels, int32_t rate, int32_t format);
 int64_t wavio_writer_write(WavioWriter* w, WavioBuffer* b);
 int32_t wavio_writer_close(WavioWriter* w);
 /* mode: 0 hardware (no null fallback), 1 explicit null device, 2 offline.
@@ -89,7 +91,12 @@ int32_t wavio_sound_route(WavioSound* s, WavioBus* b);
 /* Capture callback only copies into an SPSC ring. One control-thread reader.
  * capture index -1 means default. loopback is distinct from microphone input.
  * Read returns frames, 0 if empty, or negative status. Dropped frames are counted. */
-WavioCapture* wavio_capture_open(WavioContext* c, int32_t device, int32_t channels, int32_t rate, int32_t capacity, int32_t loopback);
+WavioCapture* wavio_capture_open(WavioContext* c,
+                                 int32_t device,
+                                 int32_t channels,
+                                 int32_t rate,
+                                 int32_t capacity,
+                                 int32_t loopback);
 void wavio_capture_close(WavioCapture* c);
 int32_t wavio_capture_start(WavioCapture* c);
 int32_t wavio_capture_stop(WavioCapture* c);

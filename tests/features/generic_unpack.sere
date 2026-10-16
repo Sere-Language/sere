@@ -1,0 +1,138 @@
+global_number, (global_text, global_flag) = (12, ("global", True))
+
+def enumerate[T](items: list[T], start: i64 = 0) -> list[(i64, T)]:
+    """Return indexed pairs from a list."""
+    result: list[(i64, T)] = []
+    index: i64 = start
+    for item in items:
+        result.append((index, item))
+        index += 1
+    return result
+
+def pair[A, B](a: A, b: B) -> (A, B):
+    return (a, b)
+
+def identity[T](value: T) -> T:
+    return value
+
+def create[T]() -> list[T]:
+    return []
+
+def first[T](items: list[T]) -> T:
+    return items[0]
+
+def position() -> (f64, f64):
+    return (10.5, 20.5)
+
+def once(counter: list[i32]) -> (i32, (str, bool)):
+    counter[0] += 1
+    return (7, ("nested", True))
+
+def recurse[T](value: T, depth: i32 = 2) -> T:
+    if depth == 0:
+        return value
+    return recurse(value, depth - 1)
+
+def tuples() -> Iterator[(i32, str)]:
+    yield (1, "one")
+    yield (2, "two")
+
+class Tools:
+    def pair[T](self, value: T, count: i32 = 4) -> (T, i32):
+        return (value, count)
+
+class Holder[T]:
+    value: T
+
+    def pair[U](self, other: U) -> (T, U):
+        return (self.value, other)
+
+struct Point:
+    x: i32
+    y: i32
+
+def forward[T](value: T) -> T:
+    return identity(value)
+
+def main() -> i32:
+    assert global_number == 12
+    assert global_text == "global"
+    assert global_flag
+    li = ["Bob", "Joe", "Joanne"]
+    for t in enumerate[str](li):
+        assert t.first >= 0
+    count = 0
+    for i, v in enumerate(li):
+        print(i, v)
+        assert v == li[count]
+        assert i == count
+        count += 1
+    assert count == 3
+    for i, v in enumerate(li, 10):
+        print(i, v)
+        assert i >= 10
+    x, y = pair(42, "hello")
+    assert x == 42
+    assert y == "hello"
+    assert identity(True)
+    assert identity(5) == 5
+    assert identity("hi") == "hi"
+    assert identity[i64](123) == 123
+    assert identity(identity("nested call")) == "nested call"
+    assert recurse("recursive") == "recursive"
+    tools = Tools()
+    method_value, method_count = tools.pair("method")
+    assert method_value == "method"
+    assert method_count == 4
+    holder = Holder[str]("held")
+    held, other = holder.pair(9)
+    assert held == "held"
+    assert other == 9
+    assert forward("forward") == "forward"
+    point, items = pair(Point(3, 4), [5, 6])
+    assert point.x == 3
+    assert point.y == 4
+    assert items[1] == 6
+    local_value = 10
+    pointer, label = pair(&local_value, "pointer")
+    assert load(pointer) == 10
+    assert label == "pointer"
+    assert first([[1, 2], [3, 4]])[1] == 2
+    empty: list[str] = create()
+    assert len(empty) == 0
+    px, py = position()
+    assert px == 10.5
+    assert py == 20.5
+    counter = [0]
+    a, (b, c) = once(counter)
+    assert counter[0] == 1
+    assert a == 7
+    assert b == "nested"
+    assert c
+    one, two, three = (1, 2, 3)
+    assert one + two + three == 6
+    left, right = (1, 2)
+    left, right = (right, left)
+    assert left == 2
+    assert right == 1
+    wide: i64 = 0
+    wide, right = (123, 4)
+    assert wide == 123
+    assert right == 4
+    id = 99
+    for id, (name, age) in [(1, ("Bob", 20)), (2, ("Alice", 25))]:
+        assert id < 3
+        assert age >= 20
+        assert len(name) > 0
+    assert id == 99
+    total = 0
+    for number, text in tuples():
+        total += number
+        assert len(text) == 3
+    assert total == 3
+    for a, b, c, d in [(1, "two", True, 4.0)]:
+        assert a == 1
+        assert b == "two"
+        assert c
+        assert d == 4.0
+    return 0

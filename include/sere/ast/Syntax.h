@@ -722,10 +722,17 @@ private:
 class ForStmt final : public Stmt {
 public:
   ForStmt(SourceRange range,
+          std::unique_ptr<Expr> target,
+          std::unique_ptr<Expr> iterable,
+          std::vector<std::unique_ptr<Stmt>> body);
+  ForStmt(SourceRange range,
           std::string name,
           std::unique_ptr<Expr> iterable,
           std::vector<std::unique_ptr<Stmt>> body);
   [[nodiscard]] const std::string& name() const;
+  // Binding position: a name or recursively nested tuple, as in AssignStmt.
+  [[nodiscard]] const Expr& target() const { return *target_; }
+  [[nodiscard]] Expr& target() { return *target_; }
   [[nodiscard]] const Expr& iterable() const;
   [[nodiscard]] Expr& iterable();
   [[nodiscard]] const std::vector<std::unique_ptr<Stmt>>& body() const;
@@ -734,6 +741,7 @@ public:
 private:
   std::string name_;
   std::unique_ptr<Expr> iterable_;
+  std::unique_ptr<Expr> target_;
   std::vector<std::unique_ptr<Stmt>> body_;
 };
 

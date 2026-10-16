@@ -1,6 +1,7 @@
 """Regenerate Wavio's private Sere ABI declarations from its native header."""
 from pathlib import Path
 import re
+import keyword
 
 root = Path(__file__).resolve().parents[1]
 header = (root / "runtime/wavio/wavio.h").read_text()
@@ -15,10 +16,13 @@ for ret, name, args in re.findall(r"([\w]+\*?)\s+(wavio_\w+)\(([^)]*)\);", heade
     if name in {"wavio_error_message", "wavio_device_name"}:
         continue
     params = []
+    args = re.sub(r"\s+", " ", args).strip()
     parts = args.split(", ") if args != "void" else []
     skip_length = False
     for part in parts:
         ty, arg = part.rsplit(" ", 1)
+        if keyword.iskeyword(arg):
+            arg += "_value"
         if skip_length:
             assert ty == "int64_t" and arg == "length"
             skip_length = False
@@ -40,7 +44,7 @@ lines += ['extern "C" "sere_wavio_error_message"',
 (root / "stdlib/wavio/_native.sere").write_text("\n".join(lines), newline="\n")
 for path in (root / "stdlib/wavio").glob("*.sere"):
     source = path.read_text()
-    if "from wavio._native import *" in source:
-        names = sorted(set(re.findall(r"\b(_[a-z][a-z_]+)\(", source)))
-        source = source.replace("from wavio._native import *", "from wavio._native import " + ", ".join(names))
+    if "from wavio._native import " in source:
+        names = sorted(set(re.findall(r"\b(_[a-z][a-z_0-9]+)\(", source)))
+        source = re.sub(r"from wavio\._native import [^\n]+", "from wavio._native import " + ", ".join(names), source)
         path.write_text(source, newline="\n")

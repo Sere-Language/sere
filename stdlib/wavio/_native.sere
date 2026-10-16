@@ -201,7 +201,7 @@ def _sound_loop(s: Ptr[i8], loop: i32) -> i32
 """Private native binding; see runtime/wavio/wavio.h for the contract."""
 
 extern "C" "wavio_sound_fade"
-def _sound_fade(s: Ptr[i8], from: f64, to: f64, frames: i64) -> i32
+def _sound_fade(s: Ptr[i8], from_value: f64, to: f64, frames: i64) -> i32
 """Private native binding; see runtime/wavio/wavio.h for the contract."""
 
 extern "C" "wavio_sound_schedule"

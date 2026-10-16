@@ -1,0 +1,9 @@
+"""The codecs exposed by this build, distinct from upstream optional features."""
+
+def can_decode(format: str) -> bool:
+    """Return true for built-in WAV, FLAC, and MP3 decoding; names are lowercase."""
+    return format == "wav" or format == "flac" or format == "mp3"
+
+def can_encode(format: str) -> bool:
+    """Return true only for the implemented WAV encoder; names are lowercase."""
+    return format == "wav"

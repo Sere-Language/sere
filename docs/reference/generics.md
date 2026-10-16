@@ -30,6 +30,32 @@ A generic class or struct requires explicit constructor type arguments
 (`Box[i32](1)`, not `Box(1)`); functions and enum payloads are generally
 inferred.
 
+Function inference examines supplied positional and named arguments recursively,
+including nested lists and tuples. Optional parameters may be omitted: defaults
+do not prevent inference from the other arguments. Explicit type arguments take
+precedence, and the arguments still have to be assignable to the selected types.
+
+```sere
+def pair[A, B](a: A, b: B) -> (A, B):
+    return (a, b)
+
+number, text = pair(42, "hello")  # i32, str
+
+def create[T]() -> list[T]:
+    return []
+
+names: list[str] = create()      # T comes from the annotated result
+```
+
+A result annotation can supply a type parameter that arguments leave undetermined.
+Without that context, `create()` reports that `T` cannot be inferred; use an
+annotation or `create[str]()`. Conflicting argument types are an error, rather
+than an arbitrary choice of specialization. Calls with the same concrete types
+reuse a specialization.
+
+See [enumerate.sere](../../examples/enumerate.sere) for a complete example
+combining inference, generic defaults, tuple returns, and loop destructuring.
+
 ## Constraints
 
 Add `: Type` (or `: A | B`) after the parameter name to restrict the allowed

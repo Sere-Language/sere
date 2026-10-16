@@ -1,0 +1,40 @@
+events: list[i32] = []
+
+def default_count() -> i32:
+    events.append(2)
+    return 3
+
+def supplied() -> i32:
+    events.append(1)
+    return 5
+
+def repeat[T](value: T, count: i32 = default_count(), extra: i32 = 0) -> list[T]:
+    result: list[T] = []
+    for i in range(count + extra):
+        result.append(value)
+    return result
+
+def add(a: i32, b: i32 = 5) -> i32:
+    return a + b
+
+def collect[T](value: T, items: list[T] = []) -> list[T]:
+    items.append(value)
+    return items
+
+def main() -> i32:
+    assert add(10) == 15
+    assert add(10, 20) == 30
+    assert len(repeat[i32](5)) == 3
+    assert len(repeat[str]("hello")) == 3
+    assert len(repeat[i32](5, 10)) == 10
+    assert len(repeat("inferred")) == 3
+    assert len(repeat("supplied", 2)) == 2
+    assert len(repeat(value="named", count=2, extra=1)) == 3
+    assert len(events) == 3
+    events.clear()
+    assert len(repeat(supplied())) == 3
+    assert events == [1, 2]
+    assert collect("first") == ["first"]
+    assert collect("fresh") == ["fresh"]
+    assert collect[i32](7) == [7]
+    return 0

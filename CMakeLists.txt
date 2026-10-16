@@ -69,6 +69,7 @@ target_include_directories(sere_headers INTERFACE
 )
 
 add_subdirectory(runtime)
+add_subdirectory(runtime/wavio)
 add_subdirectory(lib)
 add_subdirectory(tools/sere)
 

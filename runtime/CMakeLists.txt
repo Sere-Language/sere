@@ -23,12 +23,6 @@ add_library(sere_runtime
   sere_proc.c
   sere_icon.c
   sere_crypto.c
-  wavio/miniaudio.c
-  wavio/buffer.c
-  wavio/codec.c
-  wavio/engine.c
-  wavio/dsp.c
-  wavio/bindings.c
   multiprocessing/mp_common.c
 )
 

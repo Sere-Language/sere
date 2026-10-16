@@ -169,7 +169,8 @@ const Node* searchStmt(const Stmt& stmt, std::uint32_t offset) {
   }
   case NodeKind::ForStmt: {
     const auto& loop = static_cast<const ForStmt&>(stmt);
-    inner = searchExpr(loop.iterable(), offset);
+    inner = searchExpr(loop.target(), offset);
+    inner = firstNotNull(inner, searchExpr(loop.iterable(), offset));
     for (const std::unique_ptr<Stmt>& bodyStmt : loop.body()) {
       inner = firstNotNull(inner, searchStmt(*bodyStmt, offset));
     }
@@ -675,9 +676,7 @@ void collectNameRefsFromStmt(const Stmt& stmt,
     }
     break;
   case NodeKind::ForStmt:
-    if (static_cast<const ForStmt&>(stmt).name() == name) {
-      out.push_back(stmt.range());
-    }
+    collectNameRefsFromExpr(static_cast<const ForStmt&>(stmt).target(), name, out);
     collectNameRefsFromExpr(static_cast<const ForStmt&>(stmt).iterable(), name, out);
     for (const std::unique_ptr<Stmt>& bodyStmt : static_cast<const ForStmt&>(stmt).body()) {
       collectNameRefsFromStmt(*bodyStmt, name, out);

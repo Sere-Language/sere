@@ -1,10 +1,11 @@
 #pragma once
-#include "wavio.h"
 #include "vendor/miniaudio.h"
+#include "wavio.h"
+
+#include <float.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-#include <float.h>
 
 struct WavioBuffer {
   float* data;

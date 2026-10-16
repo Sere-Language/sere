@@ -633,7 +633,7 @@ const FieldSpec kWhileFields[] = {
 };
 
 const FieldSpec kForFields[] = {
-    FIELD("target", ForStmt, name),
+    FIELD("target", ForStmt, target),
     FIELD("iter", ForStmt, iterable),
     FIELD("body", ForStmt, body),
 };

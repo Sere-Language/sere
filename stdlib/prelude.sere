@@ -305,6 +305,20 @@ class ResultError(Exception):
     """Raised when an unsuccessful Result is unwrapped."""
     pass
 
+
+def enumerate[T](items: list[T], start: i64 = 0) -> list[(i64, T)]:
+    """Return indexed pairs from a list"""
+
+    result: list[(i64, T)] = []
+    index: i64 = start
+
+    for item in items:
+        result.append((index, item))
+        index += 1
+
+    return result
+
+
 enum Result[T, E]:
     """A value that is either successful or an error."""
     Ok(value: T)

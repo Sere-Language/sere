@@ -1740,8 +1740,25 @@ std::unique_ptr<WhileStmt> Parser::parseWhile() {
 
 std::unique_ptr<ForStmt> Parser::parseFor() {
   const Token& keyword = advance();
-  std::string name = parseIdentifier("expected loop variable after 'for'");
-  if (name.empty() || !consume(TokenKind::KeywordIn, "expected 'in' after loop variable")) {
+  std::unique_ptr<Expr> target = parsePrimary();
+  if (target == nullptr)
+    return nullptr;
+  if (check(TokenKind::Comma)) {
+    const SourceLocation start = target->range().start;
+    std::vector<std::unique_ptr<Expr>> elements;
+    elements.push_back(std::move(target));
+    while (match(TokenKind::Comma)) {
+      if (check(TokenKind::KeywordIn))
+        break;
+      auto element = parsePrimary();
+      if (element == nullptr)
+        return nullptr;
+      elements.push_back(std::move(element));
+    }
+    const SourceRange range{start, elements.back()->range().end};
+    target = std::make_unique<TupleExpr>(range, std::move(elements));
+  }
+  if (!consume(TokenKind::KeywordIn, "expected 'in' after loop binding pattern")) {
     return nullptr;
   }
   std::unique_ptr<Expr> iterable = parseExpr();
@@ -1750,7 +1767,7 @@ std::unique_ptr<ForStmt> Parser::parseFor() {
   }
   std::vector<std::unique_ptr<Stmt>> body = parseSuite();
   return std::make_unique<ForStmt>(
-      keyword.range(), std::move(name), std::move(iterable), std::move(body));
+      keyword.range(), std::move(target), std::move(iterable), std::move(body));
 }
 
 std::unique_ptr<AssertStmt> Parser::parseAssert() {

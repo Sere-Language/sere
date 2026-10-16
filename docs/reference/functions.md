@@ -56,6 +56,32 @@ print(make(height=4, width=3))
 print(make(1, filled=True))
 ```
 
+Defaults also work in generic functions, with either explicit or inferred type
+arguments. An omitted default expression is evaluated at the call site each time
+the function is called; supplying the parameter skips its default expression.
+
+```sere
+def repeat[T](value: T, count: i32 = 3) -> list[T]:
+    result: list[T] = []
+    for i in range(count):
+        result.append(value)
+    return result
+
+a = repeat[str]("hello")
+b = repeat("hello")
+c = repeat("hello", 5)
+```
+
+Tuple results support nested destructuring. The right-hand side is evaluated
+once before target writes, so `a, b = (b, a)` swaps existing variables. New names
+infer their component types; existing names retain their types and mutability
+rules. Tuple patterns must have the same shape and arity as their values.
+
+```sere
+x, y = (10.5, 20.5)
+id, (name, age) = (1, ("Bob", 25))
+```
+
 `*parts` collects the remaining positional arguments into a `list[T]`; `**opts`
 collects keyword arguments into a `dict[str, T]`. Keyword-only parameters
 (after `*parts`) are not supported.

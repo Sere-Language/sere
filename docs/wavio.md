@@ -89,6 +89,10 @@ does not account for queued hardware latency. There is no claim of bit-perfect
 output, exclusive access, hotplug recovery, or measured presentation latency.
 Loopback is a separate explicit device type and fails when unsupported.
 
+Stopping a routed voice can leave one interpolated frame in its bus resampler;
+already buffered device output also cannot be recalled. Pause/stop are control
+operations, not a guarantee that the physical output becomes silent instantly.
+
 ## Examples
 
 Generate, filter, and save a tone without audio hardware:
@@ -136,7 +140,7 @@ editing the native header.
 
 ```powershell
 . .\scripts\env.ps1
-cmake --build --preset windows-clang-cl-relwithdebinfo --target sere sere_test_wavio
+cmake --build --preset windows-clang-cl-relwithdebinfo --target sere_stage sere_test_wavio
 ctest --preset windows-clang-cl-relwithdebinfo -R wavio --output-on-failure
 ```
 
@@ -145,8 +149,13 @@ invalid sizes/paths/parameters, buffer math, resampling, numerical filter
 responses/reset, overlapping voices, bus routing, pause/resume/looping,
 parent-before-child cleanup, null-device worker streaming, and capture overflow.
 The Sere feature test exercises import, linking, string ABI, and wrapper calls.
-`sere_test_wavio --hardware` additionally attempts a real output-device open
-and prints enumeration; it does not verify audibility or microphone capture.
+`sere_test_wavio --hardware` additionally opens real output, prints enumeration,
+plays a quiet 250 ms tone, and attempts to drain the default capture device.
+Unavailable capture is reported explicitly. Captured samples stay in memory.
+This probe cannot establish that a human heard the output.
+`sere_test_wavio --benchmark` measures mean/maximum render time over 200 blocks
+after warmup for 1, 32, 128 and 256 cached voices, using 256-frame stereo blocks
+at 48 kHz. It measures software render time, not physical latency or dropouts.
 
 ## Remaining specification work
 

@@ -944,7 +944,9 @@ int addCommand(const CompilerOptions& options) {
   }
   // A local path never has to be packed: a library folder (with or without a
   // manifest), a `.slib`, or a single `.sere` module is copied into `libs/`.
-  if (looksLikeLocalPath(requested)) {
+  // `--local` says so explicitly, for a path whose name also happens to be a
+  // package name in the registry.
+  if (options.addLocal || looksLikeLocalPath(requested)) {
     return addLocalLibrary(options, manifest);
   }
   PackageSpec spec;
@@ -998,6 +1000,9 @@ int addCommand(const CompilerOptions& options) {
   }
   std::cout << "  sha256: " << digest
             << (expected.empty() ? " (registry reported no checksum)" : " (verified)") << '\n';
+  // The same setup a local install gets: build the native code it shipped,
+  // install its tools, and report a system library this machine lacks.
+  setUpInstalledLibrary(manifest, installed);
   std::cout << "  import: import " << info.name << '\n';
   return 0;
 }

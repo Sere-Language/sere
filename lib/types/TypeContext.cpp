@@ -33,8 +33,21 @@ std::string genericKey(std::string_view ctor, const std::vector<const Type*>& ar
       mangled += "unknown";
       continue;
     }
-    for (const char ch : arg->display()) {
-      mangled += (ch == '[' || ch == ']' || ch == ',' || ch == ' ') ? '_' : ch;
+    // Escape punctuation (including the escape marker) injectively. Replacing
+    // punctuation with underscores made distinct nested types share symbols.
+    const Type* canonical = arg->canonical();
+    const std::string identity = canonical->qualifier().empty()
+                                     ? canonical->display()
+                                     : canonical->qualifier() + "." + canonical->display();
+    constexpr char Hex[] = "0123456789abcdef";
+    for (const unsigned char ch : identity) {
+      if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')) {
+        mangled += static_cast<char>(ch);
+      } else {
+        mangled += '$';
+        mangled += Hex[ch >> 4];
+        mangled += Hex[ch & 15];
+      }
     }
   }
   return mangled;
@@ -505,13 +518,15 @@ TypeContext::instantiateFunction(const std::string& name,
   }
   std::unordered_map<std::string, const Type*> subst;
   for (std::size_t index = 0; index < typeParams.size(); ++index) {
-    subst[typeParams[index]] = args[index];
+    subst[typeParams[index]] = args[index]->canonical();
   }
   FunctionInstantiation inst;
   inst.sourceName = name;
   inst.llvmName = llvmName;
   inst.typeParams = typeParams;
   inst.args = args;
+  for (const Type*& arg : inst.args)
+    arg = arg->canonical();
   inst.specializedType = substitute(genericType, subst);
   inst.isMethod = isMethod;
   functionInstantiations_.push_back(std::move(inst));
