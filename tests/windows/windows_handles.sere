@@ -1,0 +1,73 @@
+# Kernel handles: validity, duplication, inherit flags, and classification.
+#
+# The test harness redirects all three standard devices, so they are real
+# handles. The process and thread pseudo-handles are always usable and are
+# duplicated rather than closed: closing them would corrupt the process.
+
+import windows
+
+
+def main() -> i32:
+    assert windows.available()
+
+    out: windows.Handle = windows.stdout_handle()
+    err: windows.Handle = windows.stderr_handle()
+    inp: windows.Handle = windows.stdin_handle()
+    assert windows.handle_valid(out)
+    assert windows.handle_valid(err)
+    assert windows.handle_valid(inp)
+    assert not windows.handle_null(out)
+
+    # NULL is never a valid handle and every query on it fails predictably.
+    null: windows.Handle = None
+    assert windows.handle_null(null)
+    assert not windows.handle_valid(null)
+    assert not windows.close_handle(null)
+    assert windows.handle_information(null) == None
+    assert not windows.set_handle_information(null, 0, 0)
+    assert not windows.set_handle_inherit(null, False)
+    assert not windows.handle_is_pipe(null)
+    assert windows.file_type(null) == windows.FILE_TYPE_UNKNOWN
+    assert windows.handle_kind(null) == windows.HandleKind.Unknown
+
+    thread: windows.Handle = windows.current_thread_handle()
+    assert windows.handle_valid(thread)
+
+    # The process pseudo-handle is the INVALID_HANDLE_VALUE constant, so it is
+    # not "valid" even though Win32 honours it where a pseudo-handle is
+    # documented. It must never be closed: CloseHandle rejects it, which is
+    # what keeps this test from killing the process.
+    process: windows.Handle = windows.current_process_handle()
+    assert not windows.handle_null(process)
+    assert not windows.handle_valid(process)
+    assert not windows.close_handle(process)
+
+    # Duplicating a pseudo-handle is how a real handle is obtained; the copy is
+    # an ordinary handle with flags that can be flipped freely.
+    duplicate: windows.Handle = windows.duplicate_handle(thread)
+    assert windows.handle_valid(duplicate)
+    assert duplicate != thread
+    flags = windows.handle_information(duplicate)
+    assert flags != None
+    assert windows.set_handle_inherit(duplicate, True)
+    inherited: windows.DWORD = windows.handle_information(duplicate) as windows.DWORD
+    assert (inherited & windows.HANDLE_FLAG_INHERIT) != 0
+    assert windows.set_handle_inherit(duplicate, False)
+    plain: windows.DWORD = windows.handle_information(duplicate) as windows.DWORD
+    assert (plain & windows.HANDLE_FLAG_INHERIT) == 0
+    assert windows.close_handle(duplicate)
+
+    process_copy: windows.Handle = windows.duplicate_handle(process)
+    assert windows.handle_valid(process_copy)
+    assert windows.handle_information(process_copy) != None
+    assert windows.close_handle(process_copy)
+
+    # The standard devices are files or devices, never NULL.
+    kind: windows.DWORD = windows.file_type(out)
+    assert kind == windows.FILE_TYPE_PIPE or kind == windows.FILE_TYPE_CHAR or kind == windows.FILE_TYPE_DISK
+    assert windows.handle_kind(out) != windows.HandleKind.Unknown
+
+    # Handing the process the handle it already owns is a no-op that succeeds.
+    assert windows.set_stdout_handle(out)
+    assert windows.stdout_handle() == out
+    return 0

@@ -873,15 +873,29 @@ def set_stderr_handle(handle: Handle) -> bool:
     return _set_std_handle(STD_ERROR_HANDLE, handle) as bool
 
 def current_process_handle() -> Handle:
-    """Return the current process pseudo-handle (always valid, never close it)."""
+    """Return the current process pseudo-handle.
+
+    The value is the `(HANDLE)-1` constant, which Win32 only honours where a
+    pseudo-handle is documented: `handle_valid` therefore reports it as
+    unusable and it must never be closed. Pass it to `duplicate_handle` to get
+    a real handle to the process.
+    """
     return _current_process_handle()
 
 def current_thread_handle() -> Handle:
-    """Return the current thread pseudo-handle (always valid, never close it)."""
+    """Return the current thread pseudo-handle.
+
+    Like the process pseudo-handle it is a constant, not a real handle: never
+    close it, and duplicate it to get a handle that can be closed.
+    """
     return _current_thread_handle()
 
 def handle_valid(handle: Handle) -> bool:
-    """Return whether handle is neither NULL nor INVALID_HANDLE_VALUE."""
+    """Return whether handle is neither NULL nor INVALID_HANDLE_VALUE.
+
+    The current-process pseudo-handle is that invalid constant, so it reports
+    False even though Win32 accepts it where a pseudo-handle is documented.
+    """
     return _handle_valid(handle) as bool
 
 def handle_null(handle: Handle) -> bool:
@@ -893,7 +907,11 @@ def close_handle(handle: Handle) -> bool:
     return _close_handle(handle) as bool
 
 def duplicate_handle(handle: Handle, access: DWORD = 0, options: DWORD = DUPLICATE_SAME_ACCESS) -> Handle:
-    """Duplicate a handle into the current process, or return None on failure."""
+    """Duplicate a handle into the current process, or return None on failure.
+
+    The process and thread pseudo-handles are accepted, which is how a real,
+    closable handle to the current process or thread is obtained.
+    """
     return _duplicate_handle(handle, access, options)
 
 def handle_information(handle: Handle) -> DWORD | None:

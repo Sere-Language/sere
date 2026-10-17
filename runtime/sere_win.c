@@ -1223,7 +1223,10 @@ int32_t sere_win_close_handle(void* handle) {
 }
 
 void* sere_win_duplicate_handle(void* handle, uint32_t access, uint32_t options) {
-  if (handle == NULL || handle == INVALID_HANDLE_VALUE) {
+  // Only NULL is unusable as a source. The pseudo-handles returned by
+  // GetCurrentProcess/GetCurrentThread are `(HANDLE)-1`/`(HANDLE)-2`, which
+  // Win32 accepts here, so they are passed through and the call decides.
+  if (handle == NULL) {
     return NULL;
   }
   HANDLE duplicate = NULL;

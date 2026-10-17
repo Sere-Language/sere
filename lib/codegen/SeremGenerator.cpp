@@ -415,6 +415,15 @@ SeremGenerator::emit(const Module& module,
   moduleAliases_.clear();
   importedModuleGlobals_.clear();
   globalsByName_.clear();
+  moduleKeyForPrefix_.clear();
+  // An imported module is keyed by its dotted path, while the functions inside
+  // it record only the last segment as their module prefix, so remember how the
+  // two spellings correspond.
+  for (const std::string& key : moduleKeys) {
+    const std::size_t dot = key.rfind('.');
+    const std::string prefix = dot == std::string::npos ? key : key.substr(dot + 1);
+    moduleKeyForPrefix_.try_emplace(prefix, key);
+  }
   for (std::size_t index = 0; index < modules.size(); ++index) {
     const Module& current = *modules[index];
     const std::string& key = moduleKeys[index];
@@ -833,6 +842,40 @@ const SeremGenerator::ModuleGlobal* SeremGenerator::moduleGlobal(std::string_vie
   return anywhere == globalsByName_.end() ? nullptr : &anywhere->second;
 }
 
+std::string SeremGenerator::moduleKeyFor(std::string_view prefix) const {
+  const auto found = moduleKeyForPrefix_.find(std::string(prefix));
+  return found == moduleKeyForPrefix_.end() ? std::string(prefix) : found->second;
+}
+
+serem::ValuePtr SeremGenerator::parkInEntrySlot(const serem::ValuePtr& value) {
+  if (value == nullptr || function_ == nullptr || function_->blocks().empty())
+    return nullptr;
+  serem::BasicBlock& entry = *function_->blocks().front();
+  serem::BasicBlock& current = builder_->currentBlock();
+  const bool sameBlock = &entry == &current;
+  const std::size_t before = entry.operations().size();
+  const std::vector<std::shared_ptr<serem::Operation>> saved = current.operations();
+  builder_->setInsertBlock(entry);
+  serem::ValuePtr slot = builder_->alloca(value->type());
+  builder_->store(value, slot);
+  // The slot has to be allocated *and* initialized before anything branches, so
+  // both operations move to the head of the entry block: the value being parked
+  // is already available there, and every later read is dominated by the slot.
+  std::vector<std::shared_ptr<serem::Operation>> appended = entry.operations();
+  std::vector<std::shared_ptr<serem::Operation>> reordered;
+  reordered.reserve(appended.size());
+  for (std::size_t index = before; index < appended.size(); ++index)
+    reordered.push_back(appended[index]);
+  for (std::size_t index = 0; index < before && index < appended.size(); ++index)
+    reordered.push_back(appended[index]);
+  entry.setOperations(std::move(reordered));
+  if (!sameBlock) {
+    current.setOperations(saved);
+  }
+  builder_->setInsertBlock(current);
+  return slot;
+}
+
 const SeremGenerator::ModuleGlobal*
 SeremGenerator::moduleMemberGlobal(const MemberExpr& expression) const {
   if (expression.object().kind() != NodeKind::NameExpr ||
@@ -1124,9 +1167,10 @@ bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbo
   // transitively (only direct imports are bound with a `modulePrefix`), so keep
   // the key the per-module emission loop installed for it instead of assuming
   // the root module -- otherwise that module's own aliases and globals fail to
-  // resolve.
+  // resolve. The prefix is the module's short name, which has to be translated
+  // back to the dotted key those maps are stored under.
   if (!function.modulePrefix().empty()) {
-    currentModuleKey_ = function.modulePrefix();
+    currentModuleKey_ = moduleKeyFor(function.modulePrefix());
   }
   currentOwnerClass_ = function.ownerClass();
   function_->setAsync(function.isAsync());
@@ -1531,6 +1575,25 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
             "static.set", serem::IRType::voidType(), {value}, {{"symbol", symbol}});
         return true;
       }
+      // A computed property with a setter is written by calling it: there is no
+      // slot to store into.
+      if (!member.usesBackingField() && !member.propertySet().empty()) {
+        if (assign.op() != AssignOp::Assign)
+          return unsupported(assign,
+                             "compound assignment to computed property '" + member.field() + "'");
+        const Type* owner = resolveType(member.object().resolvedType());
+        const Type* record = owner == nullptr ? nullptr : owner->valueType();
+        const std::string setterSymbol =
+            record == nullptr ? std::string{} : methodSymbol(record, "__set_" + member.field());
+        const auto found =
+            setterSymbol.empty() ? functions_.end() : functions_.find(setterSymbol);
+        if (found == functions_.end())
+          return unsupported(assign, "computed property '" + member.field() + "'");
+        std::vector<serem::ValuePtr> arguments{emitExpression(member.object()), value};
+        (void)builder_->call(std::make_shared<serem::FunctionRef>(setterSymbol, found->second),
+                             std::move(arguments), serem::IRType::voidType());
+        return true;
+      }
       const Type* objectType = member.object().resolvedType();
       const serem::IRType lowered = lowerType(objectType);
       // A value `struct` lives in a stack slot rather than behind a pointer, so
@@ -1730,6 +1793,19 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
     }
 
     serem::ValuePtr slot = local(name.name());
+    if (slot != nullptr && slot->valueKind() == serem::ValueKind::Argument) {
+      // A parameter arrives as an SSA argument, which has no storage of its
+      // own, so the first write parks it in a stack slot and the name reads
+      // back from there.
+      const Type* declared = assign.target().resolvedType() == nullptr
+                                 ? assign.value().resolvedType()
+                                 : assign.target().resolvedType();
+      serem::ValuePtr parked = parkInEntrySlot(slot);
+      if (parked == nullptr)
+        return unsupported(assign, "assignment to a parameter");
+      (void)bindLocal(name.name(), parked, declared);
+      slot = std::move(parked);
+    }
     if (slot == nullptr) {
       slot = builder_->alloca(value->type());
       // The name is introduced by this assignment, so its slot type comes from
@@ -3370,7 +3446,7 @@ void SeremGenerator::appendDefaults(const std::string& symbol,
   // (HashHasher(seed = OFFSET_BASIS), say) with nothing to resolve to.
   const std::string previousModule = currentModuleKey_;
   if (!function.modulePrefix().empty())
-    currentModuleKey_ = function.modulePrefix();
+    currentModuleKey_ = moduleKeyFor(function.modulePrefix());
   for (std::size_t index = arguments.size(); index < function.params().size(); ++index) {
     const auto& parameter = function.params()[index];
     if (parameter.defaultValue == nullptr)
@@ -3960,14 +4036,27 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
                 .name() == "super") {
       const auto base = classBases_.find(currentOwnerClass_);
       if (base != classBases_.end()) {
-        serem::ValuePtr callee = std::make_shared<serem::FunctionRef>(
-            base->second + "." + member.field(), lowerType(expression.callee().resolvedType()));
-        args.push_back(local("self"));
-        for (const std::unique_ptr<Expr>& argument : expression.arguments()) {
-          args.push_back(emitExpression(*argument));
+        // The base class may live in another module, so its method is named the
+        // way it was registered rather than as `Base.method`.
+        std::string baseName = base->second;
+        const std::size_t bracket = baseName.find('[');
+        if (bracket != std::string::npos)
+          baseName.erase(bracket);
+        const auto known = methodSymbols_.find(baseName + "::" + member.field());
+        const std::string symbol = known != methodSymbols_.end()
+                                       ? known->second
+                                       : baseName + "." + member.field();
+        const auto found = functions_.find(symbol);
+        if (found == functions_.end()) {
+          (void)unsupported(expression, "base method '" + member.field() + "'");
+          return nullptr;
         }
-        return builder_->call(
-            std::move(callee), std::move(args), lowerType(expression.resolvedType()));
+        std::vector<serem::ValuePtr> baseArgs{local("self")};
+        for (const std::unique_ptr<Expr>& argument : expression.arguments()) {
+          baseArgs.push_back(emitExpression(*argument));
+        }
+        return builder_->call(std::make_shared<serem::FunctionRef>(symbol, found->second),
+                              std::move(baseArgs), lowerType(expression.resolvedType()));
       }
     }
     if (member.object().resolvedType() != nullptr) {
@@ -4134,6 +4223,22 @@ serem::ValuePtr SeremGenerator::emitMember(const MemberExpr& expression) {
       return builder_->operation(
           "enum.unit", lowerType(record), {}, {{"tag", std::to_string(tag)}});
     }
+  }
+  // A computed property (`@public name.get`) is backed by a getter method
+  // rather than a storage slot, so the read is a call and not a field access.
+  if (!expression.usesBackingField() && !expression.propertyGet().empty()) {
+    const Type* owner = resolveType(expression.object().resolvedType());
+    const Type* record = owner == nullptr ? nullptr : owner->valueType();
+    const std::string symbol =
+        record == nullptr ? std::string{} : methodSymbol(record, "__get_" + expression.field());
+    const auto found = symbol.empty() ? functions_.end() : functions_.find(symbol);
+    if (found == functions_.end()) {
+      (void)unsupported(expression, "computed property '" + expression.field() + "'");
+      return nullptr;
+    }
+    std::vector<serem::ValuePtr> arguments{emitExpression(expression.object())};
+    return builder_->call(std::make_shared<serem::FunctionRef>(symbol, found->second),
+                          std::move(arguments), lowerType(expression.resolvedType()));
   }
   const ModuleGlobal* moduleGlobalValue = moduleMemberGlobal(expression);
   if (moduleGlobalValue != nullptr) {

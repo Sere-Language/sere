@@ -1,0 +1,44 @@
+# Desktop geometry: the primary and virtual screen sizes, the cursor
+# position, and the struct decoders that pack them.
+#
+# The cursor is never moved to a new place; it is moved to where it already is,
+# so the test does not disturb the session.
+
+import windows
+
+
+def main() -> i32:
+    assert windows.available()
+
+    screen: windows.Size = windows.screen()
+    assert screen.width > 0
+    assert screen.height > 0
+
+    # The virtual desktop spans every monitor, so it is never smaller.
+    virtual: windows.Size = windows.virtual_screen()
+    assert virtual.width >= screen.width
+    assert virtual.height >= screen.height
+
+    # The struct helpers agree with the scalar getters they wrap.
+    assert windows.screen_width() == screen.width
+    assert windows.screen_height() == screen.height
+    assert windows.virtual_screen_width() == virtual.width
+    assert windows.virtual_screen_height() == virtual.height
+
+    point: windows.Point = windows.cursor()
+    assert windows.cursor_x() == point.x
+    assert windows.cursor_y() == point.y
+
+    # SetCursorPos accepts the position it is already at.
+    assert windows.set_cursor(point.x, point.y)
+    settled: windows.Point = windows.cursor()
+    assert settled.x == point.x
+    assert settled.y == point.y
+
+    # Showing and hiding are a balanced display counter, so the desktop is left
+    # visible; the show call must report success afterwards.
+    windows.show_cursor(False)
+    assert windows.show_cursor(True)
+
+    assert len(windows.os_version()) > 0
+    return 0

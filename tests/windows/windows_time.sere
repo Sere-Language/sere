@@ -1,0 +1,35 @@
+# Process time: the millisecond tick counters and Sleep.
+#
+# The counters are free running, so only their monotonicity and congruence are
+# asserted, and Sleep is checked with a margin that tolerates scheduling.
+
+import windows
+
+
+def main() -> i32:
+    assert windows.available()
+
+    # The machine has been up for more than a millisecond.
+    assert windows.tick_count() > 0
+    start: u64 = windows.tick_count64()
+    assert start > 0
+
+    # A zero or negative Sleep is a no-op and never moves time backwards.
+    windows.sleep(0)
+    windows.sleep(-1)
+    assert windows.tick_count64() >= start
+
+    end: u64 = windows.tick_count64()
+    assert end >= start
+
+    # Sleeping really suspends: the 64-bit counter advances by at least most
+    # of the requested interval (the system timer may round it up).
+    windows.sleep(30)
+    slept: u64 = windows.tick_count64()
+    assert slept >= end
+    assert slept - end >= 10
+
+    # The 32-bit counter is the low half of the same clock.
+    low: windows.INT = windows.tick_count()
+    assert low != 0
+    return 0

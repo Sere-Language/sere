@@ -1,0 +1,49 @@
+# Anonymous pipes: byte-oriented I/O, short reads, EOF, and classification.
+#
+# Both ends are created inheritable, so a spawned child could take them; the
+# flag is checked even though this test never spawns one.
+
+import windows
+import bytes
+
+
+def main() -> i32:
+    assert windows.available()
+
+    pipe: windows.Pipe = windows.create_pipe()
+    assert windows.handle_valid(pipe.read)
+    assert windows.handle_valid(pipe.write)
+    assert windows.handle_is_pipe(pipe.read)
+    assert windows.handle_is_pipe(pipe.write)
+    assert not windows.handle_is_file(pipe.read)
+    assert windows.file_type(pipe.read) == windows.FILE_TYPE_PIPE
+    assert windows.handle_kind(pipe.read) == windows.HandleKind.Pipe
+    assert windows.handle_kind(pipe.write) == windows.HandleKind.Pipe
+
+    read_flags: windows.DWORD = windows.handle_information(pipe.read) as windows.DWORD
+    assert (read_flags & windows.HANDLE_FLAG_INHERIT) != 0
+
+    message: list[byte] = bytes.from_str("hello pipe")
+    assert windows.handle_write(pipe.write, message) == len(message)
+    chunk: list[byte] = windows.handle_read(pipe.read, 4096)
+    assert len(chunk) == len(message)
+    assert bytes.to_str(chunk) == "hello pipe"
+
+    # A short read returns what is available and leaves the rest queued.
+    assert windows.handle_write(pipe.write, bytes.from_str("abcdef")) == 6
+    head: list[byte] = windows.handle_read(pipe.read, 3)
+    assert bytes.to_str(head) == "abc"
+    tail: list[byte] = windows.handle_read(pipe.read, 3)
+    assert bytes.to_str(tail) == "def"
+
+    # A zero-byte read never touches the pipe.
+    assert len(windows.handle_read(pipe.read, 0)) == 0
+
+    # Closing the write end turns further writes into a failure and reads into
+    # a clean EOF instead of an error.
+    assert windows.close_handle(pipe.write)
+    assert windows.handle_write(pipe.write, message) == -1
+    assert len(windows.handle_read(pipe.read, 16)) == 0
+
+    assert windows.close_handle(pipe.read)
+    return 0

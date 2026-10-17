@@ -1,0 +1,38 @@
+# Error handling: the thread error code and its formatted message.
+#
+# Win32 records a reason for the last failure on the calling thread; the
+# wrappers never raise for it, so a caller reads last_error() afterwards.
+
+import windows
+
+
+def main() -> i32:
+    assert windows.available()
+
+    # The error code round-trips through the thread state.
+    windows.set_last_error(5)
+    assert windows.last_error() == 5
+    windows.set_last_error(windows.CP_UTF8)
+    assert windows.last_error() == windows.CP_UTF8
+
+    # Known codes format into distinct, non-empty messages.
+    denied: str = windows.error_message(5)
+    missing: str = windows.error_message(2)
+    assert len(denied) > 0
+    assert len(missing) > 0
+    assert denied != missing
+
+    # A failing call records its reason for the next last_error().
+    assert not windows.delete_file("sere-windows-api-no-such-file.tmp")
+    assert windows.last_error() == 2
+    assert len(windows.error_message(windows.last_error())) > 0
+
+    # A successful call is silent about the error code...
+    windows.set_last_error(0)
+    assert windows.last_error() == 0
+    assert windows.directory_exists(windows.current_directory())
+
+    # ...but a second failure right after refreshes it.
+    assert not windows.delete_file("sere-windows-api-no-such-file.tmp")
+    assert windows.last_error() == 2
+    return 0

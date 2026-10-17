@@ -144,6 +144,12 @@ private:
   [[nodiscard]] serem::ValuePtr emitName(const NameExpr& expression);
   [[nodiscard]] const ModuleGlobal* moduleGlobal(std::string_view name) const;
   [[nodiscard]] const ModuleGlobal* moduleMemberGlobal(const MemberExpr& expression) const;
+  /// Map a function's short module prefix to the key the module maps use.
+  [[nodiscard]] std::string moduleKeyFor(std::string_view prefix) const;
+  /// Park a value in a stack slot allocated in the function's entry block. A
+  /// slot allocated where the value happens to be needed would sit inside a
+  /// branch and not dominate later uses.
+  serem::ValuePtr parkInEntrySlot(const serem::ValuePtr& value);
   [[nodiscard]] bool emitModuleInitializers(const std::vector<const Module*>& modules,
                                             const std::vector<std::string>& moduleKeys);
   [[nodiscard]] serem::ValuePtr emitBinary(const BinaryExpr& expression);
@@ -204,6 +210,11 @@ private:
       importedModuleGlobals_;
   std::string rootModuleKey_;
   std::string currentModuleKey_;
+  /// Short module name to full module key. An imported module is keyed by its
+  /// dotted path (`multiprocessing.reduction`), but the functions in it record
+  /// only the last segment as their module prefix, so `currentModuleKey_` has
+  /// to be translated before the per-module maps are consulted.
+  std::unordered_map<std::string, std::string> moduleKeyForPrefix_;
   const Type* returnType_ = nullptr;
   std::unordered_map<std::string, serem::IRType> functions_;
   std::unordered_map<std::string, const FunctionDef*> definitions_;

@@ -1,0 +1,46 @@
+# The filesystem half of the Windows layer: existence probes, directory and
+# file mutation, and path qualification.
+#
+# Everything here is read-only or fails on purpose, so the test leaves the
+# machine exactly as it found it.
+
+import windows
+import string
+
+
+def main() -> i32:
+    assert windows.available()
+
+    current: str = windows.current_directory()
+    temporary: str = windows.temp_directory()
+    assert len(current) > 0
+    assert len(temporary) > 0
+    assert windows.directory_exists(current)
+    assert windows.directory_exists(temporary)
+    assert not windows.file_exists(current)
+    assert not windows.file_exists(temporary)
+
+    # A directory everybody has, probed through the environment.
+    root: str = windows.env_get("SystemRoot")
+    assert len(root) > 0
+    assert windows.directory_exists(root)
+    assert not windows.file_exists(root)
+
+    # Relative paths qualify against the working directory and are idempotent.
+    relative: str = windows.full_path("sere-windows-api-test")
+    assert len(relative) > len(current)
+    assert relative != current
+    assert windows.full_path(relative) == relative
+    assert string.starts_with(relative, current)
+
+    # Missing paths are reported, not invented: nothing is created to fail on.
+    missing: str = temporary + "sere-windows-api-missing.tmp"
+    assert not windows.file_exists(missing)
+    assert not windows.directory_exists(missing)
+    assert not windows.delete_file(missing)
+    assert not windows.delete_file(current)
+
+    # Creating a directory that already exists is a failure, not a nesting.
+    assert not windows.create_directory(current)
+    assert windows.directory_exists(current)
+    return 0

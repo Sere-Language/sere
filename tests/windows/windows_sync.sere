@@ -1,0 +1,83 @@
+# Synchronization objects: events (auto and manual reset), mutexes,
+# semaphores, and the single/multiple wait primitives.
+#
+# Every wait uses a zero timeout, so a mistake can never hang the suite.
+
+import windows
+
+
+def main() -> i32:
+    assert windows.available()
+
+    # WaitForSingleObject on a NULL handle is reported, not raised.
+    null: windows.Handle = None
+    assert windows.wait(null, 0) == windows.WAIT_FAILED
+    assert windows.wait(null, windows.INFINITE) == windows.WAIT_FAILED
+
+    # An auto-reset event releases exactly one waiter.
+    auto: windows.Handle = windows.event_create(False, False)
+    assert windows.handle_valid(auto)
+    assert windows.wait(auto, 0) == windows.WAIT_TIMEOUT
+    assert not windows.wait_timeout(auto, 0)
+    assert windows.event_set(auto)
+    assert windows.wait(auto, 0) == windows.WAIT_OBJECT_0
+    assert windows.wait(auto, 0) == windows.WAIT_TIMEOUT
+
+    # A manual-reset event stays signaled until it is reset.
+    manual: windows.Handle = windows.event_create(True, True)
+    assert windows.handle_valid(manual)
+    assert windows.wait(manual, 0) == windows.WAIT_OBJECT_0
+    assert windows.wait(manual, 0) == windows.WAIT_OBJECT_0
+    assert windows.event_reset(manual)
+    assert windows.wait(manual, 0) == windows.WAIT_TIMEOUT
+
+    # Pulses release current waiters and then return to nonsignaled.
+    assert windows.event_pulse(manual)
+    assert windows.wait(manual, 0) == windows.WAIT_TIMEOUT
+
+    # A mutex is owned on a successful wait and must be released by its owner.
+    mutex: windows.Handle = windows.mutex_create(False)
+    assert windows.handle_valid(mutex)
+    assert windows.wait(mutex, 0) == windows.WAIT_OBJECT_0
+    assert windows.mutex_release(mutex)
+    assert windows.wait(mutex, 0) == windows.WAIT_OBJECT_0
+    assert windows.mutex_release(mutex)
+
+    # A semaphore counts releases; releasing past the maximum fails.
+    semaphore: windows.Handle = windows.semaphore_create(2, 3)
+    assert windows.handle_valid(semaphore)
+    assert windows.semaphore_release(semaphore) == 2
+    assert windows.semaphore_release(semaphore) == None
+    # Each wait takes one count until the semaphore is exhausted.
+    assert windows.wait(semaphore, 0) == windows.WAIT_OBJECT_0
+    assert windows.wait(semaphore, 0) == windows.WAIT_OBJECT_0
+    assert windows.wait(semaphore, 0) == windows.WAIT_OBJECT_0
+    assert windows.wait(semaphore, 0) == windows.WAIT_TIMEOUT
+    assert windows.semaphore_release(semaphore) == 0
+
+    # Impossible counts are rejected before reaching Win32.
+    assert windows.semaphore_create(-1, 4) == None
+    assert windows.semaphore_create(3, 2) == None
+
+    # WaitForMultipleObjects: any (default) then all.
+    assert windows.event_reset(auto)
+    assert windows.event_reset(manual)
+    pair: list[windows.Handle] = [auto, manual]
+    assert windows.wait_multiple(pair, False, 0) == windows.WAIT_TIMEOUT
+    assert windows.wait_multiple(pair, True, 0) == windows.WAIT_TIMEOUT
+    assert windows.event_set(auto)
+    assert windows.wait_multiple(pair, False, 0) == windows.WAIT_OBJECT_0
+    assert windows.wait_multiple(pair, True, 0) == windows.WAIT_TIMEOUT
+    assert windows.event_set(auto)
+    assert windows.event_set(manual)
+    assert windows.wait_multiple(pair, True, 0) == windows.WAIT_OBJECT_0
+    broken: list[windows.Handle] = [auto, manual, null]
+    assert windows.wait_multiple(broken, False, 0) == windows.WAIT_FAILED
+    empty: list[windows.Handle] = []
+    assert windows.wait_multiple(empty, False, 0) == windows.WAIT_FAILED
+
+    assert windows.close_handle(auto)
+    assert windows.close_handle(manual)
+    assert windows.close_handle(mutex)
+    assert windows.close_handle(semaphore)
+    return 0

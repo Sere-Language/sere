@@ -1,0 +1,44 @@
+# Pseudoconsole (ConPTY): the console host used to run a child process under
+# a pipe-driven terminal.
+#
+# Creating one spawns a console host, so the invalid-argument paths are checked
+# first and the live path is closed again before the pipes are released. Hosts
+# older than Windows 10 1809 do not export the entry points at all.
+
+import windows
+
+
+def main() -> i32:
+    assert windows.available()
+
+    if not windows.conpty_available():
+        return 0
+
+    null: windows.Handle = None
+
+    # Bad arguments are rejected without starting a console host.
+    assert windows.pseudo_console_create(null, null, 80, 25) == None
+    assert windows.pseudo_console_create(null, null, 0, 25) == None
+    assert not windows.pseudo_console_resize(null, 80, 25)
+    assert not windows.pseudo_console_resize(null, 0, 0)
+    windows.pseudo_console_close(null)
+
+    # A pseudoconsole reads the child's input from one pipe and writes its
+    # output to another.
+    input_pipe: windows.Pipe = windows.create_pipe()
+    output_pipe: windows.Pipe = windows.create_pipe()
+    assert windows.handle_is_pipe(input_pipe.read)
+    assert windows.handle_is_pipe(output_pipe.write)
+
+    pseudo: windows.PseudoConsole = windows.pseudo_console_create(
+        input_pipe.read, output_pipe.write, 80, 25)
+    assert pseudo != None
+    assert windows.pseudo_console_resize(pseudo, 100, 40)
+    assert not windows.pseudo_console_resize(pseudo, 0, 40)
+    windows.pseudo_console_close(pseudo)
+
+    assert windows.close_handle(input_pipe.read)
+    assert windows.close_handle(input_pipe.write)
+    assert windows.close_handle(output_pipe.read)
+    assert windows.close_handle(output_pipe.write)
+    return 0

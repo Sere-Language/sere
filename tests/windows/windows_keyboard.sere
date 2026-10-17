@@ -1,0 +1,47 @@
+# Keyboard state: the 256-byte key table, virtual-key mapping, and key
+# translation through ToUnicode.
+#
+# No key is ever pressed or simulated: the test only reads what the desktop
+# reports and maps codes that are fixed by the Win32 documentation.
+
+import windows
+
+
+def main() -> i32:
+    assert windows.available()
+
+    # The keyboard state table always has one byte per virtual key.
+    state: list[byte] = windows.keyboard_state()
+    assert len(state) == 256
+
+    # VK_TO_VSC and VSC_TO_VK are inverses for the letter keys.
+    scan: windows.DWORD = windows.map_virtual_key(
+        windows.VirtualKey.A as windows.DWORD, windows.MAPVK_VK_TO_VSC)
+    assert scan > 0
+    assert windows.map_virtual_key(scan, windows.MAPVK_VSC_TO_VK) == windows.VirtualKey.A as windows.DWORD
+    assert windows.map_virtual_key(
+        windows.VirtualKey.Z as windows.DWORD, windows.MAPVK_VK_TO_VSC) > 0
+
+    # The unshifted character for a letter key is its uppercase letter.
+    assert windows.map_virtual_key(
+        windows.VirtualKey.A as windows.DWORD, windows.MAPVK_VK_TO_CHAR) == 65
+    assert windows.map_virtual_key(
+        windows.VirtualKey.Key0 as windows.DWORD, windows.MAPVK_VK_TO_CHAR) == 48
+
+    # Translating with the live table yields one character, lower or upper
+    # depending on the lock states the desktop currently reports.
+    text: str = windows.to_unicode(windows.VirtualKey.A, scan as i32, state)
+    assert len(text) == 1
+    assert text == "a" or text == "A"
+
+    # An unknown key or a truncated state table translates to nothing.
+    assert windows.to_unicode(windows.VirtualKey.A, scan as i32, []) == ""
+
+    # The key queries are answers, not crashes, whatever the desktop is doing.
+    pressed: bool = windows.key_pressed(windows.VirtualKey.Shift)
+    toggled: bool = windows.key_toggled(windows.VirtualKey.CapsLock)
+    down: bool = windows.key_down(windows.VirtualKey.Shift)
+    assert pressed or not pressed
+    assert toggled or not toggled
+    assert down or not down
+    return 0

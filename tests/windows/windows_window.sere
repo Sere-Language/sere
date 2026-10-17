@@ -1,0 +1,95 @@
+# Window objects and the message queue: registering a class, creating a
+# window that is never shown, querying and moving it, and driving the queue.
+#
+# The window stays hidden for its whole life, so the test needs no message
+# pump and puts nothing on screen. A custom WNDPROC cannot be produced by Sere
+# yet, so the class uses DefWindowProcW.
+
+import windows
+
+
+def main() -> i32:
+    assert windows.available()
+
+    name: str = "SereWindowsApiTestClass"
+    windows.unregister_window_class(name)
+    atom: windows.DWORD = windows.register_window_class(name)
+    assert atom != 0
+    assert windows.register_window_class(name) == 0
+
+    window: windows.WindowHandle = windows.create_window(
+        name, "Sere test window", windows.WS_OVERLAPPEDWINDOW, 0, 128, 128, 640, 480)
+    assert window != None
+    assert windows.window_valid(window)
+    assert not windows.window_visible(window)
+    assert not windows.window_iconic(window)
+    assert not windows.window_zoomed(window)
+    assert windows.window_title(window) == "Sere test window"
+    assert windows.window_text(window) == "Sere test window"
+    assert windows.window_set_title(window, "Sere renamed")
+    assert windows.window_title(window) == "Sere renamed"
+
+    rect: windows.Rect = windows.window_rect(window)
+    assert rect.right - rect.left == 640
+    assert rect.bottom - rect.top == 480
+    client: windows.Rect = windows.window_client_rect(window)
+    assert client.right - client.left > 0
+    assert client.right - client.left <= 640
+    assert client.bottom - client.top > 0
+
+    # Moving and resizing a hidden window needs no message pump.
+    assert windows.window_move(window, 160, 160, 320, 240)
+    moved: windows.Rect = windows.window_rect(window)
+    assert moved.right - moved.left == 320
+    assert moved.bottom - moved.top == 240
+    assert windows.window_set_pos(
+        window, 200, 200, 300, 200, windows.SWP_NOACTIVATE, windows.ANCHOR_TOP)
+    resized: windows.Rect = windows.window_rect(window)
+    assert resized.right - resized.left == 300
+    assert resized.bottom - resized.top == 200
+
+    # Hiding a window that was never shown reports that it was not visible.
+    assert not windows.window_show(window, windows.ShowWindowCommand.Hide)
+    assert not windows.window_visible(window)
+
+    # Null-window calls answer instead of crashing.
+    null_window: windows.WindowHandle = None
+    assert not windows.window_valid(null_window)
+    assert not windows.window_visible(null_window)
+    assert windows.window_title(null_window) == ""
+    null_rect: windows.Rect = windows.window_rect(null_window)
+    assert null_rect.left == 0 and null_rect.right == 0
+    assert not windows.window_set_title(null_window, "text")
+    assert not windows.set_foreground_window(null_window)
+    assert not windows.bring_window_to_top(null_window)
+    assert not windows.window_update(null_window)
+    assert not windows.window_show(null_window)
+    assert not windows.window_destroy(null_window)
+
+    assert windows.window_destroy(window)
+    assert not windows.window_valid(window)
+
+    # Drain whatever the window system queued while the window existed, so the
+    # queue below starts empty.
+    while windows.peek_message(windows.PM_REMOVE) != None:
+        pass
+    assert windows.peek_message(windows.PM_REMOVE) == None
+
+    # PostQuitMessage is the message a loop stops on. peek_message hands it
+    # back with its exit code, while get_message reports it as None.
+    windows.post_quit_message(7)
+    quit_message = windows.peek_message(windows.PM_REMOVE)
+    assert quit_message != None
+    quit_event: windows.WindowMessageEvent = quit_message as windows.WindowMessageEvent
+    assert quit_event.message == windows.WM_QUIT
+    assert quit_event.wparam == 7
+    assert not windows.translate_message(quit_event)
+    assert windows.dispatch_message(quit_event) == 0
+    assert windows.peek_message(windows.PM_REMOVE) == None
+
+    windows.post_quit_message(3)
+    assert windows.get_message() == None
+
+    assert windows.unregister_window_class(name)
+    assert not windows.unregister_window_class(name)
+    return 0

@@ -1,0 +1,52 @@
+# Process and thread objects: opening this process, reading its exit code,
+# waiting on it, and duplicating its handle.
+#
+# Nothing here terminates anything: the test only ever inspects its own process.
+
+import windows
+
+
+def main() -> i32:
+    assert windows.available()
+
+    pid: windows.DWORD = windows.process_id() as windows.DWORD
+    tid: windows.DWORD = windows.thread_id() as windows.DWORD
+    assert pid > 0
+    assert tid > 0
+
+    # Zero and an unknown id never yield a usable process handle.
+    null: windows.Handle = None
+    assert windows.open_process(windows.PROCESS_QUERY_LIMITED_INFORMATION, False, 0) == None
+    assert not windows.terminate_process(null)
+    assert windows.exit_code_process(null) == None
+
+    # The process is still running, so its exit code is STILL_ACTIVE (259).
+    process: windows.Handle = windows.open_process(
+        windows.PROCESS_QUERY_LIMITED_INFORMATION | windows.SYNCHRONIZE, False, pid)
+    assert windows.handle_valid(process)
+    assert not windows.wait_timeout(process, 0)
+    code = windows.exit_code_process(process)
+    assert code != None
+    assert code as windows.DWORD == 259
+
+    # Duplicating yields an independent handle to the same object.
+    duplicate: windows.Handle = windows.duplicate_handle(process)
+    assert windows.handle_valid(duplicate)
+    assert duplicate != process
+    assert not windows.wait_timeout(duplicate, 0)
+    assert windows.close_handle(duplicate)
+
+    # Duplicating the process pseudo-handle works even though it reports as an
+    # invalid handle: Win32 accepts it as a DuplicateHandle source.
+    self_copy: windows.Handle = windows.duplicate_handle(windows.current_process_handle())
+    assert windows.handle_valid(self_copy)
+    assert not windows.wait_timeout(self_copy, 0)
+    assert windows.close_handle(self_copy)
+
+    # The thread pseudo-handle is separate from the process one.
+    assert windows.current_thread_handle() != windows.current_process_handle()
+    assert windows.close_handle(process)
+
+    # Closing twice is a failure rather than an error.
+    assert not windows.close_handle(process)
+    return 0

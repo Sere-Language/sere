@@ -1,0 +1,77 @@
+# Console queries against a handle that is not a console.
+#
+# The standard output of a test run is a pipe, so every console wrapper has to
+# answer "not a console" instead of writing to a terminal. The pipe stands in
+# for that case explicitly, so the expectations do not depend on how the test
+# process itself was launched.
+
+import windows
+
+
+def main() -> i32:
+    assert windows.available()
+
+    pipe: windows.Pipe = windows.create_pipe()
+    not_console: windows.Handle = pipe.read
+
+    # Mode queries and updates.
+    assert not windows.is_console(not_console)
+    assert windows.console_mode(not_console) == None
+    assert not windows.set_console_mode(not_console, 0)
+    assert not windows.console_mode_enable(not_console, windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING)
+    assert not windows.console_mode_disable(not_console, windows.ENABLE_ECHO_INPUT)
+
+    # Screen buffer geometry and cursor state.
+    assert windows.console_screen_info(not_console) == None
+    assert windows.console_width(not_console) == 0
+    assert windows.console_height(not_console) == 0
+    assert windows.console_buffer_width(not_console) == 0
+    assert windows.console_buffer_height(not_console) == 0
+    assert windows.console_cursor(not_console) == None
+    assert not windows.console_set_cursor(0, 0, not_console)
+    assert windows.console_cursor_size(not_console) == 0
+    assert not windows.console_cursor_visible(not_console)
+    assert not windows.console_set_cursor_visible(True, not_console)
+    assert not windows.console_set_cursor_size(25, not_console)
+    assert windows.console_largest_size(not_console) == None
+    assert not windows.console_set_buffer_size(80, 25, not_console)
+    rect: windows.ConsoleRect = windows.ConsoleRect(0, 0, 79, 24)
+    assert not windows.console_set_window_rect(rect, False, not_console)
+    assert not windows.console_set_attribute(windows.FOREGROUND_RED, not_console)
+
+    # Positioned screen-buffer I/O reads empty and writes nothing.
+    assert not windows.console_write_at(0, 0, "text", not_console)
+    assert not windows.console_fill_char(0, 0, 4, 32, not_console)
+    assert not windows.console_fill_attribute(0, 0, 4, windows.FOREGROUND_RED, not_console)
+    attributes: list[u16] = [0, 0, 0, 0]
+    assert not windows.console_write_attributes(0, 0, attributes, not_console)
+    assert windows.console_read_at(0, 0, 4, not_console) == ""
+    # An untyped [] literal cannot be inferred, so the empty result is measured.
+    assert len(windows.console_read_attributes(0, 0, 4, not_console)) == 0
+    assert not windows.console_scroll(rect, 0, 1, 32, 0, not_console)
+    assert not windows.console_clear(not_console)
+
+    # Direct I/O and input polling.
+    assert not windows.console_supports_vt(not_console)
+    assert not windows.console_enable_vt(not_console)
+    assert not windows.console_enable_vt_input(not_console)
+    assert not windows.console_enable_raw_input(not_console)
+    assert windows.console_event_count(not_console) == 0
+    assert windows.console_peek_event(not_console) == None
+    assert not windows.console_flush_input(not_console)
+    assert windows.console_write(not_console, "text") == -1
+    assert windows.console_read(not_console, 0) == ""
+
+    # Titles and code pages are session specific, so only their shape is
+    # checked; reading them must never block or fail.
+    title: str = windows.console_title()
+    original: str = windows.console_original_title()
+    assert len(title) >= 0
+    assert len(original) >= 0
+    assert windows.get_console_cp() <= 0xFFFF
+    assert windows.get_console_output_cp() <= 0xFFFF
+    assert not windows.console_supports_vt()
+
+    assert windows.close_handle(pipe.read)
+    assert windows.close_handle(pipe.write)
+    return 0
