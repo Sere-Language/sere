@@ -992,6 +992,22 @@ void sere_bytes_hex(void* buffer, const char** out_data, int64_t* out_len) {
   outStr(copy, n, out_data, out_len);
 }
 
+void sere_b64_encode_bytes(void* buffer, const char** out_data, int64_t* out_len) {
+  SereList* src = u8List(buffer);
+  if (src == NULL || src->data == NULL || src->len <= 0) {
+    sere_b64_encode("", 0, out_data, out_len);
+    return;
+  }
+  sere_b64_encode((const char*)u8Data(src), src->len, out_data, out_len);
+}
+
+void* sere_b64_decode_bytes(const char* data, int64_t len) {
+  const char* decoded = NULL;
+  int64_t decoded_len = 0;
+  sere_b64_decode(data, len, &decoded, &decoded_len);
+  return sere_bytes_from_str(decoded, decoded_len);
+}
+
 static int hexNibble(char ch) {
   if (ch >= '0' && ch <= '9') {
     return ch - '0';

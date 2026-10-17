@@ -2708,7 +2708,8 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
     return classDef;
   }
   if (check(TokenKind::KeywordType) && peekNth(1).kind() == TokenKind::Identifier &&
-      peekNth(2).kind() == TokenKind::Equal) {
+      (peekNth(2).kind() == TokenKind::Equal ||
+       peekNth(2).kind() == TokenKind::LBracket)) {
     std::unique_ptr<TypeAlias> alias = parseTypeAlias();
     if (alias != nullptr) {
       markPrivateFromDecorators(*alias, decorators);

@@ -2912,7 +2912,7 @@ std::unique_ptr<llvm::Module> SeremLLVMBackend::emit(const serem::IRModule& modu
   }
   std::string verificationError;
   llvm::raw_string_ostream errors(verificationError);
-  if (false && llvm::verifyModule(*module_, &errors)) {
+  if (llvm::verifyModule(*module_, &errors)) {
     report("invalid Serem LLVM module: " + verificationError);
     return nullptr;
   }
@@ -2920,4 +2920,3 @@ std::unique_ptr<llvm::Module> SeremLLVMBackend::emit(const serem::IRModule& modu
 }
 
 } // namespace sere
-

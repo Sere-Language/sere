@@ -739,6 +739,10 @@ int32_t sere_sys_cpu_count(void);
 
 void sere_b64_encode(const char* data, int64_t len, const char** out_data, int64_t* out_len);
 void sere_b64_decode(const char* data, int64_t len, const char** out_data, int64_t* out_len);
+/// Base64 over a `list[byte]`, so binary data never round-trips through a
+/// NUL-terminated string.
+void sere_b64_encode_bytes(void* buffer, const char** out_data, int64_t* out_len);
+void* sere_b64_decode_bytes(const char* data, int64_t len);
 
 int64_t sere_string_find(const char* data, int64_t len, const char* needle, int64_t needle_len);
 void sere_string_replace(const char* data,

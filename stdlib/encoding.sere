@@ -8,3 +8,14 @@ def b64encode(text: str) -> str
 extern "C" "sere_b64_decode"
 def b64decode(text: str) -> str
 """Decode base64 text."""
+
+extern "C" "sere_b64_encode_bytes"
+def b64encode_bytes(buffer: list[byte]) -> str
+"""Encode a byte list as base64, preserving every byte (including NUL).
+
+Use this for binary data: a `str` may not survive bytes that are not valid text.
+"""
+
+extern "C" "sere_b64_decode_bytes"
+def b64decode_bytes(text: str) -> list[byte]
+"""Decode base64 text into a byte list, preserving every decoded byte."""

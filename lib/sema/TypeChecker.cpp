@@ -3933,6 +3933,17 @@ const Type* TypeChecker::checkCall(CallExpr& expr) {
   if (expr.arguments().size() == 1 && (symbol == nullptr || symbol->kind == SymbolKind::Type)) {
     const Type* target = resolveNamedType(name->name(), expr.typeArgs(), expr.range(), false);
     if (target != nullptr) {
+      // A `type` alias of a class keeps its constructor: `type IntBox = Box[i32]`
+      // then `IntBox(5)` calls `Box.__init__` instead of failing as a cast.
+      if (target->isRecord()) {
+        const Type* argument = checkExpr(*expr.arguments()[0]);
+        if (argument == nullptr) {
+          return nullptr;
+        }
+        if (!isAssignable(argument, target) && !canCast(argument, target)) {
+          return checkConstructor(expr, target);
+        }
+      }
       const Type* result = checkCastValue(*expr.arguments()[0], target, expr.range());
       expr.setCast(true);
       expr.setResolvedType(result);

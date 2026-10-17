@@ -505,8 +505,10 @@ def password_hash_with(password: str, iterations: i64) -> str:
     derived: list[byte] = _pbkdf2_sha256(
         bytes.from_str(password), salt, iterations, PASSWORD_KEY_BYTES
     )
-    salt_text: str = encoding.b64encode(bytes.to_str(salt))
-    key_text: str = encoding.b64encode(bytes.to_str(derived))
+    # The salt and key are binary, so encode them as bytes: converting them to
+    # text first would lose everything after the first NUL byte.
+    salt_text: str = encoding.b64encode_bytes(salt)
+    key_text: str = encoding.b64encode_bytes(derived)
     encoded: str = _PASSWORD_PREFIX + "$" + str(iterations) + "$" + salt_text + "$" + key_text
     return encoded
 
@@ -527,8 +529,8 @@ def password_verify(password: str, encoded: str) -> bool:
         return False
     if iterations > 100000000:
         return False
-    salt: list[byte] = bytes.from_str(encoding.b64decode(parts[2]))
-    expected: list[byte] = bytes.from_str(encoding.b64decode(parts[3]))
+    salt: list[byte] = encoding.b64decode_bytes(parts[2])
+    expected: list[byte] = encoding.b64decode_bytes(parts[3])
     if len(salt) < 8 or len(expected) < 16:
         return False
     derived: list[byte] = _pbkdf2_sha256(

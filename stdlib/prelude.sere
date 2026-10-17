@@ -48,8 +48,17 @@
 type Int = i8 | i16 | i32 | i64 | u8 | u16 | u32 | u64 # type: ignore
 type Float = f32 | f64 # type: ignore
 
+type int = i32
+type float = f64
+
+type uint = u32
+
+type size = u64
+
 type UnsignedInt = u8 | u16 | u32 | u64 # type: ignore
 type SignedInt = i8 | i16 | i32 | i64
+
+type ArrayLike[T] = array[T] | list[T]
 
 extern "C" "sere_input"
 def input(prompt: str) -> str
@@ -97,6 +106,23 @@ def sign(value: i32) -> i32:
 # `zip` and friends that would return pairs are deliberately absent.
 # ---------------------------------------------------------------------------
 
+
+def zip[T, U](a: list[T], b: list[U]) -> list[(T, U)]:
+    """Combine two lists into tuples, stopping at the shortest list."""
+
+    result: list[(T, U)] = []
+    length: i64 = len(a)
+
+    if len(b) < length:
+        length = len(b)
+
+    i = 0
+
+    while i < length:
+        result.append((a[i], b[i]))
+        i += 1
+
+    return result
 
 def sorted[T](items: list[T]) -> list[T]:
     """Return a new list with the items in ascending order.
