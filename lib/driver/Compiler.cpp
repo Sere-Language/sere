@@ -488,6 +488,13 @@ static llvm::json::Value astJsonValue(const Node& node) {
     case NodeKind::TypeAlias: {
       const auto& alias = static_cast<const TypeAlias&>(node);
       obj["name"] = alias.name();
+      if (!alias.typeParams().empty()) {
+        llvm::json::Array params;
+        for (const std::string& param : alias.typeParams()) {
+          params.push_back(param);
+        }
+        obj["typeParams"] = std::move(params);
+      }
       break;
     }
     case NodeKind::MacroDef: {

@@ -1,0 +1,97 @@
+# Generic type aliases: `type Name[T] = ...`
+
+type Row[T] = list[T]
+type Grid[T] = list[Row[T]]
+type Mapping[K, V] = dict[K, V]
+type ArrayLike[T] = array[T] | list[T]
+type Scalar[T: i32 | f64] = T | list[T]
+type IntRows = Row[i32]
+
+
+class Box[T]:
+    value: T
+
+    def __init__(self, value: T) -> void:
+        self.value = value
+
+    def get(self) -> T:
+        return self.value
+
+
+# An alias keeps its argument constraints and forwards them to the class.
+type Boxed[T: i32 | f64] = Box[T]
+
+
+class Shelf[T]:
+    rows: Grid[T]
+
+    def __init__(self) -> void:
+        self.rows = []
+
+    def add(self, row: Row[T]) -> void:
+        self.rows.push(row)
+
+    def height(self) -> i32:
+        return len(self.rows)
+
+
+def make_row[T](value: T) -> Row[T]:
+    row: Row[T] = []
+    row.push(value)
+    return row
+
+
+def echo[T](values: ArrayLike[T]) -> ArrayLike[T]:
+    return values
+
+
+def total_rows(values: Row[i32]) -> i32:
+    total: i32 = 0
+    for value in values:
+        total += value
+    return total
+
+
+def main() -> i32:
+    # A generic alias is a normal list type once instantiated.
+    row: Row[i32] = [1, 2, 3]
+    assert total_rows(row) == 6
+
+    # Aliases nest, including through another alias parameter.
+    rows: Grid[i32] = [[1, 2], [3]]
+    assert len(rows) == 2
+    assert len(rows[0]) == 2
+    assert rows[1][0] == 3
+
+    # An alias of an instantiated alias.
+    same: IntRows = [4, 5]
+    assert total_rows(same) == 9
+
+    table: Mapping[str, i32] = {"one": 1, "two": 2}
+    assert table["two"] == 2
+
+    # Union aliases accept every member.
+    numbers: ArrayLike[i32] = [1, 2, 3]
+    from_array: array[i32] = [4, 5]
+    numbers = from_array
+    echoed: ArrayLike[i32] = echo[i32](numbers)
+    numbers = echoed
+
+    # A union alias keeps its constraints: only i32/f64 arguments are allowed.
+    scaled: Scalar[f64] = [1.5, 2.5]
+    narrowed: list[f64] = scaled as list[f64]
+    assert len(narrowed) == 2
+
+    # Aliasing a generic class keeps its constructor and methods.
+    boxed: Boxed[i32] = Boxed[i32](7)
+    assert boxed.get() == 7
+
+    # A generic alias inside a generic class body.
+    shelf: Shelf[str] = Shelf[str]()
+    shelf.add(make_row[str]("a"))
+    shelf.add(["b", "c"])
+    assert shelf.height() == 2
+    assert shelf.rows[1][1] == "c"
+
+    print("generic type aliases ok")
+    return 0

@@ -1278,88 +1278,166 @@ exercises the whole layer: camera, projection, model transform, normals, depth
 buffer, and buffers.
 
 ```sere
+
 import gl
 import matrix
 
-VERTEX: str = """#version 120
+const VERTEX: str = """#version 120
 attribute vec3 position;
-attribute vec3 normal;
+
 uniform mat4 mvp;
-uniform mat3 normal_matrix;
 varying vec3 shade;
+
 void main() {
-    shade = normalize(normal_matrix * normal);
+    shade = position * 0.5 + 0.5;
     gl_Position = mvp * vec4(position, 1.0);
 }
 """
 
-FRAGMENT: str = """#version 120
+const FRAGMENT: str = """#version 120
 varying vec3 shade;
+
 void main() {
-    gl_FragColor = vec4(normalize(shade) * 0.5 + 0.5, 1.0);
+    gl_FragColor = vec4(shade, 1.0);
 }
 """
 
-CUBE: list[f64] = [
-    -1.0, -1.0,  1.0,  0.0,  0.0,  1.0,
-     1.0, -1.0,  1.0,  0.0,  0.0,  1.0,
-     1.0,  1.0,  1.0,  0.0,  0.0,  1.0,
-    -1.0, -1.0,  1.0,  0.0,  0.0,  1.0,
-     1.0,  1.0,  1.0,  0.0,  0.0,  1.0,
-    -1.0,  1.0,  1.0,  0.0,  0.0,  1.0]
-
 def main() -> i32:
-    window: gl.Window = gl.Window("cube", 640, 400)
+    window: gl.Window = gl.Window(
+        "Spinning Cube", 640, 400, gl.WINDOW_DEFAULT
+    )
+
     if not window.is_open():
+        print("Failed to create OpenGL window")
         return 1
+
     window.make_current()
 
+    # Flattened vertex positions (x, y, z)
+    vertices: list[f64] = [
+        -1.0, -1.0, -1.0,
+         1.0, -1.0, -1.0,
+         1.0,  1.0, -1.0,
+        -1.0,  1.0, -1.0,
+        -1.0, -1.0,  1.0,
+         1.0, -1.0,  1.0,
+         1.0,  1.0,  1.0,
+        -1.0,  1.0,  1.0,
+    ]
+
+    indices: list[i32] = [
+        # Back
+        0, 2, 1, 0, 3, 2,
+        # Front
+        4, 5, 6, 4, 6, 7,
+        # Left
+        0, 4, 7, 0, 7, 3,
+        # Right
+        1, 2, 6, 1, 6, 5,
+        # Bottom
+        0, 1, 5, 0, 5, 4,
+        # Top
+        3, 7, 6, 3, 6, 2,
+    ]
+
+    # Build shaders
     program: gl.Program = gl.build(VERTEX, FRAGMENT)
+
     if not program.ok():
         print(program.log)
         window.destroy()
         return 1
+
     program.bind_attribute(0, "position")
-    program.bind_attribute(1, "normal")
-    program.link()
+
+    if not program.link():
+        print(program.log)
+        program.destroy()
+        window.destroy()
+        return 1
+
     program.use()
 
+    # Vertex Array Object
     vao: gl.VertexArray = gl.VertexArray()
     vao.bind()
+
+    # Vertex Buffer Object
     vbo: gl.Buffer = gl.Buffer(gl.GL_ARRAY_BUFFER)
     vbo.bind()
-    vbo.data_f64(CUBE, gl.GL_STATIC_DRAW)
-    vao.float_attribute(0, 3, 24, 0)
-    vao.float_attribute(1, 3, 24, 12)
+    vbo.data_f64(vertices, gl.GL_STATIC_DRAW)
 
-    camera: gl.Camera = gl.orbit_camera(gl.vec3(0.0, 0.0, 0.0), 30.0, 20.0, 8.0)
-    camera.upload(program, "view", "projection")
+    # 3 floats per vertex, 12-byte stride
+    vao.float_attribute(0, 3, 12, 0)
 
+    # Element Buffer Object
+    ebo: gl.Buffer = gl.Buffer(gl.GL_ELEMENT_ARRAY_BUFFER)
+    ebo.bind()
+    ebo.data_i32(indices, gl.GL_STATIC_DRAW)
+
+    # Camera
+    camera: gl.Camera = gl.orbit_camera(
+        gl.vec3(0.0, 0.0, 0.0),
+        30.0,
+        20.0,
+        6.0
+    )
+
+    camera.set_aspect_ratio(gl.aspect_of_window(window))
+
+    # Model transform
     model: gl.Transform = gl.Transform()
+
+    # OpenGL state
     gl.enable(gl.GL_DEPTH_TEST)
     gl.default_depth_state()
 
+    # Main loop
     while window.is_open():
         window.poll()
+
         if window.should_close() or window.key_pressed(gl.KEY_ESCAPE):
-            window.destroy()
+            break
 
+        # Update viewport and camera
         gl.apply_frame(camera, window)
-        gl.clear_color(0.1, 0.1, 0.14, 1.0)
-        gl.clear(gl.GL_COLOR_BUFFER_BIT + gl.GL_DEPTH_BUFFER_BIT)
 
-        model.turn(0.4 * window.dt(), 0.7 * window.dt(), 0.0)
-        gl.set_matrix4(program, "model", model.matrix())
-        gl.set_normal_matrix(program, "normal_matrix", model.matrix())
+        # Clear both buffers
+        gl.clear_color(0.1, 0.1, 0.12, 1.0)
+        gl.clear(
+            gl.GL_COLOR_BUFFER_BIT +
+            gl.GL_DEPTH_BUFFER_BIT
+        )
+
+        # Rotate using frame delta time
+        dt: f64 = window.dt()
+        model.turn(0.4 * dt, 0.7 * dt, 0.0)
+
+        program.use()
+        vao.bind()
+
+        # Update transformation matrix
         camera.upload_mvp(program, "mvp", model.matrix())
 
-        gl.draw_arrays(gl.GL_TRIANGLES, 0, 6)
+        # Draw 12 triangles (36 indices)
+        gl.draw_elements(
+            gl.GL_TRIANGLES,
+            36,
+            gl.GL_UNSIGNED_INT,
+            0
+        )
+
         window.swap()
 
-    vao.destroy()
+        # Cleanup
+    ebo.destroy()
     vbo.destroy()
+    vao.destroy()
     program.destroy()
+    window.destroy()
+
     return 0
+
 ```
 
 An orbit camera driven by the mouse: yaw and pitch come straight from the

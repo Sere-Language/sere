@@ -251,6 +251,44 @@ A bare `Callable` result is `Any`; annotate `Callable[R]` when the return value 
 - `struct` â€” copy-by-value
 - `enum` â€” discriminant; variants `Color.Green`
 - `type Name = ...` â€” alias or union
+- `type Name[T, ...] = ...` â€” generic alias
+
+### Generic aliases
+
+A `type` definition may take type parameters, including constraints. The alias
+resolves to its underlying type wherever it is used, so it can name shapes that
+would otherwise repeat:
+
+```sere
+type Row[T] = list[T]
+type Grid[T] = list[Row[T]]              # aliases nest
+type Mapping[K, V] = dict[K, V]
+type ArrayLike[T] = array[T] | list[T]   # unions of generics
+type Scalar[T: i32 | f64] = T | list[T]  # constraints travel with the alias
+
+rows: Grid[i32] = [[1, 2], [3]]
+lookup: Mapping[str, i32] = {"one": 1}
+numbers: ArrayLike[i32] = [1, 2, 3]
+```
+
+`Scalar[str]` is rejected because `str` is outside the alias constraint. An
+unparametrized use of a generic alias fills every parameter with `Any`
+(`items: Row = []`).
+
+Aliases of classes keep the class constructor and methods:
+
+```sere
+class Box[T]:
+    value: T
+    def __init__(self, value: T) -> void:
+        self.value = value
+
+type IntBox = Box[i32]
+type Boxed[T: i32 | f64] = Box[T]
+
+boxed: Boxed[i32] = Boxed[i32](7)
+assert boxed.value == 7
+```
 
 ### Unions
 

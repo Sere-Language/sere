@@ -6161,6 +6161,10 @@ bool TypeChecker::collectAliases(Module& module) {
     if (!resolveTypeConstraints(alias.typeConstraints()) && !bestEffort_) {
       return false;
     }
+    // The alias parameters are in scope while the underlying type resolves, so
+    // `type Boxed[T: i32 | f64] = Box[T]` can pass `T` to the constrained `Box`.
+    TypeConstraintScope constraintScope(
+        activeTypeConstraints_, alias.typeParams(), resolvedConstraints(alias.typeConstraints()));
     const Type* underlying = resolveTypeExpr(alias.type());
     if (underlying == nullptr) {
       if (!bestEffort_) {
