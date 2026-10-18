@@ -1,0 +1,81 @@
+# Driver and display queries.
+#
+# The binding answers every query even when no driver loaded or no context is
+# current: strings come back empty and numbers come back zero. This test pins
+# that contract down and checks the list helpers keep the requested length.
+
+import gl
+
+
+def main() -> i32:
+    loaded: bool = gl.available()
+
+    if loaded:
+        # A loaded driver always has a primary display.
+        assert gl.screen_width() > 0
+        assert gl.screen_height() > 0
+    else:
+        # The fallback is well defined, not just "some value".
+        assert gl.screen_width() == 0
+        assert gl.screen_height() == 0
+
+    size: list[i32] = gl.screen_size()
+    assert len(size) == 2
+    assert size[0] == gl.screen_width()
+    assert size[1] == gl.screen_height()
+
+    # Without a current context these are the driver defaults; the shapes hold.
+    dims: list[i32] = gl.max_viewport_dims()
+    assert len(dims) == 2
+    assert dims[0] >= 0
+    assert dims[1] >= 0
+
+    assert gl.max_texture_size() >= 0
+    assert gl.major_version() >= 0
+    assert gl.minor_version() >= 0
+
+    # Range queries answer low/high pairs.
+    lines: list[f64] = gl.line_width_range()
+    assert len(lines) == 2
+    assert lines[0] >= 0.0
+    assert lines[1] >= 0.0
+
+    points: list[f64] = gl.point_size_range()
+    assert len(points) == 2
+    assert points[0] >= 0.0
+
+    # floats()/integers() return exactly the requested number of components
+    # (the binding's query buffer holds four, so stay within that).
+    one: list[f64] = gl.floats(gl.GL_SMOOTH_LINE_WIDTH_RANGE, 1)
+    assert len(one) == 1
+    three: list[f64] = gl.floats(gl.GL_POINT_SIZE_RANGE, 3)
+    assert len(three) == 3
+    quad_i: list[i32] = gl.integers(gl.GL_VIEWPORT, 4)
+    assert len(quad_i) == 4
+
+    # The extension list is split and stripped: no empty entries survive.
+    extensions: list[str] = gl.extensions()
+    i: i64 = 0
+    while i < len(extensions):
+        assert len(extensions[i]) > 0
+        assert not contains_space(extensions[i])
+        i = i + 1
+
+    # supports() is a membership test over that same list.
+    assert not gl.supports("GL_SERE_DOES_NOT_EXIST")
+    assert not gl.supports("")
+    if len(extensions) > 0:
+        assert gl.supports(extensions[0])
+        assert gl.supports(extensions[len(extensions) - 1])
+
+    print("gl info ok", loaded, gl.screen_size(), len(extensions))
+    return 0
+
+
+def contains_space(text: str) -> bool:
+    i: i64 = 0
+    while i < len(text):
+        if text[i] == " ":
+            return True
+        i = i + 1
+    return False

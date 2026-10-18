@@ -11,7 +11,7 @@
 #     vbo: gl.Buffer = gl.Buffer(gl.GL_ARRAY_BUFFER)
 #     vbo.bind()
 #     vbo.data_f64(vertices, gl.GL_STATIC_DRAW)
-#     vao.float_attribute(0, 3, 3 * 8, 0)
+#     vao.float_attribute(0, 3, 3 * 4, 0)
 #
 #     ebo: gl.Buffer = gl.Buffer(gl.GL_ELEMENT_ARRAY_BUFFER)
 #     ebo.bind()
@@ -20,7 +20,8 @@
 #     gl.draw_elements(gl.GL_TRIANGLES, len(indices), gl.GL_UNSIGNED_INT, 0)
 #
 # Data is copied at call time, so the Sere list may go out of scope afterwards.
-# Offsets and strides are in bytes, not in elements.
+# Offsets and strides are in bytes: f64 inputs are narrowed to 4-byte floats on
+# upload, so a 3-component attribute strides by 12 bytes, not 24.
 
 from gl.constants import *
 

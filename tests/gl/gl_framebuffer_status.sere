@@ -1,0 +1,51 @@
+# Framebuffer completeness names and the status helpers.
+#
+# check_framebuffer() reports a GL_* status; these helpers turn it into a name
+# and a single boolean, which is what a render-target setup checks before it
+# draws. No window and no context are needed.
+
+import gl
+
+
+def main() -> i32:
+    assert gl.framebuffer_status_name(gl.GL_FRAMEBUFFER_COMPLETE) == "GL_FRAMEBUFFER_COMPLETE"
+    assert gl.framebuffer_status_name(gl.GL_FRAMEBUFFER_UNDEFINED) == "GL_FRAMEBUFFER_UNDEFINED"
+    assert (
+        gl.framebuffer_status_name(gl.GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT)
+        == "GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT"
+    )
+    assert (
+        gl.framebuffer_status_name(gl.GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT)
+        == "GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT"
+    )
+    assert (
+        gl.framebuffer_status_name(gl.GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER)
+        == "GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER"
+    )
+    assert (
+        gl.framebuffer_status_name(gl.GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER)
+        == "GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER"
+    )
+    assert gl.framebuffer_status_name(gl.GL_FRAMEBUFFER_UNSUPPORTED) == "GL_FRAMEBUFFER_UNSUPPORTED"
+    assert (
+        gl.framebuffer_status_name(gl.GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE)
+        == "GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE"
+    )
+    assert (
+        gl.framebuffer_status_name(gl.GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS)
+        == "GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS"
+    )
+
+    # Anything else is reported as unknown rather than crashing or lying.
+    assert gl.framebuffer_status_name(0) == "GL_FRAMEBUFFER_UNKNOWN"
+    assert gl.framebuffer_status_name(0x1234) == "GL_FRAMEBUFFER_UNKNOWN"
+
+    # is_complete() is exactly the equality test the status name implies.
+    assert gl.is_complete(gl.GL_FRAMEBUFFER_COMPLETE)
+    assert not gl.is_complete(gl.GL_FRAMEBUFFER_UNDEFINED)
+    assert not gl.is_complete(gl.GL_FRAMEBUFFER_UNSUPPORTED)
+    assert not gl.is_complete(gl.GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT)
+    assert not gl.is_complete(0)
+
+    print("gl framebuffer status ok", gl.framebuffer_status_name(gl.GL_FRAMEBUFFER_COMPLETE))
+    return 0

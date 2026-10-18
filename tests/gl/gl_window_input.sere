@@ -1,0 +1,91 @@
+# Window flags, cursor modes, modifier bits, and key codes.
+#
+# Input handling is bit work over constants, so it is checked without opening a
+# window. The live-context test covers the calls that need a real window.
+
+import gl
+
+
+def main() -> i32:
+    # Window flags are independent bits that combine into a style.
+    assert gl.WINDOW_VISIBLE == 1
+    assert gl.WINDOW_RESIZABLE == 2
+    assert gl.WINDOW_DECORATED == 4
+    assert gl.WINDOW_MAXIMIZED == 8
+    assert gl.WINDOW_FLOATING == 0x10
+    assert gl.WINDOW_FOCUSED == 0x20
+    assert gl.WINDOW_FULLSCREEN == 0x40
+    assert gl.WINDOW_VSYNC == 0x80
+    assert gl.WINDOW_DEFAULT == 0xA7
+    assert gl.WINDOW_DEFAULT == (
+        gl.WINDOW_VISIBLE
+        | gl.WINDOW_RESIZABLE
+        | gl.WINDOW_DECORATED
+        | gl.WINDOW_FOCUSED
+        | gl.WINDOW_VSYNC
+    )
+    # A maximised window is still visible; the bits do not overlap.
+    combined: i32 = gl.WINDOW_VISIBLE | gl.WINDOW_MAXIMIZED
+    assert (combined & gl.WINDOW_VISIBLE) != 0
+    assert (combined & gl.WINDOW_FULLSCREEN) == 0
+
+    # Cursor modes are a small closed set with a name helper.
+    assert gl.CURSOR_NORMAL == 0
+    assert gl.CURSOR_HIDDEN == 1
+    assert gl.CURSOR_DISABLED == 2
+    assert gl.CURSOR_CAPTURED == 3
+    assert gl.cursor_mode_name(gl.CURSOR_NORMAL) == "CURSOR_NORMAL"
+    assert gl.cursor_mode_name(gl.CURSOR_HIDDEN) == "CURSOR_HIDDEN"
+    assert gl.cursor_mode_name(gl.CURSOR_DISABLED) == "CURSOR_DISABLED"
+    assert gl.cursor_mode_name(gl.CURSOR_CAPTURED) == "CURSOR_CAPTURED"
+    assert gl.cursor_mode_name(99) == "CURSOR_UNKNOWN"
+
+    # Modifiers are a mask, so has_modifier() must test one bit at a time.
+    assert gl.MOD_SHIFT == 1
+    assert gl.MOD_CONTROL == 2
+    assert gl.MOD_ALT == 4
+    assert gl.MOD_SUPER == 8
+    assert gl.MOD_CAPS_LOCK == 0x10
+    assert gl.MOD_NUM_LOCK == 0x20
+    both: i32 = gl.MOD_SHIFT | gl.MOD_CONTROL
+    assert gl.has_modifier(both, gl.MOD_SHIFT)
+    assert gl.has_modifier(both, gl.MOD_CONTROL)
+    assert not gl.has_modifier(both, gl.MOD_ALT)
+    assert not gl.has_modifier(0, gl.MOD_SHIFT)
+    all_mods: i32 = gl.MOD_SHIFT | gl.MOD_CONTROL | gl.MOD_ALT | gl.MOD_SUPER
+    assert gl.has_modifier(all_mods, gl.MOD_SUPER)
+    assert gl.has_modifier(all_mods, gl.MOD_SHIFT)
+
+    # Mouse buttons count from zero; X1/X2 follow the middle button.
+    assert gl.MOUSE_LEFT == 0
+    assert gl.MOUSE_RIGHT == 1
+    assert gl.MOUSE_MIDDLE == 2
+    assert gl.MOUSE_X1 == 3
+    assert gl.MOUSE_X2 == 4
+
+    # Keys use the Windows virtual-key codes, which is what the input layer
+    # reports on every platform.
+    assert gl.KEY_A == 65
+    assert gl.KEY_Z == 90
+    assert gl.KEY_0 == 48
+    assert gl.KEY_9 == 57
+    assert gl.KEY_ESCAPE == 27
+    assert gl.KEY_SPACE == 32
+    assert gl.KEY_ENTER == 13
+    assert gl.KEY_TAB == 9
+    assert gl.KEY_BACKSPACE == 8
+    assert gl.KEY_F1 == 112
+    assert gl.KEY_F12 == 123
+    assert gl.KEY_LEFT == 0x25
+    assert gl.KEY_UP == 0x26
+    assert gl.KEY_RIGHT == 0x27
+    assert gl.KEY_DOWN == 0x28
+    assert gl.KEY_LEFT < gl.KEY_UP
+    assert gl.KEY_UP < gl.KEY_RIGHT
+    assert gl.KEY_RIGHT < gl.KEY_DOWN
+    # Letters are contiguous in key-code order.
+    assert gl.KEY_B == gl.KEY_A + 1
+    assert gl.KEY_Q == gl.KEY_A + 16
+
+    print("gl window input ok", gl.WINDOW_DEFAULT, gl.cursor_mode_name(gl.CURSOR_DISABLED))
+    return 0

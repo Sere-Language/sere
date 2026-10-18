@@ -1,0 +1,90 @@
+# Enumerant values and the arithmetic the binding does over them.
+#
+# No window and no OpenGL context: everything here is a compile-time GL_* value
+# or a pure helper over one, so the test runs on any host and in both backends.
+
+import gl
+
+
+def main() -> i32:
+    # Clear bits are independent so one call can clear several buffers.
+    assert gl.GL_COLOR_BUFFER_BIT == 0x4000
+    assert gl.GL_DEPTH_BUFFER_BIT == 0x0100
+    assert gl.GL_STENCIL_BUFFER_BIT == 0x0400
+    mask: gl.GLbitfield = gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT
+    assert mask == 0x4100
+    assert (mask & gl.GL_COLOR_BUFFER_BIT) != 0
+    assert (mask & gl.GL_STENCIL_BUFFER_BIT) == 0
+    assert (gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT | gl.GL_STENCIL_BUFFER_BIT) == 0x4500
+
+    # Primitive modes keep the GL numbering, including the deprecated quad forms.
+    assert gl.GL_POINTS == 0
+    assert gl.GL_LINES == 1
+    assert gl.GL_LINE_LOOP == 2
+    assert gl.GL_LINE_STRIP == 3
+    assert gl.GL_TRIANGLES == 4
+    assert gl.GL_TRIANGLE_STRIP == 5
+    assert gl.GL_TRIANGLE_FAN == 6
+    assert gl.GL_QUADS == 7
+
+    # Shader stages, buffer targets, and usage hints.
+    assert gl.GL_VERTEX_SHADER == 0x8B31
+    assert gl.GL_FRAGMENT_SHADER == 0x8B30
+    assert gl.GL_ARRAY_BUFFER == 0x8892
+    assert gl.GL_ELEMENT_ARRAY_BUFFER == 0x8893
+    assert gl.GL_STATIC_DRAW == 0x88E4
+    assert gl.GL_DYNAMIC_DRAW == 0x88E8
+
+    # Pixel formats and component types used by texture uploads.
+    assert gl.GL_RGBA == 0x1908
+    assert gl.GL_RGB == 0x1907
+    assert gl.GL_RED == 0x1903
+    assert gl.GL_UNSIGNED_BYTE == 0x1401
+    assert gl.GL_FLOAT == 0x1406
+    assert gl.GL_UNSIGNED_INT == 0x1405
+
+    # Depth comparisons and blend factors keep their documented order.
+    assert gl.GL_NEVER < gl.GL_LESS
+    assert gl.GL_LESS < gl.GL_EQUAL
+    assert gl.GL_EQUAL < gl.GL_LEQUAL
+    assert gl.GL_LEQUAL < gl.GL_GREATER
+    assert gl.GL_GREATER < gl.GL_NOTEQUAL
+    assert gl.GL_ALWAYS > gl.GL_GEQUAL
+    assert gl.GL_SRC_ALPHA == 0x0302
+    assert gl.GL_ONE_MINUS_SRC_ALPHA == 0x0303
+    assert gl.GL_ONE == 1
+    assert gl.GL_ZERO == 0
+
+    # Framebuffer targets and attachments.
+    assert gl.GL_FRAMEBUFFER == 0x8D40
+    assert gl.GL_RENDERBUFFER == 0x8D41
+    assert gl.GL_COLOR_ATTACHMENT0 == 0x8CE0
+    assert gl.GL_COLOR_ATTACHMENT1 == gl.GL_COLOR_ATTACHMENT0 + 1
+    assert gl.GL_DEPTH_ATTACHMENT == 0x8D00
+    assert gl.GL_FRAMEBUFFER_COMPLETE == 0x8CD5
+
+    # Texture units are contiguous, which texture_unit() relies on.
+    assert gl.GL_TEXTURE0 == 0x84C0
+    assert gl.GL_TEXTURE1 == gl.GL_TEXTURE0 + 1
+    assert gl.texture_unit(0) == gl.GL_TEXTURE0
+    assert gl.texture_unit(7) == gl.GL_TEXTURE0 + 7
+    assert gl.texture_unit(31) == gl.GL_TEXTURE0 + 31
+    assert gl.texture_unit(2) < gl.texture_unit(3)
+
+    # Error codes are the GL values, with zero meaning "no error".
+    assert gl.GL_NO_ERROR == 0
+    assert gl.GL_INVALID_ENUM == 0x0500
+    assert gl.GL_INVALID_VALUE == 0x0501
+    assert gl.GL_INVALID_OPERATION == 0x0502
+    assert gl.GL_OUT_OF_MEMORY == 0x0505
+
+    # The aliases in gl.types name the shapes the FFI expects.
+    code: gl.GLenum = gl.GL_TRIANGLES
+    count: gl.GLint = 6
+    offset: gl.GLintptr = 24
+    assert code == 4
+    assert count + 1 == 7
+    assert offset * 2 == 48
+
+    print("gl enums ok", mask, gl.texture_unit(7), code)
+    return 0

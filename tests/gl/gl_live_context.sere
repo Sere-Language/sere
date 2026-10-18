@@ -1,0 +1,191 @@
+# A real OpenGL context: driver strings, objects, a shader program, a draw, and
+# a pixel readback.
+#
+# The window is created without WINDOW_VISIBLE so nothing flashes. On a host
+# without a driver, or without a display, the test prints a skip line and exits
+# 0 so the suite stays green on build machines.
+
+import gl
+
+
+VERTEX_SOURCE: str = """
+#version 120
+attribute vec2 a_pos;
+void main() {
+    gl_Position = vec4(a_pos, 0.0, 1.0);
+}
+"""
+
+FRAGMENT_SOURCE: str = """
+#version 120
+uniform vec4 u_color;
+void main() {
+    gl_FragColor = u_color;
+}
+"""
+
+
+def main() -> i32:
+    if not gl.available():
+        print("gl live context skipped: no driver")
+        return 0
+
+    window: gl.Window = gl.Window("sere gl test", 64, 64, 0)
+    if not window.is_open():
+        print("gl live context skipped: no window")
+        return 0
+    window.make_current()
+    if window.framebuffer_width() < 64 or window.framebuffer_height() < 64:
+        print("gl live context skipped: framebuffer too small")
+        window.destroy()
+        return 0
+
+    # -- driver identity ---------------------------------------------------
+
+    assert len(gl.vendor()) > 0
+    assert len(gl.renderer()) > 0
+    assert len(gl.version()) > 0
+    assert len(gl.shading_language_version()) > 0
+    assert gl.max_texture_size() >= 64
+    assert gl.max_viewport_dims()[0] >= 64
+    assert gl.screen_width() > 0
+
+    # A fresh context reports no queued error.
+    gl.clear_all()
+    assert not gl.pending()
+
+    # -- objects -----------------------------------------------------------
+
+    vao: gl.VertexArray = gl.VertexArray()
+    vbo: gl.Buffer = gl.Buffer(gl.GL_ARRAY_BUFFER)
+    assert vao.id > 0
+    assert vbo.id > 0
+
+    texture: gl.Texture = gl.Texture()
+    assert texture.id > 0
+    texture.bind()
+    gl.smooth_filter(gl.GL_TEXTURE_2D)
+    image: list[byte] = gl.rgba_pixels(2, 2, 255, 0, 255, 255)
+    texture.image_2d(0, gl.GL_RGBA, 2, 2, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, image)
+
+    # -- shaders -----------------------------------------------------------
+
+    vertex: gl.Shader = gl.Shader(gl.GL_VERTEX_SHADER, VERTEX_SOURCE)
+    fragment: gl.Shader = gl.Shader(gl.GL_FRAGMENT_SHADER, FRAGMENT_SOURCE)
+    assert vertex.ok()
+    assert fragment.ok()
+
+    program: gl.Program = gl.Program()
+    program.bind_attribute(0, "a_pos")
+    program.attach(vertex)
+    program.attach(fragment)
+    assert program.link()
+    assert program.uniform("u_color") >= 0
+    assert program.uniform("u_missing") == -1
+    assert program.attribute("a_pos") >= 0
+
+    # -- draw --------------------------------------------------------------
+
+    # A half-size quad leaves the framebuffer corner on the clear colour while
+    # the centre is covered by the shader.
+    vertices: list[f64] = [
+        -0.5, -0.5,
+        0.5, -0.5,
+        0.5, 0.5,
+        -0.5, -0.5,
+        0.5, 0.5,
+        -0.5, 0.5,
+    ]
+
+    vao.bind()
+    vbo.bind()
+    vbo.data_f64(vertices, gl.GL_STATIC_DRAW)
+    # Two 4-byte floats per vertex: the stride is 8 bytes, not 16.
+    vao.float_attribute(0, 2, 8, 0)
+
+    program.use()
+    program.set_vec4("u_color", 0.0, 1.0, 0.0, 1.0)
+    gl.viewport_whole(64, 64)
+    gl.clear_color(0.0, 0.0, 1.0, 1.0)
+    gl.clear(gl.GL_COLOR_BUFFER_BIT)
+    gl.draw_arrays(gl.GL_TRIANGLES, 0, 6)
+    gl.finish()
+
+    # -- readback ----------------------------------------------------------
+
+    pixels: array[i8] = gl.read_rgba(0, 0, 64, 64)
+    assert len(pixels) == 64 * 64 * 4
+    centre: list[i32] = gl.pixel_at(pixels, 64, 32, 32, 4)
+    assert len(centre) == 4
+    assert centre[1] > 200
+    assert centre[0] < 50
+    assert centre[3] > 200
+
+    # The clear colour survives where the quad did not cover: the corner pixel.
+    corner: list[i32] = gl.pixel_at(pixels, 64, 0, 0, 4)
+    assert corner[2] > 200
+    assert corner[1] < 50
+
+    # -- an off-screen render target ---------------------------------------
+
+    target: gl.Framebuffer = gl.Framebuffer()
+    assert target.id > 0
+    target.bind()
+
+    colour: gl.Texture = gl.Texture()
+    colour.bind()
+    colour.storage(gl.GL_RGBA, 8, 8, gl.GL_RGBA)
+    target.attach_texture(gl.GL_COLOR_ATTACHMENT0, colour.id)
+
+    depth_storage: gl.Renderbuffer = gl.Renderbuffer()
+    assert depth_storage.id > 0
+    depth_storage.bind()
+    depth_storage.storage(gl.GL_DEPTH_COMPONENT24, 8, 8)
+    target.attach_renderbuffer(gl.GL_DEPTH_ATTACHMENT, depth_storage.id)
+
+    assert target.complete()
+    assert target.status_name() == "GL_FRAMEBUFFER_COMPLETE"
+    assert gl.is_complete(gl.check_framebuffer(gl.GL_FRAMEBUFFER))
+
+    # Render into the target and read the result back from it.
+    gl.viewport_whole(8, 8)
+    gl.clear_color(1.0, 0.0, 0.0, 1.0)
+    gl.clear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
+    gl.finish()
+    shot: array[i8] = gl.read_rgba(0, 0, 8, 8)
+    assert len(shot) == 8 * 8 * 4
+    shot_pixel: list[i32] = gl.pixel_at(shot, 8, 4, 4, 4)
+    assert shot_pixel[0] > 200
+    assert shot_pixel[1] < 50
+    assert shot_pixel[3] > 200
+
+    target.unbind()
+
+    # -- the error queue ---------------------------------------------------
+
+    gl.clear_all()
+    # An impossible capability is rejected with GL_INVALID_ENUM.
+    gl.enable(0xDEAD)
+    code: u32 = gl.take_error()
+    assert code == gl.GL_INVALID_ENUM
+    assert gl.error_name(code) == "GL_INVALID_ENUM"
+    assert gl.error("probe") == ""
+    assert gl.take_error() == gl.GL_NO_ERROR
+    assert not gl.pending()
+
+    # -- cleanup -----------------------------------------------------------
+
+    gl.delete_vao(vao.id)
+    vbo.destroy()
+    texture.destroy()
+    target.destroy()
+    depth_storage.destroy()
+    colour.destroy()
+    vertex.destroy()
+    fragment.destroy()
+    program.destroy()
+    window.destroy()
+    assert not window.is_open()
+
+    print("gl live context ok", gl.vendor(), gl.max_texture_size(), centre)
+    return 0

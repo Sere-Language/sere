@@ -286,6 +286,8 @@ class Box[T]:
 type IntBox = Box[i32]
 type Boxed[T: i32 | f64] = Box[T]
 
+small: IntBox = IntBox(1)
+assert small.value == 1
 boxed: Boxed[i32] = Boxed[i32](7)
 assert boxed.value == 7
 ```

@@ -1,0 +1,41 @@
+# Error names and the hex fallback.
+#
+# Pure string work: no window, no context, and no glGetError() call. The one
+# place that talks to the driver is the live-context test.
+
+import gl
+
+
+def main() -> i32:
+    assert gl.error_name(gl.GL_NO_ERROR) == "GL_NO_ERROR"
+    assert gl.error_name(gl.GL_INVALID_ENUM) == "GL_INVALID_ENUM"
+    assert gl.error_name(gl.GL_INVALID_VALUE) == "GL_INVALID_VALUE"
+    assert gl.error_name(gl.GL_INVALID_OPERATION) == "GL_INVALID_OPERATION"
+    assert gl.error_name(gl.GL_STACK_OVERFLOW) == "GL_STACK_OVERFLOW"
+    assert gl.error_name(gl.GL_STACK_UNDERFLOW) == "GL_STACK_UNDERFLOW"
+    assert gl.error_name(gl.GL_OUT_OF_MEMORY) == "GL_OUT_OF_MEMORY"
+    assert gl.error_name(gl.GL_TABLE_TOO_LARGE) == "GL_TABLE_TOO_LARGE"
+    assert gl.error_name(gl.GL_INVALID_FRAMEBUFFER_OPERATION) == "GL_INVALID_FRAMEBUFFER_OPERATION"
+
+    # An unlisted code is spelled as 0x plus uppercase hex digits.
+    assert gl.error_name(0x9999) == "0x9999"
+    assert gl.error_name(0xDEAD) == "0xDEAD"
+    assert gl.error_name(1) == "0x1"
+    assert gl.error_name(0x12345678) == "0x12345678"
+
+    # hex_code leaves out the 0x and trims leading zeros.
+    assert gl.hex_code(0) == "0"
+    assert gl.hex_code(1) == "1"
+    assert gl.hex_code(0x0A) == "A"
+    assert gl.hex_code(0x0F) == "F"
+    assert gl.hex_code(0x10) == "10"
+    assert gl.hex_code(0x0500) == "500"
+    assert gl.hex_code(0x7FFF) == "7FFF"
+
+    # Every code round-trips through the name and back to the same digits.
+    assert gl.error_name(gl.GL_INVALID_ENUM) == "GL_INVALID_ENUM"
+    assert gl.hex_code(gl.GL_INVALID_ENUM) == "500"
+    assert gl.hex_code(gl.GL_INVALID_FRAMEBUFFER_OPERATION) == "506"
+
+    print("gl error names ok", gl.error_name(0xDEAD), gl.hex_code(0x7FFF))
+    return 0

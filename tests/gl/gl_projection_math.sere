@@ -1,0 +1,149 @@
+# Projections, views, picking, and the uniform upload layout.
+#
+# Mirror-free arithmetic: no window and no context are created, so this runs on
+# any host and in either backend. It complements tests/features/gl_math.sere by
+# pinning down round trips rather than individual matrix entries.
+
+import gl
+import matrix
+from vec import Vec2, Vec3, Vec4
+
+
+def near(left: f64, right: f64, tolerance: f64) -> bool:
+    difference: f64 = left - right
+    if difference < 0.0:
+        difference = -difference
+    return difference <= tolerance
+
+
+def near3(values: list[f64], x: f64, y: f64, z: f64) -> bool:
+    return near(values[0], x, 1.0e-6) and near(values[1], y, 1.0e-6) and near(values[2], z, 1.0e-6)
+
+
+def main() -> i32:
+    # Degrees and radians are the same projection computed two ways.
+    by_degrees: matrix.Mat4 = gl.perspective_deg(60.0, 1.5, 0.25, 250.0)
+    by_radians: matrix.Mat4 = gl.perspective(gl.to_radians(60.0), 1.5, 0.25, 250.0)
+    assert near(by_degrees.data[0], by_radians.data[0], 1.0e-12)
+    assert near(by_degrees.data[5], by_radians.data[5], 1.0e-12)
+    assert near(by_degrees.data[10], by_radians.data[10], 1.0e-12)
+    assert near(by_degrees.data[11], by_radians.data[11], 1.0e-12)
+
+    # A centred orthographic box maps its corners to the NDC cube.
+    centred: matrix.Mat4 = gl.ortho_centered(300.0, 200.0)
+    assert near3(centred.transform_point(0.0, 0.0, 0.0), 0.0, 0.0, 0.0)
+    assert near3(centred.transform_point(150.0, 100.0, 0.0), 1.0, 1.0, 0.0)
+    assert near3(centred.transform_point(-150.0, -100.0, 0.0), -1.0, -1.0, 0.0)
+
+    # A view built from a position and a direction matches one built from the
+    # position and the point the direction reaches.
+    eye: Vec3 = gl.vec3(2.0, 3.0, 4.0)
+    forward: Vec3 = gl.vec3(0.0, 0.0, -1.0)
+    up: Vec3 = gl.vec3(0.0, 1.0, 0.0)
+    by_direction: matrix.Mat4 = gl.look_at_dir(eye, forward, up)
+    by_target: matrix.Mat4 = gl.look_at(eye, eye.add(forward), up)
+    assert near(by_direction.data[0], by_target.data[0], 1.0e-12)
+    assert near(by_direction.data[5], by_target.data[5], 1.0e-12)
+    assert near(by_direction.data[10], by_target.data[10], 1.0e-12)
+    assert near(by_direction.data[12], by_target.data[12], 1.0e-12)
+    assert near(by_direction.data[13], by_target.data[13], 1.0e-12)
+    assert near(by_direction.data[14], by_target.data[14], 1.0e-12)
+
+    # Projection to NDC and back to world space is an identity for points that
+    # are in front of the camera.
+    camera: gl.Camera = gl.make_camera(gl.vec3(0.0, 0.0, 6.0), gl.vec3(0.0, 0.0, 0.0))
+    camera.set_aspect_ratio(1.5)
+    mvp: matrix.Mat4 = camera.view_projection()
+    point: Vec3 = gl.vec3(0.5, -0.25, 1.0)
+    ndc: list[f64] = gl.project_ndc(mvp, point)
+    assert ndc[2] > -1.0
+    assert ndc[2] < 1.0
+    world: Vec3 = gl.unproject(mvp, gl.vec3(ndc[0], ndc[1], ndc[2]))
+    assert near3(world.to_list(), point.x, point.y, point.z)
+
+    # Screen space uses a pixel projection with y growing downward.
+    pixels: matrix.Mat4 = gl.ortho_2d(200, 100)
+    screen: list[f64] = gl.project_to_screen(pixels, gl.vec3(25.0, 75.0, 0.0), 200, 100)
+    assert near(screen[0], 25.0, 1.0e-6)
+    assert near(screen[1], 75.0, 1.0e-6)
+    # The same point survives a trip through NDC and back.
+    ndc_xy: list[f64] = gl.ndc_from_screen(25.0, 75.0, 200, 100)
+    back: list[f64] = gl.screen_from_ndc(ndc_xy[0], ndc_xy[1], 200, 100)
+    assert near(back[0], 25.0, 1.0e-6)
+    assert near(back[1], 75.0, 1.0e-6)
+
+    # A mat3 upload is the transpose of the row-major matrix, like mat4.
+    basis: matrix.Mat3 = matrix.Mat3([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0])
+    block: list[f64] = gl.matrix3_data(basis)
+    assert block[0] == 1.0
+    assert block[1] == 4.0
+    assert block[2] == 7.0
+    assert block[3] == 2.0
+    assert block[6] == 3.0
+    assert block[8] == 9.0
+
+    # A pure rotation is its own normal matrix: inverse transpose of an
+    # orthonormal block is the block again.
+    turned: matrix.Mat4 = matrix.rotate_y(gl.to_radians(90.0))
+    normals: matrix.Mat3 = gl.normal_matrix(turned)
+    upper: matrix.Mat3 = turned.upper3()
+    assert near(normals.data[0], upper.data[0], 1.0e-12)
+    assert near(normals.data[1], upper.data[1], 1.0e-12)
+    assert near(normals.data[4], upper.data[4], 1.0e-12)
+
+    # Transform.turn() accumulates radians, and the matrix follows.
+    model: gl.Transform = gl.transform(1.0, 2.0, 3.0)
+    model.turn(0.0, gl.to_radians(90.0), 0.0)
+    assert near3(model.matrix().transform_dir(1.0, 0.0, 0.0), 0.0, 0.0, -1.0)
+    model.move(1.0, 0.0, 0.0)
+    assert near3(model.matrix().transform_point(0.0, 0.0, 0.0), 2.0, 2.0, 3.0)
+
+    # sprite_matrix places a unit quad on a pixel rectangle.
+    sprite: matrix.Mat4 = gl.sprite_matrix(10.0, 20.0, 30.0, 40.0)
+    assert near3(sprite.transform_point(0.0, 0.0, 0.0), 10.0, 20.0, 0.0)
+    assert near3(sprite.transform_point(1.0, 1.0, 0.0), 40.0, 60.0, 0.0)
+
+    # Camera movement: dolly travels along the view direction, move shifts both
+    # the eye and the target.
+    traveller: gl.Camera = gl.make_camera(gl.vec3(0.0, 0.0, 5.0), gl.vec3(0.0, 0.0, 0.0))
+    traveller.dolly(2.0)
+    assert near3(traveller.position.to_list(), 0.0, 0.0, 3.0)
+    traveller.move(1.0, 0.0, 0.0)
+    assert near3(traveller.position.to_list(), 1.0, 0.0, 3.0)
+    assert near3(traveller.target.to_list(), 1.0, 0.0, 0.0)
+    assert near3(traveller.forward().to_list(), 0.0, 0.0, -1.0)
+    assert near3(traveller.right().to_list(), 1.0, 0.0, 0.0)
+    assert near3(traveller.true_up().to_list(), 0.0, 1.0, 0.0)
+
+    # Depth reconstruction is exact at both ends of the clip range.
+    assert near(gl.linear_depth(-1.0, 0.1, 1000.0), 0.1, 1.0e-12)
+    assert near(gl.linear_depth(1.0, 0.1, 1000.0), 1000.0, 1.0e-9)
+    middle: f64 = gl.linear_depth(0.0, 1.0, 101.0)
+    assert middle > 1.0
+    assert middle < 101.0
+
+    # A picking ray starts on the near plane and has a unit direction.
+    ray_camera: gl.Camera = gl.make_camera(gl.vec3(0.0, 0.0, 5.0), gl.vec3(0.0, 0.0, 0.0))
+    ray_camera.set_aspect_ratio(2.0)
+    centre: list[f64] = ray_camera.ray(100.0, 50.0, 200, 100)
+    assert near(centre[0], 0.0, 1.0e-6)
+    assert near(centre[1], 0.0, 1.0e-6)
+    assert near(centre[2], 4.9, 1.0e-6)
+    assert near(centre[5], -1.0, 1.0e-6)
+    corner: list[f64] = ray_camera.ray(0.0, 0.0, 200, 100)
+    length: f64 = corner[3] * corner[3] + corner[4] * corner[4] + corner[5] * corner[5]
+    assert near(length, 1.0, 1.0e-9)
+    assert corner[5] < 0.0
+
+    # The vector helpers used throughout the layer keep their components.
+    two: Vec2 = gl.vec2(3.0, 4.0)
+    three: Vec3 = gl.vec3(1.0, 2.0, 3.0)
+    four: Vec4 = gl.vec4(1.0, 2.0, 3.0, 4.0)
+    assert two.x == 3.0
+    assert two.y == 4.0
+    assert three.z == 3.0
+    assert four.w == 4.0
+    assert len(three.to_list()) == 3
+
+    print("gl projection math ok", ndc[2], middle)
+    return 0

@@ -1,0 +1,112 @@
+# Pixel buffers and the upload layouts built from them.
+#
+# Pure data: rgba_pixels() fills an RGBA image, pixel_at() decodes a readback,
+# and the layout helpers flatten geometry into the blocks the buffers upload.
+# No window and no context are needed.
+
+import gl
+
+
+def main() -> i32:
+    # A solid image repeats the same four channels per pixel.
+    solid: list[byte] = gl.rgba_pixels(4, 3, 10, 20, 30, 255)
+    assert len(solid) == 48
+    assert solid[0] == 10
+    assert solid[1] == 20
+    assert solid[2] == 30
+    assert solid[3] == 255
+    assert solid[44] == 10
+    assert solid[47] == 255
+
+    # A transparent black image is all zeroes.
+    blank: list[byte] = gl.rgba_pixels(1, 1, 0, 0, 0, 0)
+    assert len(blank) == 4
+    assert blank[0] == 0
+    assert blank[3] == 0
+
+    # pixel_count() is width * height * components, with no aliasing surprises.
+    assert gl.pixel_count(4, 3, 4) == 48
+    assert gl.pixel_count(1, 1, 4) == 4
+    assert gl.pixel_count(0, 5, 4) == 0
+    assert gl.pixel_count(7, 0, 3) == 0
+
+    # A 2x2 RGBA readback, bottom row first, exactly as read_pixels returns it.
+    raw: array[i8] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    bottom_left: list[i32] = gl.pixel_at(raw, 2, 0, 0, 4)
+    assert len(bottom_left) == 4
+    assert bottom_left[0] == 1
+    assert bottom_left[1] == 2
+    assert bottom_left[2] == 3
+    assert bottom_left[3] == 4
+
+    top_right: list[i32] = gl.pixel_at(raw, 2, 1, 1, 4)
+    assert len(top_right) == 4
+    assert top_right[0] == 13
+    assert top_right[3] == 16
+
+    # A three-component read maps three channels per pixel, not four.
+    rgb_raw: array[i8] = [10, 20, 30, 40, 50, 60]
+    rgb: list[i32] = gl.pixel_at(rgb_raw, 2, 1, 0, 3)
+    assert len(rgb) == 3
+    assert rgb[0] == 40
+    assert rgb[1] == 50
+    assert rgb[2] == 60
+
+    # Requests outside the buffer return no channels instead of reading garbage.
+    beyond: list[i32] = gl.pixel_at(raw, 2, 9, 9, 4)
+    assert len(beyond) == 0
+
+    # Signed bytes come back as unsigned channels.
+    signed: array[i8] = [-1, -128, 127, 0]
+    channels: list[i32] = gl.pixel_at(signed, 1, 0, 0, 4)
+    assert len(channels) == 4
+    assert channels[0] == 255
+    assert channels[1] == 128
+    assert channels[2] == 127
+    assert channels[3] == 0
+
+    # A fan over n vertices is n-2 triangles sharing vertex 0.
+    assert len(gl.fan_indices(2)) == 0
+    assert len(gl.fan_indices(3)) == 3
+    assert len(gl.fan_indices(5)) == 9
+    fan: list[i32] = gl.fan_indices(4)
+    assert fan[0] == 0
+    assert fan[1] == 1
+    assert fan[2] == 2
+    assert fan[3] == 0
+    assert fan[4] == 2
+    assert fan[5] == 3
+
+    # A quad is six vertices in counter-clockwise winding.
+    quad: list[f64] = gl.quad_vertices(10.0, 20.0, 30.0, 40.0)
+    assert len(quad) == 12
+    assert quad[0] == 10.0
+    assert quad[1] == 20.0
+    assert quad[2] == 40.0
+    assert quad[3] == 20.0
+    assert quad[4] == 40.0
+    assert quad[5] == 60.0
+    assert quad[6] == 10.0
+    assert quad[7] == 20.0
+    assert quad[8] == 40.0
+    assert quad[9] == 60.0
+    assert quad[10] == 10.0
+    assert quad[11] == 60.0
+
+    # Points and colours flatten in order, three and four numbers per element.
+    points: list[f64] = gl.points_to_data([gl.vec3(1.0, 2.0, 3.0), gl.vec3(-4.0, 5.0, 6.0)])
+    assert len(points) == 6
+    assert points[0] == 1.0
+    assert points[2] == 3.0
+    assert points[3] == -4.0
+    assert points[5] == 6.0
+
+    colours: list[f64] = gl.vectors4_to_data([gl.vec4(1.0, 0.0, 0.0, 1.0), gl.vec4(0.0, 1.0, 0.0, 0.5)])
+    assert len(colours) == 8
+    assert colours[0] == 1.0
+    assert colours[3] == 1.0
+    assert colours[4] == 0.0
+    assert colours[7] == 0.5
+
+    print("gl pixel data ok", len(solid), len(fan), len(quad))
+    return 0

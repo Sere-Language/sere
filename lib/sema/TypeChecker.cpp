@@ -3940,9 +3940,12 @@ const Type* TypeChecker::checkCall(CallExpr& expr) {
         if (argument == nullptr) {
           return nullptr;
         }
-        if (!isAssignable(argument, target) && !canCast(argument, target)) {
-          return checkConstructor(expr, target);
+        if (isAssignable(argument, target) || canCast(argument, target)) {
+          expr.setCast(true);
+          expr.setResolvedType(target);
+          return target;
         }
+        return checkConstructor(expr, target);
       }
       const Type* result = checkCastValue(*expr.arguments()[0], target, expr.range());
       expr.setCast(true);
