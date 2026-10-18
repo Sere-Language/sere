@@ -202,6 +202,7 @@ void addUniquePath(std::vector<std::filesystem::path>& files, const std::filesys
   while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back())) != 0) {
     text.remove_suffix(1);
   }
+
   return std::string(text);
 }
 
@@ -866,6 +867,7 @@ bool writePackedLibrary(const std::filesystem::path& slibPath,
     error = "cannot write '" + slibPath.string() + "'";
     return false;
   }
+
   // Members are written in path order and each one records its hash, so packing
   // the same content twice produces the same archive bytes.
   std::vector<const LibraryMember*> members;
