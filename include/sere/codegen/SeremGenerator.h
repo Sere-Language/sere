@@ -86,6 +86,7 @@ private:
   void declareInstances(const std::vector<const Module*>& modules);
   void declareEnum(const EnumDef& enumDef);
   [[nodiscard]] serem::ValuePtr emitExpression(const Expr& expression);
+  [[nodiscard]] serem::ValuePtr emitReceiver(const Expr& expression);
   /// Converts one lowered value between Sere types: numeric widths, a base-class
   /// view of a record, or a member of a union. Returns the value unchanged when
   /// both types share a representation.

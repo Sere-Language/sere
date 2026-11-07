@@ -1,0 +1,37 @@
+type @access:
+    get = @param
+    set = @param
+
+@access
+def identity(value: i32) -> i32:
+    return value
+
+@access[get = self.not_a_getter, set = self.not_a_setter]
+def update(values: list[i32]):
+    values[0] += 1
+
+class Example:
+    using @configured as @access[get = self.read_$, set = self.write_$]
+
+    @access
+    def plain(self) -> i32:
+        return 3
+
+    @configured
+    def aliased(self) -> i32:
+        return 4
+
+    @access[get = self.missing, set = self.also_missing]
+    def configured(self) -> i32:
+        return 5
+
+def main() -> i32:
+    assert identity(2) == 2
+    values: list[i32] = [0]
+    update(values)
+    assert values[0] == 1
+    example: Example = Example()
+    assert example.plain() == 3
+    assert example.aliased() == 4
+    assert example.configured() == 5
+    return 0

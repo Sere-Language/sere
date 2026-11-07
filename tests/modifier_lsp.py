@@ -33,6 +33,8 @@ queries = [
     (12, "definition", "self.read_$", len("self.read_")),
     (13, "completion", "get = self.read_value", len("get = self.re")),
     (14, "completion", "using @access", len("usi")),
+    (16, "hover", "@property_access\ndef marker", 3),
+    (17, "definition", "@property_access\ndef marker", 3),
 ]
 for request_id, method, needle, advance in queries:
     messages.append({"jsonrpc": "2.0", "id": request_id,
@@ -83,4 +85,6 @@ assert len(responses[12]) == 2
 assert item(13, "read_value")["insertText"] == "read_value"
 assert item(14, "using")
 assert "using @access as @property_access" in json.dumps(responses[15])
+assert "do not apply to functions" in json.dumps(responses[16])
+assert responses[17][0]["range"]["start"]["line"] == 0
 print("modifier LSP regressions passed")

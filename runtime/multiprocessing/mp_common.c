@@ -1378,6 +1378,7 @@ static void mpInvokeTarget(void* fn, int32_t spreadArity, const int32_t* classes
 }
 
 void sere_mp_register_target(const char* name, int64_t nameLen, const void* box) {
+  box = mpSerem() && box != NULL ? *(const void* const*)box : box;
   (void)nameLen;
   int32_t isBound = 0;
   void* fn = unwrapTargetBox(box, &isBound);
@@ -1453,6 +1454,7 @@ void sere_mp_target_name(void* fn, const char** outData, int64_t* outLen) {
 /// The registered name of the function boxed in `box`, used by `Process` to
 /// turn a `target=` value into the name the child will resolve.
 void sere_mp_target_name_box(const void* box, const char** outData, int64_t* outLen) {
+  box = mpSerem() && box != NULL ? *(const void* const*)box : box;
   void* fn = unwrapTargetBox(box, NULL);
   if (fn == NULL) {
     *outData = "";
@@ -1465,6 +1467,7 @@ void sere_mp_target_name_box(const void* box, const char** outData, int64_t* out
 int64_t sere_mp_target_count(void) { return gTargetCount; }
 
 void sere_mp_set_rebuilder(const void* box) {
+  box = mpSerem() && box != NULL ? *(const void* const*)box : box;
   gRebuilder = unwrapTargetBox(box, NULL);
 }
 
@@ -1493,6 +1496,7 @@ static MpStoredRule gRebuilders[MP_MAX_RULES];
 static int32_t gRebuilderCount;
 
 void sere_mp_add_reducer(const void* box) {
+  box = mpSerem() && box != NULL ? *(const void* const*)box : box;
   if (box == NULL || gReducerCount >= MP_MAX_RULES) {
     return;
   }
@@ -1501,6 +1505,7 @@ void sere_mp_add_reducer(const void* box) {
 }
 
 void sere_mp_add_rebuilder(int32_t kind, const void* box) {
+  box = mpSerem() && box != NULL ? *(const void* const*)box : box;
   if (box == NULL || kind <= 0 || gRebuilderCount >= MP_MAX_RULES) {
     return;
   }
@@ -1534,6 +1539,7 @@ int32_t sere_mp_rebuilder_into(int32_t kind, void* outBox) {
 }
 
 void sere_mp_call_target(const void* box, void* argsList) {
+  box = mpSerem() && box != NULL ? *(const void* const*)box : box;
   int32_t isBound = 0;
   void* fn = unwrapTargetBox(box, &isBound);
   if (fn == NULL) {
@@ -1791,6 +1797,7 @@ void* sere_mp_pack_call(const char* name, int64_t nameLen, void* argsList) {
 
 /// Encodes a boxed value (a pointer to its 16-byte `Any`) as a byte list.
 void* sere_mp_pack_any(const void* box) {
+  box = mpSerem() && box != NULL ? *(const void* const*)box : box;
   const MpAny value = mpReadBox(box);
   MpBuf buf;
   buf.data = NULL;
@@ -1930,6 +1937,7 @@ static const char* canonicalScalarName(int32_t kind) {
 /// cast between `Any` and a container type, and the codec always receives a
 /// buffer whose stride matches its declared type.
 void* sere_mp_to_any_list(const void* box) {
+  box = mpSerem() && box != NULL ? *(const void* const*)box : box;
   const MpAny value = mpReadBox(box);
   if (box == NULL || value.name == NULL || value.data == NULL ||
       strcmp(value.name, "None") == 0) {

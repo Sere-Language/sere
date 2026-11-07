@@ -2002,11 +2002,43 @@ struct ModifierHoverInfo {
 /// or a `using` alias that configures one.
 [[nodiscard]] ModifierHoverInfo modifierHoverAt(const Module& module, std::uint32_t offset) {
   ModifierHoverInfo info;
+  const auto functionHover = [&](const FunctionDef& function) {
+    for (const ModifierUse& use : function.modifierUses()) {
+      bool custom = findModifierDef(module, use.name) != nullptr;
+      for (const auto& statement : module.statements()) {
+        if (statement->kind() == NodeKind::ClassDef) {
+          const auto& owner = static_cast<const ClassDef&>(*statement);
+          if (owner.name() == function.ownerClass()) {
+            for (const ModifierAlias& alias : owner.modifierAliases()) {
+              custom = custom || alias.alias == use.name;
+            }
+          }
+        }
+      }
+      if (custom && rangeContains(use.range, offset)) {
+        info.text = "**@" + use.name + "** on function `" + function.name() +
+                    "`\n\nCustom modifier getter/setter slots and `@param` arguments "
+                    "do not apply to functions.";
+        info.range = use.range;
+        return true;
+      }
+    }
+    return false;
+  };
   for (const std::unique_ptr<Stmt>& statement : module.statements()) {
+    if (statement != nullptr && statement->kind() == NodeKind::FunctionDef &&
+        functionHover(static_cast<const FunctionDef&>(*statement))) {
+      return info;
+    }
     if (statement == nullptr || statement->kind() != NodeKind::ClassDef) {
       continue;
     }
     const auto& classDef = static_cast<const ClassDef&>(*statement);
+    for (const auto& method : classDef.methods()) {
+      if (functionHover(*method)) {
+        return info;
+      }
+    }
     for (const ModifierAlias& alias : classDef.modifierAliases()) {
       if (!rangeContains(alias.range, offset)) {
         continue;
@@ -2338,10 +2370,11 @@ void LanguageSession::handleCompletion(const llvm::json::Value* id,
           }
           const auto& owner = static_cast<const ClassDef&>(*statement);
           const bool getter = slot.substr(0, slot.find('=')).find("get") != std::string_view::npos;
+          const std::string methodPrefix(slot.substr(slot.rfind('.') + 1));
           for (const auto& method : owner.methods()) {
             if (method->params().size() == (getter ? 1u : 2u)) {
               addCompletion(items, method->name(), kCompletionFunction,
-                            getter ? "getter method reference" : "setter method reference", prefix,
+                            getter ? "getter method reference" : "setter method reference", methodPrefix,
                             method->name(), "0" + method->name(), false);
             }
           }
@@ -2352,7 +2385,7 @@ void LanguageSession::handleCompletion(const llvm::json::Value* id,
           if (header.find("using") != std::string_view::npos) {
             const std::string pattern = getter ? "_get_$" : "_set_$";
             addCompletion(items, pattern, kCompletionFunction, "$ expands to the member name",
-                          prefix, pattern, "1" + pattern, false);
+                          methodPrefix, pattern, "1" + pattern, false);
           }
           writeResult(id, std::move(items));
           return;
@@ -2446,11 +2479,44 @@ void LanguageSession::handleDefinition(const llvm::json::Value* id,
     writeNullResult(id);
     return;
   }
+  const auto functionTarget = [&](const FunctionDef& function, const ClassDef* owner)
+      -> std::optional<SourceRange> {
+    for (const ModifierUse& use : function.modifierUses()) {
+      if (!rangeContains(use.range, located->second)) {
+        continue;
+      }
+      if (owner != nullptr) {
+        for (const ModifierAlias& alias : owner->modifierAliases()) {
+          if (alias.alias == use.name) {
+            return alias.range;
+          }
+        }
+      }
+      if (const CustomModifierDef* definition = findModifierDef(*frontend->module(), use.name)) {
+        return definition->range;
+      }
+    }
+    return std::nullopt;
+  };
   for (const auto& statement : frontend->module()->statements()) {
+    if (statement->kind() == NodeKind::FunctionDef) {
+      if (const auto target = functionTarget(static_cast<const FunctionDef&>(*statement), nullptr)) {
+        writeResult(id, llvm::json::Array{llvm::json::Object{
+                            {"uri", located->first}, {"range", lspRange(*target)}}});
+        return;
+      }
+    }
     if (statement->kind() != NodeKind::ClassDef) {
       continue;
     }
     const auto& owner = static_cast<const ClassDef&>(*statement);
+    for (const auto& method : owner.methods()) {
+      if (const auto target = functionTarget(*method, &owner)) {
+        writeResult(id, llvm::json::Array{llvm::json::Object{
+                            {"uri", located->first}, {"range", lspRange(*target)}}});
+        return;
+      }
+    }
     const std::string& source = documents_.at(located->first);
     const auto identifierChar = [](char ch) {
       return std::isalnum(static_cast<unsigned char>(ch)) != 0 || ch == '_' || ch == '$';

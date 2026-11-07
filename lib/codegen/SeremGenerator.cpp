@@ -600,7 +600,13 @@ SeremGenerator::emit(const Module& module,
           const Type* type = functionType(*method);
           if (type != nullptr) {
             const std::string symbol = functionName(*method);
-            functions_.insert_or_assign(symbol, lowerType(type));
+            std::vector<serem::IRType> params;
+            for (std::size_t index = 0; index < type->paramTypes().size(); ++index) {
+              const serem::IRType param = lowerType(type->paramTypes()[index]);
+              params.push_back(index == 0 && classDef.isStruct() ? serem::IRType::ptr(param) : param);
+            }
+            functions_.insert_or_assign(
+                symbol, serem::IRType::function(lowerType(type->returnType()), std::move(params)));
             definitions_[symbol] = method.get();
             methodSymbols_[classDef.name() + "::" + method->name()] = symbol;
           }
@@ -1147,7 +1153,9 @@ bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbo
   for (std::size_t index = 0; index < type->paramTypes().size(); ++index) {
     const Type* param =
         index == 0 && receiverOverride_ != nullptr ? receiverOverride_ : type->paramTypes()[index];
-    params.push_back(lowerType(param));
+    const serem::IRType lowered = lowerType(param);
+    params.push_back(index == 0 && function.isMethod() && param->canonical()->isStruct()
+                         ? serem::IRType::ptr(lowered) : lowered);
   }
   auto irFunction =
       std::make_unique<serem::IRFunction>(symbol.empty() ? functionName(function) : symbol,
@@ -1205,7 +1213,13 @@ bool SeremGenerator::emitFunction(const FunctionDef& function, std::string symbo
   }
   for (std::size_t index = 0; index < function.params().size(); ++index) {
     if (index < function_->arguments().size()) {
-      locals_[function.params()[index].name] = function_->argument(index);
+      serem::ValuePtr value = function_->argument(index);
+      if (!function.isMethod() || index != 0) {
+        const serem::ValuePtr storage = builder_->alloca(value->type());
+        builder_->store(value, storage);
+        value = storage;
+      }
+      locals_[function.params()[index].name] = value;
       localTypes_[function.params()[index].name] = index == 0 && receiverOverride_ != nullptr
                                                        ? receiverOverride_
                                                        : type->paramTypes()[index];
@@ -1589,7 +1603,7 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
         if (found == functions_.end())
           return unsupported(assign, "computed property '" + member.field() + "'");
         serem::ValuePtr written = value;
-        const serem::ValuePtr receiver = emitExpression(member.object());
+        const serem::ValuePtr receiver = emitReceiver(member.object());
         if (assign.op() != AssignOp::Assign) {
           const Type* memberType = assign.target().resolvedType();
           serem::ValuePtr current;
@@ -3006,6 +3020,24 @@ void SeremGenerator::emitPendingRenderers() {
   }
 }
 
+serem::ValuePtr SeremGenerator::emitReceiver(const Expr& expression) {
+  const Type* type = expression.resolvedType();
+  if (type != nullptr && type->canonical()->isStruct()) {
+    if (expression.kind() == NodeKind::NameExpr) {
+      const auto& name = static_cast<const NameExpr&>(expression);
+      if (serem::ValuePtr storage = local(name.name())) {
+        if (storage->valueKind() != serem::ValueKind::Argument || name.name() == "self") {
+          return storage;
+        }
+      }
+    }
+    const serem::ValuePtr storage = builder_->alloca(lowerType(type));
+    builder_->store(emitExpression(expression), storage);
+    return storage;
+  }
+  return emitExpression(expression);
+}
+
 serem::ValuePtr SeremGenerator::emitName(const NameExpr& expression) {
   // A compile-time host fact is a literal, not a value the module declares:
   // `__windows__` is a flag and `__file__` is text. A macro such as the prelude's
@@ -3029,7 +3061,8 @@ serem::ValuePtr SeremGenerator::emitName(const NameExpr& expression) {
   if (serem::ValuePtr value = local(expression.name())) {
     const auto known = localTypes_.find(expression.name());
     const Type* stored = known == localTypes_.end() ? expression.resolvedType() : known->second;
-    if (value->valueKind() != serem::ValueKind::Argument) {
+    if (value->valueKind() != serem::ValueKind::Argument ||
+        (expression.name() == "self" && stored != nullptr && stored->canonical()->isStruct())) {
       value = builder_->load(value, lowerType(stored));
     }
     return coerce(value, stored, expression.resolvedType());
@@ -4155,7 +4188,7 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
       }
       serem::ValuePtr callee = std::make_shared<serem::FunctionRef>(
           symbol, lowerType(expression.callee().resolvedType()));
-      args.push_back(emitExpression(member.object()));
+      args.push_back(emitReceiver(member.object()));
       if (appendVariadicArguments(symbol, expression, 1, args)) {
         // The receiver is already in the first argument slot.
       } else if (!expression.boundArguments().empty()) {
@@ -4300,7 +4333,7 @@ serem::ValuePtr SeremGenerator::emitMember(const MemberExpr& expression) {
       (void)unsupported(expression, "computed property '" + expression.field() + "'");
       return nullptr;
     }
-    std::vector<serem::ValuePtr> arguments{emitExpression(expression.object())};
+    std::vector<serem::ValuePtr> arguments{emitReceiver(expression.object())};
     return builder_->call(std::make_shared<serem::FunctionRef>(symbol, found->second),
                           std::move(arguments), lowerType(expression.resolvedType()));
   }
@@ -4676,8 +4709,15 @@ serem::ValuePtr SeremGenerator::emitUnary(const UnaryExpr& expression) {
   case UnaryOp::AddrOf:
     if (expression.operand().kind() == NodeKind::NameExpr) {
       const auto& name = static_cast<const NameExpr&>(expression.operand());
-      if (serem::ValuePtr slot = local(name.name()))
+      if (serem::ValuePtr slot = local(name.name())) {
+        if (slot->valueKind() == serem::ValueKind::Argument) {
+          const serem::ValuePtr storage = builder_->alloca(lowerType(expression.operand().resolvedType()));
+          builder_->store(slot, storage);
+          locals_[name.name()] = storage;
+          return storage;
+        }
         return slot;
+      }
     }
     if (expression.operand().kind() == NodeKind::MemberExpr) {
       const auto& member = static_cast<const MemberExpr&>(expression.operand());

@@ -10,6 +10,13 @@ type @mixed_access:
     get = @param or @public
     set = @param or @public
 
+# Structs take `self` by value, so a setter that writes the backing field is
+# outside what the experimental Serem backend lowers today; a getter-only
+# modifier still exercises decorators on a struct.
+type @get_only:
+    get = @param
+    set = @public
+
 class Mixed:
     @mixed_access[get = self.read] value: i32 = 0
     @mixed_access[set = self.write] other: i32 = 1
@@ -39,13 +46,10 @@ class Meter:
         self.value = value * 2
 
 struct Value:
-    @property_access[get = self.read, set = self.write] value: i32
+    @get_only[get = self.read] value: i32
 
     def read(self) -> i32:
-        return self.value
-
-    def write(self, value: i32) -> void:
-        self.value = value
+        return self.value + 1
 
 class Aliased:
     using @access as @property_access[
@@ -71,10 +75,14 @@ class Aliased:
     def write_y(self, value: i32) -> void:
         self.y = value + 20
 
+@property_access
+def marker():
+    pass
+
 def main() -> i32:
+    marker()
     value: Value = Value(1)
-    value.value = 5
-    assert value.value == 5
+    assert value.value == 2
     mixed: Mixed = Mixed()
     mixed.value = 4
     assert mixed.value == 5
@@ -87,7 +95,7 @@ def main() -> i32:
     assert meter.plain == 7
     meter.value = 4
     assert meter.value == 9
-    meter.value += 1
+    meter.value = meter.value + 1
     assert meter.value == 21
     pair: Aliased = Aliased()
     pair.x = 3

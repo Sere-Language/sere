@@ -2792,6 +2792,7 @@ std::unique_ptr<ClassDef> Parser::parseClass(const std::string& enclosing) {
       method->setOwnerClass(name);
       attachFunctionDecorators(*method, std::move(decoratorExprs));
       method->setAbstract(markedAbstract);
+      method->modifierUses() = std::move(parsedMemberDecorators.modifiers);
       method->setOverride(markedOverride);
       markPrivateFromDecorators(*method, method->decorators());
       methods.push_back(std::move(method));
@@ -2933,8 +2934,9 @@ std::unique_ptr<TypeAlias> Parser::parseTypeAlias() {
 }
 
 std::unique_ptr<Stmt> Parser::parseStatement() {
-  std::vector<std::unique_ptr<Expr>> decoratorExprs = parseDecoratorExprs();
-  const std::vector<std::string> decorators = decoratorExprNames(decoratorExprs);
+  ParsedMemberDecorators parsedDecorators = parseMemberDecorators();
+  std::vector<std::unique_ptr<Expr>> decoratorExprs = std::move(parsedDecorators.exprs);
+  const std::vector<std::string> decorators = parsedDecorators.names;
   if (check(TokenKind::KeywordExtern)) {
     advance();
     if (!consume(TokenKind::String, "expected ABI name string after extern")) {
@@ -2974,6 +2976,7 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
         function->setAsync(true);
       }
       attachFunctionDecorators(*function, std::move(decoratorExprs));
+      function->modifierUses() = std::move(parsedDecorators.modifiers);
       markPrivateFromDecorators(*function, function->decorators());
       for (const std::string& decorator : function->decorators()) {
         if (decorator == "abstract") {

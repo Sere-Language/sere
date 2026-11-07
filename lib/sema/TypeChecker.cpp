@@ -7860,6 +7860,22 @@ bool TypeChecker::applyDecorators(Module& module) {
 }
 
 bool TypeChecker::applyFunctionDecorators(FunctionDef& function) {
+  const auto isCustomModifier = [&](std::string_view name) {
+    if (customModifiers_.contains(std::string(name))) {
+      return true;
+    }
+    const auto owner = classes_.find(function.ownerClass());
+    return owner != classes_.end() && findModifierAlias(*owner->second, name) != nullptr;
+  };
+  // Accessor slots describe fields. On functions the custom modifier is a
+  // declaration marker, not a runtime decorator or a demand for @param values.
+  std::erase_if(function.decoratorExprs(), [&](const std::unique_ptr<Expr>& expr) {
+    return expr != nullptr && expr->kind() == NodeKind::NameExpr &&
+           isCustomModifier(static_cast<const NameExpr&>(*expr).name());
+  });
+  std::vector<std::string> names = function.decorators();
+  std::erase_if(names, isCustomModifier);
+  function.setDecorators(std::move(names));
   if (!hasRuntimeDecorators(function.decoratorExprs())) {
     return true;
   }

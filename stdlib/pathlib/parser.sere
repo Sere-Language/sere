@@ -128,6 +128,8 @@ class Parser:
 
     def components(self, rest: str) -> list[str]:
         """Split a root-relative remainder into path components."""
+        if self.has_drive:
+            rest = rest.replace("/", "\\")
         return _split_components(rest, self.sep)
 
     def join_many(self, paths: list[str]) -> str:

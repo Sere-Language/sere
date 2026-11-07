@@ -28,6 +28,11 @@ field's type; setters take `self` and a value of that type and return `void` or
 Constructors also initialize backing storage directly. Outside those contexts,
 reads and writes invoke the configured methods.
 
+Functions without a return annotation return `void`; a setter may therefore be
+written as `def write(self, value: i32):`. Custom modifiers can also be placed
+on functions or methods. Their `get` and `set` slots do not apply in that case:
+no `@param` argument is required, and any supplied accessor references are ignored.
+
 Aliases configure accessors once for multiple members:
 
 ```sere

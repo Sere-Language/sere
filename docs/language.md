@@ -535,8 +535,8 @@ def identity[T](value: T) -> T:
     return value
 ```
 
-- Return type after `->` may be omitted: `main` infers `i32`, `__init__`
-  infers `void`, other functions infer `Any`
+- Omitting the return annotation means `void`, including for methods and `main`.
+  Functions that return a value must declare its type with `-> T`.
 - Parameter types may be omitted (`Any`)
 - Default arguments are allowed
 - Keyword arguments at call sites: `scale(factor=3, value=1)`

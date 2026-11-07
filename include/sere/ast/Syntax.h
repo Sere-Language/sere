@@ -1087,6 +1087,8 @@ public:
   [[nodiscard]] const std::string& docstring() const;
   [[nodiscard]] bool isExtern() const;
   [[nodiscard]] const std::string& ownerClass() const;
+  [[nodiscard]] const std::vector<ModifierUse>& modifierUses() const { return modifierUses_; }
+  [[nodiscard]] std::vector<ModifierUse>& modifierUses() { return modifierUses_; }
   [[nodiscard]] bool isMethod() const;
   void setOwnerClass(std::string ownerClass);
   [[nodiscard]] bool isAbstract() const;
@@ -1125,6 +1127,7 @@ private:
   std::string externName_;
   std::string docstring_{};
   std::string ownerClass_;
+  std::vector<ModifierUse> modifierUses_{};
   std::vector<std::string> decorators_{};
   std::vector<std::unique_ptr<Expr>> decoratorExprs_{};
   const Type* decoratedType_ = nullptr;
