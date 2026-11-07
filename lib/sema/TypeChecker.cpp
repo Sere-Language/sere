@@ -1,4 +1,4 @@
-/// @file TypeChecker.cpp
+﻿/// @file TypeChecker.cpp
 /// Semantic analysis for the typed Sere frontend.
 
 #include "sere/sema/TypeChecker.h"
@@ -5228,6 +5228,15 @@ bool TypeChecker::checkAssign(AssignStmt& statement) {
                               "property '" + member.field() + "' is read-only");
           return false;
         }
+      } else if (field != nullptr && !field->setterPublic && !ownAccessor && !initBacking &&
+                 !canAccessPrivate(objectType)) {
+        diagnostics_->warn(statement.range(), "debug private-set branch");
+        // No setter method, but the `set` half of a custom modifier may still
+        // have made the storage private.
+        diagnostics_->error(statement.range(),
+                            "cannot assign to private field '" + member.field() + "' of '" +
+                                objectType->name() + "'");
+        return false;
       }
       if (objectType->isFrozen() && currentFunctionName_ != "__init__" &&
           member.propertySet().empty()) {
@@ -6519,6 +6528,12 @@ bool TypeChecker::flattenClass(ClassDef& classDef) {
     created.getterPublic = !getRule.isPrivate;
     created.setterPublic = !setRule.isPrivate;
     created.frozen = getRule.isFrozen || setRule.isFrozen;
+    if (!field.modifiers.empty()) {
+      diagnostics_->warn(field.range,
+                            "debug modifiers field=" + field.name + " getPrivate=" +
+                                std::to_string(getRule.isPrivate) + " setPrivate=" +
+                                std::to_string(setRule.isPrivate));
+    }
     const auto bindAccessor = [&](const std::string& path, bool isGetter) -> bool {
       std::string methodName = path;
       if (methodName.rfind("self.", 0) == 0) {
