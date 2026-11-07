@@ -153,18 +153,21 @@ constexpr int kCompletionEnumMember = 20;
   return std::string(line.substr(cursor, end - cursor));
 }
 
-[[nodiscard]] bool fieldVisible(const RecordField& field) {
+[[nodiscard]] bool fieldVisible(const RecordField& field, bool includePrivate) {
   if (field.isPublic) {
     return true;
   }
-  return !field.getterLlvm.empty() && field.getterPublic;
+  if (!field.getterLlvm.empty() && field.getterPublic) {
+    return true;
+  }
+  return includePrivate;
 }
 
-[[nodiscard]] bool methodVisible(const RecordMethod& method) {
-  if (!method.isPublic) {
+[[nodiscard]] bool methodVisible(const RecordMethod& method, bool includePrivate) {
+  if (method.name.rfind("__get_", 0) == 0 || method.name.rfind("__set_", 0) == 0) {
     return false;
   }
-  return method.name.rfind("__get_", 0) != 0 && method.name.rfind("__set_", 0) != 0;
+  return method.isPublic || includePrivate;
 }
 
 [[nodiscard]] std::string formatMethod(const RecordMethod& method) {
@@ -400,7 +403,7 @@ const Type* resolveMemberType(Frontend* frontend, const MemberAccessQuery& query
   return normalizeCompletionType(frontend->checker()->typeOfPathAt(query.receiver, query.offset));
 }
 
-std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type) {
+std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type, bool includePrivate) {
   std::vector<MemberCompletionItem> items;
   type = normalizeCompletionType(type);
   if (type == nullptr) {
@@ -496,7 +499,10 @@ std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type) {
     }
   }
   for (const RecordField& field : type->fields()) {
-    if (!fieldVisible(field) || field.name.empty() || field.name[0] == '_') {
+    if (!fieldVisible(field, includePrivate) || field.name.empty()) {
+      continue;
+    }
+    if (!includePrivate && field.name[0] == '_') {
       continue;
     }
     // Enum variants are constructors, only reachable through the enum's name.
@@ -523,7 +529,10 @@ std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type) {
       }
       item.kind = field.getterLlvm.empty() ? kCompletionField : kCompletionProperty;
     }
-    item.sortText = "0" + field.name;
+    if (!field.isPublic) {
+      item.detail = item.detail.empty() ? "private" : "private " + item.detail;
+    }
+    item.sortText = (!field.isPublic ? "1" : "0") + field.name;
     addItem(std::move(item));
   }
   if (type->isEnum() && !onTypeObject) {
@@ -542,15 +551,21 @@ std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type) {
     addItem(std::move(value));
   }
   for (const RecordMethod& method : type->methods()) {
-    if (!methodVisible(method) || method.name.empty() || method.name[0] == '_') {
+    if (!methodVisible(method, includePrivate) || method.name.empty()) {
+      continue;
+    }
+    if (!includePrivate && method.name[0] == '_') {
       continue;
     }
     MemberCompletionItem item;
     item.label = method.name;
     item.detail = formatMethod(method);
+    if (!method.isPublic) {
+      item.detail = "private " + item.detail;
+    }
     item.insertText = methodSnippet(method.name, item.detail);
     item.kind = kCompletionMethod;
-    item.sortText = "0" + method.name;
+    item.sortText = (!method.isPublic ? "1" : "0") + method.name;
     item.documentation = memberDocumentation(method.docstring);
     addItem(std::move(item));
   }

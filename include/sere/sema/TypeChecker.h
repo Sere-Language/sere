@@ -97,6 +97,10 @@ public:
   [[nodiscard]] const Type* typeOfNameAt(std::string_view name, std::uint32_t offset) const;
   [[nodiscard]] const Type* typeOfPathAt(const std::vector<std::string>& parts,
                                          std::uint32_t offset) const;
+  /// The class whose body contains `offset`, or nullptr at module scope. The
+  /// language server uses it to offer the private members that a method of that
+  /// class is allowed to touch.
+  [[nodiscard]] const Type* enclosingRecordAt(std::uint32_t offset) const;
 
 private:
   void pushScope(SourceRange range = {});

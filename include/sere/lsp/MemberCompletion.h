@@ -55,6 +55,10 @@ struct AstMemberAccess {
 
 [[nodiscard]] const Type* resolveMemberType(Frontend* frontend, const MemberAccessQuery& query);
 
-[[nodiscard]] std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type);
+/// Members of `type` as completion items. `includePrivate` is set while the
+/// cursor sits inside the class that declares `type`, where private members and
+/// accessors are in scope.
+[[nodiscard]] std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type,
+                                                                        bool includePrivate = false);
 
 } // namespace sere

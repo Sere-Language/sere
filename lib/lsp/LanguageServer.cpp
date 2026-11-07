@@ -1018,10 +1018,13 @@ void addCompletion(llvm::json::Array& items,
 }
 
 /// Adds every member of `type`, filtered by what the cursor already typed.
+/// `includePrivate` is set while the cursor is inside the class that declares
+/// `type`, where its private members and accessors are in scope.
 void addMemberCompletions(llvm::json::Array& items,
                           const Type* type,
-                          const std::string& prefix) {
-  for (const MemberCompletionItem& member : collectMemberCompletions(type)) {
+                          const std::string& prefix,
+                          bool includePrivate = false) {
+  for (const MemberCompletionItem& member : collectMemberCompletions(type, includePrivate)) {
     addCompletion(items,
                   member.label,
                   member.kind,
@@ -1824,6 +1827,119 @@ LanguageSession::documentOffset(const llvm::json::Object& params) const {
   return std::make_pair(uri->str(), offset);
 }
 
+struct ModifierHoverInfo {
+  std::string text;
+  SourceRange range{};
+};
+
+[[nodiscard]] std::string formatModifierSpec(const ModifierSpec* spec) {
+  if (spec == nullptr) {
+    return "@public";
+  }
+  switch (spec->kind) {
+  case ModifierSpecKind::Passthrough:
+    return "...";
+  case ModifierSpecKind::Modifier:
+    return "@" + spec->name;
+  case ModifierSpecKind::List: {
+    std::string text = "[";
+    for (std::size_t index = 0; index < spec->items.size(); ++index) {
+      if (index != 0) {
+        text += ", ";
+      }
+      text += formatModifierSpec(spec->items[index].get());
+    }
+    return text + "]";
+  }
+  case ModifierSpecKind::Fallback:
+    if (spec->items.size() != 2) {
+      return "@param";
+    }
+    return formatModifierSpec(spec->items[0].get()) + " or " +
+           formatModifierSpec(spec->items[1].get());
+  }
+  return {};
+}
+
+[[nodiscard]] const CustomModifierDef* findModifierDef(const Module& module,
+                                                       std::string_view name) {
+  for (const CustomModifierDef& definition : module.customModifiers()) {
+    if (definition.name == name) {
+      return &definition;
+    }
+  }
+  return nullptr;
+}
+
+/// Hover text for a custom modifier declaration, its application on a member,
+/// or a `using` alias that configures one.
+[[nodiscard]] ModifierHoverInfo modifierHoverAt(const Module& module, std::uint32_t offset) {
+  ModifierHoverInfo info;
+  for (const std::unique_ptr<Stmt>& statement : module.statements()) {
+    if (statement == nullptr || statement->kind() != NodeKind::ClassDef) {
+      continue;
+    }
+    const auto& classDef = static_cast<const ClassDef&>(*statement);
+    for (const ModifierAlias& alias : classDef.modifierAliases()) {
+      if (!rangeContains(alias.range, offset)) {
+        continue;
+      }
+      std::string text = "**@" + alias.alias + "** \u2014 configured `@" + alias.target + "`";
+      text += "\n\n- `get` = `" +
+              (alias.hasGet ? alias.getArgument : std::string("@public")) + "`";
+      text += "\n- `set` = `" +
+              (alias.hasSet ? alias.setArgument : std::string("@public")) + "`";
+      info.text = std::move(text);
+      info.range = alias.range;
+      return info;
+    }
+    for (const FieldDecl& field : classDef.fields()) {
+      for (const ModifierUse& use : field.modifiers) {
+        if (!rangeContains(use.range, offset)) {
+          continue;
+        }
+        std::string target = use.name;
+        for (const ModifierAlias& alias : classDef.modifierAliases()) {
+          if (alias.alias == use.name) {
+            target = alias.target;
+            break;
+          }
+        }
+        std::string text = "**@" + use.name + "**";
+        if (const CustomModifierDef* definition = findModifierDef(module, target)) {
+          text += " \u2014 custom access modifier";
+          text += "\n\n- `get` = `" + formatModifierSpec(definition->getSpec.get()) + "`";
+          text += "\n- `set` = `" + formatModifierSpec(definition->setSpec.get()) + "`";
+          text += "\n\nApplied to `" + field.name + "`.";
+        } else {
+          text += " \u2014 access modifier";
+        }
+        if (use.hasGet) {
+          text += "\n- get accessor: `" + use.getArgument + "`";
+        }
+        if (use.hasSet) {
+          text += "\n- set accessor: `" + use.setArgument + "`";
+        }
+        info.text = std::move(text);
+        info.range = use.range;
+        return info;
+      }
+    }
+  }
+  for (const CustomModifierDef& definition : module.customModifiers()) {
+    if (!rangeContains(definition.range, offset)) {
+      continue;
+    }
+    std::string text = "**@" + definition.name + "** \u2014 custom access modifier";
+    text += "\n\n- `get` = `" + formatModifierSpec(definition.getSpec.get()) + "`";
+    text += "\n- `set` = `" + formatModifierSpec(definition.setSpec.get()) + "`";
+    info.text = std::move(text);
+    info.range = definition.range;
+    return info;
+  }
+  return info;
+}
+
 void LanguageSession::handleHover(const llvm::json::Value* id, const llvm::json::Object& params) {
   const auto located = documentOffset(params);
   if (!located.has_value()) {
@@ -1841,8 +1957,13 @@ void LanguageSession::handleHover(const llvm::json::Value* id, const llvm::json:
   // description, and the argument, returns, and raises sections.
   bool markdown = false;
   SourceRange hoverRange{{}, {}};
+  const ModifierHoverInfo modifierHover = modifierHoverAt(*frontend->module(), located->second);
   const MacroUse* namedUse = findMacroNameAt(frontend->macroUses(), located->second);
-  if (namedUse != nullptr) {
+  if (!modifierHover.text.empty()) {
+    contents = modifierHover.text;
+    markdown = true;
+    hoverRange = modifierHover.range;
+  } else if (namedUse != nullptr) {
     const SemanticSymbol* symbol = findNamedSymbol(frontend->checker(), namedUse->name, "macro");
     contents = symbol != nullptr && !symbol->typeDisplay.empty() ? symbol->typeDisplay
                                                                  : "macro " + namedUse->name;
@@ -1920,13 +2041,29 @@ void LanguageSession::handleCompletion(const llvm::json::Value* id,
   // The typed AST resolves receivers the textual scan cannot type, such as the
   // result of a call (`add(5, 4).`) or an index (`xs[0].`).
   const AstMemberAccess astAccess = resolveMemberAccessFromAst(frontend, text, located->second);
+  const auto inScope = [&](const Type* receiver) {
+    if (frontend == nullptr || frontend->checker() == nullptr || receiver == nullptr) {
+      return false;
+    }
+    const Type* owner = frontend->checker()->enclosingRecordAt(located->second);
+    if (owner == nullptr) {
+      return false;
+    }
+    const Type* target = receiver->canonical();
+    if (target->isTypeObject() && target->typeObjectInstance() != nullptr) {
+      target = target->typeObjectInstance()->canonical();
+    }
+    return owner->canonical() == target;
+  };
   if (astAccess.active && astAccess.receiverType != nullptr) {
-    addMemberCompletions(items, astAccess.receiverType, astAccess.prefix);
+    addMemberCompletions(items, astAccess.receiverType, astAccess.prefix,
+                         inScope(astAccess.receiverType));
     writeResult(id, std::move(items));
     return;
   }
   if (access.active) {
-    addMemberCompletions(items, resolveMemberType(frontend, access), access.prefix);
+    const Type* receiver = resolveMemberType(frontend, access);
+    addMemberCompletions(items, receiver, access.prefix, inScope(receiver));
     writeResult(id, std::move(items));
     return;
   }

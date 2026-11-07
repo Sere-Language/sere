@@ -1006,6 +1006,28 @@ const Type* TypeChecker::typeOfNameAt(std::string_view name, std::uint32_t offse
   return narrowed == nullptr ? typeOfName(name) : narrowed;
 }
 
+const Type* TypeChecker::enclosingRecordAt(std::uint32_t offset) const {
+  const Type* best = nullptr;
+  std::uint32_t bestSize = std::numeric_limits<std::uint32_t>::max();
+  for (const SemanticSymbol& symbol : symbols_) {
+    if (symbol.container.empty()) {
+      continue;
+    }
+    if (offset < symbol.range.start.offset || offset > symbol.range.end.offset) {
+      continue;
+    }
+    const std::uint32_t size = symbol.range.end.offset - symbol.range.start.offset;
+    if (size >= bestSize) {
+      continue;
+    }
+    if (const Type* record = classType(symbol.container)) {
+      best = record;
+      bestSize = size;
+    }
+  }
+  return best;
+}
+
 const Type* TypeChecker::typeOfPathAt(const std::vector<std::string>& parts,
                                       std::uint32_t offset) const {
   if (parts.empty()) {
@@ -5230,12 +5252,11 @@ bool TypeChecker::checkAssign(AssignStmt& statement) {
         }
       } else if (field != nullptr && !field->setterPublic && !ownAccessor && !initBacking &&
                  !canAccessPrivate(objectType)) {
-        diagnostics_->warn(statement.range(), "debug private-set branch");
         // No setter method, but the `set` half of a custom modifier may still
         // have made the storage private.
         diagnostics_->error(statement.range(),
-                            "cannot assign to private field '" + member.field() + "' of '" +
-                                objectType->name() + "'");
+                            "setter for field '" + member.field() + "' of '" +
+                                objectType->name() + "' is private");
         return false;
       }
       if (objectType->isFrozen() && currentFunctionName_ != "__init__" &&
@@ -6528,12 +6549,6 @@ bool TypeChecker::flattenClass(ClassDef& classDef) {
     created.getterPublic = !getRule.isPrivate;
     created.setterPublic = !setRule.isPrivate;
     created.frozen = getRule.isFrozen || setRule.isFrozen;
-    if (!field.modifiers.empty()) {
-      diagnostics_->warn(field.range,
-                            "debug modifiers field=" + field.name + " getPrivate=" +
-                                std::to_string(getRule.isPrivate) + " setPrivate=" +
-                                std::to_string(setRule.isPrivate));
-    }
     const auto bindAccessor = [&](const std::string& path, bool isGetter) -> bool {
       std::string methodName = path;
       if (methodName.rfind("self.", 0) == 0) {
