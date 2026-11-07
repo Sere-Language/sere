@@ -949,6 +949,7 @@ const HelperFieldSpec kParamFields[] = {
     HFIELD("annotation", ParamDecl, type),
     HFIELD("default", ParamDecl, defaultValue),
     HFIELD("kind", ParamDecl, kind),
+    HFIELD("is_auto", ParamDecl, isAuto),
 };
 
 const HelperFieldSpec kIfBranchFields[] = {

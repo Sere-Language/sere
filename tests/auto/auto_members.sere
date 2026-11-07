@@ -1,0 +1,69 @@
+class Record:
+    number: i32
+    text: late str
+    @private secret: i32
+    @frozen fixed: i32
+
+    def __init__(self, auto number: i32, auto text: str = "default", auto secret: i32 = 7, auto fixed: i32 = 9) -> void:
+        assert self.number == number
+        assert self.text == text
+        assert self.secret == secret
+        assert self.fixed == fixed
+        self.number += 1
+
+    def read(self) -> i32:
+        return self.secret + self.fixed
+
+struct Pair:
+    left: i32
+    right: late i32
+    def __init__(self, auto left: i32, auto right: i32) -> void:
+        assert self.left == left
+        assert self.right == right
+
+class Box[T]:
+    value: late T
+    def __init__(self, auto value: T) -> void:
+        pass
+
+class Parent:
+    value: i32
+
+class Child(Parent):
+    def __init__(self, auto value: i32) -> void:
+        pass
+
+type @access:
+    get = @public
+    set = @param
+
+class Setter:
+    @access[set = self.write] value: late i32
+    def __init__(self, auto value: i32) -> void:
+        pass
+    def write(self, value: i32) -> void:
+        self.value = value * 2
+
+def main() -> i32:
+    first = Record(2)
+    assert first.number == 3
+    assert first.text == "default"
+    assert first.read() == 16
+    second = Record(text="supplied", number=4, fixed=8, secret=6)
+    assert second.number == 5
+    assert second.text == "supplied"
+    assert second.read() == 14
+    second.text = "changed"
+    assert second.text == "changed"
+    pair = Pair(right=5, left=3)
+    assert pair.left == 3
+    assert pair.right == 5
+    box = Box[i32](12)
+    assert box.value == 12
+    child = Child(21)
+    assert child.value == 21
+    setter = Setter(4)
+    assert setter.value == 4
+    setter.value = 4
+    assert setter.value == 8
+    return 0

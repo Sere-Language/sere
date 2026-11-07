@@ -2020,6 +2020,18 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
                          ir.CreateStructGEP(record, result, slot));
         }
       }
+    } else if (type->isStructTy() && functions_.contains(attribute(operation, "init"))) {
+      // Struct constructors receive the address of their zero-initialized value,
+      // just like an ordinary mutating struct method.
+      llvm::Value* storage = ir.CreateAlloca(type);
+      ir.CreateStore(llvm::Constant::getNullValue(type), storage);
+      llvm::Function* init = functions_.at(attribute(operation, "init"));
+      std::vector<llvm::Value*> args{storage};
+      for (std::size_t index = 0; index < operands.size(); ++index) {
+        args.push_back(convert(operand(index), init->getFunctionType()->getParamType(index + 1)));
+      }
+      ir.CreateCall(init, args);
+      result = ir.CreateLoad(type, storage);
     } else if (type->isStructTy()) {
       const std::string tagText = attribute(operation, "tag");
       const bool enumAggregate = type->getStructNumElements() == 2 &&

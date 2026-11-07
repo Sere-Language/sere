@@ -232,7 +232,7 @@ void emitIdentifier(const std::vector<Token>& tokens, std::size_t index, const T
   } else if (type < 0) {
     type = lookupName(checker, name, false);
   }
-  if (name == "self") {
+  if (name == "self" || prev == TokenKind::KeywordAuto) {
     type = static_cast<int>(SemanticType::Parameter);
   }
   if (name == "_") {

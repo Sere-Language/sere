@@ -154,7 +154,7 @@ private:
   void recoverStatement();
   [[nodiscard]] std::string rawSlice(SourceRange range) const;
   std::vector<std::unique_ptr<Stmt>> parseSuite();
-  std::vector<ParamDecl> parseParams();
+  std::vector<ParamDecl> parseParams(bool allowAuto = false);
   std::string parseIdentifier(const char* errorMessage);
   std::string parseStringValue();
 

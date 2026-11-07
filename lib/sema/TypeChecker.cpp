@@ -5542,6 +5542,31 @@ bool TypeChecker::checkStatement(Stmt& statement, const Type* expectedReturn) {
 
 bool TypeChecker::checkFunctionBody(FunctionDef& function) {
   const Type* owner = function.isMethod() ? classType(function.ownerClass()) : nullptr;
+  for (const ParamDecl& param : function.params()) {
+    if (!param.isAuto)
+      continue;
+    if (owner == nullptr || function.name() != "__init__" || function.isExtern() ||
+        function.isAsync() || function.isGenerator()) {
+      diagnostics_->error(param.range, "auto is only valid in instance __init__ parameters");
+      return false;
+    }
+    if (param.name == "self" || param.kind != ParamKind::Normal || param.type == nullptr) {
+      diagnostics_->error(param.range, "auto requires a named, typed parameter other than self");
+      return false;
+    }
+    const RecordField* field = owner->findField(param.name);
+    if (field == nullptr || field->isStatic || !field->stored) {
+      diagnostics_->error(param.range, "auto parameter '" + param.name +
+                          "' must match an instance field");
+      return false;
+    }
+    const Type* type = resolveParamDeclType(param);
+    if (type == nullptr || field->type == nullptr || type->canonical() != field->type->canonical()) {
+      diagnostics_->error(param.range, "auto parameter '" + param.name +
+                          "' must have the same type as its field");
+      return false;
+    }
+  }
   TypeConstraintScope classConstraints(
       activeTypeConstraints_,
       owner == nullptr ? std::vector<std::string>{} : owner->typeParams(),

@@ -8,6 +8,7 @@
 #include "sere/source/SourceManager.h"
 
 #include <algorithm>
+#include <iterator>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
@@ -1416,7 +1417,7 @@ std::unique_ptr<Expr> Parser::parseFString() {
   return std::make_unique<InterpolatedStringExpr>(token.range(), std::move(parts));
 }
 
-std::vector<ParamDecl> Parser::parseParams() {
+std::vector<ParamDecl> Parser::parseParams(bool allowAuto) {
   std::vector<ParamDecl> params;
   bool sawVarArg = false;
   bool sawKwArg = false;
@@ -1426,6 +1427,10 @@ std::vector<ParamDecl> Parser::parseParams() {
       break;
     }
     ParamDecl param;
+    param.isAuto = match(TokenKind::KeywordAuto);
+    if (param.isAuto && !allowAuto) {
+      diagnostics_->error(previous().range(), "auto is only valid in __init__ parameters");
+    }
     param.range = peek().range();
     if (match(TokenKind::StarStar)) {
       if (sawKwArg) {
@@ -2549,7 +2554,7 @@ std::unique_ptr<FunctionDef> Parser::parseFunction(std::string externName) {
   if (name.empty() || !consume(TokenKind::LParen, "expected '(' after function name")) {
     return nullptr;
   }
-  std::vector<ParamDecl> params = parseParams();
+  std::vector<ParamDecl> params = parseParams(true);
   if (!consume(TokenKind::RParen, "expected ')' after parameters")) {
     return nullptr;
   }
@@ -2590,6 +2595,23 @@ std::unique_ptr<FunctionDef> Parser::parseFunction(std::string externName) {
   if (!body.empty()) {
     range.end = body.back()->range().end;
   }
+  // Lower auto parameters to ordinary assignments before the user body. Both
+  // backends then share assignment/access-control and late-initialization rules.
+  std::vector<std::unique_ptr<Stmt>> assignments;
+  for (const ParamDecl& param : params) {
+    if (!param.isAuto)
+      continue;
+    if (name != "__init__" || isExtern) {
+      diagnostics_->error(param.range, "auto is only valid in instance __init__ parameters");
+      continue;
+    }
+    auto target = std::make_unique<MemberExpr>(param.range,
+        std::make_unique<NameExpr>(param.range, "self"), param.name);
+    assignments.push_back(std::make_unique<AssignStmt>(param.range, std::move(target),
+        std::make_unique<NameExpr>(param.range, param.name), AssignOp::Assign));
+  }
+  body.insert(body.begin(), std::make_move_iterator(assignments.begin()),
+              std::make_move_iterator(assignments.end()));
   auto function = std::make_unique<FunctionDef>(range,
                                                 std::move(name),
                                                 std::move(params),

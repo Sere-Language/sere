@@ -446,6 +446,8 @@ void writeNullResult(const llvm::json::Value* id) {
       if (index != 0) {
         text += ", ";
       }
+      if (function.params()[index].isAuto)
+        text += "auto ";
       text += function.params()[index].name;
       if (function.params()[index].type != nullptr) {
         const Type* paramType = function.params()[index].type->resolvedType();
@@ -1209,7 +1211,7 @@ void addKeywordCompletions(llvm::json::Array& items, const std::string& prefix) 
       "if",          "elif",         "else",      "while",     "pass",
       "and",         "or",           "not",       "True",      "False",
       "None",        "extern",       "break",     "continue",  "import",
-      "from",        "as",           "late", "static",    "abstract",  "override",
+      "from",        "as",           "auto", "late", "static",    "abstract",  "override",
       "enum",        "for",          "in",        "is",        "assert",
       "try",         "except",       "finally",   "raise",     "match",
       "case",        "lambda",       "with",      "defer",     "del", "using",

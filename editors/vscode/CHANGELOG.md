@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Highlight and complete `auto` constructor parameters and provide a parameter snippet.
+
 - Highlight and complete `late` instance fields, with a field declaration snippet.
 
 # Changelog

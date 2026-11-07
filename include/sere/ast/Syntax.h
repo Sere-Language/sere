@@ -665,6 +665,7 @@ struct ParamDecl {
   std::unique_ptr<Expr> defaultValue;
   SourceRange range{};
   ParamKind kind = ParamKind::Normal;
+  bool isAuto = false;
 };
 
 class LambdaExpr final : public Expr {

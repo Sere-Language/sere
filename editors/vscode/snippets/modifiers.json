@@ -1,4 +1,9 @@
 {
+  "Auto constructor parameter": {
+    "prefix": "auto",
+    "body": "auto ${1:name}: ${2:str}",
+    "description": "Assign an __init__ parameter to its matching instance field"
+  },
   "Late instance field": {
     "prefix": "late",
     "body": "${1:name}: late ${2:str}",

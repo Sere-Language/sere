@@ -102,3 +102,21 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(sere.late.checks PROPERTIES TIMEOUT 180
     ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
 endif()
+
+foreach(backend IN ITEMS llvm serem)
+  add_test(NAME sere.auto.members.${backend}
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCOMPILER=${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}"
+      "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/auto/auto_members.sere"
+      "-DSTDLIB=${CMAKE_SOURCE_DIR}/stdlib"
+      "-DBACKEND=${backend}"
+      "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/auto-members-${backend}${CMAKE_EXECUTABLE_SUFFIX}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/run_feature.cmake")
+endforeach()
+if(Python3_Interpreter_FOUND)
+  add_test(NAME sere.auto.checks
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/auto_checks.py"
+      "${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}")
+  set_tests_properties(sere.auto.checks PROPERTIES TIMEOUT 120
+    ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
+endif()
