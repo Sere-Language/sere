@@ -1589,10 +1589,16 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
         if (found == functions_.end())
           return unsupported(assign, "computed property '" + member.field() + "'");
         serem::ValuePtr written = value;
+        const serem::ValuePtr receiver = emitExpression(member.object());
         if (assign.op() != AssignOp::Assign) {
-          if (member.propertyGet().empty())
-            return unsupported(assign, "compound assignment to write-only property '" +
-                                           member.field() + "'");
+          const Type* memberType = assign.target().resolvedType();
+          serem::ValuePtr current;
+          if (member.propertyGet().empty()) {
+            const int index = record->fieldIndex(member.field());
+            current = builder_->operation(
+                "member.get", lowerType(memberType), {receiver},
+                {{"field", member.field()}, {"index", std::to_string(fieldSlot(record, index))}});
+          } else {
           std::string getterSymbol = methodSymbolForLlvm(record, member.propertyGet());
           if (getterSymbol.empty()) {
             getterSymbol = member.propertyGet();
@@ -1600,16 +1606,16 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
           const auto getter = functions_.find(getterSymbol);
           if (getter == functions_.end())
             return unsupported(assign, "computed property '" + member.field() + "'");
-          const Type* memberType = assign.target().resolvedType();
-          std::vector<serem::ValuePtr> getArguments{emitExpression(member.object())};
-          serem::ValuePtr current =
+          std::vector<serem::ValuePtr> getArguments{receiver};
+          current =
               builder_->call(std::make_shared<serem::FunctionRef>(getterSymbol, getter->second),
                              std::move(getArguments), lowerType(memberType));
+          }
           written = compoundAssignValue(assign.op(), std::move(current), value, memberType);
           if (written == nullptr)
             return unsupported(assign, "unsupported compound assignment to a computed property");
         }
-        std::vector<serem::ValuePtr> arguments{emitExpression(member.object()), written};
+        std::vector<serem::ValuePtr> arguments{receiver, written};
         (void)builder_->call(std::make_shared<serem::FunctionRef>(setterSymbol, found->second),
                              std::move(arguments), serem::IRType::voidType());
         return true;
@@ -1653,6 +1659,19 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
         serem::ValuePtr current = builder_->operation(
             "member.get", fieldType, {object},
             {{"field", member.field()}, {"index", memberIndex}});
+        if (!member.propertyGet().empty()) {
+          const Type* record = resolveType(objectType)->valueType();
+          std::string symbol = methodSymbolForLlvm(record, member.propertyGet());
+          if (symbol.empty()) {
+            symbol = member.propertyGet();
+          }
+          const auto getter = functions_.find(symbol);
+          if (getter == functions_.end()) {
+            return unsupported(assign, "custom getter '" + member.field() + "'");
+          }
+          current = builder_->call(std::make_shared<serem::FunctionRef>(symbol, getter->second),
+                                   {object}, fieldType);
+        }
         serem::ValuePtr combined = compoundAssignValue(assign.op(), std::move(current), value,
                                                        assign.target().resolvedType());
         if (combined == nullptr) {

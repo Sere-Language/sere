@@ -28,6 +28,11 @@ queries = [
     (5, "hover", "@property_access[get", 3),
     (6, "definition", "@property_access[get", 3),
     (7, "completion", "@property_access[get", len("@property_access[g")),
+    (10, "hover", "self.read_$", len("self.read_")),
+    (11, "definition", "as @property_access", len("as @prop")),
+    (12, "definition", "self.read_$", len("self.read_")),
+    (13, "completion", "get = self.read_value", len("get = self.re")),
+    (14, "completion", "using @access", len("usi")),
 ]
 for request_id, method, needle, advance in queries:
     messages.append({"jsonrpc": "2.0", "id": request_id,
@@ -36,6 +41,8 @@ for request_id, method, needle, advance in queries:
                                 "position": position(needle, advance)}})
 messages.extend([
     {"jsonrpc": "2.0", "id": 8, "method": "textDocument/semanticTokens/full",
+     "params": {"textDocument": {"uri": uri}}},
+    {"jsonrpc": "2.0", "id": 15, "method": "textDocument/documentSymbol",
      "params": {"textDocument": {"uri": uri}}},
     {"jsonrpc": "2.0", "id": 9, "method": "shutdown"},
     {"jsonrpc": "2.0", "method": "exit"},
@@ -69,4 +76,11 @@ assert "custom access modifier" in json.dumps(responses[5])
 assert responses[6][0]["range"]["start"]["line"] == 0
 assert item(7, "get")["insertText"] == "get = self."
 assert responses[8]["data"]
+assert "self.read_x" in json.dumps(responses[10])
+assert "self.read_y" in json.dumps(responses[10])
+assert responses[11][0]["range"]["start"]["line"] == 0
+assert len(responses[12]) == 2
+assert item(13, "read_value")["insertText"] == "read_value"
+assert item(14, "using")
+assert "using @access as @property_access" in json.dumps(responses[15])
 print("modifier LSP regressions passed")

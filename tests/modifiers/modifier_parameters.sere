@@ -14,10 +14,14 @@ class Mixed:
     @mixed_access[get = self.read] value: i32 = 0
     @mixed_access[set = self.write] other: i32 = 1
 
+    def __init__(self) -> void:
+        self.value = 0
+        self.other = 1
+
     def read(self) -> i32:
         return self.value + 1
 
-    def write(self, value: i32) -> void:
+    def write(self, value: i32):
         self.other = value * 2
 
 class Meter:
@@ -31,8 +35,17 @@ class Meter:
     def read_value(self) -> i32:
         return self.value + 1
 
-    def write_value(self, value: i32) -> void:
+    def write_value(self, value: i32):
         self.value = value * 2
+
+struct Value:
+    @property_access[get = self.read, set = self.write] value: i32
+
+    def read(self) -> i32:
+        return self.value
+
+    def write(self, value: i32) -> void:
+        self.value = value
 
 class Aliased:
     using @access as @property_access[
@@ -59,6 +72,9 @@ class Aliased:
         self.y = value + 20
 
 def main() -> i32:
+    value: Value = Value(1)
+    value.value = 5
+    assert value.value == 5
     mixed: Mixed = Mixed()
     mixed.value = 4
     assert mixed.value == 5

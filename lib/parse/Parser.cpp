@@ -1757,6 +1757,7 @@ ParsedMemberDecorators Parser::parseMemberDecorators() {
       if (!consume(TokenKind::RBracket, "expected ']' after modifier arguments")) {
         break;
       }
+      use.range.end = previous().range().end;
       result.names.push_back(use.name);
       result.modifiers.push_back(std::move(use));
     } else {
@@ -2556,20 +2557,8 @@ std::unique_ptr<FunctionDef> Parser::parseFunction(std::string externName) {
       return nullptr;
     }
   } else {
-    inferredReturn = true;
-    const char* inferred = "Any";
-    if (name == "main") {
-      inferred = "i32";
-    } else if (name == "__init__") {
-      inferred = "void";
-    }
     returnType = std::make_unique<TypeExpr>(
-        previous().range(), inferred, std::vector<std::unique_ptr<TypeExpr>>{});
-    if (!externName.empty()) {
-      diagnostics_->error(previous().range(), "extern function '" + name + "' needs a return type");
-      diagnostics_->help("write `-> void` or another type after the parameter list");
-      return nullptr;
-    }
+        previous().range(), "void", std::vector<std::unique_ptr<TypeExpr>>{});
   }
   std::vector<std::unique_ptr<Stmt>> body;
   const bool isExtern = !externName.empty();

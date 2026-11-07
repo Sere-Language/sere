@@ -69,7 +69,7 @@ def _win_splitdrive(part: str) -> list[str]:
             if index2 < 0:
                 index2 = len(norm)
             return [part[0:index2], part[index2:]]
-        if norm[1:2] == "\\":
+        if norm[1:2] == ":":
             if len(norm) >= 6 and norm[0:4] == "\\\\?\\" and norm[5:6] == ":":
                 return [part[0:6], part[6:]]
             return [part[0:2], part[2:]]

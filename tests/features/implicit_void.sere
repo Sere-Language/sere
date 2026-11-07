@@ -1,0 +1,19 @@
+def update(values: list[i32]):
+    values[0] += 1
+
+class Counter:
+    value: i32
+
+    def __init__(self):
+        self.value = 0
+
+    def increment(self):
+        self.value += 1
+
+def main():
+    values: list[i32] = [0]
+    update(values)
+    assert values[0] == 1
+    counter: Counter = Counter()
+    counter.increment()
+    assert counter.value == 1

@@ -421,6 +421,11 @@ void classifyToken(const std::vector<Token>& tokens,
     return;
   }
   if (token.kind() == TokenKind::Identifier) {
+    if (token.spelling() == "using" && index + 1 < tokens.size() &&
+        tokens[index + 1].kind() == TokenKind::At) {
+      pushToken(out, token.range(), SemanticType::Keyword, 0);
+      return;
+    }
     emitIdentifier(tokens, index, checker, out);
     return;
   }

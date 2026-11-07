@@ -560,9 +560,21 @@ int32_t mpConnPoll(MpConn* conn, int64_t timeoutMs) {
   if (conn == NULL || conn->readHandle < 0) {
     return 0;
   }
-  const DWORD timeout = timeoutMs < 0 ? INFINITE : (DWORD)timeoutMs;
-  const DWORD state = WaitForSingleObject((HANDLE)(intptr_t)conn->readHandle, timeout);
-  return state == WAIT_OBJECT_0 ? 1 : 0;
+  const ULONGLONG started = GetTickCount64();
+  for (;;) {
+    DWORD available = 0;
+    if (!PeekNamedPipe((HANDLE)(intptr_t)conn->readHandle, NULL, 0, NULL, &available, NULL)) {
+      const DWORD error = GetLastError();
+      return error == ERROR_BROKEN_PIPE || error == ERROR_HANDLE_EOF;
+    }
+    if (available != 0) {
+      return 1;
+    }
+    if (timeoutMs >= 0 && GetTickCount64() - started >= (ULONGLONG)timeoutMs) {
+      return 0;
+    }
+    Sleep(1);
+  }
 }
 
 void mpConnCloseRead(MpConn* conn) {

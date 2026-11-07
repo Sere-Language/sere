@@ -1212,7 +1212,7 @@ void addKeywordCompletions(llvm::json::Array& items, const std::string& prefix) 
       "from",        "as",           "static",    "abstract",  "override",
       "enum",        "for",          "in",        "is",        "assert",
       "try",         "except",       "finally",   "raise",     "match",
-      "case",        "lambda",       "with",      "defer",     "del",
+      "case",        "lambda",       "with",      "defer",     "del", "using",
       "do",          "const",        "macro",     "quote",     "__name__",
       "__file__",    "__package__",  "__doc__",   "__debug__", "__sere_version__",
       "__windows__", "__linux__",    "__macos__", "__unix__",  "__x86_64__",
@@ -2016,6 +2016,27 @@ struct ModifierHoverInfo {
               (alias.hasGet ? alias.getArgument : std::string("@public")) + "`";
       text += "\n- `set` = `" +
               (alias.hasSet ? alias.setArgument : std::string("@public")) + "`";
+      if (alias.getArgument.find('$') != std::string::npos ||
+          alias.setArgument.find('$') != std::string::npos) {
+        text += "\n\n`$` substitutes the name of each member using this alias.";
+        for (const FieldDecl& field : classDef.fields()) {
+          for (const ModifierUse& use : field.modifiers) {
+            if (use.name != alias.alias) {
+              continue;
+            }
+            const auto expand = [&](std::string path) {
+              std::size_t at = 0;
+              while ((at = path.find('$', at)) != std::string::npos) {
+                path.replace(at, 1, field.name);
+                at += field.name.size();
+              }
+              return path;
+            };
+            text += "\n- `" + field.name + "`: `" + expand(alias.getArgument) + "`, `" +
+                    expand(alias.setArgument) + "`";
+          }
+        }
+      }
       info.text = std::move(text);
       info.range = alias.range;
       return info;
@@ -2304,6 +2325,39 @@ void LanguageSession::handleCompletion(const llvm::json::Value* id,
         writeResult(id, std::move(items));
         return;
       }
+      if (slot.find("self.") != std::string_view::npos && frontend != nullptr &&
+          frontend->module() != nullptr) {
+        const auto& statements = frontend->module()->statements();
+        for (std::size_t index = 0; index < statements.size(); ++index) {
+          const auto& statement = statements[index];
+          if (statement->kind() != NodeKind::ClassDef ||
+              located->second < statement->range().start.offset ||
+              (index + 1 < statements.size() &&
+               located->second >= statements[index + 1]->range().start.offset)) {
+            continue;
+          }
+          const auto& owner = static_cast<const ClassDef&>(*statement);
+          const bool getter = slot.substr(0, slot.find('=')).find("get") != std::string_view::npos;
+          for (const auto& method : owner.methods()) {
+            if (method->params().size() == (getter ? 1u : 2u)) {
+              addCompletion(items, method->name(), kCompletionFunction,
+                            getter ? "getter method reference" : "setter method reference", prefix,
+                            method->name(), "0" + method->name(), false);
+            }
+          }
+          const std::size_t lineStart = beforeCursor.rfind('\n', nameStart);
+          const std::string_view header = beforeCursor.substr(
+              lineStart == std::string_view::npos ? 0 : lineStart + 1,
+              nameStart - (lineStart == std::string_view::npos ? 0 : lineStart + 1));
+          if (header.find("using") != std::string_view::npos) {
+            const std::string pattern = getter ? "_get_$" : "_set_$";
+            addCompletion(items, pattern, kCompletionFunction, "$ expands to the member name",
+                          prefix, pattern, "1" + pattern, false);
+          }
+          writeResult(id, std::move(items));
+          return;
+        }
+      }
     }
   }
   // The typed AST resolves receivers the textual scan cannot type, such as the
@@ -2397,10 +2451,70 @@ void LanguageSession::handleDefinition(const llvm::json::Value* id,
       continue;
     }
     const auto& owner = static_cast<const ClassDef&>(*statement);
+    const std::string& source = documents_.at(located->first);
+    const auto identifierChar = [](char ch) {
+      return std::isalnum(static_cast<unsigned char>(ch)) != 0 || ch == '_' || ch == '$';
+    };
+    std::size_t start = located->second;
+    std::size_t end = start;
+    while (start > 0 && identifierChar(source[start - 1])) {
+      --start;
+    }
+    while (end < source.size() && identifierChar(source[end])) {
+      ++end;
+    }
+    const std::string word = source.substr(start, end - start);
+    const bool accessor = start >= 5 && source.substr(start - 5, 5) == "self.";
+    const auto methodLocations = [&](const std::string& fieldName) {
+      llvm::json::Array locations;
+      std::string methodName = word;
+      std::size_t at = 0;
+      while ((at = methodName.find('$', at)) != std::string::npos) {
+        methodName.replace(at, 1, fieldName);
+        at += fieldName.size();
+      }
+      for (const auto& method : owner.methods()) {
+        if (method->name() == methodName) {
+          locations.push_back(llvm::json::Object{
+              {"uri", located->first}, {"range", lspRange(method->range())}});
+        }
+      }
+      return locations;
+    };
+    for (const ModifierAlias& alias : owner.modifierAliases()) {
+      if (!rangeContains(alias.range, located->second)) {
+        continue;
+      }
+      if (accessor) {
+        llvm::json::Array locations;
+        for (const FieldDecl& field : owner.fields()) {
+          for (const ModifierUse& use : field.modifiers) {
+            if (use.name == alias.alias) {
+              for (auto& location : methodLocations(field.name)) {
+                locations.push_back(std::move(location));
+              }
+            }
+          }
+        }
+        writeResult(id, std::move(locations));
+        return;
+      }
+      if (word == alias.target) {
+        if (const CustomModifierDef* definition = findModifierDef(*frontend->module(), alias.target)) {
+          writeResult(id, llvm::json::Array{llvm::json::Object{
+                              {"uri", located->first}, {"range", lspRange(definition->range)}}});
+          return;
+        }
+      }
+    }
     for (const FieldDecl& field : owner.fields()) {
       for (const ModifierUse& use : field.modifiers) {
         if (!rangeContains(use.range, located->second)) {
           continue;
+        }
+        if (accessor) {
+          writeResult(id, methodLocations(field.name));
+          return;
         }
         for (const ModifierAlias& alias : owner.modifierAliases()) {
           if (alias.alias == use.name) {
@@ -2516,6 +2630,15 @@ void LanguageSession::handleDocumentSymbol(const llvm::json::Value* id,
     } else if (statement->kind() == NodeKind::ClassDef) {
       const auto& classDef = static_cast<const ClassDef&>(*statement);
       llvm::json::Array children;
+      for (const ModifierAlias& alias : classDef.modifierAliases()) {
+        children.push_back(llvm::json::Object{
+            {"name", "@" + alias.alias},
+            {"detail", "using @" + alias.alias + " as @" + alias.target},
+            {"kind", kSymbolType},
+            {"range", lspRange(alias.range)},
+            {"selectionRange", lspRange(alias.range)},
+        });
+      }
       for (const FieldDecl& field : classDef.fields()) {
         children.push_back(llvm::json::Object{
             {"name", field.name},

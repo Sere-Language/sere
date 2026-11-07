@@ -209,14 +209,12 @@
       ]
     },
     "modifierAlias": {
-      "match": "\\b(using)\\s+(@)([A-Za-z_][A-Za-z0-9_]*)\\s+(as)\\s+(@)([A-Za-z_][A-Za-z0-9_]*)",
+      "match": "\\b(using)\\s+(@)([A-Za-z_][A-Za-z0-9_]*)\\s+(as)(?=\\s+@)",
       "captures": {
         "1": { "name": "keyword.control.sere" },
         "2": { "name": "punctuation.decorator.sere" },
         "3": { "name": "entity.name.function.decorator.sere" },
-        "4": { "name": "keyword.control.sere" },
-        "5": { "name": "punctuation.decorator.sere" },
-        "6": { "name": "entity.name.function.decorator.sere" }
+        "4": { "name": "keyword.control.sere" }
       }
     },
     "modifierKey": {

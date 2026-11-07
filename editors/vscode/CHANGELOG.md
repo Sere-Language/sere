@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add custom access modifier and `using @alias` IntelliSense, navigation, highlighting,
+  and snippets, including `@param` fallbacks and `$` member-name substitutions.
+
 - Class, struct, and enum hovers list their documented members as `**Attributes**` and `**Methods**` below the declaration instead of splicing prose into the signature block, so hover Markdown stays valid
 - A class or enum without its own docstring still documents its members on hover
 - Signature help renders the documentation the server sends (previously it showed `[object Object]`) and describes the active argument
