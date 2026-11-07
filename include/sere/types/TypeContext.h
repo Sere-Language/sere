@@ -29,6 +29,8 @@ public:
 
   [[nodiscard]] const Type* primitive(std::string_view name) const;
   [[nodiscard]] const Type* generic(std::string_view ctor, const std::vector<const Type*>& args);
+  [[nodiscard]] const Type* namedTuple(const std::vector<std::string>& names,
+                                       const std::vector<const Type*>& elements);
   [[nodiscard]] const Type* functionType(const std::vector<const Type*>& params,
                                          const Type* returnType);
   [[nodiscard]] const Type* defineRecord(const std::string& name,

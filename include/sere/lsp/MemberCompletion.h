@@ -31,6 +31,9 @@ struct MemberCompletionItem {
   std::string sortText;
   /// Declaration docstring, shown by the client next to the suggestion.
   std::string documentation;
+  /// True for members whose accessors come from the deprecated `name.get:` /
+  /// `name.set` syntax, so the client shows them struck through.
+  bool deprecated = false;
 };
 
 /// A member access read from the typed AST. This is what resolves receivers the

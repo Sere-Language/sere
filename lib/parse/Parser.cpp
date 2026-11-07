@@ -400,6 +400,8 @@ std::unique_ptr<TypeExpr> Parser::parseTypeAtom() {
     const SourceLocation start = previous().range().start;
     std::vector<std::unique_ptr<TypeExpr>> members;
     bool commaSeen = false;
+    std::vector<std::string> elementNames;
+    std::vector<SourceRange> elementRanges;
     skipNewlines();
     if (check(TokenKind::RParen)) {
       diagnostics_->error(peek().range(), "expected a type inside '( ... )'");
@@ -407,6 +409,26 @@ std::unique_ptr<TypeExpr> Parser::parseTypeAtom() {
     }
     while (true) {
       skipNewlines();
+      const bool named = check(TokenKind::Identifier) && peekNth(1).kind() == TokenKind::Colon;
+      if ((!members.empty() && named != !elementNames.empty())) {
+        diagnostics_->error(peek().range(), "tuple elements must either all be named or all be positional");
+        return nullptr;
+      }
+      if (named) {
+        const Token& label = advance();
+        const std::string name(label.spelling());
+        if (std::find(elementNames.begin(), elementNames.end(), name) != elementNames.end()) {
+          diagnostics_->error(label.range(), "duplicate named tuple element '" + name + "'");
+          return nullptr;
+        }
+        if ((name == "first" && !members.empty()) || (name == "second" && members.size() != 1)) {
+          diagnostics_->error(label.range(), "named tuple element conflicts with positional member '" + name + "'");
+          return nullptr;
+        }
+        elementNames.push_back(name);
+        elementRanges.push_back(label.range());
+        advance(); // ':'
+      }
       std::unique_ptr<TypeExpr> member = parseTypeExpr();
       if (member == nullptr) {
         return nullptr;
@@ -426,10 +448,11 @@ std::unique_ptr<TypeExpr> Parser::parseTypeAtom() {
       return nullptr;
     }
     const SourceRange range{start, previous().range().end};
-    if (members.size() == 1 && !commaSeen) {
+    if (members.size() == 1 && !commaSeen && elementNames.empty()) {
       return std::move(members[0]);
     }
-    return std::make_unique<TypeExpr>(range, "tuple", std::move(members));
+    return std::make_unique<TypeExpr>(range, "tuple", std::move(members),
+                                      std::move(elementNames), std::move(elementRanges));
   }
   if (!check(TokenKind::Identifier)) {
     diagnostics_->error(peek().range(), "expected type name, found " + describeToken(peek()));
@@ -2946,10 +2969,15 @@ std::unique_ptr<TypeAlias> Parser::parseTypeAlias() {
   }
   std::vector<std::unique_ptr<TypeExpr>> typeConstraints;
   std::vector<std::string> typeParams = parseTypeParamList(typeConstraints);
-  if (!consume(TokenKind::Equal, "expected '=' after type name")) {
+  const bool directTuple = match(TokenKind::Colon);
+  if (!directTuple && !consume(TokenKind::Equal, "expected '=' or ':' after type name")) {
     return nullptr;
   }
   std::unique_ptr<TypeExpr> type = parseTypeExpr();
+  if (directTuple && type != nullptr && type->elementNames().empty()) {
+    diagnostics_->error(type->range(), "':' type declarations require a named tuple");
+    return nullptr;
+  }
   if (type == nullptr || !finishLine()) {
     return nullptr;
   }
@@ -3034,7 +3062,8 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
     return parseCustomModifierDef();
   }
   if (check(TokenKind::KeywordType) && peekNth(1).kind() == TokenKind::Identifier &&
-      (peekNth(2).kind() == TokenKind::Equal || peekNth(2).kind() == TokenKind::LBracket)) {
+      (peekNth(2).kind() == TokenKind::Equal || peekNth(2).kind() == TokenKind::Colon ||
+       peekNth(2).kind() == TokenKind::LBracket)) {
     std::unique_ptr<TypeAlias> alias = parseTypeAlias();
     if (alias != nullptr) {
       markPrivateFromDecorators(*alias, decorators);

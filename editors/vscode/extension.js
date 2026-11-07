@@ -36,6 +36,7 @@ const TOKEN_MODIFIERS = [
   "static",
   "abstract",
   "defaultLibrary",
+  "deprecated",
 ];
 
 function compilerName() {
@@ -716,6 +717,11 @@ function toCompletion(item, document, position) {
   completion.insertText = item.insertText || item.label;
   completion.filterText = item.filterText || item.label;
   completion.sortText = item.sortText || item.label;
+  // LSP CompletionItemTag.Deprecated (1): retired members such as the legacy
+  // `name.get` / `name.set` accessor pairs are struck through.
+  if (Array.isArray(item.tags) && item.tags.includes(1)) {
+    completion.tags = [vscode.CompletionItemTag.Deprecated];
+  }
   if (item.insertTextFormat === 2) {
     completion.insertText = new vscode.SnippetString(String(item.insertText || item.label));
   }
@@ -875,6 +881,10 @@ class SereLanguageClient {
         const diagnostic = new vscode.Diagnostic(fromRange(item.range), item.message, severity);
         if (item.code) {
           diagnostic.code = item.code;
+        }
+        // LSP DiagnosticTag.Deprecated (2): the editor draws a strikethrough.
+        if (Array.isArray(item.tags) && item.tags.includes(2)) {
+          diagnostic.tags = [vscode.DiagnosticTag.Deprecated];
         }
         diagnostic.source = item.source || "sere";
         return diagnostic;

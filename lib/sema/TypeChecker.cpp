@@ -2003,6 +2003,22 @@ const Type* TypeChecker::resolveTypeFromExpr(Expr& expr, bool reportMissing) {
 }
 
 const Type* TypeChecker::resolveTypeExpr(const TypeExpr& expr) {
+  if (!expr.elementNames().empty()) {
+    std::vector<const Type*> elements;
+    for (const auto& argument : expr.args()) {
+      const Type* element = resolveTypeExpr(*argument);
+      if (element == nullptr)
+        return nullptr;
+      if (element->isVoidLike()) {
+        diagnostics_->error(argument->range(), "named tuple elements require a value type");
+        return nullptr;
+      }
+      elements.push_back(element);
+    }
+    const Type* result = types_->namedTuple(expr.elementNames(), elements);
+    const_cast<TypeExpr&>(expr).setResolvedType(result);
+    return result;
+  }
   if (!expr.name().empty() && expr.args().empty()) {
     bool digits = true;
     std::size_t index = expr.name()[0] == '-' ? 1 : 0;
@@ -2262,10 +2278,9 @@ const Type* TypeChecker::checkMember(MemberExpr& expr) {
     return exported;
   }
   // A tuple's members are positional, and `first`/`second` name the leading two.
-  if (objectType->isGenericCtor("tuple") &&
-      (expr.field() == "first" || expr.field() == "second")) {
-    const std::size_t index = expr.field() == "first" ? 0 : 1;
-    if (objectType->args().size() <= index) {
+  if (objectType->isGenericCtor("tuple")) {
+    const int index = objectType->tupleMemberIndex(expr.field());
+    if (index < 0 || objectType->args().size() <= static_cast<std::size_t>(index)) {
       diagnostics_->error(expr.range(), quoteType(objectType) + " has no member '" +
                                              expr.field() + "'");
       return nullptr;
@@ -2867,6 +2882,18 @@ const Type* TypeChecker::checkUnary(UnaryExpr& expr) {
   }
   if (expr.op() == UnaryOp::Deref) {
     return checkDeref(expr, operand);
+  }
+  const Expr* tupleObject = nullptr;
+  if (expr.operand().kind() == NodeKind::MemberExpr)
+    tupleObject = &static_cast<const MemberExpr&>(expr.operand()).object();
+  else if (expr.operand().kind() == NodeKind::IndexExpr)
+    tupleObject = &static_cast<const IndexExpr&>(expr.operand()).object();
+  if (tupleObject != nullptr && tupleObject->resolvedType() != nullptr &&
+      tupleObject->resolvedType()->isNamedTuple() &&
+      (expr.op() == UnaryOp::AddrOf || expr.op() == UnaryOp::PreInc ||
+       expr.op() == UnaryOp::PostInc || expr.op() == UnaryOp::PreDec || expr.op() == UnaryOp::PostDec)) {
+    diagnostics_->error(expr.range(), "named tuple elements are immutable");
+    return nullptr;
   }
   if (expr.op() == UnaryOp::AddrOf) {
     return checkAddrOf(expr, operand);
@@ -3967,6 +3994,11 @@ const Type* TypeChecker::checkCall(CallExpr& expr) {
     expr.setResolvedType(target);
     return target;
   }
+  if (symbol == nullptr || symbol->kind == SymbolKind::Type) {
+    const Type* target = resolveNamedType(name->name(), expr.typeArgs(), expr.range(), false);
+    if (target != nullptr && target->isNamedTuple())
+      return checkConstructor(expr, target);
+  }
   if (expr.arguments().size() == 1 && (symbol == nullptr || symbol->kind == SymbolKind::Type)) {
     const Type* target = resolveNamedType(name->name(), expr.typeArgs(), expr.range(), false);
     if (target != nullptr) {
@@ -4092,6 +4124,21 @@ const Type* TypeChecker::checkConstructor(CallExpr& expr, const Type* record) {
     return nullptr;
   }
   record = record->canonical();
+  if (record->isNamedTuple()) {
+    std::vector<ParamDecl> params;
+    for (const std::string& name : record->tupleNames()) {
+      ParamDecl param;
+      param.name = name;
+      params.push_back(std::move(param));
+    }
+    if (!checkFunctionArguments(expr, params, record->args(), record->display(), 0))
+      return nullptr;
+    expr.setParamNames(record->tupleNames());
+    expr.setConstructor(true);
+    expr.callee().setResolvedType(record);
+    expr.setResolvedType(record);
+    return record;
+  }
   if (record->isEnum()) {
     if (expr.arguments().size() != 1) {
       diagnostics_->error(expr.range(), "enum '" + record->name() + "' takes one integer value");
@@ -5182,6 +5229,18 @@ bool TypeChecker::checkAssign(AssignStmt& statement) {
       if (source != nullptr && isCallableSymbol(*source)) {
         return bindCallableAlias(statement, *target, *source);
       }
+    }
+  }
+  const Expr* tupleObject = nullptr;
+  if (targetExpr.kind() == NodeKind::MemberExpr)
+    tupleObject = &static_cast<MemberExpr&>(targetExpr).object();
+  else if (targetExpr.kind() == NodeKind::IndexExpr)
+    tupleObject = &static_cast<IndexExpr&>(targetExpr).object();
+  if (tupleObject != nullptr) {
+    const Type* owner = checkExpr(const_cast<Expr&>(*tupleObject));
+    if (owner != nullptr && owner->isNamedTuple()) {
+      diagnostics_->error(targetExpr.range(), "named tuple elements are immutable");
+      return false;
     }
   }
   if (!isAssignableTarget(targetExpr)) {
@@ -6987,6 +7046,10 @@ bool TypeChecker::collectMethods(Module& module) {
         fields.push_back(std::move(created));
         found = &fields.back();
       }
+      // The owning backend synthesizes storage for these accessors, but the
+      // syntax itself is deprecated: editors nudge the author toward a custom
+      // access modifier instead.
+      found->deprecatedAccessors = true;
       if (method->propertyKind() == PropertyKind::Get) {
         if (!found->getterLlvm.empty()) {
           diagnostics_->error(method->range(),

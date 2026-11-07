@@ -48,6 +48,7 @@ enum class SemanticMod : std::uint32_t {
   Static = 1u << 3,
   Abstract = 1u << 4,
   DefaultLibrary = 1u << 5,
+  Deprecated = 1u << 6,
 };
 
 inline constexpr const char* kSemanticTokenTypeNames[] = {
@@ -59,6 +60,7 @@ inline constexpr const char* kSemanticTokenTypeNames[] = {
 
 inline constexpr const char* kSemanticTokenModifierNames[] = {
     "declaration", "definition", "readonly", "static", "abstract", "defaultLibrary",
+    "deprecated",
 };
 
 void collectSemanticTokens(Frontend& frontend, std::vector<SemanticToken>& out);

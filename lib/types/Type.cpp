@@ -26,6 +26,24 @@ const std::vector<const Type*>& Type::args() const {
   return canonical()->args_;
 }
 
+const std::vector<std::string>& Type::tupleNames() const { return canonical()->tupleNames_; }
+
+bool Type::isNamedTuple() const { return isGenericCtor("tuple") && !tupleNames().empty(); }
+
+int Type::tupleMemberIndex(std::string_view name) const {
+  if (!isGenericCtor("tuple"))
+    return -1;
+  for (std::size_t index = 0; index < tupleNames().size(); ++index) {
+    if (tupleNames()[index] == name)
+      return static_cast<int>(index);
+  }
+  if (name == "first" && !args().empty())
+    return 0;
+  if (name == "second" && args().size() > 1)
+    return 1;
+  return -1;
+}
+
 const std::vector<RecordField>& Type::fields() const {
   return canonical()->fields_;
 }
@@ -474,6 +492,15 @@ int Type::methodIndex(std::string_view methodName) const {
 }
 
 std::string Type::display() const {
+  if (kind_ == TypeKind::Generic && isNamedTuple()) {
+    std::string text = "(";
+    for (std::size_t index = 0; index < args_.size(); ++index) {
+      if (index != 0)
+        text += ", ";
+      text += tupleNames_[index] + ": " + args_[index]->display();
+    }
+    return text + ")";
+  }
   if (kind_ == TypeKind::Union) {
     std::string text;
     for (std::size_t index = 0; index < args_.size(); ++index) {

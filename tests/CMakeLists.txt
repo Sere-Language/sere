@@ -120,3 +120,21 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(sere.auto.checks PROPERTIES TIMEOUT 120
     ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
 endif()
+
+foreach(backend IN ITEMS llvm serem)
+  add_test(NAME sere.named_tuples.members.${backend}
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCOMPILER=${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}"
+      "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/named_tuples/named_tuples.sere"
+      "-DSTDLIB=${CMAKE_SOURCE_DIR}/stdlib"
+      "-DBACKEND=${backend}"
+      "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/named-tuples-${backend}${CMAKE_EXECUTABLE_SUFFIX}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/run_feature.cmake")
+endforeach()
+if(Python3_Interpreter_FOUND)
+  add_test(NAME sere.named_tuples.checks
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/named_tuple_checks.py"
+      "${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}")
+  set_tests_properties(sere.named_tuples.checks PROPERTIES TIMEOUT 120
+    ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
+endif()

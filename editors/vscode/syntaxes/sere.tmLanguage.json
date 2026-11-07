@@ -18,6 +18,7 @@
     { "include": "#macroDef" },
     { "include": "#defDecl" },
     { "include": "#modifierDecl" },
+    { "include": "#namedTuple" },
     { "include": "#typeDecl" },
     { "include": "#declaration" },
     { "include": "#macroInvoke" },
@@ -32,6 +33,52 @@
     { "include": "#number" }
   ],
   "repository": {
+  "namedTuple": {
+    "begin": "\\b(type)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\[[^\\]]+\\])?\\s*[:=]\\s*(\\()(?=\\s*[A-Za-z_][A-Za-z0-9_]*\\s*:)",
+    "beginCaptures": {
+      "1": {
+        "name": "keyword.declaration.sere"
+      },
+      "2": {
+        "name": "entity.name.type.sere"
+      },
+      "3": {
+        "name": "punctuation.section.parens.begin.sere"
+      }
+    },
+    "end": "\\)",
+    "patterns": [
+      {
+        "include": "#namedTupleElements"
+      },
+      {
+        "name": "variable.other.member.sere",
+        "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*:)"
+      },
+      {
+        "include": "#type"
+      },
+      {
+        "include": "#comment"
+      }
+    ]
+  },
+  "namedTupleElements": {
+    "begin": "\\(",
+    "end": "\\)",
+    "patterns": [
+      {
+        "include": "#namedTupleElements"
+      },
+      {
+        "name": "variable.other.member.sere",
+        "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*:)"
+      },
+      {
+        "include": "#type"
+      }
+    ]
+  },
     "comment": {
       "name": "comment.line.number-sign.sere",
       "match": "#.*$"

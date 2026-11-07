@@ -38,6 +38,10 @@ struct RecordField {
   std::string setterLlvm{};
   bool getterPublic = true;
   bool setterPublic = true;
+  /// Set when the accessors came from the deprecated `name.get:` / `name.set`
+  /// syntax rather than a custom access modifier. Tooling marks such members
+  /// deprecated and points at the modifier form.
+  bool deprecatedAccessors = false;
   /// Set by a custom access modifier that includes `frozen` in its `set` half:
   /// the member may only be written during construction.
   bool frozen = false;
@@ -71,6 +75,9 @@ public:
   [[nodiscard]] const std::string& name() const;
   [[nodiscard]] const std::string& qualifier() const;
   [[nodiscard]] const std::vector<const Type*>& args() const;
+  [[nodiscard]] const std::vector<std::string>& tupleNames() const;
+  [[nodiscard]] bool isNamedTuple() const;
+  [[nodiscard]] int tupleMemberIndex(std::string_view name) const;
   [[nodiscard]] const std::vector<RecordField>& fields() const;
   [[nodiscard]] const std::vector<RecordMethod>& methods() const;
   [[nodiscard]] const std::vector<const Type*>& paramTypes() const;
@@ -155,6 +162,7 @@ private:
   std::string qualifier_{};
   std::vector<const Type*> args_{};
   std::vector<RecordField> fields_{};
+  std::vector<std::string> tupleNames_{};
   std::vector<RecordMethod> methods_{};
   std::vector<const Type*> paramTypes_{};
   const Type* returnType_ = nullptr;

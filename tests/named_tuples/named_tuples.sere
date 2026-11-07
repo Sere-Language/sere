@@ -1,0 +1,45 @@
+type Size: (width: u32, height: u32)
+type Resolution = (width: u32, height: u32)
+type Single: (value: i32)
+type Pair[T]: (left: T, right: T)
+type Nested = (size: Size, title: str)
+
+def area(size: Resolution) -> u32:
+    return size.width * size.height
+
+def add(width: u32, height: u32) -> u32:
+    return width + height
+
+def identity[T](value: T) -> T:
+    return value
+
+def main() -> i32:
+    size = Size(3, 4)
+    assert size.width == 3
+    assert size.height == 4
+    assert size.first == 3
+    assert size.second == 4
+    assert size[0] == 3
+    assert size[1] == 4
+    width, height = size
+    assert width == 3
+    assert height == 4
+    assert area(size) == 12
+    resolution: Resolution = size
+    assert resolution.width == 3
+    reordered = Size(height=7, width=5)
+    assert reordered.first == 5
+    assert reordered.second == 7
+    size = Resolution(8, 9)
+    assert size.width == 8
+    assert Single(6).value == 6
+    pair = Pair[str]("left", "right")
+    assert pair.left == "left"
+    assert pair.second == "right"
+    nested = Nested(title="screen", size=Size(2, 3))
+    assert nested.size.height == 3
+    assert nested.title == "screen"
+    copied = identity(reordered)
+    assert copied.width == 5
+    assert copied.height == 7
+    return 0

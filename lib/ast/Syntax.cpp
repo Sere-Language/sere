@@ -100,9 +100,14 @@ void Node::setPrivate(bool value) {
   isPrivate_ = value;
 }
 
-TypeExpr::TypeExpr(SourceRange range, std::string name, std::vector<std::unique_ptr<TypeExpr>> args)
-    : Node(NodeKind::TypeExpr, range), name_(std::move(name)), args_(std::move(args)) {
+TypeExpr::TypeExpr(SourceRange range, std::string name, std::vector<std::unique_ptr<TypeExpr>> args,
+                   std::vector<std::string> elementNames, std::vector<SourceRange> elementRanges)
+    : Node(NodeKind::TypeExpr, range), name_(std::move(name)), args_(std::move(args)),
+      elementNames_(std::move(elementNames)), elementRanges_(std::move(elementRanges)) {
 }
+
+const std::vector<std::string>& TypeExpr::elementNames() const { return elementNames_; }
+const std::vector<SourceRange>& TypeExpr::elementRanges() const { return elementRanges_; }
 
 const std::string& TypeExpr::name() const {
   return name_;

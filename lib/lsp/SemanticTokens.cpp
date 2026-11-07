@@ -2,12 +2,14 @@
 /// Classifies lexer tokens and symbols for LSP semantic highlighting.
 
 #include "sere/lsp/SemanticTokens.h"
+#include "sere/ast/Query.h"
 
 #include "sere/diag/DiagnosticEngine.h"
 #include "sere/driver/Frontend.h"
 #include "sere/lex/Lexer.h"
 #include "sere/lex/Token.h"
 #include "sere/lex/TokenKind.h"
+#include "sere/lsp/LegacyProperty.h"
 #include "sere/sema/TypeChecker.h"
 #include "sere/source/SourceManager.h"
 #include "sere/types/Intrinsic.h"
@@ -452,6 +454,66 @@ void collectSemanticTokens(Frontend& frontend, std::vector<SemanticToken>& out) 
       continue;
     }
     classifyToken(tokens, index, checker, *frontend.source(), out);
+    if (token.kind() == TokenKind::Identifier && frontend.module() != nullptr && !out.empty()) {
+      const Node* node = findNodeAt(*frontend.module(), token.range().start.offset);
+      bool namedElement = false;
+      bool declaration = false;
+      if (node != nullptr && node->kind() == NodeKind::TypeExpr) {
+        const auto visit = [&](auto&& self, const TypeExpr& expression) -> void {
+          for (const SourceRange& range : expression.elementRanges())
+            declaration = declaration || range.start.offset == token.range().start.offset;
+          for (const auto& argument : expression.args())
+            if (argument != nullptr)
+              self(self, *argument);
+        };
+        visit(visit, static_cast<const TypeExpr&>(*node));
+        namedElement = declaration;
+      } else if (node != nullptr && node->kind() == NodeKind::MemberExpr &&
+                 previousKind(tokens, index) == TokenKind::Dot) {
+        const auto& member = static_cast<const MemberExpr&>(*node);
+        const Type* owner = member.object().resolvedType();
+        namedElement = owner != nullptr && owner->isNamedTuple() &&
+                       owner->tupleMemberIndex(member.field()) >= 0;
+      }
+      if (namedElement) {
+        out.back().type = static_cast<std::uint32_t>(SemanticType::Property);
+        out.back().modifiers |= static_cast<std::uint32_t>(SemanticMod::Readonly);
+        if (declaration)
+          out.back().modifiers |= static_cast<std::uint32_t>(SemanticMod::Declaration);
+      }
+    }
+  }
+  // Legacy `name.get` / `name.set` accessors are retired in favour of custom
+  // access modifiers: the member name in the declaration is greyed out. The
+  // checker records no symbol for the synthesized member, so the classifier
+  // usually produced no token here and one is added.
+  if (frontend.module() != nullptr) {
+    const auto deprecated = static_cast<std::uint32_t>(SemanticMod::Deprecated);
+    for (const LegacyPropertyAccessor& accessor : legacyPropertyAccessors(*frontend.module())) {
+      const std::uint32_t line = accessor.range.start.line == 0 ? 0 : accessor.range.start.line - 1;
+      const std::uint32_t column =
+          accessor.range.start.column == 0 ? 0 : accessor.range.start.column - 1;
+      const std::uint32_t length =
+          accessor.range.end.offset > accessor.range.start.offset
+              ? accessor.range.end.offset - accessor.range.start.offset
+              : static_cast<std::uint32_t>(accessor.member.size());
+      bool marked = false;
+      for (SemanticToken& token : out) {
+        if (token.line == line && token.column == column) {
+          token.modifiers |= deprecated;
+          marked = true;
+        }
+      }
+      if (!marked) {
+        SemanticToken token;
+        token.line = line;
+        token.column = column;
+        token.length = length;
+        token.type = static_cast<std::uint32_t>(SemanticType::Property);
+        token.modifiers = deprecated;
+        out.push_back(token);
+      }
+    }
   }
 }
 

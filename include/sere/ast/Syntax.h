@@ -100,7 +100,10 @@ private:
 
 class TypeExpr final : public Node {
 public:
-  TypeExpr(SourceRange range, std::string name, std::vector<std::unique_ptr<TypeExpr>> args);
+  TypeExpr(SourceRange range, std::string name, std::vector<std::unique_ptr<TypeExpr>> args,
+           std::vector<std::string> elementNames = {}, std::vector<SourceRange> elementRanges = {});
+  [[nodiscard]] const std::vector<std::string>& elementNames() const;
+  [[nodiscard]] const std::vector<SourceRange>& elementRanges() const;
 
   [[nodiscard]] const std::string& name() const;
   [[nodiscard]] const std::vector<std::unique_ptr<TypeExpr>>& args() const;
@@ -108,6 +111,8 @@ public:
 private:
   std::string name_;
   std::vector<std::unique_ptr<TypeExpr>> args_;
+  std::vector<std::string> elementNames_;
+  std::vector<SourceRange> elementRanges_;
 };
 
 class Expr : public Node {

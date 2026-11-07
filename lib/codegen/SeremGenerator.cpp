@@ -4046,6 +4046,13 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
   }
   if (expression.isConstructor()) {
     const Type* record = types_->substitute(expression.resolvedType(), subst_);
+    if (record->isNamedTuple()) {
+      for (std::size_t index = 0; index < expression.boundArguments().size(); ++index) {
+        const Expr* argument = expression.boundArguments()[index];
+        args.push_back(coerce(emitExpression(*argument), argument->resolvedType(), record->args()[index]));
+      }
+      return builder_->operation("aggregate.tuple", lowerType(record), std::move(args));
+    }
     // A constructor's arguments are checked against `__init__`'s signature: the
     // receiver is parameter 0 and `construct` supplies it, so operand `i` maps to
     // parameter `i + 1`. Coercing here boxes a `None`/`Any` default the way the
@@ -4342,8 +4349,8 @@ serem::ValuePtr SeremGenerator::emitMember(const MemberExpr& expression) {
   // `pair.first` / `pair.second` read the leading tuple members.
   if (const Type* tupleType = resolveType(expression.object().resolvedType());
       tupleType != nullptr && tupleType->isGenericCtor("tuple") &&
-      (expression.field() == "first" || expression.field() == "second")) {
-    const std::size_t index = expression.field() == "first" ? 0 : 1;
+      tupleType->tupleMemberIndex(expression.field()) >= 0) {
+    const std::size_t index = static_cast<std::size_t>(tupleType->tupleMemberIndex(expression.field()));
     return builder_->extract(emitExpression(expression.object()), index,
                              lowerType(expression.resolvedType()));
   }

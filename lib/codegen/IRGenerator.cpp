@@ -3630,6 +3630,16 @@ llvm::Value* IRGenerator::emitConstruct(llvm::IRBuilder<>& builder, const CallEx
     return nullptr;
   }
   record = resolveType(record);
+  if (record->isNamedTuple()) {
+    llvm::Value* value = llvm::UndefValue::get(lower(record));
+    for (std::size_t index = 0; index < expr.boundArguments().size(); ++index) {
+      const Expr* argument = expr.boundArguments()[index];
+      llvm::Value* element = emitCoerce(builder, emitExpr(builder, *argument),
+                                        argument->resolvedType(), record->args()[index]);
+      value = builder.CreateInsertValue(value, element, {static_cast<unsigned>(index)});
+    }
+    return value;
+  }
   if (record->isPointerLike()) {
     if (expr.arguments().empty()) {
       return emitDefault(record);
@@ -5526,12 +5536,13 @@ llvm::Value* IRGenerator::emitExpr(llvm::IRBuilder<>& builder, const Expr& expr)
     }
     // `pair.first` / `pair.second` read the leading tuple members.
     if (instanceType != nullptr && instanceType->isGenericCtor("tuple") &&
-        (member.field() == "first" || member.field() == "second")) {
+        instanceType->tupleMemberIndex(member.field()) >= 0) {
       llvm::Value* object = emitExpr(builder, member.object());
       if (object == nullptr) {
         return nullptr;
       }
-      return builder.CreateExtractValue(object, {member.field() == "first" ? 0u : 1u});
+      return builder.CreateExtractValue(object,
+          {static_cast<unsigned>(instanceType->tupleMemberIndex(member.field()))});
     }
     if (member.isUnboundMethod()) {
       const auto found = functions_.find(member.boundMethodLlvm());

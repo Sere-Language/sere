@@ -438,6 +438,12 @@ std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type, boo
   // element type in each detail mirrors TypeChecker::checkMember.
   if (type->isGenericCtor("tuple")) {
     const std::vector<const Type*>& elements = type->args();
+    if (onTypeObject)
+      return items;
+    for (std::size_t index = 0; index < type->tupleNames().size(); ++index) {
+      const std::string& name = type->tupleNames()[index];
+      addField(name, name + " -> " + elements[index]->display() + " (readonly)");
+    }
     if (!elements.empty() && elements[0] != nullptr) {
       addField("first", "first -> " + elements[0]->display());
     }
@@ -520,6 +526,7 @@ std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type, boo
       item.detail = "late " + item.detail;
     }
     item.documentation = memberDocumentation(field.docstring);
+    item.deprecated = field.deprecatedAccessors;
     const bool isFn = field.type != nullptr && field.type->kind() == TypeKind::Function;
     if (isFn) {
       // Module exports and callable fields read better with parameter names.

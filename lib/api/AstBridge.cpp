@@ -442,6 +442,7 @@ const FieldSpec kModuleFields[] = {
 
 const FieldSpec kTypeFields[] = {
     FIELD("name", TypeExpr, name),
+    FIELD("element_names", TypeExpr, elementNames),
     FIELD("args", TypeExpr, args),
 };
 

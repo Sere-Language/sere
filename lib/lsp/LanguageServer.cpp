@@ -13,6 +13,7 @@
 #include "sere/driver/Toolchain.h"
 #include "sere/lsp/ImportCompletion.h"
 #include "sere/lsp/DocFormat.h"
+#include "sere/lsp/LegacyProperty.h"
 #include "sere/lsp/MemberCompletion.h"
 #include "sere/lsp/SemanticTokens.h"
 #include "sere/sema/TypeChecker.h"
@@ -1097,7 +1098,8 @@ void addCompletion(llvm::json::Array& items,
                    const std::string& insertText = {},
                    const std::string& sortText = {},
                    bool snippet = true,
-                   const std::string& documentation = {}) {
+                   const std::string& documentation = {},
+                   bool deprecated = false) {
   const auto startsWithIgnoreCase = [](std::string_view text, std::string_view prefix) {
     if (prefix.empty()) {
       return true;
@@ -1143,6 +1145,10 @@ void addCompletion(llvm::json::Array& items,
       !sortText.empty() ? sortText : ((label.empty() || label[0] == '_' ? "1" : "0") + label);
   item["sortText"] = sortKey;
   item["filterText"] = label;
+  if (deprecated) {
+    // CompletionItemTag.Deprecated: the client renders the suggestion struck out.
+    item["tags"] = llvm::json::Array{1};
+  }
   items.push_back(std::move(item));
 }
 
@@ -1162,7 +1168,8 @@ void addMemberCompletions(llvm::json::Array& items,
                   member.insertText,
                   member.sortText,
                   true,
-                  member.documentation);
+                  member.documentation,
+                  member.deprecated);
   }
 }
 
@@ -1289,7 +1296,8 @@ public:
   [[nodiscard]] bool handleMessage(const llvm::json::Object& message);
 
 private:
-  void publishDiagnostics(const std::string& uri, const DiagnosticEngine& diagnostics);
+  void publishDiagnostics(const std::string& uri, const DiagnosticEngine& diagnostics,
+                          const Module* module);
   void handleInitialize(const llvm::json::Value* id, const llvm::json::Object* params);
   void captureWorkspaceRoot(const llvm::json::Object& params);
   void applyLanguageContext(const std::filesystem::path& start);
@@ -1483,7 +1491,8 @@ bool LanguageSession::handleMessage(const llvm::json::Object& message) {
 }
 
 void LanguageSession::publishDiagnostics(const std::string& uri,
-                                         const DiagnosticEngine& diagnostics) {
+                                         const DiagnosticEngine& diagnostics,
+                                         const Module* module) {
   llvm::json::Array items;
   for (const Diagnostic& diagnostic : diagnostics.diagnostics()) {
     items.push_back(llvm::json::Object{
@@ -1495,6 +1504,25 @@ void LanguageSession::publishDiagnostics(const std::string& uri,
          diagnostic.help.empty() ? diagnostic.message
                                  : diagnostic.message + "\n= help: " + diagnostic.help},
     });
+  }
+  // The `name.get:` / `name.set` accessor form still compiles, but the editor
+  // retires it in favour of custom access modifiers. The warning is published
+  // here rather than by the parser so library code stays warning-free.
+  if (module != nullptr) {
+    for (const LegacyPropertyAccessor& accessor : legacyPropertyAccessors(*module)) {
+      items.push_back(llvm::json::Object{
+          {"range", lspRange(accessor.range)},
+          {"severity", lspSeverity(DiagnosticSeverity::Warning)},
+          {"source", "sere"},
+          {"code", "Deprecation"},
+          // DiagnosticTag.Deprecated: the editor strikes the range through.
+          {"tags", llvm::json::Array{2}},
+          {"message",
+           "`" + accessor.member + (accessor.isGetter ? ".get`" : ".set`") +
+               " is deprecated: use a custom access modifier\n= help: " +
+               legacyPropertyHelp(accessor.owner, accessor.member, accessor.isGetter)},
+      });
+    }
   }
   writeMessage(llvm::json::Object{
       {"jsonrpc", "2.0"},
@@ -1529,7 +1557,7 @@ void LanguageSession::analyzeDocument(const std::string& uri, bool publish) {
   // not take away completion and highlighting for the rest of the document.
   (void)frontend->analyze(file.string(), found->second, stdlibDir_, /*bestEffort=*/true);
   if (publish) {
-    publishDiagnostics(uri, frontend->diagnostics());
+    publishDiagnostics(uri, frontend->diagnostics(), frontend->module());
   }
   analyzedText_[uri] = found->second;
   std::unordered_set<std::string> dependencies;
@@ -2600,6 +2628,26 @@ void LanguageSession::handleDefinition(const llvm::json::Value* id,
     }
   }
   const Node* node = findNodeAt(*frontend->module(), located->second);
+  if (node != nullptr && node->kind() == NodeKind::MemberExpr) {
+    const auto& member = static_cast<const MemberExpr&>(*node);
+    const Type* owner = member.object().resolvedType();
+    if (owner != nullptr && owner->isNamedTuple()) {
+      const int index = owner->tupleMemberIndex(member.field());
+      for (const auto& statement : frontend->module()->statements()) {
+        if (statement->kind() != NodeKind::TypeAlias)
+          continue;
+        const auto& expression = static_cast<const TypeAlias&>(*statement).type();
+        if (expression.resolvedType() != nullptr &&
+            expression.resolvedType()->canonical() == owner->canonical() && index >= 0 &&
+            static_cast<std::size_t>(index) < expression.elementRanges().size()) {
+          writeResult(id, llvm::json::Array{llvm::json::Object{
+              {"uri", located->first}, {"range", lspRange(expression.elementRanges()[index])}}});
+          return;
+        }
+      }
+    }
+  }
+
   std::string name;
   std::string container;
   bool preferMacro = false;
@@ -2823,6 +2871,12 @@ void LanguageSession::handleSignatureHelp(const llvm::json::Value* id,
       if (fn->returnType() != nullptr && !call->isConstructor()) {
         returnType = fn->returnType()->display();
       }
+    }
+    if (call->isConstructor() && call->resolvedType() != nullptr &&
+        call->resolvedType()->isNamedTuple()) {
+      types.clear();
+      for (const Type* element : call->resolvedType()->args())
+        types.push_back(element->display());
     }
     if (call->resolvedType() != nullptr && !call->isConstructor() && returnType.empty()) {
       returnType = call->resolvedType()->display();

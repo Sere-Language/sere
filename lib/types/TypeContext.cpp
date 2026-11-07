@@ -134,6 +134,26 @@ const Type* TypeContext::generic(std::string_view ctor, const std::vector<const 
   return pointer;
 }
 
+const Type* TypeContext::namedTuple(const std::vector<std::string>& names,
+                                    const std::vector<const Type*>& elements) {
+  std::vector<const Type*> args;
+  std::string key = "NT:";
+  for (std::size_t index = 0; index < elements.size(); ++index) {
+    const Type* type = elements[index]->canonical();
+    args.push_back(type);
+    key += std::to_string(names[index].size()) + ":" + names[index] + ":" +
+           std::to_string(reinterpret_cast<std::uintptr_t>(type)) + ";";
+  }
+  if (const auto found = interned_.find(key); found != interned_.end())
+    return found->second.get();
+  auto type = std::unique_ptr<Type>(new Type(TypeKind::Generic, "tuple"));
+  type->args_ = std::move(args);
+  type->tupleNames_ = names;
+  const Type* result = type.get();
+  interned_.emplace(std::move(key), std::move(type));
+  return result;
+}
+
 const Type* TypeContext::functionType(const std::vector<const Type*>& params,
                                       const Type* returnType) {
   std::vector<const Type*> canonicalParams;
@@ -359,7 +379,7 @@ const Type* TypeContext::substitute(const Type* type,
     for (const Type* arg : type->args()) {
       args.push_back(substitute(arg, subst));
     }
-    return generic(type->name(), args);
+    return type->isNamedTuple() ? namedTuple(type->tupleNames(), args) : generic(type->name(), args);
   }
   if (type->kind() == TypeKind::Function) {
     std::vector<const Type*> params;

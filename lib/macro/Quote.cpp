@@ -432,7 +432,8 @@ std::unique_ptr<TypeExpr> cloneTypeExpr(const TypeExpr& expr) {
     }
     args.push_back(cloneTypeExpr(*arg));
   }
-  return std::make_unique<TypeExpr>(expr.range(), expr.name(), std::move(args));
+  return std::make_unique<TypeExpr>(expr.range(), expr.name(), std::move(args),
+                                    expr.elementNames(), expr.elementRanges());
 }
 
 std::unique_ptr<Expr> cloneExpr(const Expr& expr) {

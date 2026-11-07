@@ -105,6 +105,7 @@ add_library(sere_driver
   driver/Toolchain.cpp
   driver/Installer.cpp
   lsp/ImportCompletion.cpp
+  lsp/LegacyProperty.cpp
   lsp/MemberCompletion.cpp
   lsp/LanguageServer.cpp
   lsp/SemanticTokens.cpp
