@@ -1581,12 +1581,8 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
         if (assign.op() != AssignOp::Assign)
           return unsupported(assign,
                              "compound assignment to computed property '" + member.field() + "'");
-        const Type* owner = resolveType(member.object().resolvedType());
-        const Type* record = owner == nullptr ? nullptr : owner->valueType();
-        const std::string setterSymbol =
-            record == nullptr ? std::string{} : methodSymbol(record, "__set_" + member.field());
-        const auto found =
-            setterSymbol.empty() ? functions_.end() : functions_.find(setterSymbol);
+        const std::string& setterSymbol = member.propertySet();
+        const auto found = functions_.find(setterSymbol);
         if (found == functions_.end())
           return unsupported(assign, "computed property '" + member.field() + "'");
         std::vector<serem::ValuePtr> arguments{emitExpression(member.object()), value};
@@ -4224,14 +4220,13 @@ serem::ValuePtr SeremGenerator::emitMember(const MemberExpr& expression) {
           "enum.unit", lowerType(record), {}, {{"tag", std::to_string(tag)}});
     }
   }
-  // A computed property (`@public name.get`) is backed by a getter method
-  // rather than a storage slot, so the read is a call and not a field access.
+  // A computed property (`@public name.get`, or a member with a custom getter
+  // from an access modifier) is backed by a getter method rather than a storage
+  // slot, so the read is a call and not a field access. `propertyGet()` holds
+  // the getter's lowered symbol name.
   if (!expression.usesBackingField() && !expression.propertyGet().empty()) {
-    const Type* owner = resolveType(expression.object().resolvedType());
-    const Type* record = owner == nullptr ? nullptr : owner->valueType();
-    const std::string symbol =
-        record == nullptr ? std::string{} : methodSymbol(record, "__get_" + expression.field());
-    const auto found = symbol.empty() ? functions_.end() : functions_.find(symbol);
+    const std::string& symbol = expression.propertyGet();
+    const auto found = functions_.find(symbol);
     if (found == functions_.end()) {
       (void)unsupported(expression, "computed property '" + expression.field() + "'");
       return nullptr;

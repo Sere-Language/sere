@@ -21,6 +21,8 @@
   </a>
 </p>
 
+### 🚨 **_Sere 0.3.0 is in development and will include major language extensions! Check [Here](https://github.com/Sere-Language/sere/issues/11) to learn what is to be added!_**
+
 Sere is a statically typed language that compiles to native code through LLVM 22. Its syntax is deliberately Python-shaped (significant indentation, `def`, f-strings, comprehensions, `class`, `match`), so it reads like something you already know. The resemblance stops at the surface. There is no interpreter, no virtual machine, and no CPython underneath; a Sere program becomes a real executable, or a `.slib` library you can drop into another project.
 
 One misunderstanding is worth heading off early.
@@ -451,3 +453,4 @@ Sere is released under the [MIT License](LICENSE).
 ## Was this made with AI?
 
 AI agents have been used for error detection, optimization opportunities, and testing. They have had no part in the language's creative design.
+

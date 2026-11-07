@@ -21,6 +21,17 @@ struct ParsedCallArguments {
   std::vector<NamedArgument> keyword;
 };
 
+/// The decorators written on one class member.
+///
+/// `exprs` holds the runtime decorator expressions and is handed to a method or
+/// nested type; `modifiers` describes every decorator as an access-modifier
+/// application, which is what a field uses.
+struct ParsedMemberDecorators {
+  std::vector<std::unique_ptr<Expr>> exprs;
+  std::vector<ModifierUse> modifiers;
+  std::vector<std::string> names;
+};
+
 class Parser {
 public:
   Parser(DiagnosticEngine& diagnostics,
@@ -80,6 +91,11 @@ private:
   [[nodiscard]] ParsedCallArguments parseCallArguments();
   std::unique_ptr<Expr> parseComprehension(std::unique_ptr<Expr> element);
   std::unique_ptr<Stmt> parseStatement();
+  /// `type @name:` — a custom access modifier (feature: custom modifiers).
+  std::unique_ptr<Stmt> parseCustomModifierDef();
+  std::unique_ptr<ModifierSpec> parseModifierSpec();
+  /// A dotted accessor path such as `self._get_$`; `$` may appear anywhere.
+  std::string parseAccessorPath();
   std::unique_ptr<FunctionDef> parseFunction(std::string externName);
   std::unique_ptr<FunctionDef> parsePropertyAccessor(std::string name, SourceRange nameRange);
   std::unique_ptr<ClassDef> parseClass(const std::string& enclosing = {});
@@ -89,6 +105,11 @@ private:
   std::unique_ptr<VarDecl> parseVarDecl(bool isStatic = false);
   void parseDecorators(bool& isPublic, bool& isPrivate);
   std::vector<std::unique_ptr<Expr>> parseDecoratorExprs();
+  /// Decorators on a class member: runtime decorator expressions plus the
+  /// `@name[get = ..., set = ...]` modifier applications a field can carry.
+  ParsedMemberDecorators parseMemberDecorators();
+  /// `using @alias as @target[get = ..., set = ...]` inside a type body.
+  void parseModifierAlias(std::vector<ModifierAlias>& aliases);
   std::vector<std::string> parseNameList();
   std::unique_ptr<ReturnStmt> parseReturn();
   std::unique_ptr<IfStmt> parseIf();
@@ -143,6 +164,8 @@ private:
   std::size_t current_ = 0;
   // Nested types lower to qualified declarations plus a type member on their parent.
   std::vector<std::unique_ptr<ClassDef>> nestedClasses_;
+  // `type @name:` declarations collected for the module being parsed.
+  std::vector<CustomModifierDef> parsedModifiers_;
   bool inQuote_ = false;
   bool allowAsCast_ = true;
 };

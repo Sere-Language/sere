@@ -855,10 +855,62 @@ private:
   std::vector<std::unique_ptr<Stmt>> body_;
 };
 
+/// One `@name` or `@name[get = ..., set = ...]` written on a member.
+///
+/// The arguments are accessor paths such as `self._get_$`; the `$` is replaced
+/// with the member's name when the modifier is applied.
+struct ModifierUse {
+  std::string name;
+  bool hasGet = false;
+  bool hasSet = false;
+  std::string getArgument{};
+  std::string setArgument{};
+  SourceRange range{};
+};
+
+/// A class-body `using @alias as @target[get = ..., set = ...]` configuration.
+struct ModifierAlias {
+  std::string alias;
+  std::string target;
+  bool hasGet = false;
+  bool hasSet = false;
+  std::string getArgument{};
+  std::string setArgument{};
+  SourceRange range{};
+};
+
+/// How one access slot of a custom modifier is described.
+enum class ModifierSpecKind {
+  /// A modifier name: `public`, `private`, `frozen`, `param`, or a custom one.
+  Modifier,
+  /// A list of specs; every entry applies (logical AND).
+  List,
+  /// `@param or <fallback>`: the argument when supplied, otherwise the fallback.
+  Fallback,
+  /// `...`: inherited from the application site.
+  Passthrough,
+};
+
+struct ModifierSpec {
+  ModifierSpecKind kind = ModifierSpecKind::Modifier;
+  std::string name{};
+  std::vector<std::unique_ptr<ModifierSpec>> items{};
+  SourceRange range{};
+};
+
+/// A module-level `type @name:` block declaring a custom access modifier.
+struct CustomModifierDef {
+  std::string name;
+  std::unique_ptr<ModifierSpec> getSpec;
+  std::unique_ptr<ModifierSpec> setSpec;
+  SourceRange range{};
+};
+
 struct FieldDecl {
   std::string name;
   std::unique_ptr<TypeExpr> type;
   std::unique_ptr<Expr> init;
+  std::vector<ModifierUse> modifiers{};
   SourceRange range{};
   bool isPublic = true;
   bool isStatic = false;
@@ -1116,6 +1168,8 @@ public:
   [[nodiscard]] std::vector<std::unique_ptr<Expr>>& decoratorExprs();
   void setDecoratedType(const Type* type);
   [[nodiscard]] const Type* decoratedType() const;
+  void setModifierAliases(std::vector<ModifierAlias> aliases);
+  [[nodiscard]] const std::vector<ModifierAlias>& modifierAliases() const;
   void setStruct(bool value);
   [[nodiscard]] bool isStruct() const;
   void setFrozen(bool value);
@@ -1130,6 +1184,7 @@ private:
   std::vector<std::unique_ptr<TypeExpr>> baseTypes_{};
   std::vector<std::string> typeParams_{};
   std::vector<std::unique_ptr<TypeExpr>> typeConstraints_{};
+  std::vector<ModifierAlias> modifierAliases_{};
   std::vector<std::string> decorators_{};
   std::vector<std::unique_ptr<Expr>> decoratorExprs_{};
   const Type* decoratedType_ = nullptr;
@@ -1327,12 +1382,15 @@ public:
   [[nodiscard]] const std::vector<std::string>& exportNames() const;
   void addExportAlias(RecordField field);
   [[nodiscard]] const std::vector<RecordField>& exportAliases() const;
+  [[nodiscard]] const std::vector<CustomModifierDef>& customModifiers() const;
+  [[nodiscard]] std::vector<CustomModifierDef>& customModifiers();
 
 private:
   std::vector<std::unique_ptr<Stmt>> statements_;
   ModuleExportMode exportMode_ = ModuleExportMode::Default;
   std::vector<std::string> exportNames_{};
   std::vector<RecordField> exportAliases_{};
+  std::vector<CustomModifierDef> customModifiers_{};
 };
 
 [[nodiscard]] bool isReservedDecoratorName(std::string_view name);

@@ -38,6 +38,9 @@ struct RecordField {
   std::string setterLlvm{};
   bool getterPublic = true;
   bool setterPublic = true;
+  /// Set by a custom access modifier that includes `frozen` in its `set` half:
+  /// the member may only be written during construction.
+  bool frozen = false;
   std::vector<std::string> paramNames{};
   std::vector<const Type*> payloadTypes{};
   std::size_t requiredArgs = 0;

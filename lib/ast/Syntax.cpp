@@ -1441,6 +1441,14 @@ const Type* ClassDef::decoratedType() const {
   return decoratedType_;
 }
 
+void ClassDef::setModifierAliases(std::vector<ModifierAlias> aliases) {
+  modifierAliases_ = std::move(aliases);
+}
+
+const std::vector<ModifierAlias>& ClassDef::modifierAliases() const {
+  return modifierAliases_;
+}
+
 void ClassDef::setStruct(bool value) {
   isStruct_ = value;
 }
@@ -1546,8 +1554,15 @@ std::vector<std::unique_ptr<Stmt>>& Module::statements() {
   return statements_;
 }
 
-void Module::insertFront(std::vector<std::unique_ptr<Stmt>> extra) {
-  for (std::unique_ptr<Stmt>& statement : extra) {
+const std::vector<CustomModifierDef>& Module::customModifiers() const {
+  return customModifiers_;
+}
+
+std::vector<CustomModifierDef>& Module::customModifiers() {
+  return customModifiers_;
+}
+
+void Module::insertFront(std::vector<std::unique_ptr<Stmt>> extra) {  for (std::unique_ptr<Stmt>& statement : extra) {
     statement->setFromPrelude(true);
     if (statement->kind() == NodeKind::ClassDef) {
       for (const std::unique_ptr<FunctionDef>& method :

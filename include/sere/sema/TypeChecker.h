@@ -109,6 +109,7 @@ private:
   bool collectClassNames(Module& module);
   bool collectEnumNames(Module& module);
   bool collectEnums(Module& module);
+  bool collectModifiers(Module& module);
   bool collectAliases(Module& module);
   bool flattenClass(ClassDef& classDef);
   bool collectClassFields(Module& module);
@@ -238,6 +239,31 @@ private:
   std::unordered_map<const Type*, const std::vector<std::unique_ptr<TypeExpr>>*>
       recordConstraintExprs_{};
   std::vector<const Type*> resolvingConstraints_{};
+  /// One resolved access slot of a member: the `get` or the `set` half of the
+  /// modifiers written on it.
+  struct AccessRule {
+    bool isPrivate = false;
+    bool isFrozen = false;
+    bool hasCallable = false;
+    std::string callable;
+  };
+  [[nodiscard]] bool resolveFieldAccess(const ClassDef& classDef,
+                                        const FieldDecl& field,
+                                        AccessRule& getRule,
+                                        AccessRule& setRule,
+                                        bool& declaredPrivate);
+  [[nodiscard]] bool applyModifierSpec(const ModifierSpec& spec,
+                                       const std::string& getArgument,
+                                       const std::string& setArgument,
+                                       bool isGet,
+                                       AccessRule& rule,
+                                       SourceRange range,
+                                       int depth);
+  [[nodiscard]] const ModifierAlias* findModifierAlias(const ClassDef& classDef,
+                                                       std::string_view name) const;
+  [[nodiscard]] std::optional<std::string> accessorLlvmName(const ClassDef& classDef,
+                                                            std::string_view methodName) const;
+  std::unordered_map<std::string, const CustomModifierDef*> customModifiers_{};
   TypeContext* types_;
   DiagnosticEngine* diagnostics_;
   std::vector<std::unordered_map<std::string, Symbol>> scopes_{};

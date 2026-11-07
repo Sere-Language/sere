@@ -1542,6 +1542,270 @@ std::vector<std::unique_ptr<Expr>> Parser::parseDecoratorExprs() {
   return exprs;
 }
 
+std::string Parser::parseAccessorPath() {
+  // `self._get_$` and `self.set$var` both lex as a chain of names and `$`
+  // tokens, so the path is rebuilt from token spellings.
+  std::string path;
+  bool expectSegment = true;
+  while (true) {
+    if (check(TokenKind::Identifier) || check(TokenKind::KeywordType)) {
+      path += std::string(advance().spelling());
+      expectSegment = false;
+      continue;
+    }
+    if (check(TokenKind::Dollar)) {
+      advance();
+      path += "$";
+      expectSegment = false;
+      continue;
+    }
+    if (check(TokenKind::Dot)) {
+      advance();
+      path += ".";
+      expectSegment = true;
+      continue;
+    }
+    break;
+  }
+  if (path.empty() || expectSegment) {
+    diagnostics_->error(peek().range(), "expected an accessor path after '='");
+  }
+  return path;
+}
+
+std::unique_ptr<ModifierSpec> Parser::parseModifierSpec() {
+  const SourceRange start = peek().range();
+  std::unique_ptr<ModifierSpec> spec;
+  if (match(TokenKind::DotDotDot)) {
+    spec = std::make_unique<ModifierSpec>();
+    spec->kind = ModifierSpecKind::Passthrough;
+  } else if (match(TokenKind::At)) {
+    std::string name = parseIdentifier("expected a modifier name after '@'");
+    if (name.empty()) {
+      return nullptr;
+    }
+    spec = std::make_unique<ModifierSpec>();
+    spec->kind = ModifierSpecKind::Modifier;
+    spec->name = std::move(name);
+  } else if (match(TokenKind::LBracket)) {
+    spec = std::make_unique<ModifierSpec>();
+    spec->kind = ModifierSpecKind::List;
+    skipNewlines();
+    while (!check(TokenKind::RBracket) && !isAtEnd()) {
+      std::unique_ptr<ModifierSpec> item = parseModifierSpec();
+      if (item == nullptr) {
+        return nullptr;
+      }
+      spec->items.push_back(std::move(item));
+      skipNewlines();
+      if (!match(TokenKind::Comma)) {
+        break;
+      }
+      skipNewlines();
+    }
+    skipNewlines();
+    if (!consume(TokenKind::RBracket, "expected ']' after a modifier list")) {
+      return nullptr;
+    }
+  } else {
+    diagnostics_->error(peek().range(), "expected a modifier, a modifier list, or '...'");
+    return nullptr;
+  }
+  spec->range = SourceRange{start.start, previous().range().end};
+  if (match(TokenKind::KeywordOr)) {
+    std::unique_ptr<ModifierSpec> fallback = parseModifierSpec();
+    if (fallback == nullptr) {
+      return nullptr;
+    }
+    auto combined = std::make_unique<ModifierSpec>();
+    combined->kind = ModifierSpecKind::Fallback;
+    combined->range = SourceRange{spec->range.start, fallback->range.end};
+    // items[0] is the placeholder that the application may replace, items[1]
+    // is the default used when no argument is supplied.
+    combined->items.push_back(std::move(spec));
+    combined->items.push_back(std::move(fallback));
+    return combined;
+  }
+  return spec;
+}
+
+std::unique_ptr<Stmt> Parser::parseCustomModifierDef() {
+  const Token& keyword = advance(); // `type`
+  (void)consume(TokenKind::At, "expected '@' after 'type'");
+  const SourceRange nameRange = peek().range();
+  std::string name = parseIdentifier("expected a modifier name");
+  if (name.empty() ||
+      !consume(TokenKind::Colon, "expected ':' after the modifier name") ||
+      !consume(TokenKind::Newline, "expected a newline after the modifier header") ||
+      !consume(TokenKind::Indent, "expected an indented modifier body")) {
+    return nullptr;
+  }
+  CustomModifierDef definition;
+  definition.name = std::move(name);
+  definition.range = SourceRange{keyword.range().start, nameRange.end};
+  while (!check(TokenKind::Dedent) && !isAtEnd()) {
+    skipNewlines();
+    if (check(TokenKind::Dedent)) {
+      break;
+    }
+    const SourceRange keyRange = peek().range();
+    std::string key = parseIdentifier("expected 'get' or 'set'");
+    if (key.empty() || !consume(TokenKind::Equal, "expected '=' after 'get' or 'set'")) {
+      return nullptr;
+    }
+    std::unique_ptr<ModifierSpec> spec = parseModifierSpec();
+    if (spec == nullptr || !finishLine()) {
+      return nullptr;
+    }
+    if (key == "get") {
+      if (definition.getSpec != nullptr) {
+        diagnostics_->error(keyRange, "duplicate 'get' in custom modifier '@" + definition.name + "'");
+        return nullptr;
+      }
+      definition.getSpec = std::move(spec);
+    } else if (key == "set") {
+      if (definition.setSpec != nullptr) {
+        diagnostics_->error(keyRange, "duplicate 'set' in custom modifier '@" + definition.name + "'");
+        return nullptr;
+      }
+      definition.setSpec = std::move(spec);
+    } else {
+      diagnostics_->error(keyRange, "expected 'get' or 'set', found '" + key + "'");
+      return nullptr;
+    }
+  }
+  if (!consume(TokenKind::Dedent, "expected the end of the modifier body")) {
+    return nullptr;
+  }
+  if (definition.getSpec == nullptr && definition.setSpec == nullptr) {
+    diagnostics_->error(keyword.range(),
+                        "custom modifier '@" + definition.name +
+                            "' must declare 'get', 'set', or both");
+    return nullptr;
+  }
+  parsedModifiers_.push_back(std::move(definition));
+  // The declaration is consumed by the checker, not by the statement stream.
+  return std::make_unique<PassStmt>(keyword.range());
+}
+
+ParsedMemberDecorators Parser::parseMemberDecorators() {
+  ParsedMemberDecorators result;
+  while (match(TokenKind::At)) {
+    if (check(TokenKind::KeywordStatic)) {
+      const Token& keyword = advance();
+      ModifierUse use;
+      use.name = "static";
+      use.range = keyword.range();
+      result.names.push_back(use.name);
+      result.modifiers.push_back(std::move(use));
+      result.exprs.push_back(std::make_unique<NameExpr>(keyword.range(), "static"));
+    } else if (check(TokenKind::Identifier) && peekNth(1).kind() == TokenKind::LBracket &&
+               peekNth(2).kind() == TokenKind::Identifier &&
+               peekNth(3).kind() == TokenKind::Equal) {
+      // `@name[get = <accessor>, set = <accessor>]`
+      ModifierUse use;
+      const Token& nameToken = advance();
+      use.name = std::string(nameToken.spelling());
+      use.range = nameToken.range();
+      advance(); // '['
+      skipNewlines();
+      while (!check(TokenKind::RBracket) && !isAtEnd()) {
+        const SourceRange keyRange = peek().range();
+        std::string key = parseIdentifier("expected 'get' or 'set'");
+        if (key.empty() || !consume(TokenKind::Equal, "expected '=' after 'get' or 'set'")) {
+          break;
+        }
+        std::string path = parseAccessorPath();
+        if (key == "get") {
+          use.hasGet = true;
+          use.getArgument = std::move(path);
+        } else if (key == "set") {
+          use.hasSet = true;
+          use.setArgument = std::move(path);
+        } else {
+          diagnostics_->error(keyRange,
+                              "expected 'get' or 'set' in a modifier application, found '" + key +
+                                  "'");
+        }
+        skipNewlines();
+        if (!match(TokenKind::Comma)) {
+          break;
+        }
+        skipNewlines();
+      }
+      skipNewlines();
+      if (!consume(TokenKind::RBracket, "expected ']' after modifier arguments")) {
+        break;
+      }
+      result.names.push_back(use.name);
+      result.modifiers.push_back(std::move(use));
+    } else {
+      std::unique_ptr<Expr> expr = parsePostfix();
+      if (expr == nullptr) {
+        diagnostics_->error(previous().range(), "expected decorator expression after '@'");
+        break;
+      }
+      ModifierUse use;
+      use.name = decoratorExprName(*expr);
+      use.range = expr->range();
+      result.names.push_back(use.name);
+      result.modifiers.push_back(std::move(use));
+      result.exprs.push_back(std::move(expr));
+    }
+    skipNewlines();
+  }
+  return result;
+}
+
+void Parser::parseModifierAlias(std::vector<ModifierAlias>& aliases) {
+  advance(); // `using`
+  (void)consume(TokenKind::At, "expected '@' after 'using'");
+  ModifierAlias alias;
+  alias.alias = parseIdentifier("expected a modifier alias name");
+  if (alias.alias.empty() || !(check(TokenKind::KeywordAs) && match(TokenKind::KeywordAs))) {
+    diagnostics_->error(peek().range(), "expected 'as' in a modifier alias");
+    return;
+  }
+  (void)consume(TokenKind::At, "expected '@' before the aliased modifier");
+  alias.range = previous().range();
+  alias.target = parseIdentifier("expected the aliased modifier name");
+  if (alias.target.empty()) {
+    return;
+  }
+  skipNewlines();
+  if (match(TokenKind::LBracket)) {
+    skipNewlines();
+    while (!check(TokenKind::RBracket) && !isAtEnd()) {
+      const SourceRange keyRange = peek().range();
+      std::string key = parseIdentifier("expected 'get' or 'set'");
+      if (key.empty() || !consume(TokenKind::Equal, "expected '=' after 'get' or 'set'")) {
+        break;
+      }
+      std::string path = parseAccessorPath();
+      if (key == "get") {
+        alias.hasGet = true;
+        alias.getArgument = std::move(path);
+      } else if (key == "set") {
+        alias.hasSet = true;
+        alias.setArgument = std::move(path);
+      } else {
+        diagnostics_->error(keyRange, "expected 'get' or 'set' in a modifier alias");
+      }
+      skipNewlines();
+      if (!match(TokenKind::Comma)) {
+        break;
+      }
+      skipNewlines();
+    }
+    skipNewlines();
+    (void)consume(TokenKind::RBracket, "expected ']' after modifier alias arguments");
+  }
+  if (!finishLine()) {
+    return;
+  }
+  aliases.push_back(std::move(alias));
+}
+
 void Parser::parseDecorators(bool& isPublic, bool& isPrivate) {
   isPublic = false;
   isPrivate = false;
@@ -2434,11 +2698,17 @@ std::unique_ptr<ClassDef> Parser::parseClass(const std::string& enclosing) {
   }
   std::vector<FieldDecl> fields;
   std::vector<std::unique_ptr<FunctionDef>> methods;
+  std::vector<ModifierAlias> modifierAliases;
   std::string classDocstring;
   while (!check(TokenKind::Dedent) && !isAtEnd()) {
     skipNewlines();
     if (check(TokenKind::Dedent)) {
       break;
+    }
+    if (check(TokenKind::Identifier) && peek().spelling() == "using" &&
+        peekNth(1).kind() == TokenKind::At) {
+      parseModifierAlias(modifierAliases);
+      continue;
     }
     if (check(TokenKind::String) && classDocstring.empty()) {
       std::unique_ptr<Expr> doc = parseExpr();
@@ -2448,8 +2718,9 @@ std::unique_ptr<ClassDef> Parser::parseClass(const std::string& enclosing) {
       classDocstring = static_cast<const StringLiteral&>(*doc).value();
       continue;
     }
-    std::vector<std::unique_ptr<Expr>> decoratorExprs = parseDecoratorExprs();
-    const std::vector<std::string> decorators = decoratorExprNames(decoratorExprs);
+    ParsedMemberDecorators parsedMemberDecorators = parseMemberDecorators();
+    std::vector<std::unique_ptr<Expr>> decoratorExprs = std::move(parsedMemberDecorators.exprs);
+    const std::vector<std::string> decorators = parsedMemberDecorators.names;
     bool markedPrivate = false;
     bool markedAbstract = false;
     bool markedOverride = false;
@@ -2554,6 +2825,7 @@ std::unique_ptr<ClassDef> Parser::parseClass(const std::string& enclosing) {
       continue;
     }
     field.isPublic = !markedPrivate;
+    field.modifiers = parsedMemberDecorators.modifiers;
     fields.push_back(std::move(field));
   }
   if (!consume(TokenKind::Dedent, "expected dedent after type body")) {
@@ -2567,6 +2839,7 @@ std::unique_ptr<ClassDef> Parser::parseClass(const std::string& enclosing) {
                                         std::move(typeParams));
   def->setTypeConstraints(std::move(typeConstraints));
   def->setBaseTypes(std::move(baseTypes));
+  def->setModifierAliases(std::move(modifierAliases));
   def->setStruct(isStruct);
   def->setDocstring(classDocstring);
   return def;
@@ -2706,6 +2979,9 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
       }
     }
     return classDef;
+  }
+  if (check(TokenKind::KeywordType) && peekNth(1).kind() == TokenKind::At) {
+    return parseCustomModifierDef();
   }
   if (check(TokenKind::KeywordType) && peekNth(1).kind() == TokenKind::Identifier &&
       (peekNth(2).kind() == TokenKind::Equal || peekNth(2).kind() == TokenKind::LBracket)) {
@@ -2852,7 +3128,9 @@ std::unique_ptr<Module> Parser::parseModule() {
     range.start = statements.front()->range().start;
     range.end = statements.back()->range().end;
   }
-  return std::make_unique<Module>(range, std::move(statements));
+  auto module = std::make_unique<Module>(range, std::move(statements));
+  module->customModifiers() = std::move(parsedModifiers_);
+  return module;
 }
 
 std::unique_ptr<Expr> Parser::parseTopExpr() {

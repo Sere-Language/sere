@@ -23,6 +23,21 @@
 namespace sere {
 namespace {
 
+/// Replaces every `$` in an accessor path with the member it is applied to.
+[[nodiscard]] std::string substituteMemberName(const std::string& path,
+                                               std::string_view member) {
+  std::string out;
+  out.reserve(path.size() + member.size());
+  for (const char character : path) {
+    if (character == '$') {
+      out += member;
+    } else {
+      out += character;
+    }
+  }
+  return out;
+}
+
 /// Expands the space-separated parameter-name string stored on an intrinsic
 /// registry row (IntrinsicInfo::params) into the vector used by symbols and
 /// hover text. Keeping the tokens inline on the row means there is a single
@@ -5182,6 +5197,12 @@ bool TypeChecker::checkAssign(AssignStmt& statement) {
       const bool initBacking = currentClass_ == objectType->name() &&
                                currentFunctionName_ == "__init__" && field != nullptr &&
                                field->stored;
+      if (field != nullptr && field->frozen && !initBacking) {
+        diagnostics_->error(statement.range(),
+                            "field '" + member.field() + "' of '" + objectType->name() +
+                                "' is frozen");
+        return false;
+      }
       if (field != nullptr && !field->setterLlvm.empty() && !ownAccessor && !initBacking) {
         if (!field->setterPublic && !canAccessPrivate(objectType)) {
           diagnostics_->error(statement.range(),
@@ -6152,6 +6173,211 @@ bool TypeChecker::collectEnums(Module& module) {
   return true;
 }
 
+bool TypeChecker::collectModifiers(Module& module) {
+  for (const CustomModifierDef& definition : module.customModifiers()) {
+    if (isReservedDecoratorName(definition.name)) {
+      diagnostics_->error(definition.range,
+                          "'@" + definition.name + "' is a built-in access modifier");
+      if (!bestEffort_) {
+        return false;
+      }
+      continue;
+    }
+    if (customModifiers_.contains(definition.name)) {
+      diagnostics_->error(definition.range,
+                          "duplicate custom modifier '@" + definition.name + "'");
+      if (!bestEffort_) {
+        return false;
+      }
+      continue;
+    }
+    customModifiers_[definition.name] = &definition;
+  }
+  return true;
+}
+
+const ModifierAlias* TypeChecker::findModifierAlias(const ClassDef& classDef,
+                                                    std::string_view name) const {
+  for (const ModifierAlias& alias : classDef.modifierAliases()) {
+    if (alias.alias == name) {
+      return &alias;
+    }
+  }
+  return nullptr;
+}
+
+std::optional<std::string> TypeChecker::accessorLlvmName(const ClassDef& classDef,
+                                                         std::string_view methodName) const {
+  for (const std::unique_ptr<FunctionDef>& method : classDef.methods()) {
+    if (method == nullptr || method->name() != methodName) {
+      continue;
+    }
+    const std::string methodModule = classDef.fromPrelude() ? "prelude" : moduleName_;
+    if (methodModule != "__main__" && !methodModule.empty()) {
+      return methodModule + "_" + classDef.name() + "_" + method->name();
+    }
+    return classDef.name() + "_" + method->name();
+  }
+  return std::nullopt;
+}
+
+bool TypeChecker::applyModifierSpec(const ModifierSpec& spec,
+                                    const std::string& getArgument,
+                                    const std::string& setArgument,
+                                    bool isGet,
+                                    AccessRule& rule,
+                                    SourceRange range,
+                                    int depth) {
+  switch (spec.kind) {
+  case ModifierSpecKind::Passthrough:
+    // `...` accepts whatever the application site adds; nothing to inherit
+    // until modifiers can be composed at the use site.
+    return true;
+  case ModifierSpecKind::List:
+    for (const std::unique_ptr<ModifierSpec>& item : spec.items) {
+      if (item == nullptr) {
+        continue;
+      }
+      if (!applyModifierSpec(*item, getArgument, setArgument, isGet, rule, range, depth)) {
+        return false;
+      }
+    }
+    return true;
+  case ModifierSpecKind::Fallback: {
+    if (spec.items.size() != 2 || spec.items[0] == nullptr || spec.items[1] == nullptr) {
+      return true;
+    }
+    const std::string& argument = isGet ? getArgument : setArgument;
+    return applyModifierSpec(argument.empty() ? *spec.items[1] : *spec.items[0],
+                             getArgument,
+                             setArgument,
+                             isGet,
+                             rule,
+                             range,
+                             depth);
+  }
+  case ModifierSpecKind::Modifier:
+    break;
+  }
+  if (spec.name == "public") {
+    return true;
+  }
+  if (spec.name == "private") {
+    rule.isPrivate = true;
+    return true;
+  }
+  if (spec.name == "frozen") {
+    rule.isFrozen = true;
+    return true;
+  }
+  if (spec.name == "param") {
+    const std::string& argument = isGet ? getArgument : setArgument;
+    if (argument.empty()) {
+      diagnostics_->error(
+          range,
+          std::string("this custom modifier requires a '") + (isGet ? "get" : "set") +
+              "' argument; write it as @modifier[get = self.accessor]");
+      return false;
+    }
+    rule.hasCallable = true;
+    rule.callable = argument;
+    return true;
+  }
+  const auto found = customModifiers_.find(spec.name);
+  if (found == customModifiers_.end()) {
+    diagnostics_->error(range, "unknown access modifier '@" + spec.name + "'");
+    return false;
+  }
+  if (depth > 8) {
+    diagnostics_->error(range, "custom modifier '@" + spec.name + "' is defined in terms of itself");
+    return false;
+  }
+  const CustomModifierDef& nested = *found->second;
+  const ModifierSpec* nestedSpec = isGet ? nested.getSpec.get() : nested.setSpec.get();
+  if (nestedSpec == nullptr) {
+    nestedSpec = isGet ? nested.setSpec.get() : nested.getSpec.get();
+  }
+  if (nestedSpec == nullptr) {
+    return true;
+  }
+  return applyModifierSpec(*nestedSpec, getArgument, setArgument, isGet, rule, range, depth + 1);
+}
+
+bool TypeChecker::resolveFieldAccess(const ClassDef& classDef,
+                                     const FieldDecl& field,
+                                     AccessRule& getRule,
+                                     AccessRule& setRule,
+                                     bool& declaredPrivate) {
+  for (const ModifierUse& use : field.modifiers) {
+    if (use.name == "private") {
+      declaredPrivate = true;
+      getRule.isPrivate = true;
+      setRule.isPrivate = true;
+      continue;
+    }
+    if (use.name == "frozen") {
+      getRule.isFrozen = true;
+      setRule.isFrozen = true;
+      continue;
+    }
+    if (use.name.empty() || use.name == "public" || use.name == "static") {
+      continue;
+    }
+    // A `using @alias as @target[...]` in this type body stands in for the
+    // configured target modifier.
+    const ModifierAlias* alias = findModifierAlias(classDef, use.name);
+    const std::string targetName = alias != nullptr ? alias->target : use.name;
+    const auto found = customModifiers_.find(targetName);
+    if (found == customModifiers_.end()) {
+      // Not a known modifier: leave the decorator to whatever else consumes it.
+      continue;
+    }
+    std::string getArgument;
+    std::string setArgument;
+    if (use.hasGet) {
+      getArgument = use.getArgument;
+    } else if (alias != nullptr && alias->hasGet) {
+      getArgument = alias->getArgument;
+    }
+    if (use.hasSet) {
+      setArgument = use.setArgument;
+    } else if (alias != nullptr && alias->hasSet) {
+      setArgument = alias->setArgument;
+    }
+    getArgument = substituteMemberName(getArgument, field.name);
+    setArgument = substituteMemberName(setArgument, field.name);
+
+    const CustomModifierDef& definition = *found->second;
+    if (definition.getSpec != nullptr &&
+        !applyModifierSpec(*definition.getSpec,
+                           getArgument,
+                           setArgument,
+                           true,
+                           getRule,
+                           use.range,
+                           0)) {
+      return false;
+    }
+    if (definition.setSpec != nullptr) {
+      if (!applyModifierSpec(*definition.setSpec,
+                             getArgument,
+                             setArgument,
+                             false,
+                             setRule,
+                             use.range,
+                             0)) {
+        return false;
+      }
+    } else {
+      // `set` inherits the access half of `get`; a callable getter does not
+      // become the setter.
+      setRule.isPrivate = setRule.isPrivate || getRule.isPrivate;
+      setRule.isFrozen = setRule.isFrozen || getRule.isFrozen;
+    }
+  }
+  return true;
+}
+
 bool TypeChecker::collectAliases(Module& module) {
   for (const std::unique_ptr<Stmt>& statement : module.statements()) {
     if (statement == nullptr || statement->kind() != NodeKind::TypeAlias) {
@@ -6281,7 +6507,63 @@ bool TypeChecker::flattenClass(ClassDef& classDef) {
     if (type == nullptr) {
       continue;
     }
-    RecordField created{field.name, type, field.isPublic, field.isStatic};
+    AccessRule getRule;
+    AccessRule setRule;
+    bool declaredPrivate = !field.isPublic;
+    if (!field.modifiers.empty() &&
+        !resolveFieldAccess(classDef, field, getRule, setRule, declaredPrivate) && !bestEffort_) {
+      return false;
+    }
+    RecordField created{
+        field.name, type, !declaredPrivate && !getRule.isPrivate, field.isStatic};
+    created.getterPublic = !getRule.isPrivate;
+    created.setterPublic = !setRule.isPrivate;
+    created.frozen = getRule.isFrozen || setRule.isFrozen;
+    const auto bindAccessor = [&](const std::string& path, bool isGetter) -> bool {
+      std::string methodName = path;
+      if (methodName.rfind("self.", 0) == 0) {
+        methodName = methodName.substr(5);
+      }
+      if (methodName.empty() || methodName.find('.') != std::string::npos) {
+        diagnostics_->error(field.range,
+                            "a custom accessor must name a method on self, for example self._get_" +
+                                field.name);
+        return false;
+      }
+      const std::optional<std::string> llvm = accessorLlvmName(classDef, methodName);
+      if (!llvm.has_value()) {
+        diagnostics_->error(field.range,
+                            "custom accessor '" + path + "' is not a method of '" +
+                                classDef.name() + "'");
+        return false;
+      }
+      const FunctionDef* definition = nullptr;
+      for (const std::unique_ptr<FunctionDef>& method : classDef.methods()) {
+        if (method != nullptr && method->name() == methodName) {
+          definition = method.get();
+        }
+      }
+      const std::size_t expected = isGetter ? 1 : 2;
+      if (definition != nullptr && definition->params().size() != expected) {
+        diagnostics_->error(
+            field.range,
+            std::string("custom ") + (isGetter ? "getter '" : "setter '") + methodName +
+                "' must take " + (isGetter ? "only self" : "self and one value"));
+        return false;
+      }
+      if (isGetter) {
+        created.getterLlvm = *llvm;
+      } else {
+        created.setterLlvm = *llvm;
+      }
+      return true;
+    };
+    if (getRule.hasCallable && !bindAccessor(getRule.callable, true) && !bestEffort_) {
+      return false;
+    }
+    if (setRule.hasCallable && !bindAccessor(setRule.callable, false) && !bestEffort_) {
+      return false;
+    }
     if (field.isStatic) {
       const Type* record = classDef.resolvedType();
       const std::string owner = record != nullptr && !record->qualifier().empty()
@@ -7684,6 +7966,9 @@ bool TypeChecker::check(Module& module) {
     return false;
   }
   if (!run(collectEnumNames(module))) {
+    return false;
+  }
+  if (!run(collectModifiers(module))) {
     return false;
   }
   if (!run(collectAliases(module))) {
