@@ -5713,7 +5713,16 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
         }
         address = entryAlloca(builder, llvmType, nullptr, "prop.tmp");
         if (assign.op() != AssignOp::Assign) {
-          llvm::Value* current = emitExpr(builder, assign.target());
+          llvm::Value* current = nullptr;
+          if (member.propertyGet().empty()) {
+            const Type* owner = resolveType(record);
+            const int index = owner->fieldIndex(member.field());
+            llvm::Value* storage = builder.CreateStructGEP(
+                lower(owner), propertySelf, llvmFieldIndex(owner, index));
+            current = builder.CreateLoad(llvmType, storage);
+          } else {
+            current = emitNamedMethod(builder, member.propertyGet(), propertySelf, {});
+          }
           if (current == nullptr) {
             return false;
           }
@@ -5740,6 +5749,16 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
     }
     if (assign.op() != AssignOp::Assign) {
       llvm::Value* current = builder.CreateLoad(lower(assign.target().resolvedType()), address);
+      if (propertyTarget == nullptr && assign.target().kind() == NodeKind::MemberExpr) {
+        const auto& member = static_cast<const MemberExpr&>(assign.target());
+        if (!member.propertyGet().empty()) {
+          llvm::Value* self = emitObjectPointer(builder, member.object(), member.object().resolvedType());
+          current = emitNamedMethod(builder, member.propertyGet(), self, {});
+          if (current == nullptr) {
+            return false;
+          }
+        }
+      }
       llvm::Value* combined =
           emitCompoundAssign(builder, assign, address, current, value, targetType, rhsType);
       if (combined != nullptr) {

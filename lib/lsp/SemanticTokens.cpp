@@ -213,6 +213,10 @@ void emitIdentifier(const std::vector<Token>& tokens, std::size_t index, const T
   const Token& token = tokens[index];
   const std::string_view name = token.spelling();
   const TokenKind prev = previousKind(tokens, index);
+  if (prev == TokenKind::At) {
+    pushToken(out, token.range(), SemanticType::Modifier, 0);
+    return;
+  }
   int type = declarationType(prev);
   std::uint32_t mods = type >= 0 ? static_cast<std::uint32_t>(SemanticMod::Declaration) : 0;
   if (prev == TokenKind::KeywordDef) {

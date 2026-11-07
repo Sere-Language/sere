@@ -6,6 +6,20 @@ type @optional_access:
     get = @param or @public
     set = @param or @private
 
+type @mixed_access:
+    get = @param or @public
+    set = @param or @public
+
+class Mixed:
+    @mixed_access[get = self.read] value: i32 = 0
+    @mixed_access[set = self.write] other: i32 = 1
+
+    def read(self) -> i32:
+        return self.value + 1
+
+    def write(self, value: i32) -> void:
+        self.other = value * 2
+
 class Meter:
     @property_access[get = self.read_value, set = self.write_value] value: i32
     @optional_access plain: i32
@@ -21,7 +35,10 @@ class Meter:
         self.value = value * 2
 
 class Aliased:
-    using @access as @property_access[get = self.read_$, set = self.write_$]
+    using @access as @property_access[
+        get = self.read_$
+        set = self.write_$
+    ]
     @access x: i32
     @access y: i32
 
@@ -42,6 +59,13 @@ class Aliased:
         self.y = value + 20
 
 def main() -> i32:
+    mixed: Mixed = Mixed()
+    mixed.value = 4
+    assert mixed.value == 5
+    mixed.value += 2
+    assert mixed.value == 8
+    mixed.other += 2
+    assert mixed.other == 6
     meter: Meter = Meter()
     assert meter.value == 3
     assert meter.plain == 7

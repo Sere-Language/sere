@@ -1576,16 +1576,40 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
         return true;
       }
       // A computed property with a setter is written by calling it: there is no
-      // slot to store into.
+      // slot to store into. A compound assignment reads through the getter
+      // first, so `value += 1` is a get, an add, and a set.
       if (!member.usesBackingField() && !member.propertySet().empty()) {
-        if (assign.op() != AssignOp::Assign)
-          return unsupported(assign,
-                             "compound assignment to computed property '" + member.field() + "'");
-        const std::string& setterSymbol = member.propertySet();
+        const Type* owner = resolveType(member.object().resolvedType());
+        const Type* record = owner == nullptr ? nullptr : owner->valueType();
+        std::string setterSymbol = methodSymbolForLlvm(record, member.propertySet());
+        if (setterSymbol.empty()) {
+          setterSymbol = member.propertySet();
+        }
         const auto found = functions_.find(setterSymbol);
         if (found == functions_.end())
           return unsupported(assign, "computed property '" + member.field() + "'");
-        std::vector<serem::ValuePtr> arguments{emitExpression(member.object()), value};
+        serem::ValuePtr written = value;
+        if (assign.op() != AssignOp::Assign) {
+          if (member.propertyGet().empty())
+            return unsupported(assign, "compound assignment to write-only property '" +
+                                           member.field() + "'");
+          std::string getterSymbol = methodSymbolForLlvm(record, member.propertyGet());
+          if (getterSymbol.empty()) {
+            getterSymbol = member.propertyGet();
+          }
+          const auto getter = functions_.find(getterSymbol);
+          if (getter == functions_.end())
+            return unsupported(assign, "computed property '" + member.field() + "'");
+          const Type* memberType = assign.target().resolvedType();
+          std::vector<serem::ValuePtr> getArguments{emitExpression(member.object())};
+          serem::ValuePtr current =
+              builder_->call(std::make_shared<serem::FunctionRef>(getterSymbol, getter->second),
+                             std::move(getArguments), lowerType(memberType));
+          written = compoundAssignValue(assign.op(), std::move(current), value, memberType);
+          if (written == nullptr)
+            return unsupported(assign, "unsupported compound assignment to a computed property");
+        }
+        std::vector<serem::ValuePtr> arguments{emitExpression(member.object()), written};
         (void)builder_->call(std::make_shared<serem::FunctionRef>(setterSymbol, found->second),
                              std::move(arguments), serem::IRType::voidType());
         return true;
@@ -2635,6 +2659,28 @@ serem::ValuePtr SeremGenerator::coerce(serem::ValuePtr value, const Type* from, 
   return value;
 }
 
+std::string SeremGenerator::methodSymbolForLlvm(const Type* record,
+                                                const std::string& llvmName) const {
+  if (record == nullptr || llvmName.empty()) {
+    return {};
+  }
+  for (const RecordMethod& method : record->methods()) {
+    if (!method.llvmName.empty() && method.llvmName == llvmName) {
+      const std::string symbol = methodSymbol(record, method.name);
+      if (!symbol.empty()) {
+        return symbol;
+      }
+    }
+  }
+  for (const Type* base : record->bases()) {
+    const std::string symbol = methodSymbolForLlvm(base, llvmName);
+    if (!symbol.empty()) {
+      return symbol;
+    }
+  }
+  return {};
+}
+
 std::string SeremGenerator::methodSymbol(const Type* record, std::string_view name) const {
   if (record == nullptr)
     return {};
@@ -2676,8 +2722,7 @@ std::string SeremGenerator::methodSymbol(const Type* record, std::string_view na
 serem::ValuePtr SeremGenerator::callMethod(const Type* record,
                                            const std::string& name,
                                            serem::ValuePtr self,
-                                           const std::vector<serem::ValuePtr>& arguments) {
-  if (record == nullptr || self == nullptr)
+                                           const std::vector<serem::ValuePtr>& arguments) {  if (record == nullptr || self == nullptr)
     return nullptr;
   const std::string symbol = methodSymbol(record, name);
   if (symbol.empty())
@@ -4225,7 +4270,12 @@ serem::ValuePtr SeremGenerator::emitMember(const MemberExpr& expression) {
   // slot, so the read is a call and not a field access. `propertyGet()` holds
   // the getter's lowered symbol name.
   if (!expression.usesBackingField() && !expression.propertyGet().empty()) {
-    const std::string& symbol = expression.propertyGet();
+    const Type* owner = resolveType(expression.object().resolvedType());
+    const Type* record = owner == nullptr ? nullptr : owner->valueType();
+    std::string symbol = methodSymbolForLlvm(record, expression.propertyGet());
+    if (symbol.empty()) {
+      symbol = expression.propertyGet();
+    }
     const auto found = functions_.find(symbol);
     if (found == functions_.end()) {
       (void)unsupported(expression, "computed property '" + expression.field() + "'");

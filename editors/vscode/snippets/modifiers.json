@@ -1,0 +1,17 @@
+{
+  "Custom access modifier": {
+    "prefix": "modifier",
+    "body": ["type @${1:access}:", "    get = @param or @public", "    set = @param or @private"],
+    "description": "Define configurable accessors with fallback access rules"
+  },
+  "Configured member access": {
+    "prefix": "accessor",
+    "body": ["@${1:access}[get = self.${2:read_value}, set = self.${3:write_value}] ${4:value}: ${5:i32}"],
+    "description": "Bind a member to custom getter and setter methods"
+  },
+  "Reusable access modifier": {
+    "prefix": "usingmodifier",
+    "body": ["using @${1:alias} as @${2:access}[", "    get = self._get_\\$", "    set = self._set_\\$", "]"],
+    "description": "Configure accessors with member-name substitution"
+  }
+}

@@ -27,6 +27,7 @@ $Files = @(
   "icon.png",
   "syntaxes\sere.tmLanguage.json",
   "snippets\sere.json"
+  "snippets\modifiers.json"
 )
 foreach ($Rel in $Files) {
   $Src = Join-Path $ExtDir $Rel

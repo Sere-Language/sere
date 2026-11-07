@@ -38,6 +38,9 @@
   ],
   "main": "./extension.js",
   "contributes": {
+    "snippets": [
+      { "language": "sere", "path": "./snippets/modifiers.json" }
+    ],
     "languages": [
       {
         "id": "sere",

@@ -16,6 +16,33 @@ foreach(source IN LISTS SERE_FEATURE_TESTS)
 endforeach()
 
 # Focused standard-library regressions. Windows tests avoid interactive desktop APIs.
+file(GLOB SERE_MODIFIER_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/modifiers/*.sere")
+add_test(NAME sere.modifiers.diagnostics
+  COMMAND "${CMAKE_COMMAND}"
+    "-DCOMPILER=${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}"
+    "-DSTDLIB=${CMAKE_SOURCE_DIR}/stdlib"
+    "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/modifier-diagnostics"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/run_modifier_diagnostics.cmake")
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME sere.modifiers.lsp
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/modifier_lsp.py"
+      "${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}")
+  set_tests_properties(sere.modifiers.lsp PROPERTIES TIMEOUT 90
+    ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
+endif()
+foreach(source IN LISTS SERE_MODIFIER_TESTS)
+  get_filename_component(feature "${source}" NAME_WE)
+  add_test(NAME sere.modifiers.${feature}
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCOMPILER=${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}"
+      "-DSOURCE=${source}"
+      "-DSTDLIB=${CMAKE_SOURCE_DIR}/stdlib"
+      "-DBACKEND=llvm"
+      "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/${feature}${CMAKE_EXECUTABLE_SUFFIX}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/run_feature.cmake")
+endforeach()
+
 add_test(NAME sere.bindings.diagnostics
   COMMAND "${CMAKE_COMMAND}"
     "-DCOMPILER=${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}"

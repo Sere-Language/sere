@@ -129,6 +129,11 @@ private:
   /// Serem symbol of `name` implemented by `record` or one of its base classes,
   /// or an empty string when the class does not implement it.
   [[nodiscard]] std::string methodSymbol(const Type* record, std::string_view name) const;
+  /// Serem's symbol for the method whose lowered (LLVM) name is `llvmName`.
+  /// Custom access modifiers give a member a getter/setter by lowered name, and
+  /// Serem keys methods by `Class::method`, so the name is recovered first.
+  [[nodiscard]] std::string methodSymbolForLlvm(const Type* record,
+                                                const std::string& llvmName) const;
   /// Serem symbol used to render a record nested in a container: `__repr__` when
   /// it exists, then `__str__`. Empty when the class has neither.
   [[nodiscard]] std::string renderSymbol(const Type* record) const;

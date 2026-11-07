@@ -1525,6 +1525,9 @@ static std::string takeLeadingDocstring(std::vector<std::unique_ptr<Stmt>>& body
 std::vector<std::unique_ptr<Expr>> Parser::parseDecoratorExprs() {
   std::vector<std::unique_ptr<Expr>> exprs;
   while (match(TokenKind::At)) {
+    if (check(TokenKind::Identifier) && peek().spelling() == "param") {
+      diagnostics_->error(peek().range(), "@param is only valid inside a custom modifier definition");
+    }
     std::unique_ptr<Expr> expr;
     if (check(TokenKind::KeywordStatic)) {
       const Token& keyword = advance();
@@ -1549,6 +1552,10 @@ std::string Parser::parseAccessorPath() {
   bool expectSegment = true;
   while (true) {
     if (check(TokenKind::Identifier) || check(TokenKind::KeywordType)) {
+      if (!path.empty() && !expectSegment &&
+          peek().range().start.offset != previous().range().end.offset) {
+        break;
+      }
       path += std::string(advance().spelling());
       expectSegment = false;
       continue;
@@ -1613,6 +1620,10 @@ std::unique_ptr<ModifierSpec> Parser::parseModifierSpec() {
   }
   spec->range = SourceRange{start.start, previous().range().end};
   if (match(TokenKind::KeywordOr)) {
+    if (spec->kind != ModifierSpecKind::Modifier || spec->name != "param") {
+      diagnostics_->error(spec->range, "only @param can have an 'or' fallback");
+      return nullptr;
+    }
     std::unique_ptr<ModifierSpec> fallback = parseModifierSpec();
     if (fallback == nullptr) {
       return nullptr;
@@ -1691,6 +1702,9 @@ std::unique_ptr<Stmt> Parser::parseCustomModifierDef() {
 ParsedMemberDecorators Parser::parseMemberDecorators() {
   ParsedMemberDecorators result;
   while (match(TokenKind::At)) {
+    if (check(TokenKind::Identifier) && peek().spelling() == "param") {
+      diagnostics_->error(peek().range(), "@param is only valid inside a custom modifier definition");
+    }
     if (check(TokenKind::KeywordStatic)) {
       const Token& keyword = advance();
       ModifierUse use;
@@ -1717,9 +1731,15 @@ ParsedMemberDecorators Parser::parseMemberDecorators() {
         }
         std::string path = parseAccessorPath();
         if (key == "get") {
+          if (use.hasGet) {
+            diagnostics_->error(keyRange, "duplicate 'get' argument");
+          }
           use.hasGet = true;
           use.getArgument = std::move(path);
         } else if (key == "set") {
+          if (use.hasSet) {
+            diagnostics_->error(keyRange, "duplicate 'set' argument");
+          }
           use.hasSet = true;
           use.setArgument = std::move(path);
         } else {
@@ -1783,9 +1803,15 @@ void Parser::parseModifierAlias(std::vector<ModifierAlias>& aliases) {
       }
       std::string path = parseAccessorPath();
       if (key == "get") {
+        if (alias.hasGet) {
+          diagnostics_->error(keyRange, "duplicate 'get' argument");
+        }
         alias.hasGet = true;
         alias.getArgument = std::move(path);
       } else if (key == "set") {
+        if (alias.hasSet) {
+          diagnostics_->error(keyRange, "duplicate 'set' argument");
+        }
         alias.hasSet = true;
         alias.setArgument = std::move(path);
       } else {
@@ -1793,6 +1819,10 @@ void Parser::parseModifierAlias(std::vector<ModifierAlias>& aliases) {
       }
       skipNewlines();
       if (!match(TokenKind::Comma)) {
+        if (check(TokenKind::Identifier) && peekNth(1).kind() == TokenKind::Equal &&
+            peek().range().start.line > previous().range().end.line) {
+          continue;
+        }
         break;
       }
       skipNewlines();

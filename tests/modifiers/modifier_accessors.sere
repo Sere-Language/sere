@@ -27,7 +27,10 @@ class Meter:
 
 
 class Plain:
-    @scaled other: i32 = 5
+    @scaled other: i32
+
+    def __init__(self, other: i32) -> None:
+        self.other = other
 
 
 def main() -> i32:
@@ -43,7 +46,7 @@ def main() -> i32:
 
     # `@param or @public` / `@param or @private` fall back when the aliased
     # application supplies no accessor: reads are public, writes stay private.
-    plain: Plain = Plain()
+    plain: Plain = Plain(5)
     assert plain.other == 5
 
     print("modifier accessors ok", meter.value, meter.stored)

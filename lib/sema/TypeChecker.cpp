@@ -5225,6 +5225,11 @@ bool TypeChecker::checkAssign(AssignStmt& statement) {
                                 "' is frozen");
         return false;
       }
+      if (field != nullptr && field->customAccess && statement.op() != AssignOp::Assign &&
+          !field->getterPublic && !ownAccessor && !initBacking && !canAccessPrivate(objectType)) {
+        diagnostics_->error(statement.range(), "getter for field '" + member.field() + "' is private");
+        return false;
+      }
       if (field != nullptr && !field->setterLlvm.empty() && !ownAccessor && !initBacking) {
         if (!field->setterPublic && !canAccessPrivate(objectType)) {
           diagnostics_->error(statement.range(),
@@ -5232,14 +5237,15 @@ bool TypeChecker::checkAssign(AssignStmt& statement) {
                                   "' is private");
           return false;
         }
-        if (statement.op() != AssignOp::Assign && field->getterLlvm.empty()) {
+        if (statement.op() != AssignOp::Assign && field->getterLlvm.empty() &&
+            !field->customAccess) {
           diagnostics_->error(statement.range(), "property '" + member.field() + "' is write-only");
           return false;
         }
         member.setPropertySet(field->setterLlvm);
         member.setBackingField(false);
       } else if (field != nullptr && field->setterLlvm.empty() && !field->getterLlvm.empty() &&
-                   !ownAccessor && !initBacking) {
+                   !field->customAccess && !ownAccessor && !initBacking) {
         // A getter-only property stays read-only to outside callers. Inside the
         // declaring class the backing storage is owned by the author, so a plain
         // assignment writes the stored field directly.
@@ -5267,7 +5273,23 @@ bool TypeChecker::checkAssign(AssignStmt& statement) {
       }
     }
   }
-  const Type* target = checkExpr(targetExpr);
+  const Type* target = nullptr;
+  if (targetExpr.kind() == NodeKind::MemberExpr) {
+    auto& member = static_cast<MemberExpr&>(targetExpr);
+    const Type* owner = member.object().resolvedType();
+    const RecordField* field = owner != nullptr ? owner->canonical()->findField(member.field()) : nullptr;
+    if (field != nullptr && field->customAccess && field->setterLlvm.empty()) {
+      target = statement.op() == AssignOp::Assign ? field->type : checkExpr(targetExpr);
+      if (target == nullptr) {
+        return false;
+      }
+      member.setBackingField(true);
+      member.setResolvedType(target);
+    }
+  }
+  if (target == nullptr) {
+    target = checkExpr(targetExpr);
+  }
   if (target == nullptr) {
     return false;
   }
@@ -6220,7 +6242,7 @@ bool TypeChecker::collectEnums(Module& module) {
 
 bool TypeChecker::collectModifiers(Module& module) {
   for (const CustomModifierDef& definition : module.customModifiers()) {
-    if (isReservedDecoratorName(definition.name)) {
+    if (definition.name == "param" || isReservedDecoratorName(definition.name)) {
       diagnostics_->error(definition.range,
                           "'@" + definition.name + "' is a built-in access modifier");
       if (!bestEffort_) {
@@ -6564,6 +6586,11 @@ bool TypeChecker::flattenClass(ClassDef& classDef) {
     created.getterPublic = !getRule.isPrivate;
     created.setterPublic = !setRule.isPrivate;
     created.frozen = getRule.isFrozen || setRule.isFrozen;
+    for (const ModifierUse& use : field.modifiers) {
+      const ModifierAlias* alias = findModifierAlias(classDef, use.name);
+      created.customAccess = created.customAccess ||
+                             customModifiers_.contains(alias != nullptr ? alias->target : use.name);
+    }
     const auto bindAccessor = [&](const std::string& path, bool isGetter) -> bool {
       if (field.isStatic) {
         diagnostics_->error(field.range, "custom self accessors require an instance field");

@@ -2185,6 +2185,23 @@ void LanguageSession::handleCompletion(const llvm::json::Value* id,
                       "0" + definition.name,
                       false);
       }
+      if (!modifierBody.active) {
+        const auto& statements = frontend->module()->statements();
+        for (std::size_t index = 0; index < statements.size(); ++index) {
+          const auto& statement = statements[index];
+          if (statement->kind() != NodeKind::ClassDef ||
+              located->second < statement->range().start.offset ||
+              (index + 1 < statements.size() &&
+               located->second >= statements[index + 1]->range().start.offset)) {
+            continue;
+          }
+          for (const ModifierAlias& alias : static_cast<const ClassDef&>(*statement).modifierAliases()) {
+            addCompletion(items, "@" + alias.alias, kCompletionType,
+                          "configured @" + alias.target, sigilPrefix, alias.alias,
+                          "0" + alias.alias, false);
+          }
+        }
+      }
     }
     for (const char* builtin : {"@public", "@private", "@frozen", "@abstract", "@override",
                                 "@static", "@flags", "@param"}) {
@@ -2207,7 +2224,7 @@ void LanguageSession::handleCompletion(const llvm::json::Value* id,
   // and, after the `=`, the access rules each key accepts. A freshly typed `@`
   // was already handled by the modifier list above.
   if (modifierBody.active) {
-    if (modifierBody.atLineStart) {
+    if (!modifierBody.afterEquals) {
       addCompletion(items,
                     "get",
                     kCompletionKeyword,
@@ -2261,6 +2278,33 @@ void LanguageSession::handleCompletion(const llvm::json::Value* id,
     }
     writeResult(id, std::move(items));
     return;
+  }
+  // Modifier arguments are not expression nodes, so complete their keys from
+  // the source even while the application is incomplete.
+  const std::string_view beforeCursor(text.data(), located->second);
+  const std::size_t bracket = beforeCursor.rfind('[');
+  if (bracket != std::string_view::npos &&
+      beforeCursor.find(']', bracket) == std::string_view::npos) {
+    std::size_t nameStart = bracket;
+    while (nameStart > 0 &&
+           (std::isalnum(static_cast<unsigned char>(beforeCursor[nameStart - 1])) ||
+            beforeCursor[nameStart - 1] == '_')) {
+      --nameStart;
+    }
+    if (nameStart > 0 && beforeCursor[nameStart - 1] == '@') {
+      const std::string_view arguments = beforeCursor.substr(bracket + 1);
+      const std::size_t separator = arguments.find_last_of(",\n");
+      const std::string_view slot = separator == std::string_view::npos
+                                        ? arguments : arguments.substr(separator + 1);
+      if (slot.find('=') == std::string_view::npos) {
+        addCompletion(items, "get", kCompletionKeyword, "custom getter method", prefix,
+                      "get = self.", "0get", false);
+        addCompletion(items, "set", kCompletionKeyword, "custom setter method", prefix,
+                      "set = self.", "1set", false);
+        writeResult(id, std::move(items));
+        return;
+      }
+    }
   }
   // The typed AST resolves receivers the textual scan cannot type, such as the
   // result of a call (`add(5, 4).`) or an index (`xs[0].`).
@@ -2347,6 +2391,31 @@ void LanguageSession::handleDefinition(const llvm::json::Value* id,
   if (frontend == nullptr || frontend->module() == nullptr || frontend->checker() == nullptr) {
     writeNullResult(id);
     return;
+  }
+  for (const auto& statement : frontend->module()->statements()) {
+    if (statement->kind() != NodeKind::ClassDef) {
+      continue;
+    }
+    const auto& owner = static_cast<const ClassDef&>(*statement);
+    for (const FieldDecl& field : owner.fields()) {
+      for (const ModifierUse& use : field.modifiers) {
+        if (!rangeContains(use.range, located->second)) {
+          continue;
+        }
+        for (const ModifierAlias& alias : owner.modifierAliases()) {
+          if (alias.alias == use.name) {
+            writeResult(id, llvm::json::Array{llvm::json::Object{
+                                {"uri", located->first}, {"range", lspRange(alias.range)}}});
+            return;
+          }
+        }
+        if (const CustomModifierDef* definition = findModifierDef(*frontend->module(), use.name)) {
+          writeResult(id, llvm::json::Array{llvm::json::Object{
+                              {"uri", located->first}, {"range", lspRange(definition->range)}}});
+          return;
+        }
+      }
+    }
   }
   const Node* node = findNodeAt(*frontend->module(), located->second);
   std::string name;
