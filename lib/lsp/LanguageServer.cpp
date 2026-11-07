@@ -570,12 +570,139 @@ void appendMacroUseRefs(const std::vector<MacroUse>& uses,
   return std::string(text.substr(start, end - start));
 }
 
+/// The `type @name:` body a cursor sits in. A custom access modifier is
+/// declared with one `get` and one `set` line, so completion inside the body
+/// offers those two keys and, after the `=`, the access rules they accept.
+struct ModifierBodyContext {
+  bool active = false;
+  bool atLineStart = false;
+  bool afterEquals = false;
+  std::string prefix;
+};
+
+/// Whether a line opens a custom modifier body: `type @name:`.
+[[nodiscard]] bool isModifierBodyHeader(std::string_view content) {
+  if (content.size() < 8 || content.substr(0, 4) != "type") {
+    return false;
+  }
+  std::size_t index = 4;
+  if (index < content.size() && content[index] != ' ' && content[index] != '\t') {
+    return false;
+  }
+  while (index < content.size() && (content[index] == ' ' || content[index] == '\t')) {
+    ++index;
+  }
+  if (index >= content.size() || content[index] != '@') {
+    return false;
+  }
+  ++index;
+  const std::size_t nameStart = index;
+  while (index < content.size() &&
+         (std::isalnum(static_cast<unsigned char>(content[index])) != 0 || content[index] == '_')) {
+    ++index;
+  }
+  if (index == nameStart) {
+    return false;
+  }
+  while (index < content.size() && (content[index] == ' ' || content[index] == '\t')) {
+    ++index;
+  }
+  return index < content.size() && content[index] == ':';
+}
+
+[[nodiscard]] std::size_t lineIndent(std::string_view line) {
+  std::size_t indent = 0;
+  while (indent < line.size() && (line[indent] == ' ' || line[indent] == '\t')) {
+    ++indent;
+  }
+  return indent;
+}
+
+[[nodiscard]] ModifierBodyContext detectModifierBody(std::string_view text, std::uint32_t offset) {
+  ModifierBodyContext context;
+  const std::size_t end = offset > text.size() ? text.size() : static_cast<std::size_t>(offset);
+  std::size_t lineStart = end;
+  while (lineStart > 0 && text[lineStart - 1] != '\n' && text[lineStart - 1] != '\r') {
+    --lineStart;
+  }
+  const std::string_view line = text.substr(lineStart, end - lineStart);
+  const std::size_t indent = lineIndent(line);
+  const std::string_view content = line.substr(indent);
+  context.atLineStart = content.empty();
+  context.afterEquals = content.find('=') != std::string_view::npos;
+  std::size_t tokenStart = content.size();
+  while (tokenStart > 0) {
+    const unsigned char ch = static_cast<unsigned char>(content[tokenStart - 1]);
+    if (std::isalnum(ch) == 0 && content[tokenStart - 1] != '_' && content[tokenStart - 1] != '@') {
+      break;
+    }
+    --tokenStart;
+  }
+  context.prefix = std::string(content.substr(tokenStart));
+
+  // An empty line belongs to the block that precedes it, so take that line's
+  // indentation as the level the header has to be less than.
+  std::size_t blockIndent = indent;
+  std::size_t scan = lineStart;
+  if (context.atLineStart) {
+    bool found = false;
+    while (scan > 0) {
+      std::size_t previousEnd = scan;
+      while (previousEnd > 0 && (text[previousEnd - 1] == '\n' || text[previousEnd - 1] == '\r')) {
+        --previousEnd;
+      }
+      if (previousEnd == 0) {
+        return context;
+      }
+      std::size_t previousStart = previousEnd;
+      while (previousStart > 0 && text[previousStart - 1] != '\n' &&
+             text[previousStart - 1] != '\r') {
+        --previousStart;
+      }
+      const std::string_view previous =
+          text.substr(previousStart, previousEnd - previousStart);
+      if (!previous.empty()) {
+        blockIndent = lineIndent(previous);
+        scan = previousStart;
+        found = true;
+        break;
+      }
+      scan = previousStart;
+    }
+    if (!found) {
+      return context;
+    }
+  }
+
+  // The nearest line indented less than the block is its header.
+  while (scan > 0) {
+    std::size_t previousEnd = scan;
+    while (previousEnd > 0 && (text[previousEnd - 1] == '\n' || text[previousEnd - 1] == '\r')) {
+      --previousEnd;
+    }
+    if (previousEnd == 0) {
+      break;
+    }
+    std::size_t previousStart = previousEnd;
+    while (previousStart > 0 && text[previousStart - 1] != '\n' && text[previousStart - 1] != '\r') {
+      --previousStart;
+    }
+    const std::string_view previous = text.substr(previousStart, previousEnd - previousStart);
+    const std::size_t previousIndent = lineIndent(previous);
+    if (!previous.empty() && previousIndent < blockIndent) {
+      context.active = isModifierBodyHeader(previous.substr(previousIndent));
+      return context;
+    }
+    scan = previousStart;
+  }
+  return context;
+}
+
 struct CallSite {
   std::string callee;
   std::size_t active = 0;
   bool method = false;
 };
-
 [[nodiscard]] CallSite scanCallSite(std::string_view text, std::size_t cursor) {
   CallSite site;
   if (cursor > text.size()) {
@@ -2038,6 +2165,103 @@ void LanguageSession::handleCompletion(const llvm::json::Value* id,
   }
   analyzeDocument(located->first);
   Frontend* frontend = freshFrontend(located->first);
+  // `@` at the cursor: offer the built-in and the module's custom access
+  // modifiers. The `@` is not part of an identifier, so the typed prefix is
+  // compared against the sigil-prefixed label.
+  const ModifierBodyContext modifierBody = detectModifierBody(text, located->second);
+  const std::size_t sigilOffset = located->second >= prefix.size()
+                                    ? located->second - prefix.size()
+                                    : 0;
+  if (sigilOffset > 0 && text[sigilOffset - 1] == '@') {
+    const std::string sigilPrefix = "@" + prefix;
+    if (frontend != nullptr && frontend->module() != nullptr) {
+      for (const CustomModifierDef& definition : frontend->module()->customModifiers()) {
+        addCompletion(items,
+                      "@" + definition.name,
+                      kCompletionType,
+                      "custom access modifier",
+                      sigilPrefix,
+                      definition.name,
+                      "0" + definition.name,
+                      false);
+      }
+    }
+    for (const char* builtin : {"@public", "@private", "@frozen", "@abstract", "@override",
+                                "@static", "@flags", "@param"}) {
+      if (std::string_view(builtin) == "@param" && !modifierBody.active) {
+        continue;
+      }
+      addCompletion(items,
+                    builtin,
+                    kCompletionType,
+                    "access modifier",
+                    sigilPrefix,
+                    std::string(builtin + 1),
+                    "1" + std::string(builtin),
+                    false);
+    }
+    writeResult(id, std::move(items));
+    return;
+  }
+  // Inside a `type @name:` body, offer the two keys a definition may declare
+  // and, after the `=`, the access rules each key accepts. A freshly typed `@`
+  // was already handled by the modifier list above.
+  if (modifierBody.active) {
+    if (modifierBody.atLineStart) {
+      addCompletion(items,
+                    "get",
+                    kCompletionKeyword,
+                    "access applied when the member is read",
+                    modifierBody.prefix,
+                    "get = ",
+                    "0get",
+                    false,
+                    "`get` declares what reading the member requires:\n\n"
+                    "```sere\ntype @readonly:\n    get = @public\n    set = @private\n```");
+      addCompletion(items,
+                    "set",
+                    kCompletionKeyword,
+                    "access applied when the member is written",
+                    modifierBody.prefix,
+                    "set = ",
+                    "1set",
+                    false,
+                    "`set` declares what writing the member requires. Omitting it makes "
+                    "`set` inherit the access half of `get`.");
+    } else if (modifierBody.afterEquals) {
+      addCompletion(items, "@public", kCompletionType, "no restriction", modifierBody.prefix,
+                    "@public", "0@public", false);
+      addCompletion(items, "@private", kCompletionType,
+                    "only the declaring type may use the member", modifierBody.prefix, "@private",
+                    "1@private", false);
+      addCompletion(items, "@frozen", kCompletionType, "read-only after construction",
+                    modifierBody.prefix, "@frozen", "2@frozen", false);
+      addCompletion(items, "@param", kCompletionType, "accessor argument supplied at the use site",
+                    modifierBody.prefix, "@param", "3@param", false,
+                    "Replaced by the `get`/`set` accessor written in `@modifier[get = ...]`.");
+      addCompletion(items, "...", kCompletionKeyword,
+                    "inherit the modifiers written at the use site", modifierBody.prefix, "...",
+                    "4...", false);
+      addCompletion(items, "@param or @public", kCompletionType,
+                    "optional accessor with a public default", modifierBody.prefix,
+                    "@param or @public", "5param-or-public", false);
+      addCompletion(items, "@param or @private", kCompletionType,
+                    "optional accessor with a private default", modifierBody.prefix,
+                    "@param or @private", "5param-or-private", false);
+      addCompletion(items, "[@private, @frozen]", kCompletionType,
+                    "a list applies every rule", modifierBody.prefix, "[@private, @frozen]",
+                    "6list", false);
+      if (frontend != nullptr && frontend->module() != nullptr) {
+        for (const CustomModifierDef& definition : frontend->module()->customModifiers()) {
+          addCompletion(items, "@" + definition.name, kCompletionType, "custom access modifier",
+                        modifierBody.prefix, "@" + definition.name, "7" + definition.name,
+                        false);
+        }
+      }
+    }
+    writeResult(id, std::move(items));
+    return;
+  }
   // The typed AST resolves receivers the textual scan cannot type, such as the
   // result of a call (`add(5, 4).`) or an index (`xs[0].`).
   const AstMemberAccess astAccess = resolveMemberAccessFromAst(frontend, text, located->second);
@@ -2282,6 +2506,15 @@ void LanguageSession::handleDocumentSymbol(const llvm::json::Value* id,
           {"selectionRange", lspRange(macroNameRange(macro))},
       });
     }
+  }
+  for (const CustomModifierDef& definition : frontend->module()->customModifiers()) {
+    symbols.push_back(llvm::json::Object{
+        {"name", "@" + definition.name},
+        {"detail", "custom access modifier"},
+        {"kind", kSymbolType},
+        {"range", lspRange(definition.range)},
+        {"selectionRange", lspRange(definition.range)},
+    });
   }
   writeResult(id, std::move(symbols));
 }

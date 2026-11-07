@@ -1,0 +1,36 @@
+# Custom access modifiers: a public getter with a private setter.
+#
+# `@readonly` resolves the `get` half to `@public` and the `set` half to
+# `@private`, so the member can be read from anywhere but only written inside
+# the declaring class.
+
+type @readonly:
+    get = @public
+    set = @private
+
+
+class Person:
+    @readonly name: str
+    @readonly age: i32
+
+    def __init__(self, name: str, age: i32) -> None:
+        self.name = name
+        self.age = age
+
+    def rename(self, name: str) -> void:
+        self.name = name
+
+
+def main() -> i32:
+    person: Person = Person("John", 36)
+
+    # `get = @public`: reads are allowed outside the class.
+    assert person.name == "John"
+    assert person.age == 36
+
+    # `set = @private`: the class writes its own member.
+    person.rename("Jack")
+    assert person.name == "Jack"
+
+    print("readonly modifier ok", person.name, person.age)
+    return 0

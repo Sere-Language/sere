@@ -1758,6 +1758,7 @@ ParsedMemberDecorators Parser::parseMemberDecorators() {
 }
 
 void Parser::parseModifierAlias(std::vector<ModifierAlias>& aliases) {
+  const SourceRange startRange = peek().range();
   advance(); // `using`
   (void)consume(TokenKind::At, "expected '@' after 'using'");
   ModifierAlias alias;
@@ -1767,7 +1768,6 @@ void Parser::parseModifierAlias(std::vector<ModifierAlias>& aliases) {
     return;
   }
   (void)consume(TokenKind::At, "expected '@' before the aliased modifier");
-  alias.range = previous().range();
   alias.target = parseIdentifier("expected the aliased modifier name");
   if (alias.target.empty()) {
     return;
@@ -1803,6 +1803,7 @@ void Parser::parseModifierAlias(std::vector<ModifierAlias>& aliases) {
   if (!finishLine()) {
     return;
   }
+  alias.range = SourceRange{startRange.start, previous().range().end};
   aliases.push_back(std::move(alias));
 }
 

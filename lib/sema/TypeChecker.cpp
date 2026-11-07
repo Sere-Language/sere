@@ -5551,6 +5551,21 @@ bool TypeChecker::checkFunctionBody(FunctionDef& function) {
                       : function.ownerClass();
   currentFunctionName_ = function.name();
   currentPropertyName_ = function.propertyName();
+  if (currentPropertyName_.empty() && !function.ownerClass().empty()) {
+    const Type* owner = classType(function.ownerClass());
+    const std::string llvmName = function.modulePrefix().empty()
+                                     ? function.ownerClass() + "_" + function.name()
+                                     : function.modulePrefix() + "_" + function.ownerClass() + "_" +
+                                           function.name();
+    if (owner != nullptr) {
+      for (const RecordField& field : owner->fields()) {
+        if (field.getterLlvm == llvmName || field.setterLlvm == llvmName) {
+          currentPropertyName_ = field.name;
+          break;
+        }
+      }
+    }
+  }
   currentFunctionIsAsync_ = function.isAsync();
   pushScope(function.range());
   for (std::size_t index = 0; index < function.params().size(); ++index) {
@@ -6550,6 +6565,10 @@ bool TypeChecker::flattenClass(ClassDef& classDef) {
     created.setterPublic = !setRule.isPrivate;
     created.frozen = getRule.isFrozen || setRule.isFrozen;
     const auto bindAccessor = [&](const std::string& path, bool isGetter) -> bool {
+      if (field.isStatic) {
+        diagnostics_->error(field.range, "custom self accessors require an instance field");
+        return false;
+      }
       std::string methodName = path;
       if (methodName.rfind("self.", 0) == 0) {
         methodName = methodName.substr(5);
@@ -6580,6 +6599,25 @@ bool TypeChecker::flattenClass(ClassDef& classDef) {
             std::string("custom ") + (isGetter ? "getter '" : "setter '") + methodName +
                 "' must take " + (isGetter ? "only self" : "self and one value"));
         return false;
+      }
+      if (definition != nullptr) {
+        if (definition->params().front().name != "self" || definition->isAsync() ||
+            definition->isGenerator() || !definition->typeParams().empty()) {
+          diagnostics_->error(field.range,
+                              "a custom accessor must be a synchronous, non-generic self method");
+          return false;
+        }
+        const Type* result = resolveTypeExpr(definition->returnType());
+        const Type* value = isGetter ? result : resolveParamDeclType(definition->params()[1]);
+        if (value == nullptr || value->canonical() != type->canonical()) {
+          diagnostics_->error(field.range,
+                              "custom accessor '" + methodName + "' must match the field type");
+          return false;
+        }
+        if (!isGetter && (result == nullptr || !result->isVoidLike())) {
+          diagnostics_->error(field.range, "custom setter '" + methodName + "' must return void");
+          return false;
+        }
       }
       if (isGetter) {
         created.getterLlvm = *llvm;

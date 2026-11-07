@@ -1,0 +1,57 @@
+type @property_access:
+    get = @param
+    set = @param
+
+type @optional_access:
+    get = @param or @public
+    set = @param or @private
+
+class Meter:
+    @property_access[get = self.read_value, set = self.write_value] value: i32
+    @optional_access plain: i32
+
+    def __init__(self) -> void:
+        self.value = 2
+        self.plain = 7
+
+    def read_value(self) -> i32:
+        return self.value + 1
+
+    def write_value(self, value: i32) -> void:
+        self.value = value * 2
+
+class Aliased:
+    using @access as @property_access[get = self.read_$, set = self.write_$]
+    @access x: i32
+    @access y: i32
+
+    def __init__(self) -> void:
+        self.x = 1
+        self.y = 2
+
+    def read_x(self) -> i32:
+        return self.x
+
+    def write_x(self, value: i32) -> void:
+        self.x = value + 10
+
+    def read_y(self) -> i32:
+        return self.y
+
+    def write_y(self, value: i32) -> void:
+        self.y = value + 20
+
+def main() -> i32:
+    meter: Meter = Meter()
+    assert meter.value == 3
+    assert meter.plain == 7
+    meter.value = 4
+    assert meter.value == 9
+    meter.value += 1
+    assert meter.value == 21
+    pair: Aliased = Aliased()
+    pair.x = 3
+    pair.y = 4
+    assert pair.x == 13
+    assert pair.y == 24
+    return 0

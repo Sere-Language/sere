@@ -1,0 +1,50 @@
+# Custom access modifiers: callable accessors configured through `using`.
+#
+# `@scaled` takes a `@param` accessor for each half and falls back to
+# `@public`/`@private` when the application does not supply one. The `using`
+# alias configures both accessors once, and `$` is replaced with the member the
+# modifier is applied to: `self._read_$` becomes `self._read_value`.
+
+type @scaled:
+    get = @param or @public
+    set = @param or @private
+
+
+class Meter:
+    using @scaled_by_ten as @scaled[
+        get = self._read_$,
+        set = self._write_$
+    ]
+
+    @scaled_by_ten value: i32 = 0
+    stored: i32 = 0
+
+    def _read_value(self) -> i32:
+        return self.stored * 10
+
+    def _write_value(self, value: i32) -> void:
+        self.stored = value
+
+
+class Plain:
+    @scaled other: i32 = 5
+
+
+def main() -> i32:
+    meter: Meter = Meter()
+    assert meter.value == 0
+
+    # Writing goes through the configured setter.
+    meter.value = 7
+    assert meter.stored == 7
+
+    # Reading goes through the configured getter.
+    assert meter.value == 70
+
+    # `@param or @public` / `@param or @private` fall back when the aliased
+    # application supplies no accessor: reads are public, writes stay private.
+    plain: Plain = Plain()
+    assert plain.other == 5
+
+    print("modifier accessors ok", meter.value, meter.stored)
+    return 0

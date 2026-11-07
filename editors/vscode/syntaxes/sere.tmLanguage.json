@@ -11,9 +11,13 @@
     { "include": "#regex" },
     { "include": "#stringSingle" },
     { "include": "#string" },
+    { "include": "#modifierAlias" },
+    { "include": "#modifierApply" },
+    { "include": "#modifierKey" },
     { "include": "#decorator" },
     { "include": "#macroDef" },
     { "include": "#defDecl" },
+    { "include": "#modifierDecl" },
     { "include": "#typeDecl" },
     { "include": "#declaration" },
     { "include": "#macroInvoke" },
@@ -169,7 +173,7 @@
     },
     "keyword": {
       "name": "keyword.control.sere",
-      "match": "\\b(and|as|assert|await|break|case|continue|defer|del|do|elif|else|except|finally|for|from|if|import|in|is|lambda|match|not|or|pass|quote|raise|return|yield|super|try|while|with|syntax|interpolate|wrapper|typed)\\b"
+      "match": "\\b(and|as|assert|await|break|case|continue|defer|del|do|elif|else|except|finally|for|from|if|import|in|is|lambda|match|not|or|pass|quote|raise|return|yield|super|try|using|while|with|syntax|interpolate|wrapper|typed)\\b"
     },
     "modifier": {
       "name": "storage.modifier.sere",
@@ -184,6 +188,50 @@
       "captures": {
         "1": { "name": "punctuation.decorator.sere" },
         "2": { "name": "entity.name.function.decorator.sere" }
+      }
+    },
+    "modifierApply": {
+      "begin": "(@)([A-Za-z_][A-Za-z0-9_]*)(\\[)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.decorator.sere" },
+        "2": { "name": "entity.name.function.decorator.sere" },
+        "3": { "name": "punctuation.section.brackets.begin.sere" }
+      },
+      "end": "\\]",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.brackets.end.sere" }
+      },
+      "patterns": [
+        { "name": "variable.parameter.modifier.sere", "match": "\\b(get|set)\\b" },
+        { "name": "variable.language.self.sere", "match": "\\bself\\b" },
+        { "name": "variable.parameter.substitution.sere", "match": "\\$" },
+        { "include": "#operator" }
+      ]
+    },
+    "modifierAlias": {
+      "match": "\\b(using)\\s+(@)([A-Za-z_][A-Za-z0-9_]*)\\s+(as)\\s+(@)([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.control.sere" },
+        "2": { "name": "punctuation.decorator.sere" },
+        "3": { "name": "entity.name.function.decorator.sere" },
+        "4": { "name": "keyword.control.sere" },
+        "5": { "name": "punctuation.decorator.sere" },
+        "6": { "name": "entity.name.function.decorator.sere" }
+      }
+    },
+    "modifierKey": {
+      "match": "^(\\s*)(get|set)(\\s*)(=)",
+      "captures": {
+        "2": { "name": "variable.parameter.modifier.sere" },
+        "4": { "name": "keyword.operator.assignment.sere" }
+      }
+    },
+    "modifierDecl": {
+      "match": "\\b(type)\\s+(@)([A-Za-z_][A-Za-z0-9_]*)(?=\\s*:)",
+      "captures": {
+        "1": { "name": "storage.type.sere" },
+        "2": { "name": "punctuation.decorator.sere" },
+        "3": { "name": "entity.name.type.modifier.sere" }
       }
     },
     "declaration": {
