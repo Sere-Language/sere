@@ -1968,6 +1968,18 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
       ir.CreateRet(llvm::Constant::getNullValue(function->getReturnType()));
     }
     ir.SetInsertPoint(okBlock);
+  } else if (opcode == "late.check") {
+    auto* function = ir.GetInsertBlock()->getParent();
+    auto* ok = llvm::BasicBlock::Create(*context_, "late.ready", function);
+    auto* fail = llvm::BasicBlock::Create(*context_, "late.uninitialized", function);
+    ir.CreateCondBr(operand(0), ok, fail);
+    ir.SetInsertPoint(fail);
+    const std::string message = "uninitialized late member '" + attribute(operation, "field") + "'";
+    ir.CreateCall(module_->getOrInsertFunction("sere_panic", ir.getVoidTy(),
+                                               ir.getPtrTy(), ir.getInt64Ty()),
+                  {ir.CreateGlobalString(message), ir.getInt64(message.size())});
+    ir.CreateUnreachable();
+    ir.SetInsertPoint(ok);
   } else if (opcode == "construct") {
     if (type->isPointerTy() && operation.type().pointee() != nullptr &&
         operation.type().pointee()->kind() == serem::IRType::Kind::Struct) {
@@ -1997,7 +2009,10 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
         // A class without `__init__` is built field by field; slot 0 holds the
         // type id, so the arguments start at slot 1.
         for (std::size_t index = 0; index < operands.size(); ++index) {
-          const unsigned slot = static_cast<unsigned>(index) + 1;
+          unsigned slot = static_cast<unsigned>(index) + 1;
+          const std::string slotText = attribute(operation, "arg.slot." + std::to_string(index));
+          if (!slotText.empty())
+            (void)std::from_chars(slotText.data(), slotText.data() + slotText.size(), slot);
           if (slot >= record->getStructNumElements()) {
             break;
           }
@@ -2031,9 +2046,9 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
         result = ir.CreateInsertValue(result, ir.getInt32(static_cast<std::uint32_t>(tag)), {0});
         result = ir.CreateInsertValue(result, payload, {1});
       } else {
-        result = llvm::UndefValue::get(type);
+        result = llvm::Constant::getNullValue(type);
         unsigned field = 0;
-        if (type->getStructNumElements() == 2 && operands.size() == 1) {
+        if (!tagText.empty() && type->getStructNumElements() == 2 && operands.size() == 1) {
           // An enum's first word is the variant discriminant; the generator tags
           // the constructor with the variant's index, not its arm position.
           std::int32_t tag = 0;
@@ -2045,7 +2060,10 @@ llvm::Value* SeremLLVMBackend::lowerOperation(const serem::Operation& operation)
           field = 1;
         }
         for (std::size_t index = 0; index < operands.size(); ++index) {
-          const unsigned slot = field + static_cast<unsigned>(index);
+          unsigned slot = field + static_cast<unsigned>(index);
+          const std::string slotText = attribute(operation, "arg.slot." + std::to_string(index));
+          if (!slotText.empty())
+            (void)std::from_chars(slotText.data(), slotText.data() + slotText.size(), slot);
           if (slot >= type->getStructNumElements()) {
             break;
           }

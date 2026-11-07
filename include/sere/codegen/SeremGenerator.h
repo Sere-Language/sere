@@ -176,6 +176,8 @@ private:
                                                       serem::ValuePtr target);
   [[nodiscard]] serem::ValuePtr emitUnary(const UnaryExpr& expression);
   [[nodiscard]] serem::ValuePtr emitMember(const MemberExpr& expression);
+  void emitLateCheck(const Type* record, const std::string& field, serem::ValuePtr object);
+  void emitLateMark(const Type* record, const std::string& field, serem::ValuePtr object);
   [[nodiscard]] serem::ValuePtr emitIndex(const IndexExpr& expression);
   [[nodiscard]] serem::ValuePtr emitAggregate(const Expr& expression);
   /// Lowers `[element for name in iterable]` to a loop that appends to a fresh

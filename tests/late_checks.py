@@ -41,11 +41,12 @@ with tempfile.TemporaryDirectory(prefix="sere-late-") as directory:
         path = root / (name + ".sere")
         path.write_text("struct C:\n    x: late i32\ndef main() -> i32:\n" + body)
         executable = root / (name + ".exe")
-        result = run(compiler, str(path), "-o", str(executable))
-        assert result.returncode == 0, result.stderr
-        result = run(str(executable))
-        assert result.returncode != 0, name
-        assert "uninitialized late member 'x'" in result.stderr, (name, result.stderr)
+        for backend in ("llvm", "serem"):
+            result = run(compiler, "--backend=" + backend, str(path), "-o", str(executable))
+            assert result.returncode == 0, (backend, result.stderr)
+            result = run(str(executable))
+            assert result.returncode != 0, (backend, name)
+            assert "uninitialized late member 'x'" in result.stderr, (backend, name, result.stderr)
 print("late diagnostics and runtime checks passed")
 
 source = "struct C:\n    x: late i32\ndef main() -> i32:\n    c = C()\n    c.x = 1\n    return c.x\n"

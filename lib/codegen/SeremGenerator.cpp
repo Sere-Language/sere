@@ -115,10 +115,17 @@ namespace {
 /// Physical slot of a field inside a record. The type-id header occupies slot
 /// zero, so every semantic field index shifts by one.
 [[nodiscard]] int fieldSlot(const Type* record, int index) {
-  if (index < 0 || !recordHasTypeId(record)) {
+  if (index < 0 || record == nullptr) {
     return index;
   }
-  return index + 1;
+  int slot = recordHasTypeId(record) ? 1 : 0;
+  for (int i = 0; i < index; ++i) {
+    const RecordField& field = record->fields()[i];
+    if (!field.isStatic && field.stored) {
+      slot += field.isLate ? 2 : 1;
+    }
+  }
+  return slot;
 }
 
 /// Use the semantic symbol so inherited statics share storage while unrelated
@@ -334,8 +341,12 @@ serem::IRType SeremGenerator::lowerType(const Type* type) const {
   if (type->isRecord() && !type->isEnum()) {
     std::vector<serem::IRType> fields;
     for (const RecordField& field : type->fields()) {
-      if (!field.isStatic && field.stored)
+      if (!field.isStatic && field.stored) {
         fields.push_back(lowerType(field.type));
+        if (field.isLate) {
+          fields.push_back(serem::IRType::boolType());
+        }
+      }
     }
     return serem::IRType::structType(type->name(), std::move(fields));
   }
@@ -1029,12 +1040,6 @@ void SeremGenerator::pruneUnusedPreludeTypes() {
 }
 
 void SeremGenerator::declareClass(const ClassDef& classDef) {
-  for (const FieldDecl& field : classDef.fields()) {
-    if (field.isLate) {
-      diagnostics_->error(field.range, "late fields require the LLVM backend");
-      return;
-    }
-  }
   std::vector<serem::IRType> fields;
   std::vector<std::string> attributes;
   attributes.push_back(classDef.isStruct() ? "struct" : "class");
@@ -1056,6 +1061,10 @@ void SeremGenerator::declareClass(const ClassDef& classDef) {
       fields.push_back(lowerType(field.type == nullptr ? nullptr : field.type->resolvedType()));
       attributes.push_back("field=" + field.name + ":" + std::to_string(fieldIndex));
       ++fieldIndex;
+      if (field.isLate) {
+        fields.push_back(serem::IRType::boolType());
+        ++fieldIndex;
+      }
     }
   }
   classFields_[classDef.name()] = fields;
@@ -1114,6 +1123,10 @@ void SeremGenerator::declareInstances(const std::vector<const Module*>& modules)
       fields.push_back(lowerType(field.type));
       attributes.push_back("field=" + field.name + ":" + std::to_string(fieldIndex));
       ++fieldIndex;
+      if (field.isLate) {
+        fields.push_back(serem::IRType::boolType());
+        ++fieldIndex;
+      }
     }
     (void)module_->addType(std::make_unique<serem::TypeDef>(
         instance->name(),
@@ -1611,6 +1624,7 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
         serem::ValuePtr written = value;
         const serem::ValuePtr receiver = emitReceiver(member.object());
         if (assign.op() != AssignOp::Assign) {
+          emitLateCheck(record, member.field(), receiver);
           const Type* memberType = assign.target().resolvedType();
           serem::ValuePtr current;
           if (member.propertyGet().empty()) {
@@ -1638,6 +1652,7 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
         std::vector<serem::ValuePtr> arguments{receiver, written};
         (void)builder_->call(std::make_shared<serem::FunctionRef>(setterSymbol, found->second),
                              std::move(arguments), serem::IRType::voidType());
+        emitLateMark(record, member.field(), receiver);
         return true;
       }
       const Type* objectType = member.object().resolvedType();
@@ -1648,9 +1663,12 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
           member.object().kind() == NodeKind::NameExpr) {
         const auto& name = static_cast<const NameExpr&>(member.object());
         if (serem::ValuePtr slot = local(name.name())) {
-          const int index = objectType == nullptr ? -1 : objectType->fieldIndex(member.field());
+          const Type* record = resolveType(objectType);
+          const int index = record == nullptr ? -1 : fieldSlot(record, record->fieldIndex(member.field()));
           if (index >= 0) {
             const serem::ValuePtr current = builder_->load(slot, lowered);
+            if (assign.op() != AssignOp::Assign)
+              emitLateCheck(record, member.field(), current);
             if (assign.op() != AssignOp::Assign) {
               const serem::IRType fieldType = lowerType(assign.target().resolvedType());
               serem::ValuePtr combined = compoundAssignValue(
@@ -1661,8 +1679,13 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
               }
               value = std::move(combined);
             }
-            const serem::ValuePtr updated =
+            serem::ValuePtr updated =
                 builder_->insert(current, value, static_cast<std::size_t>(index), lowered);
+            if (record->findField(member.field())->isLate) {
+              updated = builder_->insert(updated,
+                  std::make_shared<serem::ConstantInt>(1, serem::IRType::boolType()),
+                  static_cast<std::size_t>(index + 1), lowered);
+            }
             builder_->store(updated, slot);
             return true;
           }
@@ -1675,6 +1698,7 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
       // A compound assignment reads the current field first, so it stores the
       // combined value rather than the right-hand side alone.
       if (assign.op() != AssignOp::Assign) {
+        emitLateCheck(objectType, member.field(), object);
         const serem::IRType fieldType = lowerType(assign.target().resolvedType());
         serem::ValuePtr current = builder_->operation(
             "member.get", fieldType, {object},
@@ -1702,6 +1726,7 @@ bool SeremGenerator::emitStatement(const Stmt& statement) {
       (void)builder_->operation(
           "member.set", serem::IRType::voidType(), {object, value},
           {{"field", member.field()}, {"index", memberIndex}});
+      emitLateMark(objectType, member.field(), object);
       return true;
     }
     if (assign.target().kind() == NodeKind::IndexExpr) {
@@ -4075,7 +4100,7 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
       for (const RecordField& field : record->fields()) {
         if (index >= args.size())
           break;
-        if (field.isStatic)
+        if (field.isStatic || !field.stored || field.isLate)
           continue;
         const Type* from = positional && index < expression.arguments().size()
                                ? expression.arguments()[index]->resolvedType()
@@ -4084,11 +4109,7 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
         ++index;
       }
     }
-    return builder_->operation(
-        "construct",
-        lowerType(expression.resolvedType()),
-        std::move(args),
-        {{"type",
+    std::unordered_map<std::string, std::string> constructAttributes{{"type",
           expression.resolvedType() == nullptr ? std::string{} : expression.resolvedType()->name()},
          {"type.id",
           recordHasTypeId(expression.resolvedType())
@@ -4096,7 +4117,18 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
                     serem::recordTypeId(expression.resolvedType()->name())))
               : std::string{}},
          {"tag", enumVariantTag(expression)},
-         {"init", methodSymbol(expression.resolvedType(), "__init__")}});
+         {"init", methodSymbol(expression.resolvedType(), "__init__")}};
+    if (record != nullptr && !record->isEnum() && initSymbol.empty()) {
+      std::size_t index = 0;
+      for (const RecordField& field : record->fields()) {
+        if (!field.isStatic && field.stored && !field.isLate) {
+          constructAttributes["arg.slot." + std::to_string(index++)] =
+              std::to_string(fieldSlot(record, record->fieldIndex(field.name)));
+        }
+      }
+    }
+    return builder_->operation("construct", lowerType(expression.resolvedType()),
+                               std::move(args), std::move(constructAttributes));
   }
   if (expression.callee().kind() == NodeKind::MemberExpr && !expression.isMethod()) {
     const auto& member = static_cast<const MemberExpr&>(expression.callee());
@@ -4279,6 +4311,28 @@ serem::ValuePtr SeremGenerator::emitCall(const CallExpr& expression) {
   return builder_->call(std::move(callee), std::move(args), lowerType(expression.resolvedType()));
 }
 
+void SeremGenerator::emitLateCheck(const Type* record, const std::string& name,
+                                  serem::ValuePtr object) {
+  record = resolveType(record);
+  const RecordField* field = record == nullptr ? nullptr : record->findField(name);
+  if (field == nullptr || !field->isLate)
+    return;
+  auto state = builder_->operation("member.get", serem::IRType::boolType(), {object},
+      {{"index", std::to_string(fieldSlot(record, record->fieldIndex(name)) + 1)}});
+  (void)builder_->operation("late.check", serem::IRType::voidType(), {state}, {{"field", name}});
+}
+
+void SeremGenerator::emitLateMark(const Type* record, const std::string& name,
+                                 serem::ValuePtr object) {
+  record = resolveType(record);
+  const RecordField* field = record == nullptr ? nullptr : record->findField(name);
+  if (field == nullptr || !field->isLate)
+    return;
+  auto state = std::make_shared<serem::ConstantInt>(1, serem::IRType::boolType());
+  (void)builder_->operation("member.set", serem::IRType::voidType(), {object, state},
+      {{"index", std::to_string(fieldSlot(record, record->fieldIndex(name)) + 1)}});
+}
+
 serem::ValuePtr SeremGenerator::emitMember(const MemberExpr& expression) {
   // A compile-time member is a literal: `Point.__name__` is text and
   // `module.__file__` is the module's own name, both known while lowering.
@@ -4339,7 +4393,9 @@ serem::ValuePtr SeremGenerator::emitMember(const MemberExpr& expression) {
       (void)unsupported(expression, "computed property '" + expression.field() + "'");
       return nullptr;
     }
-    std::vector<serem::ValuePtr> arguments{emitReceiver(expression.object())};
+    auto receiver = emitReceiver(expression.object());
+    emitLateCheck(record, expression.field(), receiver);
+    std::vector<serem::ValuePtr> arguments{receiver};
     return builder_->call(std::make_shared<serem::FunctionRef>(symbol, found->second),
                           std::move(arguments), lowerType(expression.resolvedType()));
   }
@@ -4396,10 +4452,10 @@ serem::ValuePtr SeremGenerator::emitMember(const MemberExpr& expression) {
         fieldSlot(expression.object().resolvedType(),
                   expression.object().resolvedType()->fieldIndex(expression.field())));
   }
-  return builder_->operation("member.get",
-                             lowerType(expression.resolvedType()),
-                             {emitExpression(expression.object())},
-                             std::move(attributes));
+  auto object = emitExpression(expression.object());
+  emitLateCheck(expression.object().resolvedType(), expression.field(), object);
+  return builder_->operation("member.get", lowerType(expression.resolvedType()),
+                             {object}, std::move(attributes));
 }
 
 serem::ValuePtr SeremGenerator::emitIndex(const IndexExpr& expression) {
