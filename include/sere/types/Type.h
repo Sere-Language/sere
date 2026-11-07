@@ -43,6 +43,7 @@ struct RecordField {
   bool frozen = false;
   /// Custom modifiers may independently use storage or a callable for each slot.
   bool customAccess = false;
+  bool isLate = false;
   std::vector<std::string> paramNames{};
   std::vector<const Type*> payloadTypes{};
   std::size_t requiredArgs = 0;

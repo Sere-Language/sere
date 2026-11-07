@@ -132,7 +132,7 @@ namespace {
   for (int index = 0; index < limit && static_cast<std::size_t>(index) < fields.size(); ++index) {
     const RecordField& field = fields[static_cast<std::size_t>(index)];
     if (!field.isStatic && field.stored) {
-      llvm += 1;
+      llvm += field.isLate ? 2 : 1;
     }
   }
   return llvm;
@@ -401,6 +401,9 @@ llvm::Type* IRGenerator::lower(const Type* type) {
     for (const RecordField& field : type->fields()) {
       if (!field.isStatic && field.stored) {
         fields.push_back(lower(field.type));
+        if (field.isLate) {
+          fields.push_back(llvm::Type::getInt1Ty(*context_));
+        }
       }
     }
     opaque->setBody(fields);
@@ -1481,7 +1484,32 @@ void IRGenerator::appendBoundCallArgs(llvm::IRBuilder<>& builder,
   }
 }
 
-llvm::Value* IRGenerator::emitAddress(llvm::IRBuilder<>& builder, const Expr& expr, bool required) {
+void IRGenerator::emitLateCheck(llvm::IRBuilder<>& builder, llvm::Value* initialized,
+                                const std::string& name) {
+  auto* function = builder.GetInsertBlock()->getParent();
+  auto* ok = llvm::BasicBlock::Create(*context_, "late.ready", function);
+  auto* fail = llvm::BasicBlock::Create(*context_, "late.uninitialized", function);
+  builder.CreateCondBr(initialized, ok, fail);
+  builder.SetInsertPoint(fail);
+  llvm::Value* message = emitStrLiteral(builder, "uninitialized late member '" + name + "'");
+  builder.CreateCall(runtimeDecl("sere_panic", builder.getVoidTy(),
+                                {builder.getPtrTy(), builder.getInt64Ty()}),
+                     {builder.CreateExtractValue(message, {0}),
+                      builder.CreateExtractValue(message, {1})});
+  builder.CreateUnreachable();
+  builder.SetInsertPoint(ok);
+}
+
+llvm::Value* IRGenerator::lateStateAddress(llvm::IRBuilder<>& builder, llvm::Value* address,
+                                          const Type* record, int index) {
+  const auto* layout = module_->getDataLayout().getStructLayout(
+      llvm::cast<llvm::StructType>(lower(record)));
+  const unsigned slot = llvmFieldIndex(record, index);
+  return builder.CreateGEP(builder.getInt8Ty(), address, builder.getInt64(
+      layout->getElementOffset(slot + 1) - layout->getElementOffset(slot)));
+}
+
+llvm::Value* IRGenerator::emitAddress(llvm::IRBuilder<>& builder, const Expr& expr, bool required, bool initializing) {
   if (expr.kind() == NodeKind::CallExpr &&
       static_cast<const CallExpr&>(expr).intrinsic() == IntrinsicKind::Super) {
     const auto found = locals_.find("self");
@@ -1564,7 +1592,12 @@ llvm::Value* IRGenerator::emitAddress(llvm::IRBuilder<>& builder, const Expr& ex
       }
       return nullptr;
     }
-    return builder.CreateStructGEP(lower(objectType), object, llvmFieldIndex(objectType, index));
+    llvm::Value* address = builder.CreateStructGEP(lower(objectType), object, llvmFieldIndex(objectType, index));
+    if (field != nullptr && field->isLate && !initializing) {
+      emitLateCheck(builder, builder.CreateLoad(builder.getInt1Ty(),
+          lateStateAddress(builder, address, objectType, index)), field->name);
+    }
+    return address;
   }
   if (expr.kind() == NodeKind::IndexExpr) {
     const auto& index = static_cast<const IndexExpr&>(expr);
@@ -2956,6 +2989,10 @@ IRGenerator::emitValueRepr(llvm::IRBuilder<>& builder, llvm::Value* value, const
         result = emitStrConcat(
             body, result, emitValueRepr(body, emitStrLiteral(body, field.name), types_->strType()));
         result = emitStrConcat(body, result, emitStrLiteral(body, ": "));
+        if (field.isLate) {
+          emitLateCheck(body, body.CreateExtractValue(object,
+              {llvmFieldIndex(type, type->fieldIndex(field.name)) + 1}), field.name);
+        }
         llvm::Value* item =
             body.CreateExtractValue(object, {llvmFieldIndex(type, type->fieldIndex(field.name))});
         result = emitStrConcat(body, result, emitValueRepr(body, item, field.type));
@@ -3679,13 +3716,13 @@ llvm::Value* IRGenerator::emitConstruct(llvm::IRBuilder<>& builder, const CallEx
     }
     return value;
   }
-  llvm::Value* aggregate = llvm::UndefValue::get(lower(record));
+  llvm::Value* aggregate = emitDefault(record);
   if (recordHasTypeId(record)) {
     aggregate = builder.CreateInsertValue(aggregate, builder.getInt32(recordTypeId(record)), {0});
   }
   std::vector<const RecordField*> instanceFields;
   for (const RecordField& fieldDecl : record->fields()) {
-    if (!fieldDecl.isStatic && fieldDecl.stored) {
+    if (!fieldDecl.isStatic && fieldDecl.stored && !fieldDecl.isLate) {
       instanceFields.push_back(&fieldDecl);
     }
   }
@@ -5521,14 +5558,25 @@ llvm::Value* IRGenerator::emitExpr(llvm::IRBuilder<>& builder, const Expr& expr)
     }
     if (!member.usesBackingField() && !member.propertyGet().empty()) {
       llvm::Value* self = emitObjectPointer(builder, member.object(), objectType);
+      const RecordField* field = objectType->findField(member.field());
+      if (field != nullptr && field->isLate) {
+        llvm::Value* state = builder.CreateStructGEP(lower(objectType), self,
+            llvmFieldIndex(objectType, objectType->fieldIndex(member.field())) + 1);
+        emitLateCheck(builder, builder.CreateLoad(builder.getInt1Ty(), state), member.field());
+      }
       return emitNamedMethod(builder, member.propertyGet(), self, {});
     }
     llvm::Value* address = emitAddress(builder, expr, false);
     if (address == nullptr && objectType != nullptr && objectType->isRecord()) {
       const int index = objectType->fieldIndex(member.field());
       llvm::Value* object = emitExpr(builder, member.object());
-      if (index >= 0 && object != nullptr && object->getType()->isStructTy())
-        return builder.CreateExtractValue(object, {llvmFieldIndex(objectType, index)});
+      if (index >= 0 && object != nullptr && object->getType()->isStructTy()) {
+        const unsigned slot = llvmFieldIndex(objectType, index);
+        if (objectType->fields()[index].isLate) {
+          emitLateCheck(builder, builder.CreateExtractValue(object, {slot + 1}), member.field());
+        }
+        return builder.CreateExtractValue(object, {slot});
+      }
     }
     if (address == nullptr)
       return nullptr;
@@ -5736,7 +5784,7 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
           createLocalSlot(builder, name->name(), assign.value().resolvedType());
         }
       }
-      address = emitAddress(builder, assign.target());
+      address = emitAddress(builder, assign.target(), true, assign.op() == AssignOp::Assign);
     }
     const Type* targetType = resolveType(assign.target().resolvedType());
     const Type* rhsType = resolveType(assign.value().resolvedType());
@@ -5782,12 +5830,7 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
     if (from != nullptr && to != nullptr && from->isRecord() && to->isRecord() && from != to &&
         from->isSubtypeOf(to)) {
       llvm::Value* sliced = llvm::UndefValue::get(lower(to));
-      unsigned count = 0;
-      for (const RecordField& field : to->fields()) {
-        if (!field.isStatic && field.stored) {
-          ++count;
-        }
-      }
+      const unsigned count = llvm::cast<llvm::StructType>(lower(to))->getNumElements();
       for (unsigned index = 0; index < count; ++index) {
         sliced =
             builder.CreateInsertValue(sliced, builder.CreateExtractValue(value, {index}), {index});
@@ -5800,10 +5843,26 @@ bool IRGenerator::emitStatement(llvm::IRBuilder<>& builder,
         return false;
       }
       emitNamedMethod(builder, propertyTarget->propertySet(), propertySelf, {value});
+      emitErrorCheck(builder);
+      const Type* owner = resolveType(propertyTarget->object().resolvedType());
+      const RecordField* field = owner->findField(propertyTarget->field());
+      if (field != nullptr && field->isLate) {
+        builder.CreateStore(builder.getTrue(), builder.CreateStructGEP(lower(owner), propertySelf,
+            llvmFieldIndex(owner, owner->fieldIndex(propertyTarget->field())) + 1));
+      }
       return true;
     }
     if (value != nullptr && !value->getType()->isVoidTy()) {
       builder.CreateStore(value, address);
+      if (assign.target().kind() == NodeKind::MemberExpr) {
+        const auto& member = static_cast<const MemberExpr&>(assign.target());
+        const Type* owner = resolveType(member.object().resolvedType());
+        const RecordField* field = owner->findField(member.field());
+        if (field != nullptr && field->isLate) {
+          builder.CreateStore(builder.getTrue(), lateStateAddress(
+              builder, address, owner, owner->fieldIndex(member.field())));
+        }
+      }
     }
     return true;
   }
@@ -8049,7 +8108,7 @@ llvm::Value* IRGenerator::emitConstructorThunk(const Type* record) {
     }
   } else {
     for (const RecordField& field : record->fields()) {
-      if (!field.isStatic && field.stored) {
+      if (!field.isStatic && field.stored && !field.isLate) {
         params.push_back(lower(field.type));
       }
     }
@@ -8082,10 +8141,12 @@ llvm::Value* IRGenerator::emitConstructorThunk(const Type* record) {
     builder.CreateCall(found->second, args);
   } else {
     llvm::Value* aggregate = builder.CreateLoad(lower(record), slot);
-    unsigned fieldIndex = recordHasTypeId(record) ? 1u : 0u;
-    for (llvm::Argument& arg : fn->args()) {
-      aggregate = builder.CreateInsertValue(aggregate, &arg, {fieldIndex});
-      ++fieldIndex;
+    auto argument = fn->arg_begin();
+    for (const RecordField& field : record->fields()) {
+      if (!field.isStatic && field.stored && !field.isLate) {
+        aggregate = builder.CreateInsertValue(aggregate, &*argument++,
+            {llvmFieldIndex(record, record->fieldIndex(field.name))});
+      }
     }
     builder.CreateStore(aggregate, slot);
   }

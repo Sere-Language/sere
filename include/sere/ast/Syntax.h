@@ -907,6 +907,7 @@ struct CustomModifierDef {
 };
 
 struct FieldDecl {
+  bool isLate = false;
   std::string name;
   std::unique_ptr<TypeExpr> type;
   std::unique_ptr<Expr> init;

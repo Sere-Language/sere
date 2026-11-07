@@ -1,3 +1,7 @@
+## Unreleased
+
+- Highlight and complete `late` instance fields, with a field declaration snippet.
+
 # Changelog
 
 ## Unreleased

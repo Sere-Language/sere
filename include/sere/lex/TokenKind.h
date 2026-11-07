@@ -110,6 +110,7 @@ enum class TokenKind {
   KeywordRaise,
   KeywordReturn,
   KeywordYield,
+  KeywordLate,
   KeywordStatic,
   KeywordStruct,
   KeywordSuper,

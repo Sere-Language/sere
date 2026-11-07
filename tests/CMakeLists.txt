@@ -84,3 +84,19 @@ add_executable(sere_test_wavio WavioTest.cpp)
 target_link_libraries(sere_test_wavio PRIVATE sere_runtime)
 add_test(NAME sere.test.wavio COMMAND sere_test_wavio)
 set_tests_properties(sere.test.wavio PROPERTIES TIMEOUT 30 LABELS "wavio")
+
+add_test(NAME sere.late.members
+  COMMAND "${CMAKE_COMMAND}"
+    "-DCOMPILER=${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}"
+    "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/late/late_members.sere"
+    "-DSTDLIB=${CMAKE_SOURCE_DIR}/stdlib"
+    "-DBACKEND=llvm"
+    "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/late-members${CMAKE_EXECUTABLE_SUFFIX}"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/run_feature.cmake")
+if(Python3_Interpreter_FOUND)
+  add_test(NAME sere.late.checks
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/late_checks.py"
+      "${CMAKE_BINARY_DIR}/bin/sere${CMAKE_EXECUTABLE_SUFFIX}")
+  set_tests_properties(sere.late.checks PROPERTIES TIMEOUT 180
+    ENVIRONMENT "SERE_STDLIB=${CMAKE_SOURCE_DIR}/stdlib")
+endif()

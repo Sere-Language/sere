@@ -974,6 +974,7 @@ const HelperFieldSpec kClassFieldFields[] = {
     HFIELD("value", FieldDecl, init),
     HFIELD("is_public", FieldDecl, isPublic),
     HFIELD("is_static", FieldDecl, isStatic),
+    HFIELD("is_late", FieldDecl, isLate),
 };
 
 const HelperFieldSpec kVariantFields[] = {

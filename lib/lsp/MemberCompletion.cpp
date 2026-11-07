@@ -516,6 +516,9 @@ std::vector<MemberCompletionItem> collectMemberCompletions(const Type* type, boo
     MemberCompletionItem item;
     item.label = field.name;
     item.detail = field.type == nullptr ? "" : field.type->display();
+    if (field.isLate) {
+      item.detail = "late " + item.detail;
+    }
     item.documentation = memberDocumentation(field.docstring);
     const bool isFn = field.type != nullptr && field.type->kind() == TypeKind::Function;
     if (isFn) {

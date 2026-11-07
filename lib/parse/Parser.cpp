@@ -348,6 +348,10 @@ std::string Parser::parseStringValue() {
 }
 
 std::unique_ptr<TypeExpr> Parser::parseTypeAtom() {
+  if (check(TokenKind::KeywordLate)) {
+    diagnostics_->error(advance().range(), "late is only valid before an instance field type");
+    return nullptr;
+  }
   if (match(TokenKind::KeywordNone)) {
     return std::make_unique<TypeExpr>(
         previous().range(), "None", std::vector<std::unique_ptr<TypeExpr>>{});
@@ -2829,6 +2833,7 @@ std::unique_ptr<ClassDef> Parser::parseClass(const std::string& enclosing) {
       synchronize();
       continue;
     }
+    field.isLate = match(TokenKind::KeywordLate);
     field.type = parseTypeExpr();
     if (field.type == nullptr) {
       synchronize();

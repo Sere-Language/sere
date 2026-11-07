@@ -1,4 +1,9 @@
 {
+  "Late instance field": {
+    "prefix": "late",
+    "body": "${1:name}: late ${2:str}",
+    "description": "Declare an instance field initialized by a later assignment"
+  },
   "Custom access modifier": {
     "prefix": "modifier",
     "body": ["type @${1:access}:", "    get = @param or @public", "    set = @param or @private"],

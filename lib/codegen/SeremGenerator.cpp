@@ -1029,6 +1029,12 @@ void SeremGenerator::pruneUnusedPreludeTypes() {
 }
 
 void SeremGenerator::declareClass(const ClassDef& classDef) {
+  for (const FieldDecl& field : classDef.fields()) {
+    if (field.isLate) {
+      diagnostics_->error(field.range, "late fields require the LLVM backend");
+      return;
+    }
+  }
   std::vector<serem::IRType> fields;
   std::vector<std::string> attributes;
   attributes.push_back(classDef.isStruct() ? "struct" : "class");

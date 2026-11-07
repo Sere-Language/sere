@@ -295,7 +295,11 @@ private:
                            const Type* fnType,
                            std::vector<llvm::Value*>& args,
                            std::size_t skipParams = 0);
-  llvm::Value* emitAddress(llvm::IRBuilder<>& builder, const Expr& expr, bool required = true);
+  llvm::Value* emitAddress(llvm::IRBuilder<>& builder, const Expr& expr, bool required = true, bool initializing = false);
+  void emitLateCheck(llvm::IRBuilder<>& builder, llvm::Value* initialized,
+                     const std::string& name);
+  llvm::Value* lateStateAddress(llvm::IRBuilder<>& builder, llvm::Value* address,
+                                const Type* record, int index);
   /// Lowers one call argument to a parameter. A class argument is passed by
   /// reference so the callee sees the object's dynamic type and can read the
   /// fields a subclass adds.

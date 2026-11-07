@@ -1,0 +1,44 @@
+struct Value:
+    number: late i32
+    text: late str
+    ordinary: i32
+
+class Base:
+    number: late i32
+
+class Derived(Base):
+    text: late str
+
+class Initialized:
+    value: late i32
+    def __init__(self, value: i32) -> void:
+        self.value = value
+
+struct Box[T]:
+    item: late T
+
+def main() -> i32:
+    value = Value(7)
+    value.number = 0
+    value.text = ""
+    assert value.number == 0
+    assert value.text == ""
+    assert value.ordinary == 7
+    value.number += 3
+    value.text = "ready"
+    copied = value
+    assert copied.number == 3
+    assert copied.text == "ready"
+    copied.number = 8
+    assert value.number == 3
+    child = Derived()
+    child.number = 11
+    child.text = "child"
+    assert child.number == 11
+    assert child.text == "child"
+    initialized = Initialized(42)
+    assert initialized.value == 42
+    box = Box[i32]()
+    box.item = 9
+    assert box.item == 9
+    return 0

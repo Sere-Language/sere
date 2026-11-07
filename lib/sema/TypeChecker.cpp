@@ -637,7 +637,7 @@ struct CallableShape {
     return true;
   }
   for (const RecordField& field : record->fields()) {
-    if (!field.isStatic && field.stored) {
+    if (!field.isStatic && field.stored && !field.isLate) {
       params.push_back(field.type);
     }
   }
@@ -4199,7 +4199,7 @@ const Type* TypeChecker::checkConstructor(CallExpr& expr, const Type* record) {
   std::vector<const Type*> paramTypes;
   std::vector<std::string> names;
   for (const RecordField& field : record->fields()) {
-    if (!field.isStatic && field.stored) {
+    if (!field.isStatic && field.stored && !field.isLate) {
       ParamDecl param;
       param.name = field.name;
       params.push_back(std::move(param));
@@ -6583,6 +6583,11 @@ bool TypeChecker::flattenClass(ClassDef& classDef) {
     }
     RecordField created{
         field.name, type, !declaredPrivate && !getRule.isPrivate, field.isStatic};
+    created.isLate = field.isLate;
+    if (field.isLate && (field.isStatic || field.init != nullptr)) {
+      diagnostics_->error(field.range, "late requires an instance field without an initializer");
+      return false;
+    }
     created.getterPublic = !getRule.isPrivate;
     created.setterPublic = !setRule.isPrivate;
     created.frozen = getRule.isFrozen || setRule.isFrozen;

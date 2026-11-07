@@ -301,7 +301,7 @@ void writeNullResult(const llvm::json::Value* id) {
   text += ":\n";
   for (const RecordField& field : type.fields()) {
     text += "    " + field.name + ": " +
-            (field.type == nullptr ? "?" : field.type->display());
+            (field.isLate ? "late " : "") + (field.type == nullptr ? "?" : field.type->display());
     text += "\n";
   }
   for (const RecordMethod& method : type.methods()) {
@@ -321,7 +321,7 @@ void writeNullResult(const llvm::json::Value* id) {
       continue;
     }
     attributes += "\n- `" + field.name + ": " +
-                  (field.type == nullptr ? "?" : field.type->display()) + "`";
+                  (field.isLate ? "late " : "") + (field.type == nullptr ? "?" : field.type->display()) + "`";
     const std::string summary = parseDocstring(field.docstring).summary;
     if (!summary.empty()) {
       attributes += " — " + summary;
@@ -1209,7 +1209,7 @@ void addKeywordCompletions(llvm::json::Array& items, const std::string& prefix) 
       "if",          "elif",         "else",      "while",     "pass",
       "and",         "or",           "not",       "True",      "False",
       "None",        "extern",       "break",     "continue",  "import",
-      "from",        "as",           "static",    "abstract",  "override",
+      "from",        "as",           "late", "static",    "abstract",  "override",
       "enum",        "for",          "in",        "is",        "assert",
       "try",         "except",       "finally",   "raise",     "match",
       "case",        "lambda",       "with",      "defer",     "del", "using",

@@ -177,7 +177,7 @@
     },
     "modifier": {
       "name": "storage.modifier.sere",
-      "match": "\\b(static|const|extern|async)\\b"
+      "match": "\\b(late|static|const|extern|async)\\b"
     },
     "constant": {
       "name": "constant.language.sere",

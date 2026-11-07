@@ -60,6 +60,10 @@ type SignedInt = i8 | i16 | i32 | i64
 
 type ArrayLike[T] = array[T] | list[T]
 
+type @readonly:
+    get = @param or @public
+    set = @param or @private
+
 extern "C" "sere_input"
 def input(prompt: str) -> str
 """Read a line after displaying a prompt."""
